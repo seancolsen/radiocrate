@@ -23,7 +23,7 @@ use crate::query_def::{CompileSource, QuerySections};
 /// into the reassembled [`Query`] as its definitions section.
 const PRELUDE: &str = r"#track.firstplay = #play.timestamp%min
 #track.lastplay = #play.timestamp%max
-#track.artists = #artist.name%list(\\name)
+#track.artists = #credit.artist.name%list(\\ord \\artist.name)
 #track.year = album.year
 #track.added = file.added
 #track.duration = file.duration
