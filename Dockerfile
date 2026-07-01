@@ -33,6 +33,7 @@ RUN apt-get update \
         pkg-config \
         cmake \
         sudo \
+        unzip \
         mesa-vulkan-drivers \
         libvulkan1 \
         vulkan-tools \
@@ -50,6 +51,22 @@ RUN rustup component add clippy rustfmt \
 
 # Claude Code CLI.
 RUN npm install -g @anthropic-ai/claude-code
+
+# DuckDB CLI — version must match the DuckDB bundled in backend/Cargo.toml
+# (libduckdb-sys crate version 1.10504.0 bundles DuckDB v1.5.4).
+# Update this version whenever the duckdb crate in backend/Cargo.toml is bumped.
+RUN DUCKDB_VERSION="v1.5.4" \
+    && ARCH=$(dpkg --print-architecture) \
+    && case "$ARCH" in \
+         amd64)   DUCKDB_ARCH="amd64" ;; \
+         arm64)   DUCKDB_ARCH="aarch64" ;; \
+         *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+       esac \
+    && curl -fsSL "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${DUCKDB_ARCH}.zip" \
+         -o /tmp/duckdb.zip \
+    && unzip /tmp/duckdb.zip duckdb -d /usr/local/bin/ \
+    && rm /tmp/duckdb.zip \
+    && chmod +x /usr/local/bin/duckdb
 
 # Ensure cargo is on PATH for login shells too (the base image's ENV PATH is
 # otherwise reset by /etc/profile in a `bash -l` context).
