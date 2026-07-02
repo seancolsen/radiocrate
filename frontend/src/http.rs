@@ -222,6 +222,20 @@ fn push_batch(
     Ok(())
 }
 
+/// Test helper: decodes Arrow IPC stream `bytes` and pushes the resulting rows
+/// into `state` via the exact same path a live query response takes
+/// ([`feed_decoder`] then [`push_batch`]), so snapshot fixtures can mock a backend
+/// response as raw IPC bytes. Panics on malformed input, since fixtures are
+/// known-good.
+#[cfg(test)]
+pub(crate) fn load_ipc_into_state(bytes: &[u8], state: &Arc<Mutex<QueryState>>) {
+    let ctx = egui::Context::default();
+    let mut decoder = StreamDecoder::new();
+    let mut handler = |batch: &RecordBatch| push_batch(batch, state, &ctx);
+    feed_decoder(&mut decoder, Bytes::copy_from_slice(bytes), &mut handler)
+        .expect("decode mock Arrow IPC");
+}
+
 fn feed_decoder<H>(decoder: &mut StreamDecoder, chunk: Bytes, handler: &mut H) -> Result<(), String>
 where
     H: FnMut(&RecordBatch) -> Result<(), String>,

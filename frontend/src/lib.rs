@@ -6,6 +6,8 @@ use eframe::egui;
 use eframe::egui::emath::TSTransform;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod app_snapshot;
 mod audio;
 mod builder;
 mod button;
@@ -258,6 +260,15 @@ impl Default for App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.render_root(ui);
+    }
+}
+
+impl App {
+    /// Renders the whole app into `ui`. Split out of [`eframe::App::ui`] (which
+    /// just delegates here) so snapshot tests can drive the entire UI without
+    /// constructing an [`eframe::Frame`], which `ui` never uses anyway.
+    pub(crate) fn render_root(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.bootstrap(&ctx);
         self.drain_loaded_queries();
