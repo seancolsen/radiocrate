@@ -3,6 +3,15 @@ members = ["backend", "frontend", "collectune", "xtask"]
 resolver = "3"
 default-members = ["backend", "frontend"]
 
+# Compile the bundled DuckDB C++ with optimizations even in debug builds.
+# `libduckdb-sys` builds DuckDB via the `cc` crate, which follows Cargo's
+# OPT_LEVEL. Without this, a debug build compiles DuckDB at -O0, making
+# compute-heavy queries ~10x slower than a release build (and than the DuckDB
+# CLI). Scoping the override to this crate keeps our own Rust at -O0 for fast
+# iterative compiles.
+[profile.dev.package.libduckdb-sys]
+opt-level = 3
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 
