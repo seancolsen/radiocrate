@@ -248,6 +248,14 @@ impl App {
                 let selection = &self.selection;
                 let track_id_column = state.track_id_column;
 
+                // Rows are drawn edge-to-edge with no inter-row spacing. `show_rows`
+                // reads `item_spacing.y` *here* (before the callback) to size the
+                // scrollable content, so it must be zeroed now — zeroing it only
+                // inside the callback would leave the reserved height inflated by one
+                // `item_spacing.y` per visible row, showing as a growing gap at the
+                // bottom of the pane.
+                ui.spacing_mut().item_spacing.y = 0.0;
+
                 let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
                 if let Some(idx) = pending_locate {
                     let viewport_h = ui.available_height();
