@@ -72,7 +72,7 @@ pub(crate) const EXPAND_CLOSED: MaterialIcon = mi::ICON_CHEVRON_RIGHT;
 /// magic-wand glyph is the closest match.)
 pub(crate) const CUSTOM: MaterialIcon = mi::ICON_AUTO_FIX_HIGH;
 /// A saved preset, shown beside preset entries.
-pub(crate) const PRESET: MaterialIcon = mi::ICON_APPROVAL;
+pub(crate) const PRESET: MaterialIcon = mi::ICON_LINK;
 /// The built-in "Shuffle" sorting preset, and its "Reshuffle" action.
 pub(crate) const SHUFFLE: MaterialIcon = mi::ICON_SHUFFLE;
 /// Manage the whole preset library ("toolbox").

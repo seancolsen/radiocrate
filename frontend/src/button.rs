@@ -124,8 +124,9 @@ impl Button {
 /// active [`SplitButton`].
 const MENU_TRIGGER_WIDTH: f32 = 22.0;
 /// Background of the menu-trigger region: a lighter tint of [`ACTIVE_BG`] that
-/// sets the trigger off from the main area.
-const MENU_TRIGGER_BG: egui::Color32 = egui::Color32::from_rgb(0xD7, 0xEA, 0xFD);
+/// sets the trigger off from the main area. Also used elsewhere as the app's
+/// "light blue" highlight (e.g. selected result rows).
+pub(crate) const MENU_TRIGGER_BG: egui::Color32 = egui::Color32::from_rgb(0xD7, 0xEA, 0xFD);
 
 /// A labelled toggle [`Button`] that, while `active`, grows an embedded "⋮" menu
 /// trigger on its right, set off from the label by a lighter background. The main

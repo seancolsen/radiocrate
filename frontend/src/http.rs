@@ -194,15 +194,30 @@ fn finish(result: Result<(), String>, state: &Mutex<QueryState>, ctx: &egui::Con
     if let Err(e) = result {
         s.error = Some(e);
     }
+    // No batch arrived this run: the previous run's rows are stale leftovers
+    // (e.g. this run genuinely returned nothing), so drop them now rather than
+    // keep showing them as if they were current.
+    if s.awaiting_first_batch {
+        s.rows.clear();
+        s.awaiting_first_batch = false;
+    }
     s.running = false;
     drop(s);
     ctx.request_repaint();
 }
 
 fn push_batch(batch: &RecordBatch, state: &Mutex<QueryState>, ctx: &egui::Context) {
+    let mut s = state.lock().unwrap();
+    // First batch of a reload: clear out the previous run's stale rows so this
+    // run's data starts fresh.
+    if s.awaiting_first_batch {
+        s.rows.clear();
+        s.awaiting_first_batch = false;
+    }
     // Keep the batch in its Arrow form; cells are stringified at render time
     // (see `crate::rows`). The clone is cheap — column buffers are refcounted.
-    state.lock().unwrap().rows.push_batch(batch.clone());
+    s.rows.push_batch(batch.clone());
+    drop(s);
     ctx.request_repaint();
 }
 

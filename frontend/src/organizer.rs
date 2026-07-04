@@ -425,7 +425,7 @@ fn draw_explorer(
                 });
                 ui.add_space(4.0);
                 for item in saved {
-                    let out = saved_row_widget(ui, item, current == Some(item.id), rename);
+                    let out = saved_row_widget(ui, item, rename);
                     if out.clicked {
                         actions.open = Some(item.id);
                     }
@@ -536,26 +536,21 @@ fn section_hint(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Shared row chrome (selection/hover background, no border between rows).
-/// Returns the resolved text color for painting the row's content.
-fn row_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) -> egui::Color32 {
+/// Shared row chrome: a hover background only, no border between rows. Neither
+/// list marks its active item with a fill — the "Opened" section instead paints
+/// its own left accent border (see [`opened_row_widget`]), and the "Queries"
+/// list doesn't highlight its active item at all. Returns the resolved text
+/// color for painting the row's content.
+fn row_background(ui: &egui::Ui, rect: egui::Rect, hovered: bool) -> egui::Color32 {
     let v = ui.visuals();
-    let text_color = v.text_color();
-    if selected {
-        let fill = if hovered {
-            crate::results::darken(v.selection.bg_fill, 20)
-        } else {
-            v.selection.bg_fill
-        };
-        ui.painter().rect_filled(rect, 0.0, fill);
-    } else if hovered {
+    if hovered {
         ui.painter().rect_filled(
             rect,
             0.0,
             crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
         );
     }
-    text_color
+    v.text_color()
 }
 
 /// Paints a row's leading query icon, aligned with the section header's chevron.
@@ -597,7 +592,15 @@ fn opened_row_widget(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
-    let text_color = row_background(ui, rect, selected, response.hovered());
+    let text_color = row_background(ui, rect, response.hovered());
+    if selected {
+        // A blue left edge marks the active item, like the tab bar's blue top
+        // edge on the active tab handle.
+        let accent_rect =
+            egui::Rect::from_min_size(rect.left_top(), egui::vec2(4.0, rect.height()));
+        ui.painter()
+            .rect_filled(accent_rect, 0.0, crate::HOVER_BLUE);
+    }
     let icon_color = icons::DEFAULT_COLOR;
     paint_row_icon(ui, rect, icon_color);
 
@@ -720,7 +723,6 @@ fn opened_row_widget(
 fn saved_row_widget(
     ui: &mut egui::Ui,
     item: &SavedItem,
-    selected: bool,
     rename: &mut Option<Rename>,
 ) -> RowOutcome {
     let mut outcome = RowOutcome::default();
@@ -729,7 +731,7 @@ fn saved_row_widget(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
-    let text_color = row_background(ui, rect, selected, response.hovered());
+    let text_color = row_background(ui, rect, response.hovered());
     let weak_text = ui.visuals().weak_text_color();
     paint_row_icon(ui, rect, icons::DEFAULT_COLOR);
 

@@ -108,6 +108,7 @@ pub fn setup_fonts(ctx: &egui::Context) {
     egui_material_icons::initialize(ctx);
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 pub(crate) struct QueryState {
     pub(crate) rows: ResultRows,
@@ -116,6 +117,11 @@ pub(crate) struct QueryState {
     pub(crate) columns: Vec<ColumnMetadata>,
     pub(crate) error: Option<String>,
     pub(crate) running: bool,
+    /// Set when a run starts and cleared on its first batch (or on completion
+    /// with none): while set, `rows` still holds the *previous* run's results,
+    /// kept on screen (dimmed — see `results::render_results`) instead of being
+    /// cleared up front, so a reload doesn't blank the pane while it loads.
+    pub(crate) awaiting_first_batch: bool,
     pub(crate) track_id_column: Option<usize>,
     pub(crate) lineage_done: bool,
     pub(crate) needs_revalidation: bool,
@@ -938,10 +944,14 @@ impl App {
 
         {
             let mut s = results.lock().unwrap();
-            s.rows.clear();
+            // Leave `rows` as-is: the previous results stay on screen (dimmed)
+            // until the reload's first batch arrives (or it completes with none —
+            // see `http::push_batch`/`http::finish`), rather than blanking the
+            // pane while the new run is in flight.
             s.columns.clear();
             s.error = None;
             s.running = true;
+            s.awaiting_first_batch = true;
             s.track_id_column = None;
             s.lineage_done = false;
             s.needs_revalidation = true;

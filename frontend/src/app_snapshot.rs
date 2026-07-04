@@ -469,3 +469,88 @@ fn whole_app() {
     harness.run();
     harness.snapshot("app/whole_app");
 }
+
+/// A narrower rig sharing `whole_app`'s "Lemonade" page but without the
+/// explorer/builder chrome, so the result rows fill most of the frame — used by
+/// the result-row state variants below (selection, reload, empty).
+fn results_only_app(mut page: QueryPage) -> App {
+    page.pinned = true;
+    let id = page.live.id;
+    let saved = vec![page.live.clone()];
+    App {
+        pages: vec![page],
+        saved_queries: saved,
+        current: crate::CurrentPage::Query(id),
+        auto_selected_initial: true,
+        schema_fetch_started: true,
+        queries_fetch_started: true,
+        presets_fetch_started: true,
+        ..Default::default()
+    }
+}
+
+/// `spinning` should be `true` when the page's query is running: the toolbar's
+/// run button then spins, which keeps requesting repaints forever, so such a
+/// harness must be stepped a fixed number of times instead of run to a
+/// (never-reached) steady state.
+fn snapshot_results_app(name: &str, mut app: App, spinning: bool) {
+    app.organizer.open = false;
+    let fonts_ready = Cell::new(false);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1040.0, 340.0))
+        .with_pixels_per_point(PPP)
+        .build_ui(move |ui| {
+            if !fonts_ready.replace(true) {
+                crate::setup_fonts(ui.ctx());
+                ui.ctx()
+                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
+                return;
+            }
+            app.render_root(ui);
+        });
+    if spinning {
+        harness.run_steps(2);
+    } else {
+        harness.run();
+    }
+    harness.snapshot(format!("app/{name}"));
+}
+
+/// A couple of selected result rows: the light-blue selection fill (the same
+/// blue as an active "Filter" button's menu trigger) with the row's usual
+/// top-lit gradient sheen layered on top of it.
+#[test]
+fn selected_rows() {
+    let page = lemonade_page();
+    let mut app = results_only_app(page);
+    app.selection.insert(1);
+    app.selection.insert(2);
+    snapshot_results_app("selected_rows", app, false);
+}
+
+/// The page's query is reloading but already has results on screen: they stay
+/// visible (not blanked), with every column's text turned a uniform medium gray
+/// to read as "loading".
+#[test]
+fn reloading_keeps_stale_results() {
+    let page = lemonade_page();
+    {
+        let mut state = page.results.lock().unwrap();
+        state.running = true;
+        state.awaiting_first_batch = true;
+    }
+    let app = results_only_app(page);
+    snapshot_results_app("reloading_keeps_stale_results", app, true);
+}
+
+/// A finished query with zero rows shows "No results" rather than a blank pane.
+#[test]
+fn no_results() {
+    let page = lemonade_page();
+    {
+        let mut state = page.results.lock().unwrap();
+        state.rows.clear();
+    }
+    let app = results_only_app(page);
+    snapshot_results_app("no_results", app, false);
+}

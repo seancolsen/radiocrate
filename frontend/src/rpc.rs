@@ -48,10 +48,10 @@ pub(crate) fn now_epoch() -> i64 {
     jiff::Zoned::now().timestamp().as_second()
 }
 
-/// Current local time formatted as RFC 3339 with minute precision, e.g.
-/// `2026-06-04T15:30`. Used as the default name for a new query.
+/// Current local time formatted with minute precision, e.g. `2026-06-04 15:30`.
+/// Used as the default name for a new query.
 pub(crate) fn now_name() -> String {
-    jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M").to_string()
+    jiff::Zoned::now().strftime("%Y-%m-%d %H:%M").to_string()
 }
 
 /// Fetches every saved query and stores the result in `out` for the UI to drain.

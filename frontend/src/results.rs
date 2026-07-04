@@ -22,9 +22,9 @@ const COL_GAP: f32 = 16.0;
 /// the hover effect is only slightly darker than an un-hovered row.
 pub(crate) const ROW_HOVER_DARKEN: u8 = 10;
 
-/// Background for the pills a list cell renders its elements as: a light green
+/// Background for the pills a list cell renders its elements as: a warm cream
 /// no other UI element uses.
-const PILL_BG: egui::Color32 = egui::Color32::from_rgb(0xDC, 0xED, 0xC8);
+const PILL_BG: egui::Color32 = egui::Color32::from_rgb(0xF8, 0xE4, 0xB2);
 /// Horizontal padding inside a pill, on each side of its text.
 const PILL_PAD_X: f32 = 6.0;
 /// Vertical padding inside a pill, above and below its text.
@@ -34,7 +34,7 @@ const PILL_GAP: f32 = 4.0;
 /// Narrowest a truncated pill may get. When the last pill that would show can't
 /// have even this much width, it is hidden and counted in the overflow bubble
 /// instead — a "+N" bubble beats a sliver of a pill.
-const PILL_MIN_WIDTH: f32 = 15.0;
+const PILL_MIN_WIDTH: f32 = 50.0;
 /// Extra height a line gains when it holds a pill column: the pill's vertical
 /// padding, plus a little air so adjacent rows' pills don't touch.
 const PILL_LINE_EXTRA: f32 = PILL_PAD_Y * 2.0 + 2.0;
@@ -46,6 +46,23 @@ const ROW_BG_TOP: egui::Color32 = egui::Color32::WHITE;
 /// Bottom of an un-selected row's background gradient: a very light grey, giving
 /// each row a subtle top-lit sheen.
 const ROW_BG_BOTTOM: egui::Color32 = egui::Color32::from_gray(0xF2);
+
+/// Background of a selected result row
+const SELECTED_ROW_BG: egui::Color32 = egui::Color32::from_rgb(0xC8, 0xE4, 0xFF);
+/// Opacity of the top-lit sheen gradient layered on top of a selected row's flat
+/// fill, so the sheen reads without hiding the selection color underneath.
+const SELECTED_ROW_GRADIENT_ALPHA: u8 = 90;
+
+/// Text color for result-row cells while the current page's query is reloading:
+/// a medium gray, applied uniformly (regardless of a column's own text color) so
+/// stale-looking content reads as "loading" without hiding it.
+const LOADING_TEXT_COLOR: egui::Color32 = egui::Color32::from_gray(0x90);
+
+/// Returns `color` with its alpha channel replaced by `alpha`, leaving the RGB
+/// channels untouched.
+fn translucent(color: egui::Color32, alpha: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+}
 
 /// Fills `rect` with a vertical `top`→`bottom` color gradient.
 fn paint_vertical_gradient(
@@ -148,6 +165,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn render_results(&mut self, ui: &mut egui::Ui) {
         let Some(current_id) = self.current.query_id() else {
             return;
@@ -162,6 +180,10 @@ impl App {
         };
 
         let ctx = ui.ctx().clone();
+        // Whether this page has ever had a query dispatched, so a query that
+        // simply hasn't run yet doesn't flash "No results" before it gets the
+        // chance to.
+        let fetched = self.current_page().is_some_and(|p| p.results_fetched);
         egui::CentralPanel::default()
             .frame(frame)
             .show_inside(ui, |ui| {
@@ -172,6 +194,11 @@ impl App {
                 }
 
                 if state.rows.is_empty() {
+                    if fetched && !state.running && state.error.is_none() {
+                        ui.centered_and_justified(|ui| {
+                            ui.weak("No results");
+                        });
+                    }
                     return;
                 }
 
@@ -190,6 +217,14 @@ impl App {
 
                 let metrics = self.row_metrics(ui, &state);
                 let row_height = metrics.row_height;
+                // While the page's query is reloading, the previous results stay
+                // on screen but every column's text turns a uniform medium gray
+                // (regardless of its own font color) to read as "loading".
+                let (text_color, weak_color) = if state.running {
+                    (LOADING_TEXT_COLOR, LOADING_TEXT_COLOR)
+                } else {
+                    (metrics.text_color, metrics.weak_color)
+                };
                 let row_layout = RowLayout {
                     visible: &metrics.visible,
                     placements: &metrics.layout.placements,
@@ -197,8 +232,8 @@ impl App {
                     line_heights: &metrics.line_heights,
                     body_font: metrics.body_font.clone(),
                     small_font: metrics.small_font.clone(),
-                    text_color: metrics.text_color,
-                    weak_color: metrics.weak_color,
+                    text_color,
+                    weak_color,
                     row_height,
                 };
 
@@ -307,6 +342,7 @@ struct RowLayout<'a> {
     row_height: f32,
 }
 
+#[allow(clippy::too_many_lines)]
 fn draw_row(
     ui: &mut egui::Ui,
     layout: &RowLayout,
@@ -326,22 +362,33 @@ fn draw_row(
     let rect = rect.round_to_pixels(ppp);
 
     let hovered = response.hovered();
+    let (top, bottom) = if hovered {
+        (
+            darken(ROW_BG_TOP, ROW_HOVER_DARKEN),
+            darken(ROW_BG_BOTTOM, ROW_HOVER_DARKEN),
+        )
+    } else {
+        (ROW_BG_TOP, ROW_BG_BOTTOM)
+    };
     if selected {
-        // Selected rows keep a flat highlight fill (darkened a touch on hover).
-        let base = ui.visuals().selection.bg_fill;
-        let fill = if hovered { darken(base, 20) } else { base };
-        ui.painter().rect_filled(rect, 0.0, fill);
+        // A flat light-blue fill (darkened a touch on hover) marks the selection,
+        // then the same top-lit sheen every row gets is layered on top of it, at
+        // reduced opacity so the blue still reads through.
+        let base = if hovered {
+            darken(SELECTED_ROW_BG, 20)
+        } else {
+            SELECTED_ROW_BG
+        };
+        ui.painter().rect_filled(rect, 0.0, base);
+        paint_vertical_gradient(
+            ui.painter(),
+            rect,
+            translucent(top, SELECTED_ROW_GRADIENT_ALPHA),
+            translucent(bottom, SELECTED_ROW_GRADIENT_ALPHA),
+        );
     } else {
         // Un-selected rows get a white→light-grey vertical gradient, nudged
         // slightly darker on hover so the effect stays subtle.
-        let (top, bottom) = if hovered {
-            (
-                darken(ROW_BG_TOP, ROW_HOVER_DARKEN),
-                darken(ROW_BG_BOTTOM, ROW_HOVER_DARKEN),
-            )
-        } else {
-            (ROW_BG_TOP, ROW_BG_BOTTOM)
-        };
         paint_vertical_gradient(ui.painter(), rect, top, bottom);
     }
 
@@ -570,7 +617,7 @@ fn draw_pills(ui: &egui::Ui, cell: &Cell, items: &[String]) {
             natural[i]
         };
         let pill_rect = egui::Rect::from_min_size(egui::pos2(x, pill_top), egui::vec2(w, pill_h));
-        painter.rect_filled(pill_rect, pill_h * 0.5, PILL_BG);
+        painter.rect_filled(pill_rect, crate::button::RADIUS, PILL_BG);
         let galley = if w < natural[i] {
             let mut job = LayoutJob::single_section(texts[i].clone(), format.clone());
             job.wrap = TextWrapping::truncate_at_width((w - PILL_PAD_X * 2.0).max(0.0));
