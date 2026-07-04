@@ -4,7 +4,6 @@ use arrow_array::{
     Array, ArrayRef, LargeListArray, LargeStringArray, ListArray, RecordBatch, StringArray,
 };
 use arrow_buffer::Buffer;
-use arrow_cast::display::{ArrayFormatter, FormatOptions};
 use arrow_ipc::reader::StreamDecoder;
 use bytes::Bytes;
 use eframe::egui;
@@ -21,7 +20,10 @@ pub(crate) fn run_query(query: String, state: &Arc<Mutex<QueryState>>, ctx: &egu
     let handler = {
         let state = Arc::clone(state);
         let ctx = ctx.clone();
-        move |batch: &RecordBatch| push_batch(batch, &state, &ctx)
+        move |batch: &RecordBatch| {
+            push_batch(batch, &state, &ctx);
+            Ok(())
+        }
     };
     let state_done = Arc::clone(state);
     let ctx_done = ctx.clone();
@@ -197,29 +199,11 @@ fn finish(result: Result<(), String>, state: &Mutex<QueryState>, ctx: &egui::Con
     ctx.request_repaint();
 }
 
-fn push_batch(
-    batch: &RecordBatch,
-    state: &Mutex<QueryState>,
-    ctx: &egui::Context,
-) -> Result<(), String> {
-    let fmt_opts = FormatOptions::default();
-    let formatters: Vec<_> = batch
-        .columns()
-        .iter()
-        .map(|col| ArrayFormatter::try_new(col.as_ref(), &fmt_opts))
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
-    let mut s = state.lock().unwrap();
-    for row in 0..batch.num_rows() {
-        let cells: Vec<String> = formatters
-            .iter()
-            .map(|fmt| fmt.value(row).to_string())
-            .collect();
-        s.rows.push(cells);
-    }
-    drop(s);
+fn push_batch(batch: &RecordBatch, state: &Mutex<QueryState>, ctx: &egui::Context) {
+    // Keep the batch in its Arrow form; cells are stringified at render time
+    // (see `crate::rows`). The clone is cheap — column buffers are refcounted.
+    state.lock().unwrap().rows.push_batch(batch.clone());
     ctx.request_repaint();
-    Ok(())
 }
 
 /// Test helper: decodes Arrow IPC stream `bytes` and pushes the resulting rows
@@ -231,7 +215,10 @@ fn push_batch(
 pub(crate) fn load_ipc_into_state(bytes: &[u8], state: &Arc<Mutex<QueryState>>) {
     let ctx = egui::Context::default();
     let mut decoder = StreamDecoder::new();
-    let mut handler = |batch: &RecordBatch| push_batch(batch, state, &ctx);
+    let mut handler = |batch: &RecordBatch| {
+        push_batch(batch, state, &ctx);
+        Ok(())
+    };
     feed_decoder(&mut decoder, Bytes::copy_from_slice(bytes), &mut handler)
         .expect("decode mock Arrow IPC");
 }

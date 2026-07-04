@@ -24,6 +24,7 @@ mod organizer;
 mod page;
 mod query_def;
 mod results;
+mod rows;
 mod rpc;
 mod schema;
 mod text_input;
@@ -39,6 +40,7 @@ use now_playing::CurrentTrack;
 use organizer::Organizer;
 use page::{CurrentPage, QueryPage};
 use query_def::{QueryDefinition, Section, SectionContent};
+use rows::ResultRows;
 
 pub(crate) const ORGANIZER_WIDTH: f32 = 200.0;
 const ORGANIZER_ANIM_TIME: f32 = 0.1;
@@ -106,7 +108,7 @@ pub fn setup_fonts(ctx: &egui::Context) {
 
 #[derive(Default)]
 pub(crate) struct QueryState {
-    pub(crate) rows: Vec<Vec<String>>,
+    pub(crate) rows: ResultRows,
     /// Resolved display metadata for each result column, positionally aligned with each
     /// row's cells. Empty until the query is (re)compiled.
     pub(crate) columns: Vec<ColumnMetadata>,

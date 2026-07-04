@@ -9,6 +9,7 @@ use egui::text::{LayoutJob, TextWrapping};
 
 use crate::columns::{ColumnMetadata, FontColor, FontSize, TextAlign};
 use crate::field_layout::{ColSize, FieldLayout, LayoutKey, Placement, compute_field_layout};
+use crate::rows::CellValue;
 use crate::{ACCENT_BLUE, App, QueryState};
 
 /// Vertical padding above and below a row's content.
@@ -20,6 +21,25 @@ const COL_GAP: f32 = 16.0;
 /// How much darker an un-selected row gets on hover (per RGB channel). Small, so
 /// the hover effect is only slightly darker than an un-hovered row.
 pub(crate) const ROW_HOVER_DARKEN: u8 = 10;
+
+/// Background for the pills a list cell renders its elements as: a light green
+/// no other UI element uses.
+const PILL_BG: egui::Color32 = egui::Color32::from_rgb(0xDC, 0xED, 0xC8);
+/// Horizontal padding inside a pill, on each side of its text.
+const PILL_PAD_X: f32 = 6.0;
+/// Vertical padding inside a pill, above and below its text.
+const PILL_PAD_Y: f32 = 2.0;
+/// Horizontal gap between adjacent pills (and before the overflow bubble).
+const PILL_GAP: f32 = 4.0;
+/// Narrowest a truncated pill may get. When the last pill that would show can't
+/// have even this much width, it is hidden and counted in the overflow bubble
+/// instead — a "+N" bubble beats a sliver of a pill.
+const PILL_MIN_WIDTH: f32 = 15.0;
+/// Extra height a line gains when it holds a pill column: the pill's vertical
+/// padding, plus a little air so adjacent rows' pills don't touch.
+const PILL_LINE_EXTRA: f32 = PILL_PAD_Y * 2.0 + 2.0;
+/// Padding inside the "+N" overflow bubble.
+const BUBBLE_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
 
 /// Top of an un-selected row's background gradient: white.
 const ROW_BG_TOP: egui::Color32 = egui::Color32::WHITE;
@@ -74,7 +94,7 @@ impl App {
     fn row_metrics(&mut self, ui: &egui::Ui, state: &QueryState) -> ResultMetrics {
         // One metadata entry per result column (defaults fill any gap), keeping only the
         // visible ones paired with their original cell index.
-        let col_count = state.rows.first().map_or(0, Vec::len);
+        let col_count = state.rows.col_count();
         let visible: Vec<(usize, ColumnMetadata)> = (0..col_count)
             .map(|i| (i, state.columns.get(i).cloned().unwrap_or_default()))
             .filter(|(_, meta)| !meta.hide)
@@ -97,10 +117,14 @@ impl App {
         let small_h = ui.text_style_height(&egui::TextStyle::Small);
         let mut line_heights = vec![0.0_f32; layout.line_count];
         for (vis_idx, p) in layout.placements.iter().enumerate() {
-            let h = match visible[vis_idx].1.font_size {
+            let (col_idx, meta) = &visible[vis_idx];
+            let mut h = match meta.font_size {
                 FontSize::Small => small_h,
                 FontSize::Normal => body_h,
             };
+            if state.rows.is_list_column(*col_idx) {
+                h += PILL_LINE_EXTRA;
+            }
             line_heights[p.line] = line_heights[p.line].max(h);
         }
         let mut line_tops = vec![0.0_f32; layout.line_count];
@@ -199,14 +223,13 @@ impl App {
                 scroll_area.show_rows(ui, row_height, rows.len(), |ui, range| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for index in range {
-                        let cells = &rows[index];
-                        let track_id =
-                            track_id_column.and_then(|i| cells.get(i).map(String::as_str));
+                        let cells = rows.row_values(index);
+                        let track_id = track_id_column.and_then(|i| cells.get(i)?.as_single());
                         let is_current = current_row == Some(index);
                         let resp = draw_row(
                             ui,
                             &row_layout,
-                            cells,
+                            &cells,
                             selection.contains(&index),
                             is_current,
                         );
@@ -287,7 +310,7 @@ struct RowLayout<'a> {
 fn draw_row(
     ui: &mut egui::Ui,
     layout: &RowLayout,
-    cells: &[String],
+    cells: &[CellValue],
     selected: bool,
     is_current: bool,
 ) -> egui::Response {
@@ -357,17 +380,6 @@ fn draw_row(
 
     for (vis_idx, (col_idx, meta)) in layout.visible.iter().enumerate() {
         let placement = layout.placements[vis_idx];
-        let value = cells.get(*col_idx).map_or("", String::as_str);
-        let formatted = match &meta.formatter {
-            Some(f) => f.format(value).unwrap_or_else(|| value.to_string()),
-            None => value.to_string(),
-        };
-        let text = if meta.prefix.is_empty() && meta.suffix.is_empty() {
-            formatted
-        } else {
-            format!("{}{}{}", meta.prefix, formatted, meta.suffix)
-        };
-
         let font = match meta.font_size {
             FontSize::Small => layout.small_font.clone(),
             FontSize::Normal => layout.body_font.clone(),
@@ -376,6 +388,29 @@ fn draw_row(
             FontColor::Light => layout.weak_color,
             FontColor::Default => layout.text_color,
         };
+        let cell_left = rect.left() + TEXT_PAD_X + placement.x;
+        let line_top = rect.top() + ROW_PAD_Y + layout.line_tops[placement.line];
+        let line_height = layout.line_heights[placement.line];
+
+        if let Some(CellValue::List(items)) = cells.get(*col_idx) {
+            let cell = Cell {
+                meta,
+                font,
+                color,
+                left: cell_left,
+                width: placement.width.max(0.0),
+                line_top,
+                line_height,
+            };
+            draw_pills(ui, &cell, items);
+            continue;
+        }
+
+        let value = cells
+            .get(*col_idx)
+            .and_then(CellValue::as_single)
+            .unwrap_or("");
+        let text = display_text(meta, value);
         let format = egui::TextFormat {
             font_id: font,
             color,
@@ -386,17 +421,173 @@ fn draw_row(
         let galley = ui.painter().layout_job(job);
         let size = galley.size();
 
-        let cell_left = rect.left() + TEXT_PAD_X + placement.x;
         let slack = (placement.width - size.x).max(0.0);
         let x = match meta.text_align {
             TextAlign::Left => cell_left,
             TextAlign::Right => cell_left + slack,
             TextAlign::Center => cell_left + slack * 0.5,
         };
-        let line_top = rect.top() + ROW_PAD_Y + layout.line_tops[placement.line];
-        let y = line_top + (layout.line_heights[placement.line] - size.y) * 0.5;
+        let y = line_top + (line_height - size.y) * 0.5;
         ui.painter().galley(egui::pos2(x, y), galley, color);
     }
 
     response
+}
+
+/// Applies the column's formatter and prefix/suffix to one raw cell value.
+fn display_text(meta: &ColumnMetadata, value: &str) -> String {
+    let formatted = match &meta.formatter {
+        Some(f) => f.format(value).unwrap_or_else(|| value.to_string()),
+        None => value.to_string(),
+    };
+    if meta.prefix.is_empty() && meta.suffix.is_empty() {
+        formatted
+    } else {
+        format!("{}{}{}", meta.prefix, formatted, meta.suffix)
+    }
+}
+
+/// One cell's resolved drawing parameters, shared by the pill-drawing helpers.
+struct Cell<'a> {
+    meta: &'a ColumnMetadata,
+    font: egui::FontId,
+    color: egui::Color32,
+    left: f32,
+    width: f32,
+    line_top: f32,
+    line_height: f32,
+}
+
+/// Decides how many pills fit into `width`: walks the count down from "all of
+/// them", reserving overflow-bubble room whenever any are hidden, and truncating
+/// the last visible pill into whatever width remains (but never below
+/// [`PILL_MIN_WIDTH`] — a "+N" bubble beats a sliver of a pill). `natural` holds
+/// each pill's untruncated width; `layout_bubble` lays out the "+N" text for a
+/// hidden count. Returns the count shown, the last shown pill's (possibly
+/// truncated) width, and the bubble galley when any pills are hidden.
+fn fit_pills(
+    width: f32,
+    natural: &[f32],
+    layout_bubble: &dyn Fn(usize) -> std::sync::Arc<egui::Galley>,
+) -> (usize, f32, Option<std::sync::Arc<egui::Galley>>) {
+    let mut shown = natural.len();
+    while shown > 0 {
+        let hidden = natural.len() - shown;
+        let (bubble, bubble_w) = if hidden == 0 {
+            (None, 0.0)
+        } else {
+            let g = layout_bubble(hidden);
+            let w = g.size().x + BUBBLE_PAD.x * 2.0 + PILL_GAP;
+            (Some(g), w)
+        };
+        let preceding: f32 =
+            natural[..shown - 1].iter().sum::<f32>() + PILL_GAP * (shown - 1) as f32;
+        let remaining = width - bubble_w - preceding;
+        if remaining >= natural[shown - 1] {
+            return (shown, natural[shown - 1], bubble);
+        }
+        if remaining >= PILL_MIN_WIDTH {
+            return (shown, remaining, bubble);
+        }
+        shown -= 1;
+    }
+    (0, 0.0, Some(layout_bubble(natural.len())))
+}
+
+/// Draws a list cell's elements as a row of pills. Pills that don't fit are
+/// summarized by a "+N" superscript bubble on the right; when the last visible
+/// pill is too wide for its remaining space, its text truncates instead (down to
+/// [`PILL_MIN_WIDTH`], below which the pill is dropped into the bubble's count).
+fn draw_pills(ui: &egui::Ui, cell: &Cell, items: &[String]) {
+    if items.is_empty() || cell.width <= 0.0 {
+        return;
+    }
+
+    let format = egui::TextFormat {
+        font_id: cell.font.clone(),
+        color: cell.color,
+        ..Default::default()
+    };
+    // Never paint outside the cell (a lone overflow bubble can still be wider
+    // than a very narrow cell).
+    let clip = egui::Rect::from_min_size(
+        egui::pos2(cell.left, cell.line_top),
+        egui::vec2(cell.width, cell.line_height),
+    );
+    let painter = ui.painter().with_clip_rect(clip);
+
+    // Natural (untruncated) galley and pill width for each element.
+    let texts: Vec<String> = items.iter().map(|i| display_text(cell.meta, i)).collect();
+    let galleys: Vec<_> = texts
+        .iter()
+        .map(|t| painter.layout_job(LayoutJob::single_section(t.clone(), format.clone())))
+        .collect();
+    let natural: Vec<f32> = galleys
+        .iter()
+        .map(|g| g.size().x + PILL_PAD_X * 2.0)
+        .collect();
+
+    // The overflow bubble's galley and outer width (including its leading gap)
+    // for a given hidden count.
+    let bubble_font = egui::FontId {
+        size: cell.font.size * 0.8,
+        family: cell.font.family.clone(),
+    };
+    let layout_bubble = |hidden: usize| {
+        let format = egui::TextFormat {
+            font_id: bubble_font.clone(),
+            color: cell.color,
+            ..Default::default()
+        };
+        painter.layout_job(LayoutJob::single_section(format!("+{hidden}"), format))
+    };
+
+    let (shown, last_width, bubble) = fit_pills(cell.width, &natural, &layout_bubble);
+
+    // Total width actually used, for text-align slack.
+    let pills_w: f32 = natural[..shown.saturating_sub(1)].iter().sum::<f32>()
+        + last_width
+        + PILL_GAP * shown.saturating_sub(1) as f32;
+    let bubble_w = bubble.as_ref().map_or(0.0, |g| {
+        let gap = if shown == 0 { 0.0 } else { PILL_GAP };
+        g.size().x + BUBBLE_PAD.x * 2.0 + gap
+    });
+    let slack = (cell.width - pills_w - bubble_w).max(0.0);
+    let mut x = cell.left
+        + match cell.meta.text_align {
+            TextAlign::Left => 0.0,
+            TextAlign::Right => slack,
+            TextAlign::Center => slack * 0.5,
+        };
+
+    let font_h = galleys.iter().map(|g| g.size().y).fold(0.0, f32::max);
+    let pill_h = font_h + PILL_PAD_Y * 2.0;
+    let pill_top = cell.line_top + (cell.line_height - pill_h) * 0.5;
+    for i in 0..shown {
+        let w = if i == shown - 1 {
+            last_width
+        } else {
+            natural[i]
+        };
+        let pill_rect = egui::Rect::from_min_size(egui::pos2(x, pill_top), egui::vec2(w, pill_h));
+        painter.rect_filled(pill_rect, pill_h * 0.5, PILL_BG);
+        let galley = if w < natural[i] {
+            let mut job = LayoutJob::single_section(texts[i].clone(), format.clone());
+            job.wrap = TextWrapping::truncate_at_width((w - PILL_PAD_X * 2.0).max(0.0));
+            painter.layout_job(job)
+        } else {
+            galleys[i].clone()
+        };
+        let y = pill_top + (pill_h - galley.size().y) * 0.5;
+        painter.galley(egui::pos2(x + PILL_PAD_X, y), galley, cell.color);
+        x += w + PILL_GAP;
+    }
+
+    if let Some(galley) = bubble {
+        // Superscript: the bubble hugs the top of the line instead of centering.
+        let size = galley.size() + BUBBLE_PAD * 2.0;
+        let rect = egui::Rect::from_min_size(egui::pos2(x, cell.line_top), size);
+        painter.rect_filled(rect, size.y * 0.5, darken(PILL_BG, 30));
+        painter.galley(rect.min + BUBBLE_PAD, galley, cell.color);
+    }
 }

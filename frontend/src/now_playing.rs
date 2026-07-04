@@ -127,7 +127,7 @@ impl App {
         let id = ct.id.as_str();
 
         if let Some(idx) = ct.row_index
-            && rows.get(idx).and_then(|r| r.get(col)).map(String::as_str) == Some(id)
+            && rows.cell_text(idx, col).as_deref() == Some(id)
         {
             drop(s);
             drop(ct_guard);
@@ -137,8 +137,8 @@ impl App {
 
         let scan_limit = rows.len().min(1000);
         let mut found: Option<usize> = None;
-        for (i, row) in rows.iter().take(scan_limit).enumerate() {
-            if row.get(col).map(String::as_str) == Some(id) {
+        for i in 0..scan_limit {
+            if rows.cell_text(i, col).as_deref() == Some(id) {
                 found = Some(i);
                 break;
             }
@@ -304,7 +304,7 @@ impl App {
         let s = results.lock().unwrap();
         let col = s.track_id_column?;
         let next_idx = cur_idx + 1;
-        let id = s.rows.get(next_idx)?.get(col)?.clone();
+        let id = s.rows.cell_text(next_idx, col)?;
         if id.is_empty() {
             return None;
         }

@@ -282,6 +282,147 @@ fn lemonade_page() -> QueryPage {
     page
 }
 
+/// Encodes rows of `(artist list, title)` as an Arrow IPC stream, for the pill
+/// overflow snapshot: a hidden `id`, the `artists` string list, and `title`.
+fn overflow_ipc_response(rows: &[(&[&str], &str)]) -> Vec<u8> {
+    let id = StringArray::from_iter_values((1..=rows.len()).map(fake_id));
+
+    let mut artists = ListBuilder::new(StringBuilder::new());
+    for (names, _) in rows {
+        for name in *names {
+            artists.values().append_value(name);
+        }
+        artists.append(true);
+    }
+    let artists = artists.finish();
+
+    let title = StringArray::from(rows.iter().map(|(_, t)| *t).collect::<Vec<_>>());
+
+    let batch = RecordBatch::try_from_iter(vec![
+        ("id", Arc::new(id) as ArrayRef),
+        ("artists", Arc::new(artists) as ArrayRef),
+        ("title", Arc::new(title) as ArrayRef),
+    ])
+    .expect("build record batch");
+
+    let mut bytes = Vec::new();
+    {
+        let mut writer =
+            StreamWriter::try_new(&mut bytes, &batch.schema()).expect("new IPC writer");
+        writer.write(&batch).expect("write batch");
+        writer.finish().expect("finish IPC stream");
+    }
+    bytes
+}
+
+/// Builds a page whose artists column is too narrow for its pills, covering every
+/// overflow behavior: all pills fitting, the last pill truncating, pills
+/// collapsing into the "+N" bubble, and (with many artists) a bubble after a
+/// single pill.
+fn pill_overflow_page() -> QueryPage {
+    let rows: &[(&[&str], &str)] = &[
+        (&["Beyoncé"], "One pill, fits"),
+        (&["Beyoncé", "Jay-Z"], "Two pills, fit"),
+        (&["Beyoncé", "Kendrick Lamar"], "Second pill truncates"),
+        (&["Beyoncé", "Jack White", "The Weeknd"], "Bubble"),
+        (
+            &[
+                "Beyoncé",
+                "Jack White",
+                "The Weeknd",
+                "James Blake",
+                "Kendrick Lamar",
+                "Jay-Z",
+                "Frank Ocean",
+            ],
+            "Bigger bubble",
+        ),
+        (
+            &["A very long single artist name that cannot fit", "Jay-Z"],
+            "First pill truncates",
+        ),
+    ];
+
+    let display_spec = "\
+$id @{hide:yes}
+$artists @{width:120}
+$title @{width:[100 400]}";
+    let definition = QueryDefinition {
+        base: "track".to_owned(),
+        filter: FilterParts::default(),
+        sort: SectionContent::default(),
+        display: SectionContent::Custom(display_spec.to_owned()),
+        full: None,
+    };
+    let query = Query {
+        id: Uuid::from_u128(2),
+        name: "Pill overflow".to_owned(),
+        created_at: 0,
+        modified_at: 0,
+        last_play: 0,
+        definition,
+    };
+
+    let meta = |f: &dyn Fn(&mut ColumnMetadata)| {
+        let mut m = ColumnMetadata::default();
+        f(&mut m);
+        m
+    };
+    let mut page = QueryPage::persisted(query);
+    page.results_fetched = true;
+    {
+        let mut state = page.results.lock().unwrap();
+        state.columns = vec![
+            meta(&|m| m.hide = true),
+            meta(&|m| {
+                m.min_width = 120.0;
+                m.max_width = 120.0;
+            }),
+            meta(&|m| {
+                m.min_width = 100.0;
+                m.max_width = 400.0;
+            }),
+        ];
+        state.running = false;
+        state.lineage_done = true;
+    }
+    crate::http::load_ipc_into_state(&overflow_ipc_response(rows), &page.results);
+    page
+}
+
+#[test]
+fn pill_overflow() {
+    let page = pill_overflow_page();
+    let id = page.live.id;
+    let mut app = App {
+        pages: vec![page],
+        current: crate::CurrentPage::Query(id),
+        auto_selected_initial: true,
+        schema_fetch_started: true,
+        queries_fetch_started: true,
+        presets_fetch_started: true,
+        ..Default::default()
+    };
+    app.organizer.open = false;
+
+    let fonts_ready = Cell::new(false);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(460.0, 290.0))
+        .with_pixels_per_point(PPP)
+        .build_ui(move |ui| {
+            if !fonts_ready.replace(true) {
+                crate::setup_fonts(ui.ctx());
+                ui.ctx()
+                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
+                return;
+            }
+            app.render_root(ui);
+        });
+
+    harness.run();
+    harness.snapshot("app/pill_overflow");
+}
+
 #[test]
 fn whole_app() {
     let page = lemonade_page();
