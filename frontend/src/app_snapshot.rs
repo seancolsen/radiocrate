@@ -392,10 +392,13 @@ $title @{width:[100 400]}";
 
 #[test]
 fn pill_overflow() {
-    let page = pill_overflow_page();
+    let mut page = pill_overflow_page();
+    page.pinned = true;
     let id = page.live.id;
+    let saved = vec![page.live.clone()];
     let mut app = App {
         pages: vec![page],
+        saved_queries: saved,
         current: crate::CurrentPage::Query(id),
         auto_selected_initial: true,
         schema_fetch_started: true,
@@ -425,10 +428,14 @@ fn pill_overflow() {
 
 #[test]
 fn whole_app() {
-    let page = lemonade_page();
+    let mut page = lemonade_page();
+    // Show it as a settled, pinned tab (the common case).
+    page.pinned = true;
     let id = page.live.id;
+    let saved = vec![page.live.clone()];
     let mut app = App {
         pages: vec![page],
+        saved_queries: saved,
         current: crate::CurrentPage::Query(id),
         // Skip the one-time startup fetches: this state is already "loaded".
         auto_selected_initial: true,

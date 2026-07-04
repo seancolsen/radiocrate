@@ -27,6 +27,8 @@ mod results;
 mod rows;
 mod rpc;
 mod schema;
+mod skew;
+mod tabs;
 mod text_input;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -126,8 +128,8 @@ pub(crate) struct QueryState {
 pub(crate) enum RenameSurface {
     /// The query's row in the organizer sidebar.
     Sidebar,
-    /// The query name shown in the top menu bar of the query page.
-    Page,
+    /// The query's tab handle in the tab bar.
+    Tab,
 }
 
 /// An in-progress inline rename of a query.
@@ -150,8 +152,16 @@ pub(crate) struct PendingDelete {
 // wouldn't make any of them clearer.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
-    /// All open query pages. The organizer is a switcher over these.
+    /// The open tabs, in display (tab-bar) order. Each is a query page holding
+    /// that tab's live/saved definition and cached results. This is in-memory
+    /// only — the tab set is never persisted to the backend.
     pub(crate) pages: Vec<QueryPage>,
+    /// Metadata for every saved query in the backend (whether or not it's open
+    /// in a tab). Drives the explorer's "Queries" section; kept in sync as
+    /// queries are saved, renamed, and deleted.
+    pub(crate) saved_queries: Vec<rpc::Query>,
+    /// Tab-bar interaction state (the in-progress tab drag-to-reorder).
+    pub(crate) tab_bar: tabs::TabBar,
     /// The currently displayed page.
     pub(crate) current: CurrentPage,
     /// Whether the one-time, on-open auto-selection of the most-recent query has
@@ -231,6 +241,8 @@ impl Default for App {
     fn default() -> Self {
         Self {
             pages: Vec::new(),
+            saved_queries: Vec::new(),
+            tab_bar: tabs::TabBar::default(),
             current: CurrentPage::default(),
             auto_selected_initial: false,
             filter: String::new(),
@@ -284,35 +296,45 @@ impl App {
         let panel_fill = ui.style().visuals.panel_fill;
         let persistent = ctx.viewport_rect().width() >= PERSISTENT_ORGANIZER_MIN_WIDTH;
 
+        // A tab picks up edits as its own: once an unpinned (preview) tab becomes
+        // dirty it's promoted to a pinned tab, so opening another query won't
+        // silently discard the in-progress work. (Ephemeral tabs open pinned.)
+        for page in &mut self.pages {
+            if !page.pinned && page.is_persisted() && page.unsaved() {
+                page.pinned = true;
+            }
+        }
+
         self.ensure_current_results(&ctx);
 
         // On wide screens the organizer is a persistent left panel that reserves
         // its own space, so it must be added before the top/central panels for
-        // them to lay out in the remaining area.
+        // them to lay out in the remaining area. The tab bar is added next so it
+        // spans the area to the right of the sidebar (never over it), while the
+        // sidebar extends to the very top of the screen alongside it.
         if persistent {
             self.render_persistent_organizer(ui, panel_fill);
         }
 
-        // Top panels: each page type renders its own bar (including the explorer
-        // button). Top/bottom panels must be added before the central panel.
-        match self.current {
-            CurrentPage::Query(_) => {
-                self.render_menu_bar(ui);
-                // In full mode the panel is the full-query editor (gated by its
-                // own toggle); in sectioned mode it's the open builder section.
-                let full_mode = self
-                    .current_page()
-                    .is_some_and(|p| p.live.definition.is_full());
-                let show_builder = if full_mode {
-                    self.full_editor_open
-                } else {
-                    self.builder_section.is_some()
-                };
-                if show_builder {
-                    self.render_builder_panel(ui);
-                }
+        // Top panels must be added before the central panel. The tab bar sits
+        // above the query toolbar for every page type (it carries the explorer
+        // toggle and the new-tab button even on the welcome page).
+        self.render_tab_bar(ui);
+        if let CurrentPage::Query(_) = self.current {
+            self.render_menu_bar(ui);
+            // In full mode the panel is the full-query editor (gated by its
+            // own toggle); in sectioned mode it's the open builder section.
+            let full_mode = self
+                .current_page()
+                .is_some_and(|p| p.live.definition.is_full());
+            let show_builder = if full_mode {
+                self.full_editor_open
+            } else {
+                self.builder_section.is_some()
+            };
+            if show_builder {
+                self.render_builder_panel(ui);
             }
-            CurrentPage::Welcome => self.render_welcome_bar(ui),
         }
         self.render_now_playing(ui);
         self.maybe_revalidate_current_track_index();
@@ -377,44 +399,27 @@ impl App {
         }
     }
 
-    /// If a `query.list` response has arrived, rebuild `pages` from it. This wipes
-    /// out never-saved ephemeral pages and any unsaved edits, but carries over the
-    /// cached results (and their fetched flag) for queries that still exist, so a
-    /// list refresh doesn't re-run the current page's query.
+    /// If a `query.list` response has arrived, refresh the saved-query list from
+    /// it. Open tabs are left untouched (they carry their own live/saved state
+    /// and cached results in memory), so a list refresh never re-runs an open
+    /// query or discards unsaved edits. On the very first load, opens the
+    /// most-recently-created saved query in a preview tab.
     fn drain_loaded_queries(&mut self) {
         let Some(list) = self.loaded_queries.lock().unwrap().take() else {
             return;
         };
-        let mut prior: HashMap<Uuid, (Arc<Mutex<QueryState>>, bool)> = self
-            .pages
-            .drain(..)
-            .map(|p| (p.live.id, (p.results, p.results_fetched)))
-            .collect();
-        self.pages = list
-            .into_iter()
-            .map(|q| {
-                let mut page = QueryPage::persisted(q);
-                if let Some((results, fetched)) = prior.remove(&page.live.id) {
-                    page.results = results;
-                    page.results_fetched = fetched;
-                }
-                page
-            })
-            .collect();
+        self.saved_queries = list;
 
         if !self.auto_selected_initial {
-            // On first load, open the most-recently-created query (or the welcome
-            // page if there are none yet).
             self.auto_selected_initial = true;
-            self.current = self
-                .pages
+            if let Some(id) = self
+                .saved_queries
                 .iter()
-                .max_by_key(|p| p.live.created_at)
-                .map_or(CurrentPage::Welcome, |p| CurrentPage::Query(p.live.id));
-        } else if let CurrentPage::Query(cur) = self.current
-            && !self.pages.iter().any(|p| p.live.id == cur)
-        {
-            self.current = CurrentPage::Welcome;
+                .max_by_key(|q| q.created_at)
+                .map(|q| q.id)
+            {
+                self.open_query(id);
+            }
         }
         self.selection.clear();
         self.selection_anchor = None;
@@ -552,16 +557,116 @@ impl App {
         self.selection_anchor = None;
     }
 
+    /// Opens the saved query `id` in a tab and selects it. If it's already open,
+    /// just selects that tab (leaving its pin state alone). Otherwise it opens as
+    /// an unpinned "preview" tab, reusing the slot of the existing unpinned tab
+    /// (there is at most one) so casual browsing doesn't pile up tabs — VS Code's
+    /// preview-tab behaviour. Reusing the slot drops the old page, clearing its
+    /// cached results.
+    pub(crate) fn open_query(&mut self, id: Uuid) {
+        if self.pages.iter().any(|p| p.live.id == id) {
+            self.select_page(id);
+            return;
+        }
+        let Some(query) = self.saved_queries.iter().find(|q| q.id == id).cloned() else {
+            return;
+        };
+        let page = QueryPage::persisted(query); // opens unpinned (preview)
+        if let Some(slot) = self.pages.iter().position(|p| !p.pinned) {
+            self.pages[slot] = page;
+        } else {
+            self.pages.push(page);
+        }
+        self.select_page(id);
+    }
+
+    /// Closes the tab for `id`, dropping its cached result set from memory. If it
+    /// was the current tab, selects an adjacent tab (the one that slid into its
+    /// slot, else the previous one), or the welcome page if none remain.
+    pub(crate) fn close_tab(&mut self, id: Uuid) {
+        let Some(idx) = self.pages.iter().position(|p| p.live.id == id) else {
+            return;
+        };
+        let was_current = self.current.query_id() == Some(id);
+        // Dropping the page releases its `results` Arc, freeing the result set.
+        self.pages.remove(idx);
+        if self.rename.as_ref().is_some_and(|r| r.id == id) {
+            self.rename = None;
+        }
+        if was_current {
+            let next = self
+                .pages
+                .get(idx)
+                .or_else(|| idx.checked_sub(1).and_then(|i| self.pages.get(i)));
+            self.current = next.map_or(CurrentPage::Welcome, |p| CurrentPage::Query(p.live.id));
+            self.selection.clear();
+            self.selection_anchor = None;
+        }
+    }
+
+    /// Toggles whether the tab for `id` is pinned.
+    pub(crate) fn toggle_pin(&mut self, id: Uuid) {
+        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+            page.pinned = !page.pinned;
+        }
+    }
+
+    /// Pins the tab for `id` (a no-op if it's already pinned or not open).
+    pub(crate) fn pin_tab(&mut self, id: Uuid) {
+        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+            page.pinned = true;
+        }
+    }
+
+    /// Moves the tab `id` to index `to` in the tab order (clamped in range),
+    /// backing tab drag-to-reorder.
+    pub(crate) fn move_tab(&mut self, id: Uuid, to: usize) {
+        let Some(from) = self.pages.iter().position(|p| p.live.id == id) else {
+            return;
+        };
+        let to = to.min(self.pages.len().saturating_sub(1));
+        if from == to {
+            return;
+        }
+        let page = self.pages.remove(from);
+        self.pages.insert(to, page);
+    }
+
+    /// Inserts or replaces the saved-query metadata for `query`, keeping the
+    /// explorer's "Queries" section in sync as queries are saved and renamed.
+    fn upsert_saved_query(&mut self, query: rpc::Query) {
+        if let Some(existing) = self.saved_queries.iter_mut().find(|q| q.id == query.id) {
+            *existing = query;
+        } else {
+            self.saved_queries.push(query);
+        }
+    }
+
     /// Starts an inline rename of `id`, seeding the edit buffer with the current
     /// name. `surface` records where the rename was triggered so only that
     /// surface renders the field.
     pub(crate) fn begin_rename(&mut self, id: Uuid, surface: RenameSurface) {
-        let Some(page) = self.pages.iter().find(|p| p.live.id == id) else {
+        // A rename can be started from the Queries list for a query that isn't
+        // open in a tab; seed the edit buffer from whichever record we have.
+        let name = self
+            .pages
+            .iter()
+            .find(|p| p.live.id == id)
+            .map(|p| p.live.name.clone())
+            .or_else(|| {
+                self.saved_queries
+                    .iter()
+                    .find(|q| q.id == id)
+                    .map(|q| q.name.clone())
+            });
+        let Some(name) = name else {
             return;
         };
+        // Renaming is an explicit "keep" signal, so pin the tab (if it's open).
+        self.pin_tab(id);
         self.rename = Some(Rename {
             id,
-            buffer: page.live.name.clone(),
+            buffer: name,
             surface,
             take_focus: true,
         });
@@ -579,16 +684,28 @@ impl App {
         if name.is_empty() {
             return;
         }
-        let Some(page) = self.pages.iter_mut().find(|p| p.live.id == state.id) else {
-            return;
-        };
-        if page.live.name == name {
-            return;
+        let id = state.id;
+        let mut persisted = false;
+        // Update the open tab, if any (its live name, plus the saved snapshot so
+        // the rename doesn't register as an unsaved change).
+        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+            if page.live.name == name {
+                return;
+            }
+            page.live.name.clone_from(&name);
+            if let Some(saved) = page.saved.as_mut() {
+                saved.name.clone_from(&name);
+                persisted = true;
+            }
         }
-        page.live.name.clone_from(&name);
-        if let Some(saved) = page.saved.as_mut() {
-            saved.name.clone_from(&name);
-            rpc::rename_query(state.id, &name);
+        // Keep the saved-query record (present iff persisted) in sync so the
+        // Queries list reflects the new name whether or not the query is open.
+        if let Some(query) = self.saved_queries.iter_mut().find(|q| q.id == id) {
+            query.name.clone_from(&name);
+            persisted = true;
+        }
+        if persisted {
+            rpc::rename_query(id, &name);
         }
     }
 
@@ -614,42 +731,49 @@ impl App {
         }
     }
 
-    /// Opens the delete-confirmation modal for `id`.
+    /// Opens the delete-confirmation modal for `id`. The query may be open in a
+    /// tab or only listed in the Queries section, so its name/unsaved state is
+    /// taken from whichever record exists.
     pub(crate) fn request_delete(&mut self, id: Uuid) {
-        if let Some(page) = self.pages.iter().find(|p| p.live.id == id) {
-            self.pending_delete = Some(PendingDelete {
-                id,
-                name: page.live.name.clone(),
-                unsaved: page.unsaved(),
-            });
-        }
-    }
-
-    /// Deletes a query: drops its page, deletes it on the backend if it was
-    /// persisted, and — if it was the open page — navigates to the top-listed
-    /// (most-recently-created) remaining query, or the welcome page if none.
-    pub(crate) fn delete_query(&mut self, id: Uuid) {
-        let was_persisted = self
+        let pending = self
             .pages
             .iter()
             .find(|p| p.live.id == id)
-            .is_some_and(QueryPage::is_persisted);
-        self.pages.retain(|p| p.live.id != id);
-        if was_persisted {
-            rpc::delete_query(id);
+            .map(|page| PendingDelete {
+                id,
+                name: page.live.name.clone(),
+                unsaved: page.unsaved(),
+            })
+            .or_else(|| {
+                self.saved_queries
+                    .iter()
+                    .find(|q| q.id == id)
+                    .map(|q| PendingDelete {
+                        id,
+                        name: q.name.clone(),
+                        unsaved: false,
+                    })
+            });
+        if let Some(pending) = pending {
+            self.pending_delete = Some(pending);
         }
-        if self.rename.as_ref().is_some_and(|r| r.id == id) {
-            self.rename = None;
-        }
-        if self.current.query_id() == Some(id) {
-            self.current = self
+    }
+
+    /// Deletes a query: closes its tab (dropping its results), removes it from
+    /// the saved-query list, and deletes it on the backend if it was persisted.
+    /// Closing the tab handles navigating away if it was the current page.
+    pub(crate) fn delete_query(&mut self, id: Uuid) {
+        let persisted = self.saved_queries.iter().any(|q| q.id == id)
+            || self
                 .pages
                 .iter()
-                .max_by_key(|p| p.live.created_at)
-                .map_or(CurrentPage::Welcome, |p| CurrentPage::Query(p.live.id));
-            self.selection.clear();
-            self.selection_anchor = None;
+                .find(|p| p.live.id == id)
+                .is_some_and(QueryPage::is_persisted);
+        self.saved_queries.retain(|q| q.id != id);
+        if persisted {
+            rpc::delete_query(id);
         }
+        self.close_tab(id);
     }
 
     /// Renders the delete-confirmation modal when a delete is pending. Confirming
@@ -860,6 +984,8 @@ impl App {
             return;
         };
         page.live.modified_at = rpc::now_epoch();
+        // A saved query is one the user means to keep, so its tab is pinned.
+        page.pinned = true;
         let snapshot = page.live.clone();
         let was_persisted = page.saved.is_some();
         page.saved = Some(snapshot.clone());
@@ -868,6 +994,8 @@ impl App {
         } else {
             rpc::add_query(&snapshot);
         }
+        // Reflect the new/updated query in the explorer's Queries section.
+        self.upsert_saved_query(snapshot);
     }
 
     /// Plays a track that was located on `source_page`, recording the play
@@ -904,6 +1032,9 @@ impl App {
             if page.is_persisted() {
                 rpc::record_play(source_page, now);
             }
+        }
+        if let Some(query) = self.saved_queries.iter_mut().find(|q| q.id == source_page) {
+            query.last_play = now;
         }
     }
 }

@@ -8,7 +8,6 @@ use std::sync::Arc;
 use eframe::egui;
 use uuid::Uuid;
 
-use crate::button::Button;
 use crate::icons;
 use crate::page::{QueryAction, inline_rename_field, query_actions_menu};
 use crate::{
@@ -16,7 +15,9 @@ use crate::{
     rpc,
 };
 
-/// Sliding "organizer" side panel state, including the in-progress drag gesture.
+/// Sliding "organizer" side panel state, including the in-progress drag gesture
+/// and each section's collapsed state.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 pub(crate) struct Organizer {
     pub(crate) open: bool,
@@ -24,35 +25,54 @@ pub(crate) struct Organizer {
     pub(crate) drag_dx: f32,
     pub(crate) drag_start_progress: f32,
     pub(crate) dragged_progress: f32,
+    /// Whether the "Opened" section is collapsed (its rows hidden).
+    pub(crate) opened_collapsed: bool,
+    /// Whether the "Queries" section is collapsed (its rows hidden).
+    pub(crate) queries_collapsed: bool,
 }
 
-/// One row in the query list, as displayed in the organizer.
-struct ListItem {
+/// One row in the "Opened" section: a currently-open (and persisted) tab.
+struct OpenedItem {
     id: Uuid,
     name: String,
     unsaved: bool,
-    /// Whether the query has already been saved (exists in the backend). Gates
-    /// the "Revert changes" menu item.
-    persisted: bool,
+    pinned: bool,
 }
 
-/// Deferred outcomes of interacting with the query list, applied after the
-/// drawer's UI closure releases its borrow of `self`.
+/// One row in the "Queries" section: a saved query (open or not).
+struct SavedItem {
+    id: Uuid,
+    name: String,
+    /// Whether the query is open with unsaved edits (drives the marker + the
+    /// "Revert changes" menu item).
+    unsaved: bool,
+}
+
+/// Deferred outcomes of interacting with the explorer, applied after the UI
+/// closure releases its borrow of `self`.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct ListActions {
-    add: bool,
     refresh: bool,
-    clicked: Option<Uuid>,
+    /// A saved query row was clicked: open it (in a preview tab) and select it.
+    open: Option<Uuid>,
+    /// An open-tab row was clicked: select that tab.
+    select: Option<Uuid>,
+    /// An open-tab row's × was clicked: close that tab.
+    close: Option<Uuid>,
+    /// An open-tab row's pin toggle was clicked.
+    pin_toggle: Option<Uuid>,
     rename_request: Option<Uuid>,
     revert_request: Option<Uuid>,
     duplicate_request: Option<Uuid>,
     delete_request: Option<Uuid>,
     rename_commit: bool,
     rename_cancel: bool,
+    toggle_opened_collapsed: bool,
+    toggle_queries_collapsed: bool,
 }
 
-/// Per-row outcome from `query_list_widget`, folded into `ListActions`.
+/// Per-row outcome from `saved_row_widget`, folded into `ListActions`.
 #[derive(Default)]
 struct RowOutcome {
     clicked: bool,
@@ -92,8 +112,13 @@ impl App {
 
         let organizer_x = organizer_offset - ORGANIZER_WIDTH;
         let screen_height = viewport.height();
-        let items = self.visible_items();
+        let opened = self.opened_items();
+        let saved = self.saved_items();
         let current = self.current.query_id();
+        let collapse = (
+            self.organizer.opened_collapsed,
+            self.organizer.queries_collapsed,
+        );
         let mut actions = ListActions::default();
 
         egui::Area::new(egui::Id::new("organizer"))
@@ -124,7 +149,15 @@ impl App {
                 );
                 self.handle_organizer_swipe(ctx, &drag, progress);
 
-                actions = draw_query_list(ui, &items, current, &mut self.filter, &mut self.rename);
+                actions = draw_explorer(
+                    ui,
+                    &opened,
+                    &saved,
+                    current,
+                    collapse,
+                    &mut self.filter,
+                    &mut self.rename,
+                );
             });
 
         // Selecting a query closes the modal drawer (it overlays the content);
@@ -141,8 +174,13 @@ impl App {
         ui: &mut egui::Ui,
         panel_fill: egui::Color32,
     ) {
-        let items = self.visible_items();
+        let opened = self.opened_items();
+        let saved = self.saved_items();
         let current = self.current.query_id();
+        let collapse = (
+            self.organizer.opened_collapsed,
+            self.organizer.queries_collapsed,
+        );
         let mut actions = ListActions::default();
 
         egui::Panel::left("organizer_panel")
@@ -150,7 +188,15 @@ impl App {
             .resizable(false)
             .frame(egui::Frame::new().fill(panel_fill))
             .show_animated_inside(ui, self.organizer.open, |ui| {
-                actions = draw_query_list(ui, &items, current, &mut self.filter, &mut self.rename);
+                actions = draw_explorer(
+                    ui,
+                    &opened,
+                    &saved,
+                    current,
+                    collapse,
+                    &mut self.filter,
+                    &mut self.rename,
+                );
             });
 
         self.apply_list_actions(ui.ctx(), &actions, false);
@@ -173,14 +219,28 @@ impl App {
         if actions.rename_cancel {
             self.cancel_rename();
         }
-        if actions.add {
-            self.add_query_page();
+        if actions.toggle_opened_collapsed {
+            self.organizer.opened_collapsed = !self.organizer.opened_collapsed;
         }
-        if let Some(id) = actions.clicked {
+        if actions.toggle_queries_collapsed {
+            self.organizer.queries_collapsed = !self.organizer.queries_collapsed;
+        }
+        // Navigating (opening a saved query or selecting an open tab) closes the
+        // modal drawer; closing/pinning a tab leaves it open.
+        if let Some(id) = actions.open {
+            self.open_query(id);
+            if close_on_select {
+                self.organizer.open = false;
+            }
+        }
+        if let Some(id) = actions.select {
             self.select_page(id);
             if close_on_select {
                 self.organizer.open = false;
             }
+        }
+        if let Some(id) = actions.pin_toggle {
+            self.toggle_pin(id);
         }
         if let Some(id) = actions.rename_request {
             self.begin_rename(id, RenameSurface::Sidebar);
@@ -197,24 +257,48 @@ impl App {
         if actions.refresh {
             rpc::list_queries(Arc::clone(&self.loaded_queries), ctx.clone());
         }
+        // Applied last: closing a tab can change the current page.
+        if let Some(id) = actions.close {
+            self.close_tab(id);
+        }
     }
 
-    /// The pages to show in the organizer: filtered by name, most-recently
-    /// created first.
-    fn visible_items(&self) -> Vec<ListItem> {
-        let filter = self.filter.to_lowercase();
-        let mut items: Vec<(i64, ListItem)> = self
-            .pages
+    /// The "Opened" section rows: the open (and persisted — never-saved queries
+    /// don't appear in the explorer) tabs, in tab order.
+    fn opened_items(&self) -> Vec<OpenedItem> {
+        self.pages
             .iter()
-            .filter(|p| filter.is_empty() || p.live.name.to_lowercase().contains(&filter))
-            .map(|p| {
+            .filter(|p| p.is_persisted())
+            .map(|p| OpenedItem {
+                id: p.live.id,
+                name: p.live.name.clone(),
+                unsaved: p.unsaved(),
+                pinned: p.pinned,
+            })
+            .collect()
+    }
+
+    /// The "Queries" section rows: every saved query, filtered by name and
+    /// most-recently-created first. A query open with unsaved edits shows the
+    /// unsaved marker.
+    fn saved_items(&self) -> Vec<SavedItem> {
+        let filter = self.filter.to_lowercase();
+        let mut items: Vec<(i64, SavedItem)> = self
+            .saved_queries
+            .iter()
+            .filter(|q| filter.is_empty() || q.name.to_lowercase().contains(&filter))
+            .map(|q| {
+                let unsaved = self
+                    .pages
+                    .iter()
+                    .find(|p| p.live.id == q.id)
+                    .is_some_and(crate::page::QueryPage::unsaved);
                 (
-                    p.live.created_at,
-                    ListItem {
-                        id: p.live.id,
-                        name: p.live.name.clone(),
-                        unsaved: p.unsaved(),
-                        persisted: p.is_persisted(),
+                    q.created_at,
+                    SavedItem {
+                        id: q.id,
+                        name: q.name.clone(),
+                        unsaved,
                     },
                 )
             })
@@ -255,74 +339,85 @@ impl App {
     }
 }
 
-/// Renders the "Queries" header (+ add button), the filter/refresh row, and the
-/// query list. Returns the deferred actions the caller should apply.
-fn draw_query_list(
+/// Renders the explorer's two collapsible sections — "Opened" (the open tabs)
+/// and "Queries" (all saved queries, with a name filter) — and returns the
+/// deferred actions the caller should apply.
+fn draw_explorer(
     ui: &mut egui::Ui,
-    items: &[ListItem],
+    opened: &[OpenedItem],
+    saved: &[SavedItem],
     current: Option<Uuid>,
+    collapse: (bool, bool),
     filter: &mut String,
     rename: &mut Option<Rename>,
 ) -> ListActions {
+    let (opened_collapsed, queries_collapsed) = collapse;
     let mut actions = ListActions::default();
 
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        ui.heading("Queries");
-        // The list-refresh button sits right after the heading, in a lighter
-        // color and with no background.
-        if Button::icon(icons::REFRESH)
-            .tint(ui.visuals().weak_text_color())
-            .show(ui)
-            .clicked()
-        {
-            actions.refresh = true;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(12.0);
-            if Button::icon(icons::ADD).show(ui).clicked() {
-                actions.add = true;
-            }
-        });
-    });
-
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        // Widen the filter so its right edge lines up with the add button's.
-        crate::text_input::add(
-            ui,
-            egui::TextEdit::singleline(filter)
-                .hint_text("Filter")
-                .desired_width(ORGANIZER_WIDTH - 24.0),
-        );
-    });
-
-    ui.add_space(4.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             // No vertical spacing between rows so adjacent listings butt together
             // and leave no dead (unclickable) gap.
             ui.spacing_mut().item_spacing.y = 0.0;
-            for item in items {
-                let out = query_list_widget(ui, item, current == Some(item.id), rename);
-                if out.clicked {
-                    actions.clicked = Some(item.id);
+
+            // ---- Opened ----
+            ui.add_space(8.0);
+            let (toggle, _) = collapse_header(ui, "Opened", opened_collapsed, false);
+            actions.toggle_opened_collapsed = toggle;
+            if !opened_collapsed {
+                if opened.is_empty() {
+                    section_hint(ui, "No open queries");
                 }
-                if out.rename_commit {
-                    actions.rename_commit = true;
+                for item in opened {
+                    let out = opened_row_widget(ui, item, current == Some(item.id));
+                    if out.clicked {
+                        actions.select = Some(item.id);
+                    }
+                    if out.close {
+                        actions.close = Some(item.id);
+                    }
+                    if out.pin {
+                        actions.pin_toggle = Some(item.id);
+                    }
                 }
-                if out.rename_cancel {
-                    actions.rename_cancel = true;
-                }
-                match out.action {
-                    Some(QueryAction::Rename) => actions.rename_request = Some(item.id),
-                    Some(QueryAction::Revert) => actions.revert_request = Some(item.id),
-                    Some(QueryAction::Duplicate) => actions.duplicate_request = Some(item.id),
-                    Some(QueryAction::Delete) => actions.delete_request = Some(item.id),
-                    None => {}
+            }
+
+            // ---- Queries ----
+            ui.add_space(10.0);
+            let (toggle, refresh) = collapse_header(ui, "Queries", queries_collapsed, true);
+            actions.toggle_queries_collapsed = toggle;
+            actions.refresh = refresh;
+            if !queries_collapsed {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    crate::text_input::add(
+                        ui,
+                        egui::TextEdit::singleline(filter)
+                            .hint_text("Filter")
+                            .desired_width(ORGANIZER_WIDTH - 24.0),
+                    );
+                });
+                ui.add_space(4.0);
+                for item in saved {
+                    let out = saved_row_widget(ui, item, current == Some(item.id), rename);
+                    if out.clicked {
+                        actions.open = Some(item.id);
+                    }
+                    if out.rename_commit {
+                        actions.rename_commit = true;
+                    }
+                    if out.rename_cancel {
+                        actions.rename_cancel = true;
+                    }
+                    match out.action {
+                        Some(QueryAction::Rename) => actions.rename_request = Some(item.id),
+                        Some(QueryAction::Revert) => actions.revert_request = Some(item.id),
+                        Some(QueryAction::Duplicate) => actions.duplicate_request = Some(item.id),
+                        Some(QueryAction::Delete) => actions.delete_request = Some(item.id),
+                        Some(QueryAction::TogglePin) | None => {}
+                    }
                 }
             }
         });
@@ -330,64 +425,260 @@ fn draw_query_list(
     actions
 }
 
-/// A single query listing in the organizer. Spans the sidebar's full width with
-/// no dead click area, and reuses the query-result row's hover/selected styling
-/// (see `results::row_widget`) so selection looks consistent across the app.
-///
-/// When the row is being renamed it shows an inline edit field instead of the
-/// name; otherwise it shows a `⋮` actions button (only while the row is hovered)
-/// and opens the Rename/Delete menu on `⋮`-click or right-click.
-fn query_list_widget(
+/// A collapsible section heading (chevron + title), spanning the sidebar width
+/// and toggling the section when clicked. When `with_refresh`, a reload button is
+/// interacted at the right edge (on top, so its own click doesn't toggle the
+/// section). Returns `(toggle_clicked, refresh_clicked)`.
+fn collapse_header(
     ui: &mut egui::Ui,
-    item: &ListItem,
-    selected: bool,
-    rename: &mut Option<Rename>,
-) -> RowOutcome {
-    let mut outcome = RowOutcome::default();
-    let row_height = ui.text_style_height(&egui::TextStyle::Body);
-    let height = row_height + 12.0;
-    let desired = egui::vec2(ui.available_width(), height);
-    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+    title: &str,
+    collapsed: bool,
+    with_refresh: bool,
+) -> (bool, bool) {
+    let height = 28.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
 
-    // Capture colors up front (Color32 is Copy) so later `&mut ui` calls (interact,
-    // child UIs) don't clash with an outstanding `ui.visuals()` borrow.
-    let (sel_fill, hover_fill, sep_color, text_color, weak_text) = {
+    let (hover_fill, text_color, weak) = {
         let v = ui.visuals();
         (
-            v.selection.bg_fill,
-            // Only a slight darkening on hover, matching the result rows.
             crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
-            v.widgets.noninteractive.bg_stroke.color,
             v.text_color(),
             v.weak_text_color(),
         )
     };
 
-    if selected {
-        let fill = if response.hovered() {
-            crate::results::darken(sel_fill, 20)
-        } else {
-            sel_fill
-        };
-        ui.painter().rect_filled(rect, 0.0, fill);
-    } else if response.hovered() {
+    // Refresh button (interacted after allocating the header, so it sits on top).
+    let refresh = with_refresh.then(|| {
+        let r = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 16.0, rect.center().y),
+            egui::vec2(24.0, 24.0),
+        );
+        (
+            r,
+            ui.interact(r, egui::Id::new(("refresh", title)), egui::Sense::click()),
+        )
+    });
+
+    if resp.hovered() {
         ui.painter().rect_filled(rect, 0.0, hover_fill);
     }
+    let chevron = if collapsed {
+        icons::EXPAND_CLOSED
+    } else {
+        icons::EXPAND_OPEN
+    };
+    ui.painter().text(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        chevron.codepoint,
+        icons::font_id(18.0),
+        weak,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(16.0),
+        text_color,
+    );
+    let mut refresh_clicked = false;
+    if let Some((r, resp)) = &refresh {
+        ui.painter().text(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::REFRESH.codepoint,
+            icons::font_id(18.0),
+            if resp.hovered() { text_color } else { weak },
+        );
+        refresh_clicked = resp.clicked();
+    }
+    (resp.clicked(), refresh_clicked)
+}
 
-    // Thin separator at the bottom of the row, matching the result rows.
+/// A muted, indented hint shown in place of an empty section's rows.
+fn section_hint(ui: &mut egui::Ui, text: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    let weak = ui.visuals().weak_text_color();
+    ui.painter().text(
+        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        weak,
+    );
+}
+
+/// Shared row chrome (selection/hover background + bottom separator). Returns the
+/// resolved text color for painting the row's content.
+fn row_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) -> egui::Color32 {
+    let v = ui.visuals();
+    let text_color = v.text_color();
+    if selected {
+        let fill = if hovered {
+            crate::results::darken(v.selection.bg_fill, 20)
+        } else {
+            v.selection.bg_fill
+        };
+        ui.painter().rect_filled(rect, 0.0, fill);
+    } else if hovered {
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+        );
+    }
     ui.painter().line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        egui::Stroke::new(1.0, sep_color),
+        egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color),
+    );
+    text_color
+}
+
+/// Per-row outcome from `opened_row_widget`.
+#[derive(Default)]
+struct OpenedOutcome {
+    clicked: bool,
+    close: bool,
+    pin: bool,
+}
+
+/// A row in the "Opened" section: an open tab. Clicking the body selects it; a
+/// pin toggle and an always-visible × sit at the right. An unpinned tab's name is
+/// shown italicized (matching its tab handle).
+fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> OpenedOutcome {
+    let mut outcome = OpenedOutcome::default();
+    let height = ui.text_style_height(&egui::TextStyle::Body) + 12.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let text_color = row_background(ui, rect, selected, response.hovered());
+    let icon_color = icons::DEFAULT_COLOR;
+
+    // Close (×) at the far right, then the pin toggle to its left.
+    let close_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 16.0, rect.center().y),
+        egui::vec2(22.0, 22.0),
+    );
+    let close = ui.interact(
+        close_rect,
+        egui::Id::new(("opened-close", item.id)),
+        egui::Sense::click(),
+    );
+    let pin_rect = egui::Rect::from_center_size(
+        egui::pos2(close_rect.left() - 14.0, rect.center().y),
+        egui::vec2(22.0, 22.0),
+    );
+    let pin = ui.interact(
+        pin_rect,
+        egui::Id::new(("opened-pin", item.id)),
+        egui::Sense::click(),
     );
 
-    // If this row is being renamed in the sidebar, show the inline field instead
-    // of the name (and skip the actions button / navigation for this row).
+    // Name (indented under the section chevron), truncated to clear the buttons.
+    let name_x = rect.left() + 32.0;
+    let right_limit = pin_rect.left() - 4.0;
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let (name_galley, marker_galley) = crate::page::layout_query_name(
+        ui,
+        &item.name,
+        item.unsaved,
+        font_id,
+        text_color,
+        (right_limit - name_x).max(0.0),
+    );
+    let name_y = rect.center().y - name_galley.size().y / 2.0;
+    if item.pinned {
+        ui.painter()
+            .galley(egui::pos2(name_x, name_y), name_galley.clone(), text_color);
+    } else {
+        crate::skew::paint_galley_skewed(
+            ui.painter(),
+            egui::pos2(name_x, name_y),
+            &name_galley,
+            crate::skew::ITALIC_SHEAR,
+        );
+    }
+    if let Some(marker) = marker_galley {
+        ui.painter().galley(
+            egui::pos2(
+                name_x + name_galley.size().x + crate::page::MARKER_GAP,
+                name_y,
+            ),
+            marker,
+            text_color,
+        );
+    }
+
+    // Pin toggle: a solid pin when pinned, a faint one when unpinned.
+    ui.painter().text(
+        pin_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icons::PIN.codepoint,
+        icons::font_id(15.0),
+        if item.pinned {
+            crate::HOVER_BLUE
+        } else if pin.hovered() {
+            text_color
+        } else {
+            ui.visuals().weak_text_color()
+        },
+    );
+    // Close ×.
+    if close.hovered() {
+        ui.painter().rect_filled(
+            close_rect,
+            3.0,
+            crate::results::darken(ui.visuals().panel_fill, 20),
+        );
+    }
+    ui.painter().text(
+        close_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icons::CLOSE.codepoint,
+        icons::font_id(15.0),
+        if close.hovered() {
+            text_color
+        } else {
+            icon_color
+        },
+    );
+
+    outcome.close = close.clicked();
+    outcome.pin = pin.clicked();
+    outcome.clicked = response.clicked();
+    outcome
+}
+
+/// A row in the "Queries" section: a saved query. Clicking it opens the query;
+/// the "⋮" actions button (shown on hover) and right-click both open the query's
+/// options menu. Shows an inline rename field while the query is being renamed.
+fn saved_row_widget(
+    ui: &mut egui::Ui,
+    item: &SavedItem,
+    selected: bool,
+    rename: &mut Option<Rename>,
+) -> RowOutcome {
+    let mut outcome = RowOutcome::default();
+    let height = ui.text_style_height(&egui::TextStyle::Body) + 12.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let text_color = row_background(ui, rect, selected, response.hovered());
+    let weak_text = ui.visuals().weak_text_color();
+
+    // Inline rename in place of the name for this row.
     let editing = rename
         .as_mut()
         .filter(|r| r.surface == RenameSurface::Sidebar && r.id == item.id);
     if let Some(state) = editing {
         let field_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left() + 12.0, rect.top() + 4.0),
+            egui::pos2(rect.left() + 32.0, rect.top() + 4.0),
             egui::pos2(rect.right() - 8.0, rect.bottom() - 4.0),
         );
         let builder = egui::UiBuilder::new()
@@ -409,70 +700,9 @@ fn query_list_widget(
         return outcome;
     }
 
-    let font_id = egui::TextStyle::Body.resolve(ui.style());
-    let name_x = rect.left() + 12.0;
+    let name_x = rect.left() + 32.0;
 
-    // Interact with the "⋮" actions button up front so the name can reserve room
-    // for it. It shows whenever the row or the button itself is hovered.
-    let (btn_rect, btn_resp) = actions_button(ui, item, rect);
-    let show_button = response.hovered() || btn_resp.hovered();
-
-    // While shown, the actions button (24px + 2px margin) occupies the right
-    // edge, so the name and marker get less room to avoid overlapping it.
-    let right_limit = rect.right() - if show_button { 32.0 } else { 8.0 };
-
-    draw_row_name(ui, item, rect, name_x, right_limit, font_id, text_color);
-
-    outcome.action = row_actions_menu(
-        ui, item, &response, btn_rect, &btn_resp, text_color, weak_text,
-    );
-    outcome.clicked = response.clicked();
-    outcome
-}
-
-/// Draws a row's query name (truncated to `[name_x, right_limit]`) followed by a
-/// superscript "unsaved" marker. The marker is laid out first so the name leaves
-/// room for it, truncating with an ellipsis *before* it.
-fn draw_row_name(
-    ui: &mut egui::Ui,
-    item: &ListItem,
-    rect: egui::Rect,
-    name_x: f32,
-    right_limit: f32,
-    font_id: egui::FontId,
-    text_color: egui::Color32,
-) {
-    let max_width = (right_limit - name_x).max(0.0);
-    let (name_galley, marker_galley) = crate::page::layout_query_name(
-        ui,
-        &item.name,
-        item.unsaved,
-        font_id,
-        text_color,
-        max_width,
-    );
-    let name_w = name_galley.size().x;
-    let name_top = rect.center().y - name_galley.size().y / 2.0;
-    ui.painter()
-        .galley(egui::pos2(name_x, name_top), name_galley, text_color);
-    if let Some(marker) = marker_galley {
-        // Top-aligned (small font) so it reads as a raised superscript asterisk.
-        ui.painter().galley(
-            egui::pos2(name_x + name_w + crate::page::MARKER_GAP, name_top),
-            marker,
-            text_color,
-        );
-    }
-}
-
-/// The "⋮" actions button's rect and interaction for a row. Interacted here (not
-/// in [`row_actions_menu`]) so the row's name can reserve space for it before
-/// being laid out — the button steals the row's hover when the cursor is over it.
-fn actions_button(
-    ui: &mut egui::Ui,
-    item: &ListItem,
-    rect: egui::Rect,
-) -> (egui::Rect, egui::Response) {
+    // Interact the "⋮" button first so the name can reserve room for it.
     let btn_size = 24.0;
     let btn_rect = egui::Rect::from_center_size(
         egui::pos2(rect.right() - btn_size / 2.0 - 2.0, rect.center().y),
@@ -483,45 +713,64 @@ fn actions_button(
         egui::Id::new(("query-menu", item.id)),
         egui::Sense::click(),
     );
-    (btn_rect, btn_resp)
+    let show_button = response.hovered() || btn_resp.hovered();
+    let right_limit = rect.right() - if show_button { 32.0 } else { 8.0 };
+
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let (name_galley, marker_galley) = crate::page::layout_query_name(
+        ui,
+        &item.name,
+        item.unsaved,
+        font_id,
+        text_color,
+        (right_limit - name_x).max(0.0),
+    );
+    let name_y = rect.center().y - name_galley.size().y / 2.0;
+    let name_w = name_galley.size().x;
+    ui.painter()
+        .galley(egui::pos2(name_x, name_y), name_galley, text_color);
+    if let Some(marker) = marker_galley {
+        ui.painter().galley(
+            egui::pos2(name_x + name_w + crate::page::MARKER_GAP, name_y),
+            marker,
+            text_color,
+        );
+    }
+
+    // A saved query is persisted, so "Revert changes" is offered whenever it's
+    // open with unsaved edits.
+    outcome.action = saved_row_menu(
+        ui, item, &response, btn_rect, &btn_resp, text_color, weak_text,
+    );
+    outcome.clicked = response.clicked();
+    outcome
 }
 
-/// Paints the row's "⋮" actions button (when the row or button is hovered) and
-/// wires up both its click-menu and the row's right-click context menu, returning
-/// the chosen action. The button is interacted by the caller every frame (a stable
-/// anchor keeps its popup open even once the row stops being hovered), after the
-/// row so it sits on top and steals clicks from the row's navigation.
-fn row_actions_menu(
+/// Paints the "⋮" actions button (on hover) and wires up its click-menu plus the
+/// row's right-click context menu, returning the chosen action.
+fn saved_row_menu(
     ui: &mut egui::Ui,
-    item: &ListItem,
+    item: &SavedItem,
     row: &egui::Response,
     btn_rect: egui::Rect,
     btn_resp: &egui::Response,
     text_color: egui::Color32,
     weak_text: egui::Color32,
 ) -> Option<QueryAction> {
-    // Shown whenever the row or the button itself is hovered (matching the space
-    // the name reserves for it).
     if row.hovered() || btn_resp.hovered() {
-        let icon_font = icons::font_id(18.0);
-        let icon_color = if btn_resp.hovered() {
-            text_color
-        } else {
-            weak_text
-        };
         ui.painter().text(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             icons::MORE.codepoint,
-            icon_font,
-            icon_color,
+            icons::font_id(18.0),
+            if btn_resp.hovered() {
+                text_color
+            } else {
+                weak_text
+            },
         );
     }
-
-    // Opened by clicking "⋮" (anchored under the button) or by right-clicking
-    // anywhere on the row (at the pointer). "Revert changes" is offered only for a
-    // saved query that has unsaved edits to revert.
-    let show_revert = item.persisted && item.unsaved;
+    let show_revert = item.unsaved;
     let mut action = None;
     if let Some(inner) = egui::Popup::menu(btn_resp)
         .align(egui::RectAlign::BOTTOM_END)
@@ -547,4 +796,126 @@ fn static_friction(dx: f32, friction: f32) -> f32 {
         return dx;
     }
     dx - friction * (dx / friction).tanh()
+}
+
+/// Headless snapshot tests for the explorer sidebar, driving the real
+/// [`App::render_persistent_organizer`] so the images track the actual layout.
+/// They cover the "Opened" and "Queries" sections together, each section
+/// collapsed on its own, and the empty-opened state — exercising pinned vs.
+/// unpinned (faux-italic) rows, the unsaved marker, and the pin/close controls.
+/// Generate/refresh with `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
+#[cfg(test)]
+mod snapshot_tests {
+    use std::cell::Cell;
+
+    use eframe::egui;
+    use egui_kittest::Harness;
+    use uuid::Uuid;
+
+    use crate::App;
+    use crate::page::QueryPage;
+    use crate::query_def::QueryDefinition;
+    use crate::rpc::Query;
+
+    const PPP: f32 = 2.0;
+
+    fn query(id: u128, name: &str) -> Query {
+        Query {
+            id: Uuid::from_u128(id),
+            name: name.to_owned(),
+            created_at: id as i64,
+            modified_at: 0,
+            last_play: 0,
+            definition: QueryDefinition {
+                base: "track".to_owned(),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn tab(id: u128, name: &str, pinned: bool, dirty: bool) -> QueryPage {
+        let mut page = QueryPage::persisted(query(id, name));
+        page.pinned = pinned;
+        if dirty {
+            page.live.definition.filter.custom = "edited".to_owned();
+        }
+        page
+    }
+
+    /// An app with three open tabs (pinned+selected, unpinned, pinned+unsaved)
+    /// and a handful of saved queries in the library.
+    fn populated() -> App {
+        let pages = vec![
+            tab(5, "Lemonade", true, false),
+            tab(4, "Deep Cuts", false, false),
+            tab(3, "Workout Mix", true, true),
+        ];
+        let current = crate::CurrentPage::Query(pages[0].live.id);
+        let saved_queries = vec![
+            query(5, "Lemonade"),
+            query(4, "Deep Cuts"),
+            query(3, "Workout Mix"),
+            query(2, "Late Night Chill"),
+            query(1, "Road Trip Mixtape"),
+        ];
+        App {
+            pages,
+            saved_queries,
+            current,
+            auto_selected_initial: true,
+            schema_fetch_started: true,
+            queries_fetch_started: true,
+            presets_fetch_started: true,
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(name: &str, mut app: App) {
+        app.organizer.open = true;
+        let fonts_ready = Cell::new(false);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(212.0, 380.0))
+            .with_pixels_per_point(PPP)
+            .build_ui(move |ui| {
+                if !fonts_ready.replace(true) {
+                    crate::setup_fonts(ui.ctx());
+                    ui.ctx()
+                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
+                    return;
+                }
+                let fill = ui.style().visuals.panel_fill;
+                app.render_persistent_organizer(ui, fill);
+            });
+        harness.run();
+        harness.snapshot(format!("explorer/{name}"));
+    }
+
+    #[test]
+    fn both_sections() {
+        snapshot("both_sections", populated());
+    }
+
+    #[test]
+    fn opened_collapsed() {
+        let mut app = populated();
+        app.organizer.opened_collapsed = true;
+        snapshot("opened_collapsed", app);
+    }
+
+    #[test]
+    fn queries_collapsed() {
+        let mut app = populated();
+        app.organizer.queries_collapsed = true;
+        snapshot("queries_collapsed", app);
+    }
+
+    #[test]
+    fn no_open_tabs() {
+        // No open tabs: the "Opened" section shows its empty hint; the library is
+        // still listed under "Queries".
+        let mut app = populated();
+        app.pages.clear();
+        app.current = crate::CurrentPage::Welcome;
+        snapshot("no_open_tabs", app);
+    }
 }

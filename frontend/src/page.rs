@@ -81,6 +81,9 @@ pub(crate) enum QueryAction {
     /// Create a new query copied from this one (carrying any unsaved edits).
     Duplicate,
     Delete,
+    /// Toggle whether the query's tab is pinned (kept open). Only offered from a
+    /// tab's context menu, where a query is currently open in a tab.
+    TogglePin,
 }
 
 /// Renders the shared query-actions menu body. Used both for the sidebar row's
@@ -200,26 +203,35 @@ pub(crate) struct QueryPage {
     pub(crate) results: Arc<Mutex<QueryState>>,
     /// Whether a result fetch has been kicked off for the current results cache.
     pub(crate) results_fetched: bool,
+    /// Whether this tab is pinned (kept open). Unpinned tabs are "preview" tabs
+    /// (VS Code semantics): opening another query reuses/closes the single
+    /// unpinned tab rather than piling up tabs. See [`crate::App::open_query`].
+    pub(crate) pinned: bool,
 }
 
 impl QueryPage {
     /// Builds a page from a persisted query (its live and saved versions match).
+    /// Opens unpinned (a preview tab) by default; callers pin it explicitly.
     pub(crate) fn persisted(query: Query) -> Self {
         Self {
             live: query.clone(),
             saved: Some(query),
             results: Arc::new(Mutex::new(QueryState::default())),
             results_fetched: false,
+            pinned: false,
         }
     }
 
-    /// Builds a brand-new ephemeral page that has never been saved.
+    /// Builds a brand-new ephemeral page that has never been saved. Ephemeral
+    /// queries are pinned: they don't appear in the explorer, so a preview-tab
+    /// reuse would silently discard them.
     pub(crate) fn ephemeral(query: Query) -> Self {
         Self {
             live: query,
             saved: None,
             results: Arc::new(Mutex::new(QueryState::default())),
             results_fetched: false,
+            pinned: true,
         }
     }
 

@@ -24,6 +24,12 @@ pub(crate) const SORT: MaterialIcon = mi::ICON_SWAP_VERT;
 pub(crate) const DISPLAY: MaterialIcon = mi::ICON_KEY_VISUALIZER;
 /// Full-querydown mode: the single-input raw-query editor and its toggle.
 pub(crate) const QUERYDOWN: MaterialIcon = mi::ICON_CODE;
+/// A query, shown in its tab handle. (Material Symbols 0.6 has no
+/// `database_search`; this database glyph is the closest match.)
+pub(crate) const QUERY: MaterialIcon = mi::ICON_DATABASE;
+/// Pin/unpin a tab (VS Code "keep open"). Shown as the unpinned-tab indicator
+/// button and in the pin/unpin menu items.
+pub(crate) const PIN: MaterialIcon = mi::ICON_PUSH_PIN;
 
 // Generic actions.
 /// Overflow ("⋮") menu trigger.
