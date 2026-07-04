@@ -66,7 +66,12 @@ const VIEW_SQL_VIEWPORT_MARGIN: f32 = 24.0;
 const VIEW_SQL_FOOTER_HEIGHT: f32 = 40.0;
 
 pub fn setup_fonts(ctx: &egui::Context) {
-    ctx.set_visuals(egui::Visuals::light());
+    // Light theme, but with fully-black body text (egui's default is a dark
+    // gray). Icons are painted in their own dark gray (see [`icons::DEFAULT_COLOR`])
+    // so they still read as secondary chrome against the blacker text.
+    let mut visuals = egui::Visuals::light();
+    visuals.override_text_color = Some(egui::Color32::BLACK);
+    ctx.set_visuals(visuals);
     let mut fonts = egui::FontDefinitions::default();
 
     // Bundle our own faces so the UI doesn't depend on system-installed fonts:

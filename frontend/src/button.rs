@@ -66,7 +66,7 @@ impl Button {
         // A spinning button reads as "busy" rather than "disabled", so keep its
         // glyph at full strength even while it's not clickable.
         let color = if self.enabled || self.spin {
-            self.tint.unwrap_or_else(|| ui.visuals().text_color())
+            self.tint.unwrap_or(icons::DEFAULT_COLOR)
         } else {
             ui.visuals().weak_text_color()
         };
@@ -188,14 +188,15 @@ impl SplitButton {
         let text_color = ui.visuals().text_color();
         let weak_color = ui.visuals().weak_text_color();
 
-        // Icon + label laid out as one unit, centered in the main region.
+        // Icon + label laid out as one unit, centered in the main region. The icon
+        // takes the dark-gray icon color while the label stays full-strength text.
         let mut job = egui::text::LayoutJob::default();
         job.append(
             self.icon.codepoint,
             0.0,
             egui::TextFormat {
                 font_id: icons::font_id(ICON_SIZE),
-                color: text_color,
+                color: icons::DEFAULT_COLOR,
                 ..Default::default()
             },
         );
@@ -274,7 +275,7 @@ impl SplitButton {
             if let Some(menu) = &menu {
                 // The dots read as secondary until the trigger itself is hovered.
                 let dots_color = if menu.hovered() {
-                    text_color
+                    icons::DEFAULT_COLOR
                 } else {
                     weak_color
                 };

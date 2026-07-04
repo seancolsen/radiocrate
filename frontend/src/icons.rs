@@ -9,6 +9,11 @@ use eframe::egui;
 pub(crate) use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons as mi;
 
+/// Default color for icon glyphs: a dark gray, distinct from the fully-black body
+/// text, so icons read as secondary chrome. Call sites that need a semantic tint
+/// (e.g. destructive red) override it per icon.
+pub(crate) const DEFAULT_COLOR: egui::Color32 = egui::Color32::from_gray(0x5A);
+
 // Query sections.
 /// The query's source table.
 pub(crate) const BASE: MaterialIcon = mi::ICON_PSYCHIATRY;

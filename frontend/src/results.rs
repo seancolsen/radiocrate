@@ -21,6 +21,29 @@ const COL_GAP: f32 = 16.0;
 /// the hover effect is only slightly darker than an un-hovered row.
 pub(crate) const ROW_HOVER_DARKEN: u8 = 10;
 
+/// Top of an un-selected row's background gradient: white.
+const ROW_BG_TOP: egui::Color32 = egui::Color32::WHITE;
+/// Bottom of an un-selected row's background gradient: a very light grey, giving
+/// each row a subtle top-lit sheen.
+const ROW_BG_BOTTOM: egui::Color32 = egui::Color32::from_gray(0xF2);
+
+/// Fills `rect` with a vertical `top`→`bottom` color gradient.
+fn paint_vertical_gradient(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    top: egui::Color32,
+    bottom: egui::Color32,
+) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), top);
+    mesh.colored_vertex(rect.right_top(), top);
+    mesh.colored_vertex(rect.left_bottom(), bottom);
+    mesh.colored_vertex(rect.right_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(2, 1, 3);
+    painter.add(mesh);
+}
+
 /// Returns `color` darkened by `amount` on each RGB channel (alpha unchanged).
 pub(crate) fn darken(color: egui::Color32, amount: u8) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
@@ -105,99 +128,107 @@ impl App {
         let Some(current_id) = self.current.query_id() else {
             return;
         };
+        // Drop the panel's default inner margin so the result rows run edge to edge.
+        let frame = egui::Frame::central_panel(ui.style()).inner_margin(0.0);
         let Some(results) = self.page_results(current_id) else {
-            egui::CentralPanel::default().show_inside(ui, |_ui| {});
+            egui::CentralPanel::default()
+                .frame(frame)
+                .show_inside(ui, |_ui| {});
             return;
         };
 
         let ctx = ui.ctx().clone();
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            let state = results.lock().unwrap();
+        egui::CentralPanel::default()
+            .frame(frame)
+            .show_inside(ui, |ui| {
+                let state = results.lock().unwrap();
 
-            if let Some(err) = &state.error {
-                ui.colored_label(egui::Color32::RED, err);
-            }
+                if let Some(err) = &state.error {
+                    ui.colored_label(egui::Color32::RED, err);
+                }
 
-            if state.rows.is_empty() {
-                return;
-            }
+                if state.rows.is_empty() {
+                    return;
+                }
 
-            let mut clicked: Option<(usize, egui::Modifiers)> = None;
-            let mut double_clicked: Option<(usize, String)> = None;
+                let mut clicked: Option<(usize, egui::Modifiers)> = None;
+                let mut double_clicked: Option<(usize, String)> = None;
 
-            let pending_locate = self
-                .pending_scroll_to_row
-                .take()
-                .filter(|i| *i < state.rows.len());
-            if let Some(idx) = pending_locate {
-                self.selection.clear();
-                self.selection.insert(idx);
-                self.selection_anchor = Some(idx);
-            }
+                let pending_locate = self
+                    .pending_scroll_to_row
+                    .take()
+                    .filter(|i| *i < state.rows.len());
+                if let Some(idx) = pending_locate {
+                    self.selection.clear();
+                    self.selection.insert(idx);
+                    self.selection_anchor = Some(idx);
+                }
 
-            let metrics = self.row_metrics(ui, &state);
-            let row_height = metrics.row_height;
-            let row_layout = RowLayout {
-                visible: &metrics.visible,
-                placements: &metrics.layout.placements,
-                line_tops: &metrics.line_tops,
-                line_heights: &metrics.line_heights,
-                body_font: metrics.body_font.clone(),
-                small_font: metrics.small_font.clone(),
-                text_color: metrics.text_color,
-                weak_color: metrics.weak_color,
-                row_height,
-            };
+                let metrics = self.row_metrics(ui, &state);
+                let row_height = metrics.row_height;
+                let row_layout = RowLayout {
+                    visible: &metrics.visible,
+                    placements: &metrics.layout.placements,
+                    line_tops: &metrics.line_tops,
+                    line_heights: &metrics.line_heights,
+                    body_font: metrics.body_font.clone(),
+                    small_font: metrics.small_font.clone(),
+                    text_color: metrics.text_color,
+                    weak_color: metrics.weak_color,
+                    row_height,
+                };
 
-            // Only highlight the now-playing row when it belongs to this page.
-            let current_row = {
-                let ct = self.current_track.lock().unwrap();
-                ct.as_ref()
-                    .filter(|c| c.source_page == current_id)
-                    .and_then(|c| c.row_index)
-            };
-            let rows = &state.rows;
-            let selection = &self.selection;
-            let track_id_column = state.track_id_column;
+                // Only highlight the now-playing row when it belongs to this page.
+                let current_row = {
+                    let ct = self.current_track.lock().unwrap();
+                    ct.as_ref()
+                        .filter(|c| c.source_page == current_id)
+                        .and_then(|c| c.row_index)
+                };
+                let rows = &state.rows;
+                let selection = &self.selection;
+                let track_id_column = state.track_id_column;
 
-            let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-            if let Some(idx) = pending_locate {
-                let viewport_h = ui.available_height();
-                let target = (idx as f32 * row_height) - (viewport_h - row_height).max(0.0) * 0.5;
-                scroll_area = scroll_area.vertical_scroll_offset(target.max(0.0));
-            }
-            scroll_area.show_rows(ui, row_height, rows.len(), |ui, range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for index in range {
-                    let cells = &rows[index];
-                    let track_id = track_id_column.and_then(|i| cells.get(i).map(String::as_str));
-                    let is_current = current_row == Some(index);
-                    let resp = draw_row(
-                        ui,
-                        &row_layout,
-                        cells,
-                        selection.contains(&index),
-                        is_current,
-                    );
-                    if resp.double_clicked() {
-                        if let Some(id) = track_id {
-                            double_clicked = Some((index, id.to_string()));
+                let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+                if let Some(idx) = pending_locate {
+                    let viewport_h = ui.available_height();
+                    let target =
+                        (idx as f32 * row_height) - (viewport_h - row_height).max(0.0) * 0.5;
+                    scroll_area = scroll_area.vertical_scroll_offset(target.max(0.0));
+                }
+                scroll_area.show_rows(ui, row_height, rows.len(), |ui, range| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for index in range {
+                        let cells = &rows[index];
+                        let track_id =
+                            track_id_column.and_then(|i| cells.get(i).map(String::as_str));
+                        let is_current = current_row == Some(index);
+                        let resp = draw_row(
+                            ui,
+                            &row_layout,
+                            cells,
+                            selection.contains(&index),
+                            is_current,
+                        );
+                        if resp.double_clicked() {
+                            if let Some(id) = track_id {
+                                double_clicked = Some((index, id.to_string()));
+                            }
+                        } else if resp.clicked() {
+                            let mods = ui.input(|i| i.modifiers);
+                            clicked = Some((index, mods));
                         }
-                    } else if resp.clicked() {
-                        let mods = ui.input(|i| i.modifiers);
-                        clicked = Some((index, mods));
                     }
+                });
+                drop(state);
+
+                if let Some((index, mods)) = clicked {
+                    self.handle_row_click(index, mods);
+                }
+                if let Some((index, id)) = double_clicked {
+                    self.play_track(current_id, index, &id, &ctx);
                 }
             });
-            drop(state);
-
-            if let Some((index, mods)) = clicked {
-                self.handle_row_click(index, mods);
-            }
-            if let Some((index, id)) = double_clicked {
-                self.play_track(current_id, index, &id, &ctx);
-            }
-        });
     }
 
     pub(crate) fn handle_row_click(&mut self, index: usize, modifiers: egui::Modifiers) {
@@ -271,22 +302,25 @@ fn draw_row(
     let ppp = ui.ctx().pixels_per_point();
     let rect = rect.round_to_pixels(ppp);
 
-    let visuals = ui.visuals();
-    let base_bg = if selected {
-        let base = visuals.selection.bg_fill;
-        if response.hovered() {
-            darken(base, 20)
-        } else {
-            base
-        }
-    } else if response.hovered() {
-        // Only a slight darkening on hover, so the effect is subtle.
-        darken(visuals.extreme_bg_color, ROW_HOVER_DARKEN)
+    let hovered = response.hovered();
+    if selected {
+        // Selected rows keep a flat highlight fill (darkened a touch on hover).
+        let base = ui.visuals().selection.bg_fill;
+        let fill = if hovered { darken(base, 20) } else { base };
+        ui.painter().rect_filled(rect, 0.0, fill);
     } else {
-        visuals.extreme_bg_color
-    };
-
-    ui.painter().rect_filled(rect, 0.0, base_bg);
+        // Un-selected rows get a white→light-grey vertical gradient, nudged
+        // slightly darker on hover so the effect stays subtle.
+        let (top, bottom) = if hovered {
+            (
+                darken(ROW_BG_TOP, ROW_HOVER_DARKEN),
+                darken(ROW_BG_BOTTOM, ROW_HOVER_DARKEN),
+            )
+        } else {
+            (ROW_BG_TOP, ROW_BG_BOTTOM)
+        };
+        paint_vertical_gradient(ui.painter(), rect, top, bottom);
+    }
 
     if is_current && !selected {
         ui.painter().rect_filled(
@@ -307,7 +341,8 @@ fn draw_row(
     // it renders crisply and identically on every row, and because it sits just *inside*
     // the row's bottom edge the next row's background fill cannot paint over it.
     // Soften the separator a touch by letting the row background show through.
-    let sep_color = visuals
+    let sep_color = ui
+        .visuals()
         .widgets
         .noninteractive
         .bg_stroke
