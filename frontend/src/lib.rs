@@ -469,7 +469,9 @@ impl App {
             .map(|p| Arc::clone(&p.results))
     }
 
-    /// Creates a new ephemeral query (not yet persisted) and selects it.
+    /// Creates a new ephemeral query (not yet persisted) and selects it, opening
+    /// the filter builder with its custom input focused so the user can start
+    /// typing immediately.
     pub(crate) fn add_query_page(&mut self) {
         let now = rpc::now_epoch();
         let query = rpc::Query {
@@ -483,6 +485,9 @@ impl App {
         let id = query.id;
         self.pages.push(QueryPage::ephemeral(query));
         self.select_page(id);
+        self.expanded_preset = None;
+        self.builder_section = Some(Section::Filter);
+        self.builder_focus = true;
     }
 
     /// Creates a new ephemeral query copied from `id` and selects it. The copy's

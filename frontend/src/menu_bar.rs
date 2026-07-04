@@ -1,9 +1,9 @@
-//! The query toolbar: the builder toggles (Filter/Sort/Display, or a single
-//! "Querydown" toggle in full-querydown mode), the run button, a Save button
-//! (shown while there are unsaved changes), and — at the far right — the query
-//! options ("⋮") menu, which also holds the Base-table selector as a submenu.
-//! The explorer toggle and the query name live in the tab bar above this
-//! toolbar, not here.
+//! The query toolbar: a Save button (shown while there are unsaved changes),
+//! the run button, the query options ("build") menu — which also holds the
+//! Base-table selector as a submenu — the builder toggles (Filter/Sort/
+//! Display, or a single "Querydown" toggle in full-querydown mode), and — at
+//! the far right — the result count. The explorer toggle and the query name
+//! live in the tab bar above this toolbar, not here.
 
 use std::sync::{Arc, Mutex};
 
@@ -23,7 +23,7 @@ use crate::query_def::Section;
 /// run/filter separator is hidden.
 const COMPACT_MENU_BAR_WIDTH: f32 = 500.0;
 
-/// An item chosen from the query page's options ("⋮") menu.
+/// An item chosen from the query page's options ("build") menu.
 pub(crate) enum PageMenu {
     Action(QueryAction),
     Base(String),
@@ -71,6 +71,9 @@ impl App {
         let pinned = self.current_page().map(|p| p.pinned);
         let builder_section = self.builder_section;
         let schema = Arc::clone(&self.schema);
+        let row_count = self
+            .current_page()
+            .map(|p| p.results.lock().unwrap().rows.len());
 
         let mut section_clicked = None;
         let mut section_menu_anchor = None;
@@ -90,8 +93,8 @@ impl App {
             .show_inside(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add_space(8.0);
-                    // Left-aligned controls: Save (while unsaved), Run, then the
-                    // builder toggles.
+                    // Left-aligned controls: Save (while unsaved), Run, the query
+                    // options ("build") menu trigger, then the builder toggles.
                     if unsaved && Button::icon(icons::SAVE).show(ui).clicked() {
                         save_now = true;
                     }
@@ -103,6 +106,22 @@ impl App {
                     {
                         run_now = true;
                     }
+                    // The query options ("build") menu trigger sits right after the
+                    // run button.
+                    let build = Button::icon(icons::BUILD).show(ui);
+                    menu_choice = egui::Popup::menu(&build)
+                        .align(egui::RectAlign::BOTTOM_START)
+                        .show(|ui| {
+                            page_options_menu(
+                                ui,
+                                &base_table,
+                                full_mode,
+                                show_revert,
+                                pinned,
+                                &schema,
+                            )
+                        })
+                        .and_then(|inner| inner.inner);
                     if !compact {
                         ui.separator();
                     }
@@ -115,23 +134,16 @@ impl App {
                         section_clicked = sections.clicked;
                         section_menu_anchor = sections.menu;
                     }
-                    // The options "⋮" menu stays at the far right of the toolbar.
+                    // The result count sits at the far right of the toolbar.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(8.0);
-                        let dots = Button::icon(icons::MORE).show(ui);
-                        menu_choice = egui::Popup::menu(&dots)
-                            .align(egui::RectAlign::TOP_END)
-                            .show(|ui| {
-                                page_options_menu(
-                                    ui,
-                                    &base_table,
-                                    full_mode,
-                                    show_revert,
-                                    pinned,
-                                    &schema,
-                                )
-                            })
-                            .and_then(|inner| inner.inner);
+                        if let Some(n) = row_count {
+                            ui.label(
+                                egui::RichText::new(result_count_label(n))
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                        }
                     });
                 });
             });
@@ -170,7 +182,7 @@ impl App {
         }
     }
 
-    /// Applies a choice from the query options ("⋮") menu to the query `id`.
+    /// Applies a choice from the query options ("build") menu to the query `id`.
     /// Shared by the toolbar's own menu and a tab's context menu (which carries
     /// the same items), so both behave identically. Selecting the tab first keeps
     /// menu items that act on "the current query" (Base, View SQL, Convert to
@@ -205,7 +217,7 @@ impl App {
     }
 }
 
-/// The body of the query options ("⋮") menu: the Base-table submenu and the
+/// The body of the query options ("build") menu: the Base-table submenu and the
 /// Manage-presets / Rename / Revert / Duplicate / View-SQL / Pin / Delete
 /// actions. "Revert changes" is shown only when `show_revert` (a saved query
 /// with unsaved edits). `pinned` — when `Some` — adds a Pin/Unpin toggle
@@ -226,19 +238,6 @@ pub(crate) fn page_options_menu(
         Some(BaseChoice::Table(table)) => chosen = Some(PageMenu::Base(table)),
         Some(BaseChoice::Full) => chosen = Some(PageMenu::ConvertToFull),
         None => {}
-    }
-    // Convert-to-full is a no-op once already in full mode, so hide it then.
-    if !full_mode
-        && menu_item(
-            ui,
-            icons::QUERYDOWN,
-            "Convert to raw querydown query",
-            true,
-            None,
-        )
-        .clicked()
-    {
-        chosen = Some(PageMenu::ConvertToFull);
     }
     if menu_item(ui, icons::MANAGE_PRESETS, "Manage presets", true, None).clicked() {
         chosen = Some(PageMenu::ManagePresets);
@@ -278,7 +277,7 @@ fn base_submenu(
     full_mode: bool,
     schema: &Arc<Mutex<Option<String>>>,
 ) -> Option<BaseChoice> {
-    let label = format!("{}  Base", icons::BASE.codepoint);
+    let label = format!("{}  Change base", icons::BASE.codepoint);
     let (_, inner) = egui::containers::menu::SubMenuButton::new(label).ui(ui, |ui| {
         ui.set_min_width(170.0);
         let tables = schema
@@ -370,6 +369,27 @@ fn draw_querydown_button(ui: &mut egui::Ui, open: bool, compact: bool) -> bool {
         .show(ui)
         .main
         .clicked()
+}
+
+/// A human label for the result count shown at the toolbar's far right, with
+/// thousands grouped for readability ("1,362 results" / "1 result").
+fn result_count_label(n: usize) -> String {
+    let noun = if n == 1 { "result" } else { "results" };
+    format!("{} {noun}", group_thousands(n))
+}
+
+/// Groups `n`'s digits into thousands with `,` separators (e.g. `1362` ->
+/// `"1,362"`).
+fn group_thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// The table names from the Querydown schema JSON.

@@ -403,7 +403,7 @@ impl App {
                         let has_text = !text.trim().is_empty();
                         let reserve = crate::button::SIZE + ui.spacing().item_spacing.x;
                         let w = (ui.available_width() - reserve).max(40.0);
-                        code_editor(ui, text, w, focus, &mut custom_run);
+                        code_editor(ui, text, w, focus, section.label(), &mut custom_run);
                         custom_choice = dots_menu(ui, |ui| {
                             let mut choice = None;
                             if menu_item(ui, icons::CLEAR, "Clear", has_text, None).clicked() {
@@ -568,13 +568,15 @@ impl App {
         }
     }
 
-    /// The shared builder layout. Lays out an optional custom input beside a row
-    /// of right-aligned preset `tabs`, wrapping the tabs to their own
-    /// right-aligned row below the input when the input would otherwise get too
-    /// narrow. When a preset is `expanded_id`, its detail editor is drawn full
-    /// width below the row, with the expanded tab's background extended down to
-    /// bridge into it (a tabbed look). `custom` draws the custom input (only when
-    /// `has_custom`). Returns any tab-row click.
+    /// The shared builder layout. When there's a custom input (`has_custom`), lays
+    /// it out beside a row of right-aligned preset `tabs`, wrapping the tabs to
+    /// their own right-aligned row below the input when the input would otherwise
+    /// get too narrow. Without a custom input (sort/display's single preset or
+    /// built-in), the tabs are left-aligned instead. When a preset is
+    /// `expanded_id`, its detail editor is drawn full width below the row, with
+    /// the expanded tab's background extended down to bridge into it (a tabbed
+    /// look). `custom` draws the custom input (only when `has_custom`). Returns
+    /// any tab-row click.
     fn builder_widget(
         &mut self,
         ui: &mut egui::Ui,
@@ -605,7 +607,7 @@ impl App {
                 + spacing * tabs.len() as f32;
             let side_by_side =
                 !has_custom || ui.available_width() - tabs_total >= MIN_FILTER_INPUT_WIDTH;
-            if side_by_side {
+            if side_by_side && has_custom {
                 // Tabs hug the right edge; the input fills the remaining width on
                 // the left (right-to-left layout, tabs added in reverse so they
                 // read left-to-right).
@@ -615,8 +617,17 @@ impl App {
                         click = click.or(c);
                         expanded_rect = expanded_rect.or(r);
                     }
-                    if has_custom {
-                        custom(ui);
+                    custom(ui);
+                })
+                .response
+            } else if side_by_side {
+                // No custom input beside the tabs (sort/display's single preset or
+                // built-in): left-align them instead of hugging the right edge.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                    for t in tabs {
+                        let (c, r) = draw_tab(ui, t);
+                        click = click.or(c);
+                        expanded_rect = expanded_rect.or(r);
                     }
                 })
                 .response
@@ -1320,11 +1331,11 @@ fn filter_custom_input(
 
     // With no text there's nothing the menu can act on, so show a plain input.
     if !has_text {
-        code_editor(ui, custom, w, focus, run);
+        code_editor(ui, custom, w, focus, "Filter", run);
         return None;
     }
 
-    let (output, trigger) = crate::text_input::with_menu(ui, monospace_edit(custom, w));
+    let (output, trigger) = crate::text_input::with_menu(ui, monospace_edit(custom, w, ""));
     drive_code_editor(ui, output, custom, focus, run);
     egui::Popup::menu(&trigger)
         .align(egui::RectAlign::BOTTOM_END)
@@ -1446,8 +1457,7 @@ fn full_builder_ui(ui: &mut egui::Ui, def: &mut QueryDefinition, run: &mut bool)
     let Some(text) = def.full.as_mut() else {
         return;
     };
-    small_heading(ui, "FULL QUERY");
-    code_editor(ui, text, f32::INFINITY, false, run);
+    code_editor(ui, text, f32::INFINITY, false, "", run);
 }
 
 /// A tinted rounded container used for the preset detail panel.
@@ -1464,28 +1474,37 @@ fn section_frame<R>(
         .inner
 }
 
-/// The small all-caps heading at the top of a builder block.
-fn small_heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).small().weak());
-}
-
 /// A monospace Querydown editor that auto-sizes to its line count (at least one
 /// line). `width` is the desired width (use `f32::INFINITY` for full width).
 /// When `focus`, it grabs focus once with the caret at the end. Ctrl+Enter
-/// requests a query run.
-fn code_editor(ui: &mut egui::Ui, text: &mut String, width: f32, focus: bool, run: &mut bool) {
-    let output = crate::text_input::show(ui, monospace_edit(text, width));
+/// requests a query run. `hint` is placeholder text shown while `text` is empty
+/// (pass `""` for none).
+fn code_editor(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    width: f32,
+    focus: bool,
+    hint: &str,
+    run: &mut bool,
+) {
+    let output = crate::text_input::show(ui, monospace_edit(text, width, hint));
     drive_code_editor(ui, output, text, focus, run);
 }
 
 /// Builds the auto-sizing monospace `TextEdit` shared by every Querydown editor:
-/// it grows to its line count (at least one line) and fills `width`.
-fn monospace_edit(text: &mut String, width: f32) -> egui::TextEdit<'_> {
+/// it grows to its line count (at least one line) and fills `width`. `hint` is
+/// placeholder text shown while `text` is empty (pass `""` for none).
+fn monospace_edit<'a>(text: &'a mut String, width: f32, hint: &str) -> egui::TextEdit<'a> {
     let rows = text.lines().count().max(1);
-    egui::TextEdit::multiline(text)
+    let edit = egui::TextEdit::multiline(text)
         .desired_width(width)
         .desired_rows(rows)
-        .font(egui::TextStyle::Monospace)
+        .font(egui::TextStyle::Monospace);
+    if hint.is_empty() {
+        edit
+    } else {
+        edit.hint_text(hint)
+    }
 }
 
 /// Applies a code editor's behavior to a shown editor's `output`: optional
@@ -1519,7 +1538,7 @@ fn drive_code_editor(
 /// A monospace multiline editor that auto-sizes to its line count (at least one
 /// line), for preset definitions. `width` is the desired width.
 fn sized_multiline(ui: &mut egui::Ui, text: &mut String, width: f32) -> egui::Response {
-    crate::text_input::add(ui, monospace_edit(text, width))
+    crate::text_input::add(ui, monospace_edit(text, width, ""))
 }
 
 /// The width of `text` laid out without wrapping in `font`.

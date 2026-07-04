@@ -3,12 +3,13 @@
 //! the displayed page on click.
 
 use std::cmp::Reverse;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use uuid::Uuid;
 
 use crate::icons;
+use crate::menu_bar::{PageMenu, page_options_menu};
 use crate::page::{QueryAction, inline_rename_field, query_actions_menu};
 use crate::{
     App, ORGANIZER_DRAG_FRICTION, ORGANIZER_SWIPE_VELOCITY, ORGANIZER_WIDTH, Rename, RenameSurface,
@@ -31,12 +32,18 @@ pub(crate) struct Organizer {
     pub(crate) queries_collapsed: bool,
 }
 
-/// One row in the "Opened" section: a currently-open (and persisted) tab.
+/// One row in the "Opened" section: a currently-open tab (persisted or not).
+#[allow(clippy::struct_excessive_bools)]
 struct OpenedItem {
     id: Uuid,
     name: String,
     unsaved: bool,
     pinned: bool,
+    // Per-item options-menu parameters, so a row's context menu matches the
+    // toolbar/tab menu for *that* query.
+    base_table: String,
+    full_mode: bool,
+    show_revert: bool,
 }
 
 /// One row in the "Queries" section: a saved query (open or not).
@@ -70,6 +77,9 @@ struct ListActions {
     rename_cancel: bool,
     toggle_opened_collapsed: bool,
     toggle_queries_collapsed: bool,
+    /// An "Opened" row's context menu produced a choice from the query options
+    /// menu (the same one the toolbar and tab handles show).
+    menu: Option<(Uuid, PageMenu)>,
 }
 
 /// Per-row outcome from `saved_row_widget`, folded into `ListActions`.
@@ -119,6 +129,7 @@ impl App {
             self.organizer.opened_collapsed,
             self.organizer.queries_collapsed,
         );
+        let schema = Arc::clone(&self.schema);
         let mut actions = ListActions::default();
 
         egui::Area::new(egui::Id::new("organizer"))
@@ -157,12 +168,13 @@ impl App {
                     collapse,
                     &mut self.filter,
                     &mut self.rename,
+                    &schema,
                 );
             });
 
         // Selecting a query closes the modal drawer (it overlays the content);
         // the persistent panel stays open.
-        self.apply_list_actions(ctx, &actions, true);
+        self.apply_list_actions(ctx, actions, true);
     }
 
     /// Renders the organizer as a persistent left panel for wide screens. Unlike
@@ -181,6 +193,7 @@ impl App {
             self.organizer.opened_collapsed,
             self.organizer.queries_collapsed,
         );
+        let schema = Arc::clone(&self.schema);
         let mut actions = ListActions::default();
 
         egui::Panel::left("organizer_panel")
@@ -196,10 +209,11 @@ impl App {
                     collapse,
                     &mut self.filter,
                     &mut self.rename,
+                    &schema,
                 );
             });
 
-        self.apply_list_actions(ui.ctx(), &actions, false);
+        self.apply_list_actions(ui.ctx(), actions, false);
     }
 
     /// Applies the deferred outcomes of interacting with the query list, shared by
@@ -208,7 +222,7 @@ impl App {
     fn apply_list_actions(
         &mut self,
         ctx: &egui::Context,
-        actions: &ListActions,
+        actions: ListActions,
         close_on_select: bool,
     ) {
         // Commit/cancel an in-progress rename before starting a new one, so
@@ -261,19 +275,24 @@ impl App {
         if let Some(id) = actions.close {
             self.close_tab(id);
         }
+        if let Some((id, choice)) = actions.menu {
+            self.apply_page_menu(choice, id, ctx);
+        }
     }
 
-    /// The "Opened" section rows: the open (and persisted — never-saved queries
-    /// don't appear in the explorer) tabs, in tab order.
+    /// The "Opened" section rows: every open tab, in tab order — including a
+    /// never-saved query (shown unsaved, since it has no last-saved version).
     fn opened_items(&self) -> Vec<OpenedItem> {
         self.pages
             .iter()
-            .filter(|p| p.is_persisted())
             .map(|p| OpenedItem {
                 id: p.live.id,
                 name: p.live.name.clone(),
                 unsaved: p.unsaved(),
                 pinned: p.pinned,
+                base_table: p.live.definition.base.clone(),
+                full_mode: p.live.definition.is_full(),
+                show_revert: p.is_persisted() && p.unsaved(),
             })
             .collect()
     }
@@ -342,6 +361,7 @@ impl App {
 /// Renders the explorer's two collapsible sections — "Opened" (the open tabs)
 /// and "Queries" (all saved queries, with a name filter) — and returns the
 /// deferred actions the caller should apply.
+#[allow(clippy::too_many_arguments)]
 fn draw_explorer(
     ui: &mut egui::Ui,
     opened: &[OpenedItem],
@@ -350,6 +370,7 @@ fn draw_explorer(
     collapse: (bool, bool),
     filter: &mut String,
     rename: &mut Option<Rename>,
+    schema: &Arc<Mutex<Option<String>>>,
 ) -> ListActions {
     let (opened_collapsed, queries_collapsed) = collapse;
     let mut actions = ListActions::default();
@@ -370,7 +391,7 @@ fn draw_explorer(
                     section_hint(ui, "No open queries");
                 }
                 for item in opened {
-                    let out = opened_row_widget(ui, item, current == Some(item.id));
+                    let out = opened_row_widget(ui, item, current == Some(item.id), schema);
                     if out.clicked {
                         actions.select = Some(item.id);
                     }
@@ -379,6 +400,9 @@ fn draw_explorer(
                     }
                     if out.pin {
                         actions.pin_toggle = Some(item.id);
+                    }
+                    if let Some(choice) = out.menu {
+                        actions.menu = Some((item.id, choice));
                     }
                 }
             }
@@ -512,8 +536,8 @@ fn section_hint(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Shared row chrome (selection/hover background + bottom separator). Returns the
-/// resolved text color for painting the row's content.
+/// Shared row chrome (selection/hover background, no border between rows).
+/// Returns the resolved text color for painting the row's content.
 fn row_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) -> egui::Color32 {
     let v = ui.visuals();
     let text_color = v.text_color();
@@ -531,11 +555,18 @@ fn row_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool
             crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
         );
     }
-    ui.painter().line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color),
-    );
     text_color
+}
+
+/// Paints a row's leading query icon, aligned with the section header's chevron.
+fn paint_row_icon(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
+    ui.painter().text(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        icons::QUERY.codepoint,
+        icons::font_id(14.0),
+        color,
+    );
 }
 
 /// Per-row outcome from `opened_row_widget`.
@@ -544,12 +575,22 @@ struct OpenedOutcome {
     clicked: bool,
     close: bool,
     pin: bool,
+    /// A choice made from the row's right-click query options menu.
+    menu: Option<PageMenu>,
 }
 
-/// A row in the "Opened" section: an open tab. Clicking the body selects it; a
-/// pin toggle and an always-visible × sit at the right. An unpinned tab's name is
-/// shown italicized (matching its tab handle).
-fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> OpenedOutcome {
+/// A row in the "Opened" section: an open tab. Clicking the body selects it; an
+/// always-visible × sits at the right, with a pin toggle beside it for an
+/// unpinned tab only (a pinned tab shows no pin control). An unpinned tab's name
+/// is shown italicized (matching its tab handle). Right-clicking the row opens
+/// the same query options menu as the tab handle and toolbar.
+#[allow(clippy::too_many_lines)]
+fn opened_row_widget(
+    ui: &mut egui::Ui,
+    item: &OpenedItem,
+    selected: bool,
+    schema: &Arc<Mutex<Option<String>>>,
+) -> OpenedOutcome {
     let mut outcome = OpenedOutcome::default();
     let height = ui.text_style_height(&egui::TextStyle::Body) + 12.0;
     let (rect, response) = ui.allocate_exact_size(
@@ -558,8 +599,10 @@ fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> Op
     );
     let text_color = row_background(ui, rect, selected, response.hovered());
     let icon_color = icons::DEFAULT_COLOR;
+    paint_row_icon(ui, rect, icon_color);
 
-    // Close (×) at the far right, then the pin toggle to its left.
+    // Close (×) at the far right, then — only when unpinned — a pin toggle to
+    // its left.
     let close_rect = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 16.0, rect.center().y),
         egui::vec2(22.0, 22.0),
@@ -569,19 +612,23 @@ fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> Op
         egui::Id::new(("opened-close", item.id)),
         egui::Sense::click(),
     );
-    let pin_rect = egui::Rect::from_center_size(
-        egui::pos2(close_rect.left() - 14.0, rect.center().y),
-        egui::vec2(22.0, 22.0),
-    );
-    let pin = ui.interact(
-        pin_rect,
-        egui::Id::new(("opened-pin", item.id)),
-        egui::Sense::click(),
-    );
+    let pin_rect = (!item.pinned).then(|| {
+        egui::Rect::from_center_size(
+            egui::pos2(close_rect.left() - 14.0, rect.center().y),
+            egui::vec2(22.0, 22.0),
+        )
+    });
+    let pin = pin_rect.map(|r| {
+        ui.interact(
+            r,
+            egui::Id::new(("opened-pin", item.id)),
+            egui::Sense::click(),
+        )
+    });
 
     // Name (indented under the section chevron), truncated to clear the buttons.
     let name_x = rect.left() + 32.0;
-    let right_limit = pin_rect.left() - 4.0;
+    let right_limit = pin_rect.map_or(close_rect.left(), |r| r.left()) - 4.0;
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     let (name_galley, marker_galley) = crate::page::layout_query_name(
         ui,
@@ -614,20 +661,20 @@ fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> Op
         );
     }
 
-    // Pin toggle: a solid pin when pinned, a faint one when unpinned.
-    ui.painter().text(
-        pin_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        icons::PIN.codepoint,
-        icons::font_id(15.0),
-        if item.pinned {
-            crate::HOVER_BLUE
-        } else if pin.hovered() {
-            text_color
-        } else {
-            ui.visuals().weak_text_color()
-        },
-    );
+    // Pin toggle (unpinned tabs only): faint at rest, darkening on hover.
+    if let (Some(pin_rect), Some(pin)) = (pin_rect, pin.as_ref()) {
+        ui.painter().text(
+            pin_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::PIN.codepoint,
+            icons::font_id(15.0),
+            if pin.hovered() {
+                text_color
+            } else {
+                ui.visuals().weak_text_color()
+            },
+        );
+    }
     // Close ×.
     if close.hovered() {
         ui.painter().rect_filled(
@@ -648,8 +695,21 @@ fn opened_row_widget(ui: &mut egui::Ui, item: &OpenedItem, selected: bool) -> Op
         },
     );
 
+    outcome.menu = egui::Popup::context_menu(&response)
+        .show(|ui| {
+            page_options_menu(
+                ui,
+                &item.base_table,
+                item.full_mode,
+                item.show_revert,
+                Some(item.pinned),
+                schema,
+            )
+        })
+        .and_then(|inner| inner.inner);
+
     outcome.close = close.clicked();
-    outcome.pin = pin.clicked();
+    outcome.pin = pin.is_some_and(|p| p.clicked());
     outcome.clicked = response.clicked();
     outcome
 }
@@ -671,6 +731,7 @@ fn saved_row_widget(
     );
     let text_color = row_background(ui, rect, selected, response.hovered());
     let weak_text = ui.visuals().weak_text_color();
+    paint_row_icon(ui, rect, icons::DEFAULT_COLOR);
 
     // Inline rename in place of the name for this row.
     let editing = rename
@@ -717,25 +778,21 @@ fn saved_row_widget(
     let right_limit = rect.right() - if show_button { 32.0 } else { 8.0 };
 
     let font_id = egui::TextStyle::Body.resolve(ui.style());
-    let (name_galley, marker_galley) = crate::page::layout_query_name(
+    // The unsaved marker is shown only on the tab handle and in the "Opened"
+    // list, not here — so it's never requested regardless of `item.unsaved`.
+    let (name_galley, _marker_galley) = crate::page::layout_query_name(
         ui,
         &item.name,
-        item.unsaved,
+        false,
         font_id,
         text_color,
         (right_limit - name_x).max(0.0),
     );
-    let name_y = rect.center().y - name_galley.size().y / 2.0;
-    let name_w = name_galley.size().x;
-    ui.painter()
-        .galley(egui::pos2(name_x, name_y), name_galley, text_color);
-    if let Some(marker) = marker_galley {
-        ui.painter().galley(
-            egui::pos2(name_x + name_w + crate::page::MARKER_GAP, name_y),
-            marker,
-            text_color,
-        );
-    }
+    ui.painter().galley(
+        egui::pos2(name_x, rect.center().y - name_galley.size().y / 2.0),
+        name_galley,
+        text_color,
+    );
 
     // A saved query is persisted, so "Revert changes" is offered whenever it's
     // open with unsaved edits.

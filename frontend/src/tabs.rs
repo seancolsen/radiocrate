@@ -141,10 +141,18 @@ impl App {
                     }
                     ui.add_space(4.0);
 
-                    // The strip takes all the room between the explorer toggle and
-                    // the trailing "+" button; the tabs lay out (and shrink) inside
-                    // it. Reserve the "+" button's width up front.
-                    let strip_w = (ui.available_width() - crate::button::SIZE - 6.0).max(0.0);
+                    // The strip takes the room between the explorer toggle and the
+                    // "+" button; the tabs lay out (and shrink) inside it. Sized to
+                    // the tabs' natural total width (so the "+" button sits right
+                    // after the last handle) unless that exceeds the available
+                    // room, in which case it fills the room and the handles shrink.
+                    let avail = (ui.available_width() - crate::button::SIZE - 6.0).max(0.0);
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let natural_total: f32 = tabs
+                        .iter()
+                        .map(|info| fixed_width(info) + natural_name_width(ui, info, &font))
+                        .sum();
+                    let strip_w = natural_total.min(avail);
                     let (strip_rect, _) = ui.allocate_exact_size(
                         egui::vec2(strip_w, TAB_BAR_HEIGHT),
                         egui::Sense::hover(),
@@ -197,6 +205,10 @@ impl App {
         }
         if let Some((id, to)) = actions.reorder {
             self.move_tab(id, to);
+            // Dragging a tab to reorder it is a deliberate "keep this open" act,
+            // like pinning; an unpinned (preview) tab wouldn't survive being
+            // replaced by the next opened query otherwise.
+            self.pin_tab(id);
         }
         if let Some((id, offset)) = actions.drag_start {
             self.tab_bar.drag = Some(TabDrag {
@@ -417,6 +429,16 @@ fn draw_one_tab(
         egui::Sense::click_and_drag(),
     );
 
+    // Only the top corners are rounded (matching the app's buttons), so the
+    // handle still sits flush against the tab bar below and its neighbors beside.
+    let top_radius = crate::button::RADIUS as u8;
+    let corner = egui::CornerRadius {
+        nw: top_radius,
+        ne: top_radius,
+        sw: 0,
+        se: 0,
+    };
+
     // Background: the active tab is filled like the editor (it "connects" to the
     // content below); inactive tabs sit in the bar color, darkening on hover.
     let fill = if selected {
@@ -426,12 +448,14 @@ fn draw_one_tab(
     } else {
         bar_fill
     };
-    ui.painter().rect_filled(rect, 0.0, fill);
+    ui.painter().rect_filled(rect, corner, fill);
     if selected {
         // A blue top edge marks the active tab, like an editor's active tab.
+        // Rounded to match the handle's top corners, so it doesn't square them
+        // off again.
         ui.painter().rect_filled(
-            egui::Rect::from_min_size(rect.left_top(), egui::vec2(rect.width(), 2.0)),
-            0.0,
+            egui::Rect::from_min_size(rect.left_top(), egui::vec2(rect.width(), 4.0)),
+            corner,
             crate::HOVER_BLUE,
         );
     }
@@ -439,7 +463,7 @@ fn draw_one_tab(
         // Lift the dragged handle with a hairline outline so it reads as floating.
         ui.painter().rect_stroke(
             rect,
-            0.0,
+            corner,
             egui::Stroke::new(1.0, crate::HOVER_BLUE),
             egui::StrokeKind::Inside,
         );
@@ -450,8 +474,20 @@ fn draw_one_tab(
         egui::Stroke::new(1.0, darken(bar_fill, 22)),
     );
 
-    let icon_color = icons::DEFAULT_COLOR;
-    let text_color = ui.visuals().text_color();
+    // Inactive tabs read as secondary: their icon and name dim to the weak text
+    // color. Hover feedback on the pin/close buttons always uses full-strength
+    // text, regardless of the tab's active state.
+    let icon_color = if selected {
+        icons::DEFAULT_COLOR
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let text_color = if selected {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let hover_color = ui.visuals().text_color();
     let mut cursor = rect.left() + PAD_L;
 
     // Unpinned tabs get a pin button at the far left (click to keep the tab).
@@ -512,7 +548,7 @@ fn draw_one_tab(
         icons::CLOSE.codepoint,
         icons::font_id(GLYPH_SIZE - 1.0),
         if close.hovered() {
-            text_color
+            hover_color
         } else {
             icon_color
         },

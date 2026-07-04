@@ -22,7 +22,7 @@ const PAD_X: f32 = 6.0;
 /// Gap between the icon and the label.
 const ICON_GAP: f32 = 5.0;
 /// Corner radius of the hover outline and active fill.
-const RADIUS: f32 = 4.0;
+pub(crate) const RADIUS: f32 = 4.0;
 
 /// A frameless, fixed-square icon button. Build it with the chaining setters,
 /// then `show` it.

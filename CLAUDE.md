@@ -43,3 +43,5 @@ When you need to *look at* or *measure* one, don't fumble with `convert txt:` du
 
 - `python3` has **Pillow + NumPy** preinstalled, so `from PIL import Image` works if you'd rather read pixels directly.
 
+Regenerate _all_ visual snapshots, not just the ones pertaining to your work. This helps us identify regressions.
+
