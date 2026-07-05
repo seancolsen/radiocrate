@@ -157,22 +157,93 @@ pub(crate) fn inline_rename_field(
     outcome
 }
 
+/// A fixed sentinel id for the singleton Keyboard Shortcuts page, so it flows
+/// through the same `Uuid`-keyed tab machinery (select/close/reorder) as queries
+/// without colliding with any real query id.
+pub(crate) const SHORTCUTS_PAGE_ID: Uuid =
+    Uuid::from_u128(0x5E11_0000_0000_0000_0000_0000_0000_0001);
+
 /// Which page the app is currently showing. A query page requires a concrete
 /// query id; `Welcome` is the placeholder shown when no query is open (e.g.
-/// before any query has been created).
+/// before any query has been created); `KeyboardShortcuts` is the singleton
+/// settings editor.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CurrentPage {
     #[default]
     Welcome,
     Query(Uuid),
+    KeyboardShortcuts,
 }
 
 impl CurrentPage {
-    /// The id of the open query, if a query page is currently showing.
+    /// The id of the open query, if a *query* page is currently showing.
     pub(crate) fn query_id(self) -> Option<Uuid> {
         match self {
             CurrentPage::Query(id) => Some(id),
+            CurrentPage::Welcome | CurrentPage::KeyboardShortcuts => None,
+        }
+    }
+
+    /// The tab id of the current page (query *or* settings), if any — used by the
+    /// tab-keyed commands (close/move active tab) which act on either page type.
+    pub(crate) fn page_id(self) -> Option<Uuid> {
+        match self {
+            CurrentPage::Query(id) => Some(id),
+            CurrentPage::KeyboardShortcuts => Some(SHORTCUTS_PAGE_ID),
             CurrentPage::Welcome => None,
+        }
+    }
+}
+
+/// An open tab. Currently either a query page or the singleton keyboard-shortcuts
+/// editor; more page types (playlists, artists, …) will slot in here.
+///
+/// [`QueryPage`] is boxed so the (data-less) `KeyboardShortcuts` variant doesn't
+/// bloat every element of the tab `Vec` to the query page's size.
+pub(crate) enum Page {
+    Query(Box<QueryPage>),
+    /// The keyboard-shortcuts editor. There is at most one, and its transient UI
+    /// state lives on [`crate::App`], so this variant carries no data.
+    KeyboardShortcuts,
+}
+
+impl Page {
+    /// The tab id: the query's id, or the fixed [`SHORTCUTS_PAGE_ID`] sentinel.
+    pub(crate) fn id(&self) -> Uuid {
+        match self {
+            Page::Query(p) => p.live.id,
+            Page::KeyboardShortcuts => SHORTCUTS_PAGE_ID,
+        }
+    }
+
+    /// Whether the tab is pinned. The settings tab is always pinned (it has no
+    /// preview-tab semantics).
+    pub(crate) fn pinned(&self) -> bool {
+        match self {
+            Page::Query(p) => p.pinned,
+            Page::KeyboardShortcuts => true,
+        }
+    }
+
+    pub(crate) fn as_query(&self) -> Option<&QueryPage> {
+        match self {
+            Page::Query(p) => Some(p),
+            Page::KeyboardShortcuts => None,
+        }
+    }
+
+    pub(crate) fn as_query_mut(&mut self) -> Option<&mut QueryPage> {
+        match self {
+            Page::Query(p) => Some(p),
+            Page::KeyboardShortcuts => None,
+        }
+    }
+
+    /// The [`CurrentPage`] marker that selects this page.
+    pub(crate) fn marker(&self) -> CurrentPage {
+        match self {
+            Page::Query(p) => CurrentPage::Query(p.live.id),
+            Page::KeyboardShortcuts => CurrentPage::KeyboardShortcuts,
         }
     }
 }

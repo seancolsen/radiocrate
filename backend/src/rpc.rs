@@ -42,6 +42,14 @@ struct Preset {
     modified_at: i64,
 }
 
+/// A user override for a command's keyboard shortcut. `chord` is `None` when the
+/// command is explicitly unbound. See `settings.keybinding` in migration 0002.
+#[derive(Serialize, Deserialize)]
+struct Keybinding {
+    command_id: String,
+    chord: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct RpcRequest {
     method: String,
@@ -210,6 +218,28 @@ fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, Stri
                 Ok(Value::Null)
             })
         }
+        "keybinding.list" => state.read(|conn| -> Result<Value, String> {
+            let bindings = list_keybindings(conn)?;
+            serde_json::to_value(bindings).map_err(|e| e.to_string())
+        }),
+        "keybinding.set" => {
+            let binding: Keybinding = from_params(params)?;
+            state.write(|conn| {
+                set_keybinding(conn, &binding.command_id, binding.chord.as_deref())?;
+                Ok(Value::Null)
+            })
+        }
+        "keybinding.delete" => {
+            #[derive(Deserialize)]
+            struct P {
+                command_id: String,
+            }
+            let p: P = from_params(params)?;
+            state.write(|conn| {
+                delete_keybinding(conn, &p.command_id)?;
+                Ok(Value::Null)
+            })
+        }
         other => Err(format!("method not found: {other}")),
     }
 }
@@ -353,6 +383,39 @@ fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute(
         "DELETE FROM preset WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn list_keybindings(conn: &Connection) -> Result<Vec<Keybinding>, String> {
+    let mut stmt = conn
+        .prepare("SELECT command_id, chord FROM settings.keybinding ORDER BY command_id")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(Keybinding {
+                command_id: row.get(0)?,
+                chord: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+fn set_keybinding(conn: &Connection, command_id: &str, chord: Option<&str>) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings.keybinding (command_id, chord) VALUES (?, ?)",
+        duckdb::params![command_id, chord],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn delete_keybinding(conn: &Connection, command_id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM settings.keybinding WHERE command_id = ?",
+        duckdb::params![command_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())

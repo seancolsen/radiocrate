@@ -397,7 +397,7 @@ fn pill_overflow() {
     let id = page.live.id;
     let saved = vec![page.live.clone()];
     let mut app = App {
-        pages: vec![page],
+        pages: vec![crate::page::Page::Query(Box::new(page))],
         saved_queries: saved,
         current: crate::CurrentPage::Query(id),
         auto_selected_initial: true,
@@ -434,7 +434,7 @@ fn whole_app() {
     let id = page.live.id;
     let saved = vec![page.live.clone()];
     let mut app = App {
-        pages: vec![page],
+        pages: vec![crate::page::Page::Query(Box::new(page))],
         saved_queries: saved,
         current: crate::CurrentPage::Query(id),
         // Skip the one-time startup fetches: this state is already "loaded".
@@ -470,6 +470,84 @@ fn whole_app() {
     harness.snapshot("app/whole_app");
 }
 
+#[test]
+fn command_palette() {
+    // The palette open over the loaded "Lemonade" page: a query tab is active with
+    // results, so most commands are available and each shows its default shortcut.
+    let mut page = lemonade_page();
+    page.pinned = true;
+    let id = page.live.id;
+    let saved = vec![page.live.clone()];
+    let mut app = App {
+        pages: vec![crate::page::Page::Query(Box::new(page))],
+        saved_queries: saved,
+        current: crate::CurrentPage::Query(id),
+        auto_selected_initial: true,
+        schema_fetch_started: true,
+        queries_fetch_started: true,
+        presets_fetch_started: true,
+        keybindings_fetch_started: true,
+        palette: Some(crate::palette::PaletteState::default()),
+        ..Default::default()
+    };
+    app.organizer.open = false;
+
+    let fonts_ready = Cell::new(false);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(760.0, 480.0))
+        .with_pixels_per_point(PPP)
+        .build_ui(move |ui| {
+            if !fonts_ready.replace(true) {
+                crate::setup_fonts(ui.ctx());
+                ui.ctx()
+                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
+                return;
+            }
+            app.render_root(ui);
+        });
+    harness.run();
+    harness.snapshot("app/command_palette");
+}
+
+#[test]
+fn keyboard_shortcuts_tab() {
+    // The Keyboard Shortcuts editor open as a tab beside a query tab, showing the
+    // default keymap table (Command | Keybinding | When).
+    let mut page = lemonade_page();
+    page.pinned = true;
+    let app = App {
+        pages: vec![
+            crate::page::Page::Query(Box::new(page)),
+            crate::page::Page::KeyboardShortcuts,
+        ],
+        current: crate::CurrentPage::KeyboardShortcuts,
+        auto_selected_initial: true,
+        schema_fetch_started: true,
+        queries_fetch_started: true,
+        presets_fetch_started: true,
+        keybindings_fetch_started: true,
+        ..Default::default()
+    };
+    let mut app = app;
+    app.organizer.open = false;
+
+    let fonts_ready = Cell::new(false);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 560.0))
+        .with_pixels_per_point(PPP)
+        .build_ui(move |ui| {
+            if !fonts_ready.replace(true) {
+                crate::setup_fonts(ui.ctx());
+                ui.ctx()
+                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
+                return;
+            }
+            app.render_root(ui);
+        });
+    harness.run();
+    harness.snapshot("app/keyboard_shortcuts");
+}
+
 /// A narrower rig sharing `whole_app`'s "Lemonade" page but without the
 /// explorer/builder chrome, so the result rows fill most of the frame — used by
 /// the result-row state variants below (selection, reload, empty).
@@ -478,7 +556,7 @@ fn results_only_app(mut page: QueryPage) -> App {
     let id = page.live.id;
     let saved = vec![page.live.clone()];
     App {
-        pages: vec![page],
+        pages: vec![crate::page::Page::Query(Box::new(page))],
         saved_queries: saved,
         current: crate::CurrentPage::Query(id),
         auto_selected_initial: true,

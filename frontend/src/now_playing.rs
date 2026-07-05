@@ -74,7 +74,10 @@ impl App {
                 if let Some(idx) = ct.row_index {
                     // Switch to the page the track lives on, then scroll to it.
                     self.current = crate::CurrentPage::Query(ct.source_page);
-                    self.pending_scroll_to_row = Some(idx);
+                    self.pending_scroll = Some(crate::PendingScroll {
+                        row: idx,
+                        select: true,
+                    });
                     ctx.request_repaint();
                 }
             }
@@ -294,7 +297,7 @@ impl App {
 
     /// The track immediately after the current one within its source page's
     /// results, as `(source_page, row_index, track_id)`.
-    fn next_track_info(&self) -> Option<(Uuid, usize, String)> {
+    pub(crate) fn next_track_info(&self) -> Option<(Uuid, usize, String)> {
         let (source, cur_idx) = {
             let guard = self.current_track.lock().unwrap();
             let ct = guard.as_ref()?;

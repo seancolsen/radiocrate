@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::button::Button;
 use crate::icons;
 use crate::menu_bar::{PageMenu, page_options_menu};
-use crate::page::{explorer_button, inline_rename_field};
+use crate::page::{Page, SHORTCUTS_PAGE_ID, explorer_button, inline_rename_field};
 use crate::results::darken;
 use crate::skew::{ITALIC_SHEAR, paint_galley_skewed};
 use crate::{App, Rename, RenameSurface};
@@ -57,16 +57,26 @@ struct TabDrag {
     grab_offset: f32,
 }
 
+/// Which kind of page a tab handle represents. Non-query tabs (the keyboard-
+/// shortcuts editor) render with their own icon and skip query-only affordances
+/// (pin control, inline rename, the query options context menu).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TabKind {
+    Query,
+    Shortcuts,
+}
+
 /// Everything the tab strip needs to render one handle, snapshotted from the
 /// page so the draw closure doesn't borrow `self`.
 #[allow(clippy::struct_excessive_bools)]
 struct TabInfo {
     id: Uuid,
+    kind: TabKind,
     name: String,
     pinned: bool,
     unsaved: bool,
     // Per-tab options-menu parameters, so a handle's context menu matches the
-    // toolbar menu for *that* query.
+    // toolbar menu for *that* query. Unused for non-query tabs.
     base_table: String,
     full_mode: bool,
     show_revert: bool,
@@ -105,14 +115,27 @@ impl App {
         let tabs: Vec<TabInfo> = self
             .pages
             .iter()
-            .map(|p| TabInfo {
-                id: p.live.id,
-                name: p.live.name.clone(),
-                pinned: p.pinned,
-                unsaved: p.unsaved(),
-                base_table: p.live.definition.base.clone(),
-                full_mode: p.live.definition.is_full(),
-                show_revert: p.is_persisted() && p.unsaved(),
+            .map(|p| match p {
+                Page::Query(q) => TabInfo {
+                    id: q.live.id,
+                    kind: TabKind::Query,
+                    name: q.live.name.clone(),
+                    pinned: q.pinned,
+                    unsaved: q.unsaved(),
+                    base_table: q.live.definition.base.clone(),
+                    full_mode: q.live.definition.is_full(),
+                    show_revert: q.is_persisted() && q.unsaved(),
+                },
+                Page::KeyboardShortcuts => TabInfo {
+                    id: SHORTCUTS_PAGE_ID,
+                    kind: TabKind::Shortcuts,
+                    name: "Keyboard Shortcuts".to_owned(),
+                    pinned: true,
+                    unsaved: false,
+                    base_table: String::new(),
+                    full_mode: false,
+                    show_revert: false,
+                },
             })
             .collect();
 
@@ -519,11 +542,15 @@ fn draw_one_tab(
         cursor += PIN_W + ITEM_GAP;
     }
 
-    // Query icon.
+    // Leading page icon (query vs. settings).
+    let tab_icon = match info.kind {
+        TabKind::Query => icons::QUERY,
+        TabKind::Shortcuts => icons::KEYBOARD,
+    };
     ui.painter().text(
         egui::pos2(cursor, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        icons::QUERY.codepoint,
+        tab_icon.codepoint,
         icons::font_id(GLYPH_SIZE),
         icon_color,
     );
@@ -616,26 +643,29 @@ fn draw_one_tab(
     }
 
     // Context menu: identical to the toolbar's options menu, for this query.
-    if let Some(inner) = egui::Popup::context_menu(&body)
-        .show(|ui| {
-            page_options_menu(
-                ui,
-                &info.base_table,
-                info.full_mode,
-                info.show_revert,
-                Some(info.pinned),
-                schema,
-            )
-        })
-        .and_then(|i| i.inner)
+    // Non-query tabs (settings) carry no query options, so they get none.
+    if info.kind == TabKind::Query
+        && let Some(inner) = egui::Popup::context_menu(&body)
+            .show(|ui| {
+                page_options_menu(
+                    ui,
+                    &info.base_table,
+                    info.full_mode,
+                    info.show_revert,
+                    Some(info.pinned),
+                    schema,
+                )
+            })
+            .and_then(|i| i.inner)
     {
         actions.menu = Some((info.id, inner));
     }
 
     // Fold in the body gestures. Close/pin already claimed their own clicks.
+    // Only query tabs rename on double-click.
     if close.clicked() || body.clicked_by(egui::PointerButton::Middle) {
         actions.close = Some(info.id);
-    } else if body.double_clicked() {
+    } else if body.double_clicked() && info.kind == TabKind::Query {
         actions.rename = Some(info.id);
     } else if body.clicked() {
         actions.select = Some(info.id);
@@ -776,7 +806,10 @@ mod snapshot_tests {
     fn app(pages: Vec<QueryPage>) -> App {
         let current = crate::CurrentPage::Query(pages[0].live.id);
         App {
-            pages,
+            pages: pages
+                .into_iter()
+                .map(|p| crate::page::Page::Query(Box::new(p)))
+                .collect(),
             current,
             ..Default::default()
         }

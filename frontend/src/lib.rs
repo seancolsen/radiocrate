@@ -12,6 +12,7 @@ mod audio;
 mod builder;
 mod button;
 mod columns;
+mod commands;
 mod compile;
 mod field_layout;
 mod format;
@@ -22,11 +23,13 @@ mod menu_bar;
 mod now_playing;
 mod organizer;
 mod page;
+mod palette;
 mod query_def;
 mod results;
 mod rows;
 mod rpc;
 mod schema;
+mod shortcuts_tab;
 mod skew;
 mod tabs;
 mod text_input;
@@ -37,10 +40,11 @@ mod welcome;
 use audio::AudioPlayer;
 use builder::{PresetEdit, PresetSave};
 use columns::ColumnMetadata;
+use commands::{CommandId, Keymap};
 use field_layout::FieldLayout;
 use now_playing::CurrentTrack;
 use organizer::Organizer;
-use page::{CurrentPage, QueryPage};
+use page::{CurrentPage, Page, QueryPage};
 use query_def::{QueryDefinition, Section, SectionContent};
 use rows::ResultRows;
 
@@ -147,6 +151,15 @@ pub(crate) struct Rename {
     pub(crate) take_focus: bool,
 }
 
+/// A request to bring a result row into view, optionally selecting it. Keyboard
+/// row navigation sets `select: false` (the selection is already updated), while
+/// the now-playing "Locate" action sets `select: true` to jump-select the track.
+#[derive(Clone, Copy)]
+pub(crate) struct PendingScroll {
+    pub(crate) row: usize,
+    pub(crate) select: bool,
+}
+
 /// A delete awaiting confirmation in the modal dialog.
 pub(crate) struct PendingDelete {
     pub(crate) id: Uuid,
@@ -158,10 +171,10 @@ pub(crate) struct PendingDelete {
 // wouldn't make any of them clearer.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
-    /// The open tabs, in display (tab-bar) order. Each is a query page holding
-    /// that tab's live/saved definition and cached results. This is in-memory
-    /// only — the tab set is never persisted to the backend.
-    pub(crate) pages: Vec<QueryPage>,
+    /// The open tabs, in display (tab-bar) order. Each is a [`Page`] — a query
+    /// page (live/saved definition + cached results) or the singleton keyboard-
+    /// shortcuts editor. In-memory only; the tab set is never persisted.
+    pub(crate) pages: Vec<Page>,
     /// Metadata for every saved query in the backend (whether or not it's open
     /// in a tab). Drives the explorer's "Queries" section; kept in sync as
     /// queries are saved, renamed, and deleted.
@@ -180,6 +193,9 @@ pub struct App {
     pub(crate) queries_fetch_started: bool,
     pub(crate) selection: HashSet<usize>,
     pub(crate) selection_anchor: Option<usize>,
+    /// The moving end of a keyboard row selection (the row an extend grows from);
+    /// tracks the anchor for mouse selection. Drives `select_row_delta`.
+    pub(crate) selection_lead: Option<usize>,
     pub(crate) organizer: Organizer,
     /// The in-progress inline rename, if any.
     pub(crate) rename: Option<Rename>,
@@ -234,7 +250,22 @@ pub struct App {
     pub(crate) view_sql: Option<String>,
     pub(crate) current_track: Arc<Mutex<Option<CurrentTrack>>>,
     pub(crate) audio: Box<dyn AudioPlayer>,
-    pub(crate) pending_scroll_to_row: Option<usize>,
+    /// A request to scroll a result row into view (and, when `select`, select it).
+    /// Consumed by `render_results`.
+    pub(crate) pending_scroll: Option<PendingScroll>,
+    /// The resolved keyboard-shortcut map: built-in defaults with the user's
+    /// persisted overrides layered on top.
+    pub(crate) keymap: Keymap,
+    /// The command palette's state when open (`None` when closed).
+    pub(crate) palette: Option<palette::PaletteState>,
+    /// Recently-used commands, most-recent first (session-only; not persisted).
+    /// Drives the palette's default ordering.
+    pub(crate) command_mru: Vec<CommandId>,
+    /// Transient UI state for the keyboard-shortcuts editor tab.
+    pub(crate) shortcuts: shortcuts_tab::ShortcutsUi,
+    /// Inbox for an in-flight `keybinding.list`; drained into `keymap` next frame.
+    pub(crate) loaded_keybindings: Arc<Mutex<Option<Vec<rpc::Keybinding>>>>,
+    pub(crate) keybindings_fetch_started: bool,
     /// Database schema JSON, fetched once at startup and used to compile Querydown.
     pub(crate) schema: Arc<Mutex<Option<String>>>,
     pub(crate) schema_fetch_started: bool,
@@ -256,6 +287,7 @@ impl Default for App {
             queries_fetch_started: false,
             selection: HashSet::new(),
             selection_anchor: None,
+            selection_lead: None,
             organizer: Organizer::default(),
             rename: None,
             pending_delete: None,
@@ -275,7 +307,13 @@ impl Default for App {
             view_sql: None,
             current_track: Arc::new(Mutex::new(None)),
             audio: audio::new_player(),
-            pending_scroll_to_row: None,
+            pending_scroll: None,
+            keymap: Keymap::default(),
+            palette: None,
+            command_mru: Vec::new(),
+            shortcuts: shortcuts_tab::ShortcutsUi::default(),
+            loaded_keybindings: Arc::new(Mutex::new(None)),
+            keybindings_fetch_started: false,
             schema: Arc::new(Mutex::new(None)),
             schema_fetch_started: false,
             field_layout_cache: None,
@@ -298,6 +336,11 @@ impl App {
         self.bootstrap(&ctx);
         self.drain_loaded_queries();
         self.drain_loaded_presets();
+        self.drain_loaded_keybindings();
+
+        // Global keyboard shortcuts run before any panel so a matched chord's key
+        // events are consumed before widgets (e.g. text fields) can see them.
+        self.handle_global_shortcuts(&ctx);
 
         let panel_fill = ui.style().visuals.panel_fill;
         let persistent = ctx.viewport_rect().width() >= PERSISTENT_ORGANIZER_MIN_WIDTH;
@@ -305,7 +348,7 @@ impl App {
         // A tab picks up edits as its own: once an unpinned (preview) tab becomes
         // dirty it's promoted to a pinned tab, so opening another query won't
         // silently discard the in-progress work. (Ephemeral tabs open pinned.)
-        for page in &mut self.pages {
+        for page in self.pages.iter_mut().filter_map(Page::as_query_mut) {
             if !page.pinned && page.is_persisted() && page.unsaved() {
                 page.pinned = true;
             }
@@ -348,6 +391,7 @@ impl App {
         // Central panel.
         match self.current {
             CurrentPage::Query(_) => self.render_results(ui),
+            CurrentPage::KeyboardShortcuts => self.render_shortcuts_page(ui),
             CurrentPage::Welcome => welcome::render_welcome_center(ui),
         }
 
@@ -378,6 +422,7 @@ impl App {
         self.render_preset_save_modal(&ctx);
         self.render_manage_presets_modal(&ctx);
         self.render_view_sql_modal(&ctx);
+        self.render_command_palette(&ctx);
     }
 }
 
@@ -396,12 +441,25 @@ impl App {
             self.presets_fetch_started = true;
             rpc::list_presets(Arc::clone(&self.loaded_presets), ctx.clone());
         }
+        if !self.keybindings_fetch_started {
+            self.keybindings_fetch_started = true;
+            rpc::list_keybindings(Arc::clone(&self.loaded_keybindings), ctx.clone());
+        }
     }
 
     /// If a `preset.list` response has arrived, replace the local preset list.
     fn drain_loaded_presets(&mut self) {
         if let Some(list) = self.loaded_presets.lock().unwrap().take() {
             self.presets = list;
+        }
+    }
+
+    /// If a `keybinding.list` response has arrived, apply the persisted overrides
+    /// on top of the built-in defaults.
+    fn drain_loaded_keybindings(&mut self) {
+        if let Some(list) = self.loaded_keybindings.lock().unwrap().take() {
+            self.keymap
+                .load_overrides(list.into_iter().map(|kb| (kb.command_id, kb.chord)));
         }
     }
 
@@ -429,6 +487,7 @@ impl App {
         }
         self.selection.clear();
         self.selection_anchor = None;
+        self.selection_lead = None;
     }
 
     fn organizer_progress(&self, ctx: &egui::Context) -> f32 {
@@ -459,20 +518,31 @@ impl App {
     }
 
     pub(crate) fn current_page(&self) -> Option<&QueryPage> {
-        let id = self.current.query_id()?;
-        self.pages.iter().find(|p| p.live.id == id)
+        self.find_query(self.current.query_id()?)
     }
 
     pub(crate) fn current_page_mut(&mut self) -> Option<&mut QueryPage> {
-        let id = self.current.query_id()?;
-        self.pages.iter_mut().find(|p| p.live.id == id)
+        self.find_query_mut(self.current.query_id()?)
+    }
+
+    /// The query page with id `id`, if one is open (skips non-query tabs).
+    pub(crate) fn find_query(&self, id: Uuid) -> Option<&QueryPage> {
+        self.pages
+            .iter()
+            .filter_map(Page::as_query)
+            .find(|p| p.live.id == id)
+    }
+
+    /// Mutable [`find_query`].
+    pub(crate) fn find_query_mut(&mut self, id: Uuid) -> Option<&mut QueryPage> {
+        self.pages
+            .iter_mut()
+            .filter_map(Page::as_query_mut)
+            .find(|p| p.live.id == id)
     }
 
     pub(crate) fn page_results(&self, id: Uuid) -> Option<Arc<Mutex<QueryState>>> {
-        self.pages
-            .iter()
-            .find(|p| p.live.id == id)
-            .map(|p| Arc::clone(&p.results))
+        self.find_query(id).map(|p| Arc::clone(&p.results))
     }
 
     /// Creates a new ephemeral query (not yet persisted) and selects it, opening
@@ -489,7 +559,8 @@ impl App {
             definition: self.definition_for_base("track".to_string()),
         };
         let id = query.id;
-        self.pages.push(QueryPage::ephemeral(query));
+        self.pages
+            .push(Page::Query(Box::new(QueryPage::ephemeral(query))));
         self.select_page(id);
         self.expanded_preset = None;
         self.builder_section = Some(Section::Filter);
@@ -501,7 +572,7 @@ impl App {
     /// are carried into the duplicate; its name is computed like a freshly created
     /// query's (see [`rpc::now_name`]).
     pub(crate) fn duplicate_query(&mut self, id: Uuid) {
-        let Some(source) = self.pages.iter().find(|p| p.live.id == id) else {
+        let Some(source) = self.find_query(id) else {
             return;
         };
         let now = rpc::now_epoch();
@@ -514,7 +585,8 @@ impl App {
             definition: source.live.definition.clone(),
         };
         let new_id = query.id;
-        self.pages.push(QueryPage::ephemeral(query));
+        self.pages
+            .push(Page::Query(Box::new(QueryPage::ephemeral(query))));
         self.select_page(new_id);
     }
 
@@ -563,9 +635,14 @@ impl App {
     }
 
     pub(crate) fn select_page(&mut self, id: Uuid) {
-        self.current = CurrentPage::Query(id);
+        self.current = self
+            .pages
+            .iter()
+            .find(|p| p.id() == id)
+            .map_or(CurrentPage::Query(id), Page::marker);
         self.selection.clear();
         self.selection_anchor = None;
+        self.selection_lead = None;
     }
 
     /// Opens the saved query `id` in a tab and selects it. If it's already open,
@@ -575,15 +652,15 @@ impl App {
     /// preview-tab behaviour. Reusing the slot drops the old page, clearing its
     /// cached results.
     pub(crate) fn open_query(&mut self, id: Uuid) {
-        if self.pages.iter().any(|p| p.live.id == id) {
+        if self.pages.iter().any(|p| p.id() == id) {
             self.select_page(id);
             return;
         }
         let Some(query) = self.saved_queries.iter().find(|q| q.id == id).cloned() else {
             return;
         };
-        let page = QueryPage::persisted(query); // opens unpinned (preview)
-        if let Some(slot) = self.pages.iter().position(|p| !p.pinned) {
+        let page = Page::Query(Box::new(QueryPage::persisted(query))); // opens unpinned (preview)
+        if let Some(slot) = self.pages.iter().position(|p| !p.pinned()) {
             self.pages[slot] = page;
         } else {
             self.pages.push(page);
@@ -595,10 +672,10 @@ impl App {
     /// was the current tab, selects an adjacent tab (the one that slid into its
     /// slot, else the previous one), or the welcome page if none remain.
     pub(crate) fn close_tab(&mut self, id: Uuid) {
-        let Some(idx) = self.pages.iter().position(|p| p.live.id == id) else {
+        let Some(idx) = self.pages.iter().position(|p| p.id() == id) else {
             return;
         };
-        let was_current = self.current.query_id() == Some(id);
+        let was_current = self.current.page_id() == Some(id);
         // Dropping the page releases its `results` Arc, freeing the result set.
         self.pages.remove(idx);
         if self.rename.as_ref().is_some_and(|r| r.id == id) {
@@ -609,22 +686,23 @@ impl App {
                 .pages
                 .get(idx)
                 .or_else(|| idx.checked_sub(1).and_then(|i| self.pages.get(i)));
-            self.current = next.map_or(CurrentPage::Welcome, |p| CurrentPage::Query(p.live.id));
+            self.current = next.map_or(CurrentPage::Welcome, Page::marker);
             self.selection.clear();
             self.selection_anchor = None;
+            self.selection_lead = None;
         }
     }
 
-    /// Toggles whether the tab for `id` is pinned.
+    /// Toggles whether the tab for `id` is pinned. Only query tabs pin.
     pub(crate) fn toggle_pin(&mut self, id: Uuid) {
-        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+        if let Some(page) = self.find_query_mut(id) {
             page.pinned = !page.pinned;
         }
     }
 
-    /// Pins the tab for `id` (a no-op if it's already pinned or not open).
+    /// Pins the tab for `id` (a no-op if it's already pinned or not an open query).
     pub(crate) fn pin_tab(&mut self, id: Uuid) {
-        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+        if let Some(page) = self.find_query_mut(id) {
             page.pinned = true;
         }
     }
@@ -632,7 +710,7 @@ impl App {
     /// Moves the tab `id` to index `to` in the tab order (clamped in range),
     /// backing tab drag-to-reorder.
     pub(crate) fn move_tab(&mut self, id: Uuid, to: usize) {
-        let Some(from) = self.pages.iter().position(|p| p.live.id == id) else {
+        let Some(from) = self.pages.iter().position(|p| p.id() == id) else {
             return;
         };
         let to = to.min(self.pages.len().saturating_sub(1));
@@ -660,9 +738,7 @@ impl App {
         // A rename can be started from the Queries list for a query that isn't
         // open in a tab; seed the edit buffer from whichever record we have.
         let name = self
-            .pages
-            .iter()
-            .find(|p| p.live.id == id)
+            .find_query(id)
             .map(|p| p.live.name.clone())
             .or_else(|| {
                 self.saved_queries
@@ -699,7 +775,7 @@ impl App {
         let mut persisted = false;
         // Update the open tab, if any (its live name, plus the saved snapshot so
         // the rename doesn't register as an unsaved change).
-        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) {
+        if let Some(page) = self.find_query_mut(id) {
             if page.live.name == name {
                 return;
             }
@@ -730,7 +806,7 @@ impl App {
     /// to). Also cancels any in-progress rename of the query, since reverting
     /// restores its saved name.
     pub(crate) fn revert_query(&mut self, id: Uuid) {
-        let Some(page) = self.pages.iter_mut().find(|p| p.live.id == id) else {
+        let Some(page) = self.find_query_mut(id) else {
             return;
         };
         let Some(saved) = page.saved.clone() else {
@@ -747,9 +823,7 @@ impl App {
     /// taken from whichever record exists.
     pub(crate) fn request_delete(&mut self, id: Uuid) {
         let pending = self
-            .pages
-            .iter()
-            .find(|p| p.live.id == id)
+            .find_query(id)
             .map(|page| PendingDelete {
                 id,
                 name: page.live.name.clone(),
@@ -775,11 +849,7 @@ impl App {
     /// Closing the tab handles navigating away if it was the current page.
     pub(crate) fn delete_query(&mut self, id: Uuid) {
         let persisted = self.saved_queries.iter().any(|q| q.id == id)
-            || self
-                .pages
-                .iter()
-                .find(|p| p.live.id == id)
-                .is_some_and(QueryPage::is_persisted);
+            || self.find_query(id).is_some_and(QueryPage::is_persisted);
         self.saved_queries.retain(|q| q.id != id);
         if persisted {
             rpc::delete_query(id);
@@ -938,6 +1008,7 @@ impl App {
 
         self.selection.clear();
         self.selection_anchor = None;
+        self.selection_lead = None;
         if let Some(page) = self.current_page_mut() {
             page.results_fetched = true;
         }
@@ -992,10 +1063,32 @@ impl App {
         http::run_query(sql, &results, &ctx);
     }
 
-    /// Persists the current page's live query. Inserts it if it's new, otherwise
-    /// updates its definition; either way bumps `modified_at`.
+    /// Persists the current page's live query. A no-op unless a query tab is
+    /// active. See [`save_page`](Self::save_page).
     pub(crate) fn save_current(&mut self) {
-        let Some(page) = self.current_page_mut() else {
+        if let Some(id) = self.current.query_id() {
+            self.save_page(id);
+        }
+    }
+
+    /// Persists every open query tab that has unsaved changes.
+    pub(crate) fn save_all_unsaved(&mut self) {
+        let ids: Vec<Uuid> = self
+            .pages
+            .iter()
+            .filter_map(Page::as_query)
+            .filter(|p| p.unsaved())
+            .map(|p| p.live.id)
+            .collect();
+        for id in ids {
+            self.save_page(id);
+        }
+    }
+
+    /// Persists the query page `id`. Inserts it if it's new, otherwise updates its
+    /// definition; either way bumps `modified_at` and pins the tab.
+    fn save_page(&mut self, id: Uuid) {
+        let Some(page) = self.find_query_mut(id) else {
             return;
         };
         page.live.modified_at = rpc::now_epoch();
@@ -1039,7 +1132,7 @@ impl App {
         // Record the play on the originating query. Updating both live and saved
         // equally keeps `last_play` out of the unsaved comparison.
         let now = rpc::now_epoch();
-        if let Some(page) = self.pages.iter_mut().find(|p| p.live.id == source_page) {
+        if let Some(page) = self.find_query_mut(source_page) {
             page.live.last_play = now;
             if let Some(saved) = page.saved.as_mut() {
                 saved.last_play = now;
@@ -1051,6 +1144,29 @@ impl App {
         if let Some(query) = self.saved_queries.iter_mut().find(|q| q.id == source_page) {
             query.last_play = now;
         }
+    }
+
+    /// Opens (or focuses) the singleton Keyboard Shortcuts editor tab.
+    pub(crate) fn open_keyboard_shortcuts(&mut self) {
+        if !self
+            .pages
+            .iter()
+            .any(|p| matches!(p, Page::KeyboardShortcuts))
+        {
+            self.pages.push(Page::KeyboardShortcuts);
+        }
+        self.current = CurrentPage::KeyboardShortcuts;
+        self.selection.clear();
+        self.selection_anchor = None;
+        self.selection_lead = None;
+    }
+
+    /// Records that a command was just used, moving it to the front of the MRU
+    /// list (capped) so the palette can surface recent commands first.
+    pub(crate) fn record_command_use(&mut self, cmd: CommandId) {
+        self.command_mru.retain(|c| *c != cmd);
+        self.command_mru.insert(0, cmd);
+        self.command_mru.truncate(10);
     }
 }
 

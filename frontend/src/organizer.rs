@@ -39,8 +39,11 @@ struct OpenedItem {
     name: String,
     unsaved: bool,
     pinned: bool,
+    /// True for the singleton keyboard-shortcuts tab: rendered with the keyboard
+    /// icon and no query options menu.
+    settings: bool,
     // Per-item options-menu parameters, so a row's context menu matches the
-    // toolbar/tab menu for *that* query.
+    // toolbar/tab menu for *that* query. Unused for the settings tab.
     base_table: String,
     full_mode: bool,
     show_revert: bool,
@@ -77,6 +80,8 @@ struct ListActions {
     rename_cancel: bool,
     toggle_opened_collapsed: bool,
     toggle_queries_collapsed: bool,
+    /// The Settings footer's "Keyboard shortcuts" entry was chosen.
+    open_shortcuts: bool,
     /// An "Opened" row's context menu produced a choice from the query options
     /// menu (the same one the toolbar and tab handles show).
     menu: Option<(Uuid, PageMenu)>,
@@ -271,6 +276,12 @@ impl App {
         if actions.refresh {
             rpc::list_queries(Arc::clone(&self.loaded_queries), ctx.clone());
         }
+        if actions.open_shortcuts {
+            self.open_keyboard_shortcuts();
+            if close_on_select {
+                self.organizer.open = false;
+            }
+        }
         // Applied last: closing a tab can change the current page.
         if let Some(id) = actions.close {
             self.close_tab(id);
@@ -285,14 +296,27 @@ impl App {
     fn opened_items(&self) -> Vec<OpenedItem> {
         self.pages
             .iter()
-            .map(|p| OpenedItem {
-                id: p.live.id,
-                name: p.live.name.clone(),
-                unsaved: p.unsaved(),
-                pinned: p.pinned,
-                base_table: p.live.definition.base.clone(),
-                full_mode: p.live.definition.is_full(),
-                show_revert: p.is_persisted() && p.unsaved(),
+            .map(|p| match p {
+                crate::page::Page::Query(q) => OpenedItem {
+                    id: q.live.id,
+                    name: q.live.name.clone(),
+                    unsaved: q.unsaved(),
+                    pinned: q.pinned,
+                    settings: false,
+                    base_table: q.live.definition.base.clone(),
+                    full_mode: q.live.definition.is_full(),
+                    show_revert: q.is_persisted() && q.unsaved(),
+                },
+                crate::page::Page::KeyboardShortcuts => OpenedItem {
+                    id: crate::page::SHORTCUTS_PAGE_ID,
+                    name: "Keyboard Shortcuts".to_owned(),
+                    unsaved: false,
+                    pinned: true,
+                    settings: true,
+                    base_table: String::new(),
+                    full_mode: false,
+                    show_revert: false,
+                },
             })
             .collect()
     }
@@ -308,9 +332,7 @@ impl App {
             .filter(|q| filter.is_empty() || q.name.to_lowercase().contains(&filter))
             .map(|q| {
                 let unsaved = self
-                    .pages
-                    .iter()
-                    .find(|p| p.live.id == q.id)
+                    .find_query(q.id)
                     .is_some_and(crate::page::QueryPage::unsaved);
                 (
                     q.created_at,
@@ -374,6 +396,23 @@ fn draw_explorer(
 ) -> ListActions {
     let (opened_collapsed, queries_collapsed) = collapse;
     let mut actions = ListActions::default();
+
+    // A Settings dropdown pinned to the very bottom of the sidebar. Added before
+    // the scroll area so it reserves its strip and the list fills the rest.
+    let panel_fill = ui.style().visuals.panel_fill;
+    egui::Panel::bottom("explorer_footer")
+        .exact_size(34.0)
+        .show_separator_line(true)
+        .frame(
+            egui::Frame::new()
+                .fill(panel_fill)
+                .inner_margin(egui::Margin::symmetric(0, 2)),
+        )
+        .show_inside(ui, |ui| {
+            if settings_footer(ui) {
+                actions.open_shortcuts = true;
+            }
+        });
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -522,6 +561,52 @@ fn collapse_header(
     (resp.clicked(), refresh_clicked)
 }
 
+/// The Settings dropdown pinned to the bottom of the explorer: small gray
+/// "Settings" text with a gear icon, opening a one-item menu ("Keyboard
+/// shortcuts"). Returns `true` when that entry is chosen.
+fn settings_footer(ui: &mut egui::Ui) -> bool {
+    let height = 30.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let (hover_fill, weak, strong) = {
+        let v = ui.visuals();
+        (
+            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+            v.weak_text_color(),
+            v.text_color(),
+        )
+    };
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, hover_fill);
+    }
+    let color = if resp.hovered() { strong } else { weak };
+    ui.painter().text(
+        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        icons::SETTINGS.codepoint,
+        icons::font_id(16.0),
+        color,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 34.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Settings",
+        egui::FontId::proportional(13.0),
+        color,
+    );
+
+    egui::Popup::menu(&resp)
+        .align(egui::RectAlign::TOP_START)
+        .show(|ui| {
+            ui.set_width(180.0);
+            crate::now_playing::menu_item(ui, icons::KEYBOARD, "Keyboard shortcuts", true, None)
+                .clicked()
+        })
+        .is_some_and(|inner| inner.inner)
+}
+
 /// A muted, indented hint shown in place of an empty section's rows.
 fn section_hint(ui: &mut egui::Ui, text: &str) {
     let (rect, _) =
@@ -553,12 +638,17 @@ fn row_background(ui: &egui::Ui, rect: egui::Rect, hovered: bool) -> egui::Color
     v.text_color()
 }
 
-/// Paints a row's leading query icon, aligned with the section header's chevron.
-fn paint_row_icon(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
+/// Paints a row's leading icon, aligned with the section header's chevron.
+fn paint_row_icon(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    icon: icons::MaterialIcon,
+    color: egui::Color32,
+) {
     ui.painter().text(
         egui::pos2(rect.left() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        icons::QUERY.codepoint,
+        icon.codepoint,
         icons::font_id(14.0),
         color,
     );
@@ -602,7 +692,12 @@ fn opened_row_widget(
             .rect_filled(accent_rect, 0.0, crate::HOVER_BLUE);
     }
     let icon_color = icons::DEFAULT_COLOR;
-    paint_row_icon(ui, rect, icon_color);
+    let row_icon = if item.settings {
+        icons::KEYBOARD
+    } else {
+        icons::QUERY
+    };
+    paint_row_icon(ui, rect, row_icon, icon_color);
 
     // Close (×) at the far right, then — only when unpinned — a pin toggle to
     // its left.
@@ -698,18 +793,21 @@ fn opened_row_widget(
         },
     );
 
-    outcome.menu = egui::Popup::context_menu(&response)
-        .show(|ui| {
-            page_options_menu(
-                ui,
-                &item.base_table,
-                item.full_mode,
-                item.show_revert,
-                Some(item.pinned),
-                schema,
-            )
-        })
-        .and_then(|inner| inner.inner);
+    // The settings tab has no query options menu.
+    if !item.settings {
+        outcome.menu = egui::Popup::context_menu(&response)
+            .show(|ui| {
+                page_options_menu(
+                    ui,
+                    &item.base_table,
+                    item.full_mode,
+                    item.show_revert,
+                    Some(item.pinned),
+                    schema,
+                )
+            })
+            .and_then(|inner| inner.inner);
+    }
 
     outcome.close = close.clicked();
     outcome.pin = pin.is_some_and(|p| p.clicked());
@@ -733,7 +831,7 @@ fn saved_row_widget(
     );
     let text_color = row_background(ui, rect, response.hovered());
     let weak_text = ui.visuals().weak_text_color();
-    paint_row_icon(ui, rect, icons::DEFAULT_COLOR);
+    paint_row_icon(ui, rect, icons::QUERY, icons::DEFAULT_COLOR);
 
     // Inline rename in place of the name for this row.
     let editing = rename
@@ -918,7 +1016,10 @@ mod snapshot_tests {
             query(1, "Road Trip Mixtape"),
         ];
         App {
-            pages,
+            pages: pages
+                .into_iter()
+                .map(|p| crate::page::Page::Query(Box::new(p)))
+                .collect(),
             saved_queries,
             current,
             auto_selected_initial: true,

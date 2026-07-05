@@ -43,6 +43,15 @@ pub(crate) struct Preset {
     pub(crate) modified_at: i64,
 }
 
+/// A user override for a command's keyboard shortcut, as exchanged over the wire.
+/// `chord` is `None` when the command is explicitly unbound. Mirrors the
+/// `settings.keybinding` row (see backend migration 0002).
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Keybinding {
+    pub(crate) command_id: String,
+    pub(crate) chord: Option<String>,
+}
+
 /// Current wall-clock time as epoch seconds (local clock).
 pub(crate) fn now_epoch() -> i64 {
     jiff::Zoned::now().timestamp().as_second()
@@ -138,6 +147,32 @@ pub(crate) fn rename_query(id: Uuid, name: &str) {
 pub(crate) fn delete_query(id: Uuid) {
     let params = json!({ "id": id });
     dispatch_call("query.delete", params, |_| {});
+}
+
+/// Fetches every persisted keybinding override and stores it in `out` to drain.
+pub(crate) fn list_keybindings(out: Arc<Mutex<Option<Vec<Keybinding>>>>, ctx: egui::Context) {
+    dispatch_call("keybinding.list", Value::Null, move |result| {
+        if let Ok(value) = result
+            && let Ok(list) = serde_json::from_value::<Vec<Keybinding>>(value)
+        {
+            *out.lock().unwrap() = Some(list);
+            ctx.request_repaint();
+        }
+    });
+}
+
+/// Persists a keybinding override: `chord` is the serialized chord, or `None` to
+/// record the command as explicitly unbound. Fire-and-forget.
+pub(crate) fn set_keybinding(command_id: &str, chord: Option<&str>) {
+    let params = json!({ "command_id": command_id, "chord": chord });
+    dispatch_call("keybinding.set", params, |_| {});
+}
+
+/// Removes a keybinding override, reverting the command to its default.
+/// Fire-and-forget.
+pub(crate) fn delete_keybinding(command_id: &str) {
+    let params = json!({ "command_id": command_id });
+    dispatch_call("keybinding.delete", params, |_| {});
 }
 
 fn extract_result(value: &Value) -> Result<Value, String> {

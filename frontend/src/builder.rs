@@ -851,7 +851,11 @@ impl App {
     fn delete_preset(&mut self, id: Uuid) {
         self.presets.retain(|p| p.id != id);
         rpc::delete_preset(id);
-        for page in &mut self.pages {
+        for page in self
+            .pages
+            .iter_mut()
+            .filter_map(crate::page::Page::as_query_mut)
+        {
             let def = &mut page.live.definition;
             def.filter.presets.retain(|p| *p != id);
             if def.sort == SectionContent::Preset(id) {
@@ -876,6 +880,7 @@ impl App {
     fn preset_usage_count(&self, id: Uuid) -> usize {
         self.pages
             .iter()
+            .filter_map(crate::page::Page::as_query)
             .filter(|p| p.live.definition.references_preset(id))
             .count()
     }
@@ -1964,7 +1969,10 @@ mod manage_presets_snapshot_tests {
 
         App {
             presets,
-            pages,
+            pages: pages
+                .into_iter()
+                .map(|p| crate::page::Page::Query(Box::new(p)))
+                .collect(),
             current: crate::page::CurrentPage::Query(current_id),
             manage_presets: true,
             manage_expanded: expanded,

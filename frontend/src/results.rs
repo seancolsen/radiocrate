@@ -205,15 +205,22 @@ impl App {
                 let mut clicked: Option<(usize, egui::Modifiers)> = None;
                 let mut double_clicked: Option<(usize, String)> = None;
 
-                let pending_locate = self
-                    .pending_scroll_to_row
+                let pending_scroll = self
+                    .pending_scroll
                     .take()
-                    .filter(|i| *i < state.rows.len());
-                if let Some(idx) = pending_locate {
+                    .filter(|p| p.row < state.rows.len());
+                // A "Locate"-style request (`select`) jump-selects the row; a
+                // keyboard-navigation request leaves the already-updated selection
+                // alone and only scrolls.
+                if let Some(p) = pending_scroll
+                    && p.select
+                {
                     self.selection.clear();
-                    self.selection.insert(idx);
-                    self.selection_anchor = Some(idx);
+                    self.selection.insert(p.row);
+                    self.selection_anchor = Some(p.row);
+                    self.selection_lead = Some(p.row);
                 }
+                let pending_locate = pending_scroll.map(|p| p.row);
 
                 let metrics = self.row_metrics(ui, &state);
                 let row_height = metrics.row_height;
@@ -309,16 +316,68 @@ impl App {
             for i in lo..=hi {
                 self.selection.insert(i);
             }
+            self.selection_lead = Some(index);
         } else if modifiers.command || modifiers.ctrl {
             if !self.selection.remove(&index) {
                 self.selection.insert(index);
             }
             self.selection_anchor = Some(index);
+            self.selection_lead = Some(index);
         } else {
             self.selection.clear();
             self.selection.insert(index);
             self.selection_anchor = Some(index);
+            self.selection_lead = Some(index);
         }
+    }
+
+    /// Moves the result-row selection one row down (`forward`) or up. With
+    /// `extend`, grows the selection from the anchor to the new row (Shift+Arrow);
+    /// otherwise selects just the new row. Clamps at the ends and scrolls the row
+    /// into view. Backs the `results.select_*`/`results.extend_*` commands.
+    pub(crate) fn select_row_delta(&mut self, forward: bool, extend: bool) {
+        let Some(id) = self.current.query_id() else {
+            return;
+        };
+        let Some(results) = self.page_results(id) else {
+            return;
+        };
+        let len = results.lock().unwrap().rows.len();
+        if len == 0 {
+            return;
+        }
+        let last = len - 1;
+        // Grow from the current lead (or anchor); with nothing selected yet, an
+        // initial Down selects the first row and Up the last.
+        let target = match self.selection_lead.or(self.selection_anchor) {
+            Some(cur) if forward => (cur + 1).min(last),
+            Some(cur) => cur.saturating_sub(1),
+            None if forward => 0,
+            None => last,
+        };
+
+        if extend {
+            let anchor = self.selection_anchor.unwrap_or(target);
+            self.selection_anchor = Some(anchor);
+            let (lo, hi) = if anchor <= target {
+                (anchor, target)
+            } else {
+                (target, anchor)
+            };
+            self.selection.clear();
+            for i in lo..=hi {
+                self.selection.insert(i);
+            }
+        } else {
+            self.selection.clear();
+            self.selection.insert(target);
+            self.selection_anchor = Some(target);
+        }
+        self.selection_lead = Some(target);
+        self.pending_scroll = Some(crate::PendingScroll {
+            row: target,
+            select: false,
+        });
     }
 }
 

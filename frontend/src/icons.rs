@@ -78,6 +78,12 @@ pub(crate) const SHUFFLE: MaterialIcon = mi::ICON_SHUFFLE;
 /// Manage the whole preset library ("toolbox").
 pub(crate) const MANAGE_PRESETS: MaterialIcon = mi::ICON_HANDYMAN;
 
+// Settings & command palette.
+/// The Settings dropdown trigger at the bottom of the explorer.
+pub(crate) const SETTINGS: MaterialIcon = mi::ICON_SETTINGS;
+/// The Keyboard Shortcuts settings entry and its tab handle.
+pub(crate) const KEYBOARD: MaterialIcon = mi::ICON_KEYBOARD_ALT;
+
 // Playback.
 pub(crate) const PLAY: MaterialIcon = mi::ICON_PLAY_ARROW;
 pub(crate) const PAUSE: MaterialIcon = mi::ICON_PAUSE;
