@@ -2086,6 +2086,7 @@ dependencies = [
  "egui_material_icons",
  "futures-util",
  "gloo-net",
+ "image",
  "jiff",
  "js-sys",
  "polyglot-sql",

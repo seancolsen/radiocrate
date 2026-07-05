@@ -2,7 +2,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::{App, setup_fonts};
+use crate::{App, setup_context};
 
 const CANVAS_ID: &str = "the_canvas_id";
 
@@ -26,7 +26,7 @@ pub fn auto_start() {
                 canvas,
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
-                    setup_fonts(&cc.egui_ctx);
+                    setup_context(&cc.egui_ctx);
                     Ok(Box::new(App::default()))
                 }),
             )

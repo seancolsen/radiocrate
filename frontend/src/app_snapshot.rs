@@ -14,14 +14,12 @@
 //! for real. Generate or refresh the baseline with
 //! `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
 
-use std::cell::Cell;
 use std::sync::Arc;
 
 use arrow_array::builder::{Float64Builder, ListBuilder, StringBuilder};
 use arrow_array::{ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow_ipc::writer::StreamWriter;
 use eframe::egui;
-use egui_kittest::Harness;
 use uuid::Uuid;
 
 use crate::App;
@@ -30,9 +28,7 @@ use crate::format::{DecimalPlaces, Formatter};
 use crate::page::QueryPage;
 use crate::query_def::{FilterParts, QueryDefinition, Section, SectionContent};
 use crate::rpc::Query;
-
-/// Render at 2× device scale (the project convention) so text stays crisp.
-const PPP: f32 = 2.0;
+use crate::snapshot_harness::{self, Run, snapshot_dual, snapshot_dual_run};
 
 /// The query's custom display spec, held in the query definition so the Display
 /// section (were it opened) would show exactly this. The resolved per-column
@@ -408,22 +404,12 @@ fn pill_overflow() {
     };
     app.organizer.open = false;
 
-    let fonts_ready = Cell::new(false);
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(460.0, 290.0))
-        .with_pixels_per_point(PPP)
-        .build_ui(move |ui| {
-            if !fonts_ready.replace(true) {
-                crate::setup_fonts(ui.ctx());
-                ui.ctx()
-                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                return;
-            }
-            app.render_root(ui);
-        });
+    let mut harness = snapshot_harness::harness(egui::vec2(460.0, 290.0), move |ui| {
+        app.render_root(ui);
+    });
 
     harness.run();
-    harness.snapshot("app/pill_overflow");
+    snapshot_dual(&mut harness, "app/pill_overflow");
 }
 
 #[test]
@@ -448,26 +434,12 @@ fn whole_app() {
     };
     app.organizer.open = true;
 
-    // `build_ui` runs the closure once before the context can be configured, so
-    // bind the bundled fonts + light visuals on the first frame and start drawing
-    // the app from the next one (font changes only take effect the following
-    // frame) — matching the other snapshot tests.
-    let fonts_ready = Cell::new(false);
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1040.0, 490.0))
-        .with_pixels_per_point(PPP)
-        .build_ui(move |ui| {
-            if !fonts_ready.replace(true) {
-                crate::setup_fonts(ui.ctx());
-                ui.ctx()
-                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                return;
-            }
-            app.render_root(ui);
-        });
+    let mut harness = snapshot_harness::harness(egui::vec2(1040.0, 490.0), move |ui| {
+        app.render_root(ui);
+    });
 
     harness.run();
-    harness.snapshot("app/whole_app");
+    snapshot_dual(&mut harness, "app/whole_app");
 }
 
 #[test]
@@ -492,21 +464,11 @@ fn command_palette() {
     };
     app.organizer.open = false;
 
-    let fonts_ready = Cell::new(false);
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(760.0, 480.0))
-        .with_pixels_per_point(PPP)
-        .build_ui(move |ui| {
-            if !fonts_ready.replace(true) {
-                crate::setup_fonts(ui.ctx());
-                ui.ctx()
-                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                return;
-            }
-            app.render_root(ui);
-        });
+    let mut harness = snapshot_harness::harness(egui::vec2(760.0, 480.0), move |ui| {
+        app.render_root(ui);
+    });
     harness.run();
-    harness.snapshot("app/command_palette");
+    snapshot_dual(&mut harness, "app/command_palette");
 }
 
 #[test]
@@ -531,21 +493,11 @@ fn keyboard_shortcuts_tab() {
     let mut app = app;
     app.organizer.open = false;
 
-    let fonts_ready = Cell::new(false);
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(900.0, 560.0))
-        .with_pixels_per_point(PPP)
-        .build_ui(move |ui| {
-            if !fonts_ready.replace(true) {
-                crate::setup_fonts(ui.ctx());
-                ui.ctx()
-                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                return;
-            }
-            app.render_root(ui);
-        });
+    let mut harness = snapshot_harness::harness(egui::vec2(900.0, 560.0), move |ui| {
+        app.render_root(ui);
+    });
     harness.run();
-    harness.snapshot("app/keyboard_shortcuts");
+    snapshot_dual(&mut harness, "app/keyboard_shortcuts");
 }
 
 /// A narrower rig sharing `whole_app`'s "Lemonade" page but without the
@@ -573,25 +525,17 @@ fn results_only_app(mut page: QueryPage) -> App {
 /// (never-reached) steady state.
 fn snapshot_results_app(name: &str, mut app: App, spinning: bool) {
     app.organizer.open = false;
-    let fonts_ready = Cell::new(false);
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1040.0, 340.0))
-        .with_pixels_per_point(PPP)
-        .build_ui(move |ui| {
-            if !fonts_ready.replace(true) {
-                crate::setup_fonts(ui.ctx());
-                ui.ctx()
-                    .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                return;
-            }
-            app.render_root(ui);
-        });
-    if spinning {
-        harness.run_steps(2);
-    } else {
-        harness.run();
+    let mut harness = snapshot_harness::harness(egui::vec2(1040.0, 340.0), move |ui| {
+        app.render_root(ui);
+    });
+    let run = if spinning { Run::Steps(2) } else { Run::Settle };
+    match run {
+        Run::Steps(n) => harness.run_steps(n),
+        Run::Settle => {
+            harness.run();
+        }
     }
-    harness.snapshot(format!("app/{name}"));
+    snapshot_dual_run(&mut harness, &format!("app/{name}"), &run);
 }
 
 /// A couple of selected result rows: the light-blue selection fill (the same

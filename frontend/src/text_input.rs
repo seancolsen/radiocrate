@@ -148,15 +148,13 @@ mod snapshot_tests {
     use std::rc::Rc;
 
     use eframe::egui;
-    use egui_kittest::Harness;
 
     use super::{button, with_menu};
+    use crate::snapshot_harness::{self, snapshot_dual};
 
     /// Logical width of the test container — wide enough to mirror a real Filter
     /// section without forcing a wrap until we want one.
     const CONTAINER_W: f32 = 320.0;
-    /// Render at 2× device scale so text is crisp enough to judge spacing by eye.
-    const PPP: f32 = 2.0;
 
     /// Where, if anywhere, the pointer hovers for a given case.
     #[derive(Clone, Copy, PartialEq)]
@@ -174,51 +172,31 @@ mod snapshot_tests {
         // pointer at it: (input rect, trigger rect).
         let rects: Rc<Cell<Option<(egui::Rect, egui::Rect)>>> = Rc::new(Cell::new(None));
         let rects_in_ui = rects.clone();
-        // `build_ui` runs the closure once immediately, before we can configure
-        // the context. The widget paints the trigger glyph from the
-        // `material-icons` family, which isn't bound until `setup_fonts`, so we
-        // bind fonts on that first frame and skip drawing the widget until the
-        // next one (font changes only take effect on the following frame).
-        let fonts_ready = Cell::new(false);
-
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(CONTAINER_W, 160.0))
-            .with_pixels_per_point(PPP)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    // Match the running app's environment: bundled fonts + light
-                    // visuals. Also stop the text caret blinking so the focused
-                    // snapshot is deterministic rather than depending on phase.
-                    crate::setup_fonts(ui.ctx());
-                    ui.ctx()
-                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                    return;
-                }
-
-                // Mirror `filter_custom_input` + `monospace_edit`: a monospace
-                // multiline edit that fills the available width and auto-grows
-                // with its line count. `with_menu` reserves the trigger's space
-                // inside that width, so we don't subtract it here.
-                let w = ui.available_width().max(40.0);
-                let rows = buffer.lines().count().max(1);
-                let edit = egui::TextEdit::multiline(&mut buffer)
-                    .desired_width(w)
-                    .desired_rows(rows)
-                    .font(egui::TextStyle::Monospace);
-                let (output, _trigger) = with_menu(ui, edit);
-                if focus {
-                    output.response.request_focus();
-                }
-                // Recompute the trigger rect exactly as `with_menu` does, so we
-                // can aim the pointer at its center for the trigger-hover case.
-                let r = output.response.rect;
-                let side = r.height().min(button::SIZE);
-                let trigger_rect = egui::Rect::from_min_size(
-                    egui::pos2(r.right() - side, r.top()),
-                    egui::vec2(side, side),
-                );
-                rects_in_ui.set(Some((r, trigger_rect)));
-            });
+        let mut harness = snapshot_harness::harness(egui::vec2(CONTAINER_W, 160.0), move |ui| {
+            // Mirror `filter_custom_input` + `monospace_edit`: a monospace
+            // multiline edit that fills the available width and auto-grows
+            // with its line count. `with_menu` reserves the trigger's space
+            // inside that width, so we don't subtract it here.
+            let w = ui.available_width().max(40.0);
+            let rows = buffer.lines().count().max(1);
+            let edit = egui::TextEdit::multiline(&mut buffer)
+                .desired_width(w)
+                .desired_rows(rows)
+                .font(egui::TextStyle::Monospace);
+            let (output, _trigger) = with_menu(ui, edit);
+            if focus {
+                output.response.request_focus();
+            }
+            // Recompute the trigger rect exactly as `with_menu` does, so we
+            // can aim the pointer at its center for the trigger-hover case.
+            let r = output.response.rect;
+            let side = r.height().min(button::SIZE);
+            let trigger_rect = egui::Rect::from_min_size(
+                egui::pos2(r.right() - side, r.top()),
+                egui::vec2(side, side),
+            );
+            rects_in_ui.set(Some((r, trigger_rect)));
+        });
 
         harness.run();
         // Crop the snapshot tightly to the widget rather than the whole container.
@@ -237,7 +215,7 @@ mod snapshot_tests {
             harness.run();
         }
 
-        harness.snapshot(format!("text_input_menu/{name}"));
+        snapshot_dual(&mut harness, &format!("text_input_menu/{name}"));
     }
 
     #[test]

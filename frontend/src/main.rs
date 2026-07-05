@@ -1,7 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use clap::Parser;
-    use frontend::{App, setup_fonts};
+    use frontend::{App, setup_context};
 
     #[derive(Parser)]
     struct Cli {
@@ -17,7 +17,7 @@ mod native {
             "Collectune",
             options,
             Box::new(move |cc| {
-                setup_fonts(&cc.egui_ctx);
+                setup_context(&cc.egui_ctx);
                 if let Some(s) = cli.scale {
                     cc.egui_ctx.set_pixels_per_point(s);
                 }

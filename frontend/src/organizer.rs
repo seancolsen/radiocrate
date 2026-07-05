@@ -963,18 +963,14 @@ fn static_friction(dx: f32, friction: f32) -> f32 {
 /// Generate/refresh with `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
 #[cfg(test)]
 mod snapshot_tests {
-    use std::cell::Cell;
-
     use eframe::egui;
-    use egui_kittest::Harness;
     use uuid::Uuid;
 
     use crate::App;
     use crate::page::QueryPage;
     use crate::query_def::QueryDefinition;
     use crate::rpc::Query;
-
-    const PPP: f32 = 2.0;
+    use crate::snapshot_harness::{self, snapshot_dual};
 
     fn query(id: u128, name: &str) -> Query {
         Query {
@@ -1032,22 +1028,12 @@ mod snapshot_tests {
 
     fn snapshot(name: &str, mut app: App) {
         app.organizer.open = true;
-        let fonts_ready = Cell::new(false);
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(212.0, 380.0))
-            .with_pixels_per_point(PPP)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    crate::setup_fonts(ui.ctx());
-                    ui.ctx()
-                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                    return;
-                }
-                let fill = ui.style().visuals.panel_fill;
-                app.render_persistent_organizer(ui, fill);
-            });
+        let mut harness = snapshot_harness::harness(egui::vec2(212.0, 380.0), move |ui| {
+            let fill = ui.style().visuals.panel_fill;
+            app.render_persistent_organizer(ui, fill);
+        });
         harness.run();
-        harness.snapshot(format!("explorer/{name}"));
+        snapshot_dual(&mut harness, &format!("explorer/{name}"));
     }
 
     #[test]

@@ -53,7 +53,7 @@ docker compose run --rm dev claude --dangerously-skip-permissions
 
 ## Visual regression tests (frontend UI)
 
-The frontend has snapshot tests (built on [`egui_kittest`](https://crates.io/crates/egui_kittest)) that render individual widgets headlessly to PNGs under `frontend/tests/snapshots/`. Each rendered image is compared against a committed baseline, so unintended UI changes show up as a test failure with a `*.diff.png` to inspect. Only the `*.png` baselines are committed; the `*.new.png` / `*.diff.png` / `*.old.png` side files are transient and gitignored.
+The frontend has snapshot tests (built on [`egui_kittest`](https://crates.io/crates/egui_kittest)) that render individual widgets headlessly to PNGs under `frontend/tests/snapshots/`. Every scene is captured twice through the shared rig in `frontend/src/snapshot_harness.rs` — once per theme — and the two frames are stacked into a single baseline: **light mode on top, dark mode on bottom**, split by a 2-device-px gray (`#808080`) rule. Each stacked image is compared against a committed baseline, so unintended UI changes in either theme show up as a test failure with a `*.diff.png` to inspect. Only the `*.png` baselines are committed; the `*.new.png` / `*.diff.png` / `*.old.png` side files are transient and gitignored.
 
 **Run these in the container only.** They render through the container's software Vulkan driver (lavapipe, installed in the `Dockerfile`). Rendering on a host with a different GPU, driver, or font stack produces slightly different pixels and spurious diffs, so the committed baselines are only valid when generated in the container.
 

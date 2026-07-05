@@ -724,18 +724,14 @@ mod tests {
 /// `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
 #[cfg(test)]
 mod snapshot_tests {
-    use std::cell::Cell;
-
     use eframe::egui;
-    use egui_kittest::Harness;
     use uuid::Uuid;
 
     use crate::App;
     use crate::page::QueryPage;
     use crate::query_def::QueryDefinition;
     use crate::rpc::Query;
-
-    const PPP: f32 = 2.0;
+    use crate::snapshot_harness::{self, snapshot_dual};
 
     /// Builds a query with a distinct base so an edited copy reads as unsaved.
     fn query(id: u128, name: &str) -> Query {
@@ -774,19 +770,9 @@ mod snapshot_tests {
         app.presets_fetch_started = true;
         app.auto_selected_initial = true;
 
-        let fonts_ready = Cell::new(false);
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(w, 60.0))
-            .with_pixels_per_point(PPP)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    crate::setup_fonts(ui.ctx());
-                    ui.ctx()
-                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                    return;
-                }
-                app.render_tab_bar(ui);
-            });
+        let mut harness = snapshot_harness::harness(egui::vec2(w, 60.0), move |ui| {
+            app.render_tab_bar(ui);
+        });
 
         harness.run();
         if let Some(pos) = hover {
@@ -799,7 +785,7 @@ mod snapshot_tests {
         }
         // Crop to the painted bar (34pt tall) rather than the whole container.
         harness.fit_contents();
-        harness.snapshot(format!("tabs/{name}"));
+        snapshot_dual(&mut harness, &format!("tabs/{name}"));
     }
 
     /// An app whose current tab is the first page.

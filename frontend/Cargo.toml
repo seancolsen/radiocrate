@@ -19,6 +19,9 @@ workspace = true
 # guarded against regressions. Dev-only, so it never enters the WASM bundle.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 egui_kittest = { version = "0.34", features = ["wgpu", "snapshot"] }
+# Already a transitive dep of egui_kittest's snapshot feature; used directly to
+# stack each scene's light and dark renders into one baseline image.
+image = { version = "0.25", default-features = false }
 
 [dependencies]
 arrow-array = "56"

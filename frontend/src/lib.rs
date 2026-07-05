@@ -31,8 +31,11 @@ mod rpc;
 mod schema;
 mod shortcuts_tab;
 mod skew;
+#[cfg(test)]
+mod snapshot_harness;
 mod tabs;
 mod text_input;
+mod theme;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod welcome;
@@ -73,13 +76,14 @@ const VIEW_SQL_VIEWPORT_MARGIN: f32 = 24.0;
 /// SQL at a constant height while the scroll area absorbs any viewport shrinkage.
 const VIEW_SQL_FOOTER_HEIGHT: f32 = 40.0;
 
-pub fn setup_fonts(ctx: &egui::Context) {
-    // Light theme, but with fully-black body text (egui's default is a dark
-    // gray). Icons are painted in their own dark gray (see [`icons::DEFAULT_COLOR`])
-    // so they still read as secondary chrome against the blacker text.
-    let mut visuals = egui::Visuals::light();
-    visuals.override_text_color = Some(egui::Color32::BLACK);
-    ctx.set_visuals(visuals);
+/// One-time context setup shared by every target: the bundled fonts plus the
+/// light/dark theme palettes.
+pub fn setup_context(ctx: &egui::Context) {
+    setup_fonts(ctx);
+    theme::install(ctx);
+}
+
+fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
     // Bundle our own faces so the UI doesn't depend on system-installed fonts:
@@ -1204,11 +1208,10 @@ mod view_sql_snapshot_tests {
     //! into a modal squeezed by the viewport. Generate or refresh with
     //! `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
 
-    use std::cell::Cell;
-
     use eframe::egui;
 
     use crate::App;
+    use crate::snapshot_harness::{self, snapshot_dual};
 
     /// A long, wide block of SQL: tall enough to overflow the scroll area and with a
     /// line long enough to exercise wrapping at a narrow modal width.
@@ -1243,23 +1246,13 @@ ORDER BY\n  \"track\".\"title\"";
             view_sql: Some(SAMPLE_SQL.to_owned()),
             ..Default::default()
         };
-        // The closure runs once before we can bind fonts; do that on the first frame
-        // and paint the modal from the second (font changes take effect the following
-        // frame), mirroring the filter-builder snapshots. The modal is a `ctx`-level
-        // floating area, so we drive it via `ui.ctx()` rather than the passed `ui`.
-        let fonts_ready = Cell::new(false);
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(size)
-            .with_pixels_per_point(2.0)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    crate::setup_fonts(ui.ctx());
-                    return;
-                }
-                app.render_view_sql_modal(ui.ctx());
-            });
+        // The modal is a `ctx`-level floating area, so we drive it via `ui.ctx()`
+        // rather than the passed `ui`.
+        let mut harness = snapshot_harness::harness(size, move |ui| {
+            app.render_view_sql_modal(ui.ctx());
+        });
         harness.run();
-        harness.snapshot(format!("view_sql_modal/{name}"));
+        snapshot_dual(&mut harness, &format!("view_sql_modal/{name}"));
     }
 
     #[test]

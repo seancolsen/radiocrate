@@ -1631,11 +1631,9 @@ mod snapshot_tests {
     //! - `preset_unsaved_rename_narrow` (F): (B) with the name edited to "base" and
     //!   not yet saved — the unsaved state at a narrow width.
 
-    use std::cell::Cell;
     use std::collections::HashMap;
 
     use eframe::egui;
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use uuid::Uuid;
 
@@ -1643,14 +1641,13 @@ mod snapshot_tests {
     use crate::App;
     use crate::query_def::{FilterParts, QueryDefinition, Section};
     use crate::rpc::Preset;
+    use crate::snapshot_harness::{self, PPP, snapshot_dual};
 
     /// Wide container: the preset tab sits beside the custom input.
     const WIDE: f32 = 660.0;
     /// Half of [`WIDE`]: too narrow for the tab to fit beside the input, so it
     /// wraps to its own row below it.
     const NARROW: f32 = WIDE / 2.0;
-    /// Render at 2× device scale so text is crisp enough to judge spacing by eye.
-    const PPP: f32 = 2.0;
 
     /// The saved preset's name and definition, shared by every variant.
     const PRESET_NAME: &str = "vetted";
@@ -1710,31 +1707,13 @@ mod snapshot_tests {
             ..Default::default()
         };
 
-        // `build_ui` runs the closure once immediately, before we can configure the
-        // context. The builder paints Material Symbols (chevron, preset icon, the
-        // `⋮` trigger, revert/save) that aren't bound until `setup_fonts`, so we
-        // bind fonts on that first frame and skip drawing until the next one (font
-        // changes only take effect on the following frame).
-        let fonts_ready = Cell::new(false);
-
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(scene.width, 240.0))
-            .with_pixels_per_point(PPP)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    // Match the running app: bundled fonts + light visuals, with a
-                    // non-blinking caret so the snapshot is phase-independent.
-                    crate::setup_fonts(ui.ctx());
-                    ui.ctx()
-                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                    return;
-                }
-                // No options trigger (`None`): the toolbar gear that anchors the
-                // section options popup lives in the menu bar, outside this widget,
-                // so that popup isn't part of the state we're capturing.
-                let mut run = false;
-                app.filter_builder_ui(ui, &mut def, None, &mut run);
-            });
+        let mut harness = snapshot_harness::harness(egui::vec2(scene.width, 240.0), move |ui| {
+            // No options trigger (`None`): the toolbar gear that anchors the
+            // section options popup lives in the menu bar, outside this widget,
+            // so that popup isn't part of the state we're capturing.
+            let mut run = false;
+            app.filter_builder_ui(ui, &mut def, None, &mut run);
+        });
 
         harness.run();
         if scene.hover_name {
@@ -1750,7 +1729,7 @@ mod snapshot_tests {
         }
         // Crop tightly to the rendered builder rather than the whole container.
         harness.fit_contents();
-        harness.snapshot(format!("filter_builder/{name}"));
+        snapshot_dual(&mut harness, &format!("filter_builder/{name}"));
     }
 
     #[test]
@@ -1859,11 +1838,9 @@ mod manage_presets_snapshot_tests {
     //!   (renamed), so it reads as dirty (star + enabled save/revert).
     //! - `manage_empty`: no presets yet (the empty state + enabled "New preset").
 
-    use std::cell::Cell;
     use std::collections::HashMap;
 
     use eframe::egui;
-    use egui_kittest::Harness;
     use uuid::Uuid;
 
     use super::PresetEdit;
@@ -1871,9 +1848,7 @@ mod manage_presets_snapshot_tests {
     use crate::page::QueryPage;
     use crate::query_def::{FilterParts, QueryDefinition, Section, SectionContent};
     use crate::rpc::{Preset, Query};
-
-    /// Render at 2× device scale so text is crisp enough to judge spacing by eye.
-    const PPP: f32 = 2.0;
+    use crate::snapshot_harness::{self, snapshot_dual};
 
     const FILTER_ID: Uuid = Uuid::from_u128(1);
     const SORT_ID: Uuid = Uuid::from_u128(2);
@@ -1983,25 +1958,12 @@ mod manage_presets_snapshot_tests {
 
     /// Renders the modal in `app` and writes its PNG to `manage_presets/<name>`.
     fn snapshot(name: &str, size: egui::Vec2, mut app: App) {
-        // `build_ui` runs the closure once immediately, before fonts are bound;
-        // bind them on that first frame and skip drawing until the next (font
-        // changes only take effect on the following frame).
-        let fonts_ready = Cell::new(false);
-        let mut harness = Harness::builder()
-            .with_size(size)
-            .with_pixels_per_point(PPP)
-            .build_ui(move |ui| {
-                if !fonts_ready.replace(true) {
-                    crate::setup_fonts(ui.ctx());
-                    ui.ctx()
-                        .global_style_mut(|s| s.visuals.text_cursor.blink = false);
-                    return;
-                }
-                let ctx = ui.ctx().clone();
-                app.render_manage_presets_modal(&ctx);
-            });
+        let mut harness = snapshot_harness::harness(size, move |ui| {
+            let ctx = ui.ctx().clone();
+            app.render_manage_presets_modal(&ctx);
+        });
         harness.run();
-        harness.snapshot(format!("manage_presets/{name}"));
+        snapshot_dual(&mut harness, &format!("manage_presets/{name}"));
     }
 
     #[test]
