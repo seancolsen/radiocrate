@@ -1147,23 +1147,15 @@ impl App {
         }
         self.audio.load(id);
         self.audio.play();
+        // Queue up everything after this track so the audio element can
+        // auto-advance on its own — including while the tab is backgrounded and
+        // egui isn't painting (see `AudioPlayer::set_queue`).
+        self.refresh_audio_queue(source_page, index);
         http::fetch_track_metadata(id, &self.current_track, ctx);
 
         // Record the play on the originating query. Updating both live and saved
         // equally keeps `last_play` out of the unsaved comparison.
-        let now = rpc::now_epoch();
-        if let Some(page) = self.find_query_mut(source_page) {
-            page.live.last_play = now;
-            if let Some(saved) = page.saved.as_mut() {
-                saved.last_play = now;
-            }
-            if page.is_persisted() {
-                rpc::record_play(source_page, now);
-            }
-        }
-        if let Some(query) = self.saved_queries.iter_mut().find(|q| q.id == source_page) {
-            query.last_play = now;
-        }
+        self.record_play(source_page);
     }
 
     /// Opens (or focuses) the singleton Keyboard Shortcuts editor tab.

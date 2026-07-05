@@ -28,6 +28,16 @@ enum MenuAction {
 
 impl App {
     pub(crate) fn render_now_playing(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+
+        // Fold in any track the audio element auto-advanced to on its own. The
+        // `ended` event that drives that fires even while the tab is
+        // backgrounded and our render loop is suspended, so by the time we paint
+        // again the actually-playing track may be ahead of `current_track`.
+        if let Some(new_id) = self.audio.take_auto_advanced() {
+            self.reconcile_auto_advance(&new_id, &ctx);
+        }
+
         let snapshot = self.current_track.lock().unwrap().clone();
         let Some(ct) = snapshot else {
             return;
@@ -36,16 +46,13 @@ impl App {
         let playing = self.audio.is_playing();
         let position = self.audio.position();
         let duration = self.audio.duration();
-        let ctx = ui.ctx().clone();
 
         if playing {
             ctx.request_repaint_after(Duration::from_millis(50));
         } else if self.audio.has_ended() {
-            if let Some((source, next_idx, id)) = self.next_track_info() {
-                self.play_track(source, next_idx, &id, &ctx);
-            } else {
-                *self.current_track.lock().unwrap() = None;
-            }
+            // Advancement is owned by the audio element's queue now, so reaching
+            // here means the queue ran dry: nothing is left to play.
+            *self.current_track.lock().unwrap() = None;
             ctx.request_repaint();
             return;
         }
@@ -304,6 +311,94 @@ impl App {
             return None;
         }
         Some((source, next_idx, id))
+    }
+
+    /// Folds a background auto-advance (the audio element moved to the next
+    /// queued track on its own, via its `ended` event) into app state: updates
+    /// the now-playing bar's track, re-locates its row, refetches metadata,
+    /// refreshes the audio queue for the new position, and records the play.
+    fn reconcile_auto_advance(&mut self, new_id: &str, ctx: &egui::Context) {
+        let source = {
+            let guard = self.current_track.lock().unwrap();
+            let Some(ct) = guard.as_ref() else {
+                return;
+            };
+            ct.source_page
+        };
+        let row_index = self.locate_row(source, new_id);
+        {
+            let mut guard = self.current_track.lock().unwrap();
+            let Some(ct) = guard.as_mut() else {
+                return;
+            };
+            ct.id = new_id.to_string();
+            ct.row_index = row_index;
+            ct.title = None;
+            ct.artist_names = Vec::new();
+        }
+        crate::http::fetch_track_metadata(new_id, &self.current_track, ctx);
+        if let Some(index) = row_index {
+            self.refresh_audio_queue(source, index);
+        }
+        self.record_play(source);
+    }
+
+    /// Finds the row index of `id` within `source`'s current results, if present.
+    fn locate_row(&self, source: Uuid, id: &str) -> Option<usize> {
+        let results = self.page_results(source)?;
+        let s = results.lock().unwrap();
+        let col = s.track_id_column?;
+        let scan_limit = s.rows.len().min(1000);
+        (0..scan_limit).find(|&i| s.rows.cell_text(i, col).as_deref() == Some(id))
+    }
+
+    /// Hands the audio player the ids of the tracks after `index` in `source`'s
+    /// results, so it can auto-advance through them (even while backgrounded)
+    /// as each track ends.
+    pub(crate) fn refresh_audio_queue(&mut self, source: Uuid, index: usize) {
+        let ids = self.upcoming_track_ids(source, index);
+        self.audio.set_queue(ids);
+    }
+
+    /// The contiguous run of non-empty track ids after `index` in `source`'s
+    /// results, mirroring [`next_track_info`](Self::next_track_info)'s notion of
+    /// "next": it stops at the first empty id (a row without a playable track).
+    fn upcoming_track_ids(&self, source: Uuid, index: usize) -> Vec<String> {
+        let Some(results) = self.page_results(source) else {
+            return Vec::new();
+        };
+        let s = results.lock().unwrap();
+        let Some(col) = s.track_id_column else {
+            return Vec::new();
+        };
+        let len = s.rows.len();
+        let mut ids = Vec::new();
+        for i in (index + 1)..len {
+            match s.rows.cell_text(i, col) {
+                Some(id) if !id.is_empty() => ids.push(id),
+                _ => break,
+            }
+        }
+        ids
+    }
+
+    /// Records a play against `source`'s query: bumps `last_play` on both the
+    /// live and saved copies and persists it when the query is saved. Shared by
+    /// manual plays and background auto-advances so both keep `last_play` fresh.
+    pub(crate) fn record_play(&mut self, source: Uuid) {
+        let now = crate::rpc::now_epoch();
+        if let Some(page) = self.find_query_mut(source) {
+            page.live.last_play = now;
+            if let Some(saved) = page.saved.as_mut() {
+                saved.last_play = now;
+            }
+            if page.is_persisted() {
+                crate::rpc::record_play(source, now);
+            }
+        }
+        if let Some(query) = self.saved_queries.iter_mut().find(|q| q.id == source) {
+            query.last_play = now;
+        }
     }
 }
 
