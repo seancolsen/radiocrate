@@ -534,11 +534,7 @@ impl crate::App {
                     }
                 }
             }
-            CommandId::PlaybackNextTrack => {
-                if let Some((source, next_idx, id)) = self.next_track_info() {
-                    self.play_track(source, next_idx, &id, ctx);
-                }
-            }
+            CommandId::PlaybackNextTrack => self.skip_to_next_track(ctx),
             CommandId::QueryFocusFilter => self.focus_builder_section(Section::Filter),
             CommandId::QueryFocusSort => self.focus_builder_section(Section::Sort),
             CommandId::QueryFocusDisplay => self.focus_builder_section(Section::Display),

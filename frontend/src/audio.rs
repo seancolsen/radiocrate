@@ -1,25 +1,36 @@
 pub trait AudioPlayer {
-    fn load(&mut self, track_id: &str);
+    /// Loads and plays `current`, establishing the play context around it:
+    /// `preceding` are the tracks before it (nearest last) that "previous track"
+    /// walks back through, and `upcoming` the tracks after it that auto-advance
+    /// and "next track" walk forward through.
+    fn set_playlist(&mut self, preceding: Vec<String>, current: &str, upcoming: Vec<String>);
     fn play(&mut self);
     fn pause(&mut self);
     fn is_playing(&self) -> bool;
     fn has_ended(&self) -> bool;
     fn position(&self) -> f64;
     fn duration(&self) -> Option<f64>;
-    /// Replaces the queue of track ids to play after the current one, in order.
+    /// Whether a track is queued after the current one.
+    fn has_next(&self) -> bool;
+    /// Skips to the next queued track. The change surfaces through
+    /// [`take_changed`](Self::take_changed) like any other transition.
+    fn skip_next(&mut self);
+    /// Updates the OS / lock-screen "now playing" metadata for the current track.
+    fn set_metadata(&mut self, title: Option<&str>, artist: Option<&str>);
+    /// Reports the current playback position and duration to the OS so the
+    /// lock-screen scrubber stays in sync.
+    fn update_position_state(&mut self, position: f64, duration: Option<f64>);
+    /// If a track transition happened outside the egui render loop — auto-advance
+    /// when a track ended, or a media-key next/previous — returns the new current
+    /// track id (clearing it) so the UI can reconcile its own state.
     ///
-    /// The web player advances through this queue from the audio element's
-    /// `ended` event rather than from the egui render loop. That matters on
-    /// mobile: when Chrome is backgrounded or the screen is locked, the browser
-    /// suspends `requestAnimationFrame` (and throttles timers), so egui stops
-    /// painting — but media events still fire and playback continues. Handing
-    /// the upcoming ids to the audio layer lets it auto-advance without us.
-    fn set_queue(&mut self, upcoming_ids: Vec<String>);
-    /// If the `ended` handler auto-advanced to a queued track since the last
-    /// call, returns that track id (clearing it) so the UI can reconcile its
-    /// own state (now-playing bar, row highlight, metadata) the next time it
-    /// paints. Returns `None` if no auto-advance is pending.
-    fn take_auto_advanced(&mut self) -> Option<String>;
+    /// These transitions are driven by browser media events, which keep firing
+    /// even while the tab is backgrounded or the screen is locked and egui has
+    /// stopped painting, so the UI can be arbitrarily behind by the time it next
+    /// gets to look.
+    fn take_changed(&mut self) -> Option<String>;
+    /// Stops playback and tears down the play context and OS media session.
+    fn stop(&mut self);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -40,9 +51,12 @@ mod wasm_impl {
     use std::collections::VecDeque;
     use std::rc::Rc;
 
-    use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
-    use web_sys::HtmlAudioElement;
+    use wasm_bindgen::{JsCast, JsValue};
+    use web_sys::{
+        HtmlAudioElement, MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction,
+        MediaSessionActionDetails, MediaSessionPlaybackState,
+    };
 
     use super::AudioPlayer;
 
@@ -50,27 +64,133 @@ mod wasm_impl {
         format!("/api/tracks/{track_id}/stream")
     }
 
-    pub struct WebAudioPlayer {
+    /// The shared playback engine. Everything the browser calls back into — the
+    /// `ended` event and the Media Session action handlers — runs against this
+    /// through an `Rc`, independent of the egui frame loop, so playlist
+    /// navigation keeps working while the app is backgrounded.
+    struct Engine {
         audio: HtmlAudioElement,
-        /// The id currently loaded into the audio element. Shared so the `ended`
-        /// handler can keep it in sync when it swaps in the next track.
-        loaded_id: Rc<RefCell<Option<String>>>,
-        /// Track ids queued to play after the current one, front = next up.
-        queue: Rc<RefCell<VecDeque<String>>>,
-        /// Set by the `ended` handler to the id it just auto-advanced to; drained
-        /// by the UI via [`AudioPlayer::take_auto_advanced`].
-        auto_advanced: Rc<RefCell<Option<String>>>,
-        /// Kept alive for as long as the player lives so the `ended` callback
-        /// stays registered on the audio element.
-        _on_ended: Closure<dyn FnMut()>,
+        /// `navigator.mediaSession`, absent on browsers that don't support it.
+        media_session: Option<MediaSession>,
+        /// The currently loaded track id.
+        current: RefCell<Option<String>>,
+        /// Tracks played before the current one, nearest last — the "previous"
+        /// stack.
+        history: RefCell<Vec<String>>,
+        /// Tracks queued after the current one, next up at the front.
+        queue: RefCell<VecDeque<String>>,
+        /// Set whenever a transition happens off the render loop, drained by the
+        /// UI via [`AudioPlayer::take_changed`].
+        changed: RefCell<Option<String>>,
+    }
+
+    impl Engine {
+        fn play_id(&self, id: &str) {
+            self.audio.set_src(&stream_src(id));
+            self.audio.load();
+            let _ = self.audio.play();
+            *self.current.borrow_mut() = Some(id.to_string());
+            self.set_playback_state(MediaSessionPlaybackState::Playing);
+        }
+
+        /// Advances to the next queued track, pushing the current one onto the
+        /// history stack. Returns `false` (leaving playback untouched) when the
+        /// queue is empty.
+        fn go_next(&self) -> bool {
+            let Some(next) = self.queue.borrow_mut().pop_front() else {
+                return false;
+            };
+            if let Some(cur) = self.current.borrow_mut().take() {
+                self.history.borrow_mut().push(cur);
+            }
+            self.play_id(&next);
+            *self.changed.borrow_mut() = Some(next);
+            true
+        }
+
+        /// Steps back to the previous track, returning the current one to the
+        /// front of the queue. Returns `false` when there is no history.
+        fn go_prev(&self) -> bool {
+            let Some(prev) = self.history.borrow_mut().pop() else {
+                return false;
+            };
+            if let Some(cur) = self.current.borrow_mut().take() {
+                self.queue.borrow_mut().push_front(cur);
+            }
+            self.play_id(&prev);
+            *self.changed.borrow_mut() = Some(prev);
+            true
+        }
+
+        fn set_playback_state(&self, state: MediaSessionPlaybackState) {
+            if let Some(ms) = &self.media_session {
+                ms.set_playback_state(state);
+            }
+        }
+
+        fn set_metadata(&self, title: Option<&str>, artist: Option<&str>) {
+            let Some(ms) = &self.media_session else {
+                return;
+            };
+            if let Ok(meta) = MediaMetadata::new() {
+                if let Some(t) = title {
+                    meta.set_title(t);
+                }
+                if let Some(a) = artist {
+                    meta.set_artist(a);
+                }
+                ms.set_metadata(Some(&meta));
+            }
+        }
+
+        fn update_position_state(&self, position: f64, duration: Option<f64>) {
+            let Some(ms) = &self.media_session else {
+                return;
+            };
+            let Some(d) = duration.filter(|d| d.is_finite() && *d > 0.0) else {
+                return;
+            };
+            let state = MediaPositionState::new();
+            state.set_duration(d);
+            state.set_playback_rate(1.0);
+            state.set_position(position.clamp(0.0, d));
+            ms.set_position_state_with_state(&state);
+        }
+
+        fn seek_by(&self, offset: f64) {
+            let target = (self.audio.current_time() + offset).max(0.0);
+            let target = match self.duration() {
+                Some(d) => target.min(d),
+                None => target,
+            };
+            self.audio.set_current_time(target);
+        }
+
+        fn duration(&self) -> Option<f64> {
+            let d = self.audio.duration();
+            (d.is_finite() && d > 0.0).then_some(d)
+        }
+
+        fn clear_media_session(&self) {
+            if let Some(ms) = &self.media_session {
+                ms.set_metadata(None);
+                ms.set_playback_state(MediaSessionPlaybackState::None);
+            }
+        }
+    }
+
+    pub struct WebAudioPlayer {
+        engine: Rc<Engine>,
+        /// The registered callbacks, kept alive for the player's lifetime so the
+        /// browser can keep calling them.
+        _handlers: Vec<Closure<dyn FnMut()>>,
+        _seek_handlers: Vec<Closure<dyn FnMut(MediaSessionActionDetails)>>,
     }
 
     impl WebAudioPlayer {
         pub fn new() -> Self {
-            let document = web_sys::window()
-                .expect("no window")
-                .document()
-                .expect("no document");
+            let window = web_sys::window().expect("no window");
+            let document = window.document().expect("no document");
             let element = document
                 .create_element("audio")
                 .expect("create audio element");
@@ -81,91 +201,202 @@ mod wasm_impl {
                 let _ = body.append_child(&audio);
             }
 
-            let loaded_id: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-            let queue: Rc<RefCell<VecDeque<String>>> = Rc::new(RefCell::new(VecDeque::new()));
-            let auto_advanced: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+            // `navigator.mediaSession` is undefined on unsupported browsers;
+            // probe before taking it so we degrade gracefully rather than trap.
+            let navigator = window.navigator();
+            let nav_value: &JsValue = navigator.as_ref();
+            let media_session = js_sys::Reflect::has(nav_value, &JsValue::from_str("mediaSession"))
+                .unwrap_or(false)
+                .then(|| navigator.media_session());
 
-            // Advance to the next queued track when the current one finishes.
-            // This runs from the browser's media-event dispatch, independent of
-            // the egui frame loop, so it keeps working while the tab is
-            // backgrounded or the screen is locked.
-            let on_ended = {
-                let audio = audio.clone();
-                let loaded_id = Rc::clone(&loaded_id);
-                let queue = Rc::clone(&queue);
-                let auto_advanced = Rc::clone(&auto_advanced);
-                Closure::<dyn FnMut()>::new(move || {
-                    let Some(next_id) = queue.borrow_mut().pop_front() else {
-                        return;
-                    };
-                    audio.set_src(&stream_src(&next_id));
-                    audio.load();
-                    let _ = audio.play();
-                    *loaded_id.borrow_mut() = Some(next_id.clone());
-                    *auto_advanced.borrow_mut() = Some(next_id);
-                })
-            };
-            audio.set_onended(Some(on_ended.as_ref().unchecked_ref()));
+            let engine = Rc::new(Engine {
+                audio: audio.clone(),
+                media_session,
+                current: RefCell::new(None),
+                history: RefCell::new(Vec::new()),
+                queue: RefCell::new(VecDeque::new()),
+                changed: RefCell::new(None),
+            });
+
+            let (handlers, seek_handlers) = engine.install_handlers();
 
             Self {
-                audio,
-                loaded_id,
-                queue,
-                auto_advanced,
-                _on_ended: on_ended,
+                engine,
+                _handlers: handlers,
+                _seek_handlers: seek_handlers,
             }
         }
     }
 
+    /// Type alias to keep the handler-vector signatures readable.
+    type Handlers = (
+        Vec<Closure<dyn FnMut()>>,
+        Vec<Closure<dyn FnMut(MediaSessionActionDetails)>>,
+    );
+
+    impl Engine {
+        /// Registers the browser callbacks that drive playback off the render
+        /// loop and returns them for the player to keep alive: the audio
+        /// element's `ended` handler (auto-advance) and, when the browser
+        /// supports it, the Media Session transport handlers (lock-screen /
+        /// Bluetooth / headset controls).
+        fn install_handlers(self: &Rc<Self>) -> Handlers {
+            let mut handlers: Vec<Closure<dyn FnMut()>> = Vec::new();
+            let mut seek_handlers: Vec<Closure<dyn FnMut(MediaSessionActionDetails)>> = Vec::new();
+
+            // Auto-advance when the current track finishes. This fires from the
+            // browser's media-event dispatch, so it keeps working while the tab
+            // is backgrounded or the screen is locked and egui isn't painting.
+            let engine = Rc::clone(self);
+            let on_ended = Closure::<dyn FnMut()>::new(move || {
+                engine.go_next();
+            });
+            self.audio
+                .set_onended(Some(on_ended.as_ref().unchecked_ref()));
+            handlers.push(on_ended);
+
+            // Lock-screen / Bluetooth / headset transport controls. Registering
+            // these makes the app behave like a native player: the OS shows the
+            // track metadata and routes hardware media keys to us.
+            let Some(ms) = &self.media_session else {
+                return (handlers, seek_handlers);
+            };
+
+            let mut on = |action: MediaSessionAction, f: Box<dyn FnMut()>| {
+                let cb = Closure::<dyn FnMut()>::new(f);
+                ms.set_action_handler(action, Some(cb.as_ref().unchecked_ref()));
+                handlers.push(cb);
+            };
+            let engine = Rc::clone(self);
+            on(
+                MediaSessionAction::Play,
+                Box::new(move || {
+                    let _ = engine.audio.play();
+                    engine.set_playback_state(MediaSessionPlaybackState::Playing);
+                }),
+            );
+            let engine = Rc::clone(self);
+            on(
+                MediaSessionAction::Pause,
+                Box::new(move || {
+                    let _ = engine.audio.pause();
+                    engine.set_playback_state(MediaSessionPlaybackState::Paused);
+                }),
+            );
+            let engine = Rc::clone(self);
+            on(
+                MediaSessionAction::Nexttrack,
+                Box::new(move || {
+                    engine.go_next();
+                }),
+            );
+            let engine = Rc::clone(self);
+            on(
+                MediaSessionAction::Previoustrack,
+                Box::new(move || {
+                    engine.go_prev();
+                }),
+            );
+
+            let mut on_seek =
+                |action: MediaSessionAction, f: Box<dyn FnMut(MediaSessionActionDetails)>| {
+                    let cb = Closure::<dyn FnMut(MediaSessionActionDetails)>::new(f);
+                    ms.set_action_handler(action, Some(cb.as_ref().unchecked_ref()));
+                    seek_handlers.push(cb);
+                };
+            let engine = Rc::clone(self);
+            on_seek(
+                MediaSessionAction::Seekbackward,
+                Box::new(move |d: MediaSessionActionDetails| {
+                    engine.seek_by(-d.get_seek_offset().unwrap_or(10.0));
+                }),
+            );
+            let engine = Rc::clone(self);
+            on_seek(
+                MediaSessionAction::Seekforward,
+                Box::new(move |d: MediaSessionActionDetails| {
+                    engine.seek_by(d.get_seek_offset().unwrap_or(10.0));
+                }),
+            );
+            let engine = Rc::clone(self);
+            on_seek(
+                MediaSessionAction::Seekto,
+                Box::new(move |d: MediaSessionActionDetails| {
+                    if let Some(t) = d.get_seek_time() {
+                        engine.audio.set_current_time(t);
+                    }
+                }),
+            );
+
+            (handlers, seek_handlers)
+        }
+    }
+
     impl AudioPlayer for WebAudioPlayer {
-        fn load(&mut self, track_id: &str) {
-            if self.loaded_id.borrow().as_deref() == Some(track_id) {
-                return;
-            }
-            self.audio.set_src(&stream_src(track_id));
-            self.audio.load();
-            *self.loaded_id.borrow_mut() = Some(track_id.to_string());
-            // A deliberate load (user picked a track, or "Next") supersedes any
-            // background auto-advance the UI hasn't consumed yet.
-            *self.auto_advanced.borrow_mut() = None;
+        fn set_playlist(&mut self, preceding: Vec<String>, current: &str, upcoming: Vec<String>) {
+            *self.engine.history.borrow_mut() = preceding;
+            *self.engine.queue.borrow_mut() = VecDeque::from(upcoming);
+            // A deliberate load supersedes any transition the UI hasn't consumed.
+            *self.engine.changed.borrow_mut() = None;
+            self.engine.play_id(current);
         }
 
         fn play(&mut self) {
-            let _ = self.audio.play();
+            let _ = self.engine.audio.play();
+            self.engine
+                .set_playback_state(MediaSessionPlaybackState::Playing);
         }
 
         fn pause(&mut self) {
-            let _ = self.audio.pause();
+            let _ = self.engine.audio.pause();
+            self.engine
+                .set_playback_state(MediaSessionPlaybackState::Paused);
         }
 
         fn is_playing(&self) -> bool {
-            !self.audio.paused() && !self.audio.ended()
+            !self.engine.audio.paused() && !self.engine.audio.ended()
         }
 
         fn has_ended(&self) -> bool {
-            self.audio.ended()
+            self.engine.audio.ended()
         }
 
         fn position(&self) -> f64 {
-            let t = self.audio.current_time();
+            let t = self.engine.audio.current_time();
             if t.is_finite() { t } else { 0.0 }
         }
 
         fn duration(&self) -> Option<f64> {
-            let d = self.audio.duration();
-            if d.is_finite() && d > 0.0 {
-                Some(d)
-            } else {
-                None
-            }
+            self.engine.duration()
         }
 
-        fn set_queue(&mut self, upcoming_ids: Vec<String>) {
-            *self.queue.borrow_mut() = VecDeque::from(upcoming_ids);
+        fn has_next(&self) -> bool {
+            !self.engine.queue.borrow().is_empty()
         }
 
-        fn take_auto_advanced(&mut self) -> Option<String> {
-            self.auto_advanced.borrow_mut().take()
+        fn skip_next(&mut self) {
+            self.engine.go_next();
+        }
+
+        fn set_metadata(&mut self, title: Option<&str>, artist: Option<&str>) {
+            self.engine.set_metadata(title, artist);
+        }
+
+        fn update_position_state(&mut self, position: f64, duration: Option<f64>) {
+            self.engine.update_position_state(position, duration);
+        }
+
+        fn take_changed(&mut self) -> Option<String> {
+            self.engine.changed.borrow_mut().take()
+        }
+
+        fn stop(&mut self) {
+            let _ = self.engine.audio.pause();
+            *self.engine.current.borrow_mut() = None;
+            self.engine.history.borrow_mut().clear();
+            self.engine.queue.borrow_mut().clear();
+            *self.engine.changed.borrow_mut() = None;
+            self.engine.clear_media_session();
         }
     }
 }
@@ -178,12 +409,14 @@ mod native_impl {
     pub struct NullAudioPlayer {
         loaded_id: Option<String>,
         playing: bool,
+        has_next: bool,
     }
 
     impl AudioPlayer for NullAudioPlayer {
-        fn load(&mut self, track_id: &str) {
-            self.loaded_id = Some(track_id.to_string());
-            self.playing = false;
+        fn set_playlist(&mut self, _preceding: Vec<String>, current: &str, upcoming: Vec<String>) {
+            self.loaded_id = Some(current.to_string());
+            self.playing = true;
+            self.has_next = !upcoming.is_empty();
         }
 
         fn play(&mut self) {
@@ -212,10 +445,24 @@ mod native_impl {
             None
         }
 
-        fn set_queue(&mut self, _upcoming_ids: Vec<String>) {}
+        fn has_next(&self) -> bool {
+            self.has_next
+        }
 
-        fn take_auto_advanced(&mut self) -> Option<String> {
+        fn skip_next(&mut self) {}
+
+        fn set_metadata(&mut self, _title: Option<&str>, _artist: Option<&str>) {}
+
+        fn update_position_state(&mut self, _position: f64, _duration: Option<f64>) {}
+
+        fn take_changed(&mut self) -> Option<String> {
             None
+        }
+
+        fn stop(&mut self) {
+            self.playing = false;
+            self.loaded_id = None;
+            self.has_next = false;
         }
     }
 }
