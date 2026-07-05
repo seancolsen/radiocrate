@@ -30,12 +30,13 @@ impl App {
     pub(crate) fn render_now_playing(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Fold in any track the audio element auto-advanced to on its own. The
-        // `ended` event that drives that fires even while the tab is
-        // backgrounded and our render loop is suspended, so by the time we paint
-        // again the actually-playing track may be ahead of `current_track`.
-        if let Some(new_id) = self.audio.take_auto_advanced() {
-            self.reconcile_auto_advance(&new_id, &ctx);
+        // Fold in any track that changed off the render loop — an auto-advance
+        // when a track ended, or a media-key next/previous from the lock screen
+        // or a headset. Those events keep firing while the tab is backgrounded
+        // and egui is suspended, so by the time we paint again the actually
+        // playing track may be ahead of (or behind) `current_track`.
+        if let Some(new_id) = self.audio.take_changed() {
+            self.reconcile_track_change(&new_id, &ctx);
         }
 
         let snapshot = self.current_track.lock().unwrap().clone();
@@ -43,16 +44,27 @@ impl App {
             return;
         };
 
+        // Keep the OS "now playing" metadata (lock screen, Bluetooth display) in
+        // step with the current track, pushing only when it actually changes.
+        let media_key = (ct.id.clone(), ct.title.clone(), ct.artist_names.clone());
+        if self.media_metadata_key.as_ref() != Some(&media_key) {
+            let artist = (!ct.artist_names.is_empty()).then(|| ct.artist_names.join(", "));
+            self.audio
+                .set_metadata(ct.title.as_deref(), artist.as_deref());
+            self.media_metadata_key = Some(media_key);
+        }
+
         let playing = self.audio.is_playing();
         let position = self.audio.position();
         let duration = self.audio.duration();
 
         if playing {
+            self.audio.update_position_state(position, duration);
             ctx.request_repaint_after(Duration::from_millis(50));
         } else if self.audio.has_ended() {
             // Advancement is owned by the audio element's queue now, so reaching
             // here means the queue ran dry: nothing is left to play.
-            *self.current_track.lock().unwrap() = None;
+            self.clear_current_track();
             ctx.request_repaint();
             return;
         }
@@ -68,14 +80,9 @@ impl App {
         }
 
         match action {
-            Some(MenuAction::Next) => {
-                if let Some((source, next_idx, id)) = self.next_track_info() {
-                    self.play_track(source, next_idx, &id, &ctx);
-                }
-            }
+            Some(MenuAction::Next) => self.skip_to_next_track(&ctx),
             Some(MenuAction::Close) => {
-                self.audio.pause();
-                *self.current_track.lock().unwrap() = None;
+                self.clear_current_track();
             }
             Some(MenuAction::Locate) => {
                 if let Some(idx) = ct.row_index {
@@ -273,7 +280,7 @@ impl App {
             visuals.text_color(),
         );
 
-        let can_next = self.next_track_info().is_some();
+        let can_next = self.audio.has_next();
         let can_locate = ct.row_index.is_some();
         egui::Popup::menu(&menu_resp)
             .align(egui::RectAlign::TOP_END)
@@ -294,30 +301,30 @@ impl App {
         (toggle, action)
     }
 
-    /// The track immediately after the current one within its source page's
-    /// results, as `(source_page, row_index, track_id)`.
-    pub(crate) fn next_track_info(&self) -> Option<(Uuid, usize, String)> {
-        let (source, cur_idx) = {
-            let guard = self.current_track.lock().unwrap();
-            let ct = guard.as_ref()?;
-            (ct.source_page, ct.row_index?)
-        };
-        let results = self.page_results(source)?;
-        let s = results.lock().unwrap();
-        let col = s.track_id_column?;
-        let next_idx = cur_idx + 1;
-        let id = s.rows.cell_text(next_idx, col)?;
-        if id.is_empty() {
-            return None;
+    /// Skips to the next track (from the "Next" menu item or keyboard command)
+    /// and reconciles the resulting change into app state.
+    pub(crate) fn skip_to_next_track(&mut self, ctx: &egui::Context) {
+        self.audio.skip_next();
+        if let Some(new_id) = self.audio.take_changed() {
+            self.reconcile_track_change(&new_id, ctx);
         }
-        Some((source, next_idx, id))
+        ctx.request_repaint();
     }
 
-    /// Folds a background auto-advance (the audio element moved to the next
-    /// queued track on its own, via its `ended` event) into app state: updates
-    /// the now-playing bar's track, re-locates its row, refetches metadata,
-    /// refreshes the audio queue for the new position, and records the play.
-    fn reconcile_auto_advance(&mut self, new_id: &str, ctx: &egui::Context) {
+    /// Clears the now-playing state and tears down the audio player's queue and
+    /// OS media session (stopping playback).
+    fn clear_current_track(&mut self) {
+        self.audio.stop();
+        *self.current_track.lock().unwrap() = None;
+        self.media_metadata_key = None;
+    }
+
+    /// Folds a track change that originated in the audio layer (an auto-advance
+    /// when a track ended, or a media-key next/previous) into app state: swaps
+    /// the now-playing bar's track, re-locates its row, refetches metadata, and
+    /// records the play. The audio player owns the queue/history across these
+    /// transitions, so there is nothing to re-sync there.
+    fn reconcile_track_change(&mut self, new_id: &str, ctx: &egui::Context) {
         let source = {
             let guard = self.current_track.lock().unwrap();
             let Some(ct) = guard.as_ref() else {
@@ -337,9 +344,6 @@ impl App {
             ct.artist_names = Vec::new();
         }
         crate::http::fetch_track_metadata(new_id, &self.current_track, ctx);
-        if let Some(index) = row_index {
-            self.refresh_audio_queue(source, index);
-        }
         self.record_play(source);
     }
 
@@ -352,34 +356,35 @@ impl App {
         (0..scan_limit).find(|&i| s.rows.cell_text(i, col).as_deref() == Some(id))
     }
 
-    /// Hands the audio player the ids of the tracks after `index` in `source`'s
-    /// results, so it can auto-advance through them (even while backgrounded)
-    /// as each track ends.
-    pub(crate) fn refresh_audio_queue(&mut self, source: Uuid, index: usize) {
-        let ids = self.upcoming_track_ids(source, index);
-        self.audio.set_queue(ids);
-    }
-
-    /// The contiguous run of non-empty track ids after `index` in `source`'s
-    /// results, mirroring [`next_track_info`](Self::next_track_info)'s notion of
-    /// "next": it stops at the first empty id (a row without a playable track).
-    fn upcoming_track_ids(&self, source: Uuid, index: usize) -> Vec<String> {
+    /// Snapshots `source`'s results around row `index` into the play context the
+    /// audio player navigates: `(preceding, upcoming)`. `preceding` is every
+    /// non-empty track id before `index` (nearest last, for "previous");
+    /// `upcoming` is the contiguous run of non-empty ids after `index`, stopping
+    /// at the first empty one (a row without a playable track), for "next" and
+    /// auto-advance.
+    pub(crate) fn playlist_around(&self, source: Uuid, index: usize) -> (Vec<String>, Vec<String>) {
         let Some(results) = self.page_results(source) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let s = results.lock().unwrap();
         let Some(col) = s.track_id_column else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let len = s.rows.len();
-        let mut ids = Vec::new();
+        let mut preceding = Vec::new();
+        for i in 0..index.min(len) {
+            if let Some(id) = s.rows.cell_text(i, col).filter(|id| !id.is_empty()) {
+                preceding.push(id);
+            }
+        }
+        let mut upcoming = Vec::new();
         for i in (index + 1)..len {
             match s.rows.cell_text(i, col) {
-                Some(id) if !id.is_empty() => ids.push(id),
+                Some(id) if !id.is_empty() => upcoming.push(id),
                 _ => break,
             }
         }
-        ids
+        (preceding, upcoming)
     }
 
     /// Records a play against `source`'s query: bumps `last_play` on both the

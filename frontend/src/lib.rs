@@ -267,6 +267,9 @@ pub struct App {
     pub(crate) view_sql: Option<String>,
     pub(crate) current_track: Arc<Mutex<Option<CurrentTrack>>>,
     pub(crate) audio: Box<dyn AudioPlayer>,
+    /// The `(id, title, artists)` last pushed to the OS media session, so we
+    /// only update lock-screen metadata when the current track's details change.
+    pub(crate) media_metadata_key: Option<(String, Option<String>, Vec<String>)>,
     /// A request to scroll a result row into view (and, when `select`, select it).
     /// Consumed by `render_results`.
     pub(crate) pending_scroll: Option<PendingScroll>,
@@ -324,6 +327,7 @@ impl Default for App {
             view_sql: None,
             current_track: Arc::new(Mutex::new(None)),
             audio: audio::new_player(),
+            media_metadata_key: None,
             pending_scroll: None,
             keymap: Keymap::default(),
             palette: None,
@@ -1145,12 +1149,15 @@ impl App {
                 artist_names: Vec::new(),
             });
         }
-        self.audio.load(id);
-        self.audio.play();
-        // Queue up everything after this track so the audio element can
-        // auto-advance on its own — including while the tab is backgrounded and
-        // egui isn't painting (see `AudioPlayer::set_queue`).
-        self.refresh_audio_queue(source_page, index);
+        // Hand the audio player the whole play context around this track — what
+        // came before (for "previous") and what comes after (for "next" and
+        // auto-advance) — so it can navigate on its own, including while the tab
+        // is backgrounded and egui isn't painting (see `AudioPlayer::set_playlist`).
+        let (preceding, upcoming) = self.playlist_around(source_page, index);
+        self.audio.set_playlist(preceding, id, upcoming);
+        // Force the next paint to push fresh media-session metadata even if the
+        // same track id is replayed.
+        self.media_metadata_key = None;
         http::fetch_track_metadata(id, &self.current_track, ctx);
 
         // Record the play on the originating query. Updating both live and saved
