@@ -25,14 +25,21 @@ const PADDING: egui::Margin = egui::Margin {
 const RADIUS: f32 = 4.0;
 /// Border thickness, shared by the resting and focused states.
 const BORDER_WIDTH: f32 = 1.0;
-/// Resting (and hover) border: a light gray a shade darker than the app's gray
-/// panel fill, so the input reads as a distinct well.
-const BORDER: egui::Color32 = egui::Color32::from_gray(0xC8);
+/// Resting (and hover) border: a gray a shade apart from the app's panel fill
+/// (darker on light, lighter on dark), so the input reads as a distinct well.
+const BORDER: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_gray(0xC8),
+    dark: egui::Color32::from_gray(0x4E),
+};
 
 /// Icon size of the embedded options-menu trigger glyph.
 const TRIGGER_ICON_SIZE: f32 = 16.0;
-/// The trigger glyph's resting color; it darkens to black on hover.
-const TRIGGER_COLOR: egui::Color32 = egui::Color32::from_gray(0x55);
+/// The trigger glyph's resting color; it strengthens to the theme's full text
+/// color on hover.
+const TRIGGER_COLOR: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_gray(0x55),
+    dark: egui::Color32::from_gray(0xBE),
+};
 
 /// Shows `edit` as a standard app text input, returning its full output so the
 /// caller can drive the cursor/selection. The styling is centralized here.
@@ -68,9 +75,9 @@ fn show_padded(
         .inner_margin(margin);
     let output = edit.frame(frame).show(ui);
     let color = if output.response.has_focus() {
-        HOVER_BLUE
+        HOVER_BLUE.get(ui.visuals())
     } else {
-        BORDER
+        BORDER.get(ui.visuals())
     };
     ui.painter().rect_stroke(
         output.response.rect,
@@ -117,9 +124,9 @@ pub(crate) fn with_menu(
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     let color = if trigger.hovered() {
-        egui::Color32::BLACK
+        ui.visuals().text_color()
     } else {
-        TRIGGER_COLOR
+        TRIGGER_COLOR.get(ui.visuals())
     };
     ui.painter().text(
         trigger_rect.center(),

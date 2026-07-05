@@ -229,7 +229,7 @@ impl App {
             {
                 ui.add_space(4.0);
                 ui.colored_label(
-                    crate::ACCENT_BLUE,
+                    crate::ACCENT_BLUE.get(ui.visuals()),
                     format!("Currently bound to \u{201c}{}\u{201d}", other.title()),
                 );
             }
@@ -327,7 +327,7 @@ fn record_box(ui: &mut egui::Ui, text: &str, width: f32) {
     ui.painter().rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, crate::HOVER_BLUE),
+        egui::Stroke::new(1.0, crate::HOVER_BLUE.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
@@ -401,7 +401,7 @@ fn shortcuts_row(ui: &mut egui::Ui, data: &RowData, ctx: &egui::Context) -> Opti
         ui.painter().rect_filled(
             rect,
             0.0,
-            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+            crate::theme::shade(v, v.panel_fill, crate::theme::HOVER_SHADE),
         );
     }
     let text_color = v.text_color();
@@ -426,7 +426,7 @@ fn shortcuts_row(ui: &mut egui::Ui, data: &RowData, ctx: &egui::Context) -> Opti
         Some(chord) => (
             chord.format(ctx),
             if data.overridden {
-                crate::HOVER_BLUE
+                crate::HOVER_BLUE.get(ui.visuals())
             } else {
                 text_color
             },

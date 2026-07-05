@@ -27,6 +27,9 @@ pub fn auto_start() {
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
                     setup_context(&cc.egui_ctx);
+                    // Apply the persisted theme choice, if any (localStorage
+                    // `theme`); otherwise stay on the system preference.
+                    cc.egui_ctx.set_theme(crate::theme::stored_preference());
                     Ok(Box::new(App::default()))
                 }),
             )

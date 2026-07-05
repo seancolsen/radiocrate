@@ -82,6 +82,8 @@ struct ListActions {
     toggle_queries_collapsed: bool,
     /// The Settings footer's "Keyboard shortcuts" entry was chosen.
     open_shortcuts: bool,
+    /// A theme was chosen from the Settings footer's theme entries.
+    set_theme: Option<egui::ThemePreference>,
     /// An "Opened" row's context menu produced a choice from the query options
     /// menu (the same one the toolbar and tab handles show).
     menu: Option<(Uuid, PageMenu)>,
@@ -282,6 +284,9 @@ impl App {
                 self.organizer.open = false;
             }
         }
+        if let Some(pref) = actions.set_theme {
+            crate::theme::set_preference(ctx, pref);
+        }
         // Applied last: closing a tab can change the current page.
         if let Some(id) = actions.close {
             self.close_tab(id);
@@ -408,10 +413,10 @@ fn draw_explorer(
                 .fill(panel_fill)
                 .inner_margin(egui::Margin::symmetric(0, 2)),
         )
-        .show_inside(ui, |ui| {
-            if settings_footer(ui) {
-                actions.open_shortcuts = true;
-            }
+        .show_inside(ui, |ui| match settings_footer(ui) {
+            Some(SettingsChoice::Shortcuts) => actions.open_shortcuts = true,
+            Some(SettingsChoice::Theme(pref)) => actions.set_theme = Some(pref),
+            None => {}
         });
 
     egui::ScrollArea::vertical()
@@ -507,7 +512,7 @@ fn collapse_header(
     let (hover_fill, text_color, weak) = {
         let v = ui.visuals();
         (
-            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+            crate::theme::shade(v, v.panel_fill, crate::theme::HOVER_SHADE),
             v.text_color(),
             v.weak_text_color(),
         )
@@ -561,10 +566,19 @@ fn collapse_header(
     (resp.clicked(), refresh_clicked)
 }
 
+/// An entry chosen from the Settings footer's menu.
+enum SettingsChoice {
+    /// Open the Keyboard Shortcuts editor tab.
+    Shortcuts,
+    /// Switch the app theme (or back to following the system).
+    Theme(egui::ThemePreference),
+}
+
 /// The Settings dropdown pinned to the bottom of the explorer: small gray
-/// "Settings" text with a gear icon, opening a one-item menu ("Keyboard
-/// shortcuts"). Returns `true` when that entry is chosen.
-fn settings_footer(ui: &mut egui::Ui) -> bool {
+/// "Settings" text with a gear icon, opening a menu with the Keyboard
+/// Shortcuts entry and the theme choices (the active one tinted blue).
+/// Returns the chosen entry, if any.
+fn settings_footer(ui: &mut egui::Ui) -> Option<SettingsChoice> {
     let height = 30.0;
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
@@ -573,7 +587,7 @@ fn settings_footer(ui: &mut egui::Ui) -> bool {
     let (hover_fill, weak, strong) = {
         let v = ui.visuals();
         (
-            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+            crate::theme::shade(v, v.panel_fill, crate::theme::HOVER_SHADE),
             v.weak_text_color(),
             v.text_color(),
         )
@@ -601,10 +615,45 @@ fn settings_footer(ui: &mut egui::Ui) -> bool {
         .align(egui::RectAlign::TOP_START)
         .show(|ui| {
             ui.set_width(180.0);
-            crate::now_playing::menu_item(ui, icons::KEYBOARD, "Keyboard shortcuts", true, None)
+            let mut choice = None;
+            if crate::now_playing::menu_item(ui, icons::KEYBOARD, "Keyboard shortcuts", true, None)
                 .clicked()
+            {
+                choice = Some(SettingsChoice::Shortcuts);
+            }
+            ui.separator();
+            let current = ui.ctx().options(|o| o.theme_preference);
+            let active_tint = crate::HOVER_BLUE.get(ui.visuals());
+            let mut theme_entry = |ui: &mut egui::Ui,
+                                   icon: icons::MaterialIcon,
+                                   label: &str,
+                                   pref: egui::ThemePreference| {
+                let tint = (current == pref).then_some(active_tint);
+                if crate::now_playing::menu_item(ui, icon, label, true, tint).clicked() {
+                    choice = Some(SettingsChoice::Theme(pref));
+                }
+            };
+            theme_entry(
+                ui,
+                icons::THEME_SYSTEM,
+                "System theme",
+                egui::ThemePreference::System,
+            );
+            theme_entry(
+                ui,
+                icons::THEME_LIGHT,
+                "Light theme",
+                egui::ThemePreference::Light,
+            );
+            theme_entry(
+                ui,
+                icons::THEME_DARK,
+                "Dark theme",
+                egui::ThemePreference::Dark,
+            );
+            choice
         })
-        .is_some_and(|inner| inner.inner)
+        .and_then(|inner| inner.inner)
 }
 
 /// A muted, indented hint shown in place of an empty section's rows.
@@ -632,7 +681,7 @@ fn row_background(ui: &egui::Ui, rect: egui::Rect, hovered: bool) -> egui::Color
         ui.painter().rect_filled(
             rect,
             0.0,
-            crate::results::darken(v.panel_fill, crate::results::ROW_HOVER_DARKEN),
+            crate::theme::shade(v, v.panel_fill, crate::theme::HOVER_SHADE),
         );
     }
     v.text_color()
@@ -689,9 +738,9 @@ fn opened_row_widget(
         let accent_rect =
             egui::Rect::from_min_size(rect.left_top(), egui::vec2(4.0, rect.height()));
         ui.painter()
-            .rect_filled(accent_rect, 0.0, crate::HOVER_BLUE);
+            .rect_filled(accent_rect, 0.0, crate::HOVER_BLUE.get(ui.visuals()));
     }
-    let icon_color = icons::DEFAULT_COLOR;
+    let icon_color = icons::DEFAULT_COLOR.get(ui.visuals());
     let row_icon = if item.settings {
         icons::KEYBOARD
     } else {
@@ -778,7 +827,7 @@ fn opened_row_widget(
         ui.painter().rect_filled(
             close_rect,
             3.0,
-            crate::results::darken(ui.visuals().panel_fill, 20),
+            crate::theme::shade(ui.visuals(), ui.visuals().panel_fill, 20),
         );
     }
     ui.painter().text(
@@ -831,7 +880,12 @@ fn saved_row_widget(
     );
     let text_color = row_background(ui, rect, response.hovered());
     let weak_text = ui.visuals().weak_text_color();
-    paint_row_icon(ui, rect, icons::QUERY, icons::DEFAULT_COLOR);
+    paint_row_icon(
+        ui,
+        rect,
+        icons::QUERY,
+        icons::DEFAULT_COLOR.get(ui.visuals()),
+    );
 
     // Inline rename in place of the name for this row.
     let editing = rename
@@ -1063,5 +1117,39 @@ mod snapshot_tests {
         app.pages.clear();
         app.current = crate::CurrentPage::Welcome;
         snapshot("no_open_tabs", app);
+    }
+
+    /// The Settings footer's menu, opened by clicking the footer: the Keyboard
+    /// shortcuts entry plus the three theme choices. The dual-snapshot harness
+    /// forces each theme before capturing, so the active (blue-tinted) entry is
+    /// "Light theme" in the top half and "Dark theme" in the bottom one.
+    #[test]
+    fn settings_menu() {
+        let mut app = populated();
+        app.organizer.open = true;
+        let mut harness = snapshot_harness::harness(egui::vec2(212.0, 380.0), move |ui| {
+            let fill = ui.style().visuals.panel_fill;
+            app.render_persistent_organizer(ui, fill);
+        });
+        harness.run();
+
+        // Click the Settings footer (pinned to the sidebar's bottom strip).
+        let pos = egui::pos2(100.0, 365.0);
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(pos));
+        harness.run();
+        for pressed in [true, false] {
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        harness.run();
+
+        snapshot_dual(&mut harness, "explorer/settings_menu");
     }
 }

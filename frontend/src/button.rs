@@ -9,8 +9,12 @@ use eframe::egui;
 use crate::ACCENT_BLUE;
 use crate::icons::{self, MaterialIcon};
 
-/// Light-blue background of an active (toggled-on) [`SplitButton`].
-const ACTIVE_BG: egui::Color32 = egui::Color32::from_rgb(0xBB, 0xD9, 0xFB);
+/// Blue background of an active (toggled-on) [`SplitButton`]: light blue on
+/// the light theme, a deep desaturated blue on the dark one.
+const ACTIVE_BG: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_rgb(0xBB, 0xD9, 0xFB),
+    dark: egui::Color32::from_rgb(0x2A, 0x47, 0x66),
+};
 /// The fixed height (and icon-only width) shared by every button.
 pub(crate) const SIZE: f32 = 26.0;
 /// Icon glyph size.
@@ -66,7 +70,7 @@ impl Button {
         // A spinning button reads as "busy" rather than "disabled", so keep its
         // glyph at full strength even while it's not clickable.
         let color = if self.enabled || self.spin {
-            self.tint.unwrap_or(icons::DEFAULT_COLOR)
+            self.tint.unwrap_or(icons::DEFAULT_COLOR.get(ui.visuals()))
         } else {
             ui.visuals().weak_text_color()
         };
@@ -93,7 +97,7 @@ impl Button {
             // Hover outline, painted just inside the rect so it costs no layout
             // space; transparent otherwise so hovering never shifts anything.
             let stroke_color = if self.enabled && resp.hovered() {
-                ACCENT_BLUE
+                ACCENT_BLUE.get(ui.visuals())
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -124,9 +128,13 @@ impl Button {
 /// active [`SplitButton`].
 const MENU_TRIGGER_WIDTH: f32 = 22.0;
 /// Background of the menu-trigger region: a lighter tint of [`ACTIVE_BG`] that
-/// sets the trigger off from the main area. Also used elsewhere as the app's
-/// "light blue" highlight (e.g. selected result rows).
-pub(crate) const MENU_TRIGGER_BG: egui::Color32 = egui::Color32::from_rgb(0xD7, 0xEA, 0xFD);
+/// sets the trigger off from the main area (lighter in both themes — on dark,
+/// lighter reads as raised). Also used elsewhere as the app's "light blue"
+/// highlight (e.g. selected result rows).
+pub(crate) const MENU_TRIGGER_BG: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_rgb(0xD7, 0xEA, 0xFD),
+    dark: egui::Color32::from_rgb(0x38, 0x59, 0x7D),
+};
 
 /// A labelled toggle [`Button`] that, while `active`, grows an embedded "⋮" menu
 /// trigger on its right, set off from the label by a lighter background. The main
@@ -197,7 +205,7 @@ impl SplitButton {
             0.0,
             egui::TextFormat {
                 font_id: icons::font_id(ICON_SIZE),
-                color: icons::DEFAULT_COLOR,
+                color: icons::DEFAULT_COLOR.get(ui.visuals()),
                 ..Default::default()
             },
         );
@@ -236,7 +244,8 @@ impl SplitButton {
 
         if ui.is_rect_visible(rect) {
             if self.active {
-                ui.painter().rect_filled(rect, RADIUS, ACTIVE_BG);
+                ui.painter()
+                    .rect_filled(rect, RADIUS, ACTIVE_BG.get(ui.visuals()));
                 // The trigger region sits over the right end of the fill in a
                 // lighter tint, sharing the button's rounded right corners.
                 if let Some(menu) = &menu {
@@ -249,7 +258,7 @@ impl SplitButton {
                             sw: 0,
                             se: radius,
                         },
-                        MENU_TRIGGER_BG,
+                        MENU_TRIGGER_BG.get(ui.visuals()),
                     );
                 }
             }
@@ -259,7 +268,7 @@ impl SplitButton {
             let hovered = !self.active
                 && (main.hovered() || menu.as_ref().is_some_and(egui::Response::hovered));
             let stroke_color = if hovered {
-                ACCENT_BLUE
+                ACCENT_BLUE.get(ui.visuals())
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -276,7 +285,7 @@ impl SplitButton {
             if let Some(menu) = &menu {
                 // The dots read as secondary until the trigger itself is hovered.
                 let dots_color = if menu.hovered() {
-                    icons::DEFAULT_COLOR
+                    icons::DEFAULT_COLOR.get(ui.visuals())
                 } else {
                     weak_color
                 };

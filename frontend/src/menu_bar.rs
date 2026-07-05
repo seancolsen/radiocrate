@@ -260,7 +260,15 @@ pub(crate) fn page_options_menu(
     if menu_item(ui, icons::VIEW_SQL, "View SQL", true, None).clicked() {
         chosen = Some(PageMenu::ViewSql);
     }
-    if menu_item(ui, icons::DELETE, "Delete", true, Some(DELETE_RED)).clicked() {
+    if menu_item(
+        ui,
+        icons::DELETE,
+        "Delete",
+        true,
+        Some(DELETE_RED.get(ui.visuals())),
+    )
+    .clicked()
+    {
         chosen = Some(PageMenu::Action(QueryAction::Delete));
     }
     chosen

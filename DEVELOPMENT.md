@@ -101,7 +101,10 @@ To **measure** an image to the pixel — e.g. confirm a margin is symmetric rath
 than eyeball it — use the measurement helper. It bakes in the rendering
 conventions (2× device scale / **PPP = 2**, the **8 logical-px harness margin**
 the test crop leaves around the content, and the resting border gray
-**`#C8C8C8`**) and classifies pixels as background / border / fill / content:
+**`#C8C8C8`**) and classifies pixels as background / border / fill / content.
+Its pixel classification assumes the light palette, so aim it at the **top
+(light) half** of a stacked baseline; on the dark half, only its raw scan
+coordinates are trustworthy:
 
 ```sh
 # Whole-image summary: size, content bbox, per-side margins, symmetry checks.

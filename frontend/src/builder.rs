@@ -17,7 +17,10 @@ use crate::query_def::{BuiltinPreset, QueryDefinition, Section, SectionContent};
 use crate::rpc::{self, Preset};
 
 /// Background of an expanded preset tab and its detail panel.
-const PRESET_BG: egui::Color32 = egui::Color32::from_rgb(0xF3, 0xE3, 0xFB);
+const PRESET_BG: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_rgb(0xF3, 0xE3, 0xFB),
+    dark: egui::Color32::from_rgb(0x48, 0x37, 0x55),
+};
 
 /// Smallest height the builder panel will shrink to, so an empty/"no query"
 /// state still has a sane size. Kept just above a single content line so a
@@ -662,7 +665,8 @@ impl App {
                     trect.min,
                     egui::pos2(trect.max.x, row_resp.rect.max.y + TAB_GAP + TAB_BG_OVERLAP),
                 );
-                ui.painter().set(bg_idx, tab_bg_shape(bg));
+                ui.painter()
+                    .set(bg_idx, tab_bg_shape(bg, PRESET_BG.get(ui.visuals())));
             }
             ui.add_space(TAB_GAP);
             self.preset_editor(ui, eid, run);
@@ -689,7 +693,7 @@ impl App {
         };
         let mut save = false;
         let mut revert = false;
-        section_frame(ui, PRESET_BG, |ui| {
+        section_frame(ui, PRESET_BG.get(ui.visuals()), |ui| {
             // Wrap the "Apply by default" checkbox onto its own line (below the name
             // row, above the definition) when the row can't hold the name field, the
             // dirty controls, and the checkbox side by side without colliding.
@@ -713,7 +717,10 @@ impl App {
                 // The unsaved-changes marker and the revert/save controls appear
                 // only while there are unsaved edits.
                 if dirty {
-                    ui.label(egui::RichText::new(icons::UNSAVED.codepoint).color(DELETE_RED));
+                    ui.label(
+                        egui::RichText::new(icons::UNSAVED.codepoint)
+                            .color(DELETE_RED.get(ui.visuals())),
+                    );
                     revert = Button::icon(icons::REVERT).show(ui).clicked();
                     save = Button::icon(icons::SAVE)
                         .enabled(!edit.name.trim().is_empty())
@@ -1196,11 +1203,13 @@ fn manage_preset_row(ui: &mut egui::Ui, row: &ManageRow) -> Option<ManageAction>
             action = Some(ManageAction::Toggle);
         }
         if row.dirty {
-            ui.label(egui::RichText::new(icons::UNSAVED.codepoint).color(DELETE_RED));
+            ui.label(
+                egui::RichText::new(icons::UNSAVED.codepoint).color(DELETE_RED.get(ui.visuals())),
+            );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if Button::icon(icons::DELETE)
-                .tint(DELETE_RED)
+                .tint(DELETE_RED.get(ui.visuals()))
                 .show(ui)
                 .clicked()
             {
@@ -1417,7 +1426,7 @@ fn draw_tab(ui: &mut egui::Ui, t: &TabInfo) -> (Option<TabClick>, Option<egui::R
         ui.painter().rect_stroke(
             rect.shrink(0.5),
             TAB_RADIUS,
-            egui::Stroke::new(1.0, PRESET_BG),
+            egui::Stroke::new(1.0, PRESET_BG.get(ui.visuals())),
             egui::StrokeKind::Inside,
         );
     }
@@ -1428,7 +1437,7 @@ fn draw_tab(ui: &mut egui::Ui, t: &TabInfo) -> (Option<TabClick>, Option<egui::R
 
 /// The background shape for an expanded tab: a pink fill with rounded top corners
 /// (the bottom merges into the detail panel below).
-fn tab_bg_shape(rect: egui::Rect) -> egui::Shape {
+fn tab_bg_shape(rect: egui::Rect, fill: egui::Color32) -> egui::Shape {
     egui::Shape::rect_filled(
         rect,
         egui::CornerRadius {
@@ -1437,7 +1446,7 @@ fn tab_bg_shape(rect: egui::Rect) -> egui::Shape {
             sw: 0,
             se: 0,
         },
-        PRESET_BG,
+        fill,
     )
 }
 

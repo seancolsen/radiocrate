@@ -65,8 +65,21 @@ pub(crate) const ORGANIZER_SWIPE_VELOCITY: f32 = 400.0;
 /// the drawer tracks the finger 1:1 (offset by a constant amount).
 pub(crate) const ORGANIZER_DRAG_FRICTION: f32 = 16.0;
 
-pub(crate) const ACCENT_BLUE: egui::Color32 = egui::Color32::from_rgb(0xBC, 0xD0, 0xEA);
-pub(crate) const HOVER_BLUE: egui::Color32 = egui::Color32::from_rgb(0x77, 0xA5, 0xCE);
+/// The app's soft blue accent: button hover outlines, the played part of the
+/// now-playing timeline, the now-playing row's edge marker. The dark variant
+/// is dimmed so the accent stays as quiet against dark panels as the pale blue
+/// is against light ones.
+pub(crate) const ACCENT_BLUE: theme::Duo = theme::Duo {
+    light: egui::Color32::from_rgb(0xBC, 0xD0, 0xEA),
+    dark: egui::Color32::from_rgb(0x6E, 0x8F, 0xB5),
+};
+/// The app's strong blue: focused input borders, active tab/row markers, and
+/// hover tints. A mid-lightness blue that reads as an accent on either theme's
+/// background, so both variants are the same.
+pub(crate) const HOVER_BLUE: theme::Duo = theme::Duo {
+    light: egui::Color32::from_rgb(0x77, 0xA5, 0xCE),
+    dark: egui::Color32::from_rgb(0x77, 0xA5, 0xCE),
+};
 
 /// Margin kept on each side between the "View SQL" modal and the viewport edges,
 /// so the modal shrinks to fit small windows instead of touching the edges.
@@ -880,7 +893,10 @@ impl App {
             ui.label(format!("Delete \u{201c}{name}\u{201d}?"));
             if unsaved {
                 ui.add_space(4.0);
-                ui.colored_label(ACCENT_BLUE, "This query has unsaved changes.");
+                ui.colored_label(
+                    ACCENT_BLUE.get(ui.visuals()),
+                    "This query has unsaved changes.",
+                );
             }
             ui.add_space(12.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -889,7 +905,7 @@ impl App {
                         egui::Button::new(
                             egui::RichText::new("Delete").color(egui::Color32::WHITE),
                         )
-                        .fill(page::DELETE_RED),
+                        .fill(page::DELETE_RED.get(ui.visuals())),
                     )
                     .clicked()
                 {

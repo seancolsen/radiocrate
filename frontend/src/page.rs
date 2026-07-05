@@ -14,20 +14,25 @@ use crate::icons;
 use crate::now_playing::menu_item;
 use crate::rpc::Query;
 
-/// Red used for the destructive "Delete" affordances (menu item + dialog button).
-pub(crate) const DELETE_RED: egui::Color32 = egui::Color32::from_rgb(0xC0, 0x39, 0x2B);
+/// Red used for the destructive "Delete" affordances (menu item + dialog
+/// button). The dark variant is brighter so it stays legible as text/tint on
+/// dark panels.
+pub(crate) const DELETE_RED: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_rgb(0xC0, 0x39, 0x2B),
+    dark: egui::Color32::from_rgb(0xE0, 0x6B, 0x5C),
+};
 /// Red of the superscript "unsaved changes" marker shown after a query name.
-pub(crate) const UNSAVED_RED: egui::Color32 = DELETE_RED;
+pub(crate) const UNSAVED_RED: crate::theme::Duo = DELETE_RED;
 /// Size of the superscript unsaved marker glyph.
 pub(crate) const UNSAVED_MARKER_SIZE: f32 = 10.0;
 
 /// The [`egui::TextFormat`] for the superscript "unsaved changes" marker — a
 /// small, raised, red `emergency` glyph appended after a query name. A small
 /// font with [`egui::Align::TOP`] gives the raised superscript-asterisk effect.
-pub(crate) fn unsaved_marker_format() -> egui::TextFormat {
+pub(crate) fn unsaved_marker_format(visuals: &egui::Visuals) -> egui::TextFormat {
     egui::TextFormat {
         font_id: icons::font_id(UNSAVED_MARKER_SIZE),
-        color: UNSAVED_RED,
+        color: UNSAVED_RED.get(visuals),
         valign: egui::Align::TOP,
         ..Default::default()
     }
@@ -52,7 +57,11 @@ pub(crate) fn layout_query_name(
 ) -> (Arc<egui::Galley>, Option<Arc<egui::Galley>>) {
     let marker_galley = unsaved.then(|| {
         let mut job = egui::text::LayoutJob::default();
-        job.append(icons::UNSAVED.codepoint, 0.0, unsaved_marker_format());
+        job.append(
+            icons::UNSAVED.codepoint,
+            0.0,
+            unsaved_marker_format(ui.visuals()),
+        );
         ui.painter().layout_job(job)
     });
     let reserved = marker_galley
@@ -102,7 +111,15 @@ pub(crate) fn query_actions_menu(ui: &mut egui::Ui, show_revert: bool) -> Option
     if menu_item(ui, icons::DUPLICATE, "Duplicate", true, None).clicked() {
         action = Some(QueryAction::Duplicate);
     }
-    if menu_item(ui, icons::DELETE, "Delete", true, Some(DELETE_RED)).clicked() {
+    if menu_item(
+        ui,
+        icons::DELETE,
+        "Delete",
+        true,
+        Some(DELETE_RED.get(ui.visuals())),
+    )
+    .clicked()
+    {
         action = Some(QueryAction::Delete);
     }
     action

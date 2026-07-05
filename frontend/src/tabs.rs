@@ -17,8 +17,8 @@ use crate::button::Button;
 use crate::icons;
 use crate::menu_bar::{PageMenu, page_options_menu};
 use crate::page::{Page, SHORTCUTS_PAGE_ID, explorer_button, inline_rename_field};
-use crate::results::darken;
 use crate::skew::{ITALIC_SHEAR, paint_galley_skewed};
+use crate::theme::shade;
 use crate::{App, Rename, RenameSurface};
 
 /// Height of the tab bar (and thus of a full-height tab handle).
@@ -107,7 +107,7 @@ impl App {
     /// own column), never over it.
     pub(crate) fn render_tab_bar(&mut self, ui: &mut egui::Ui) {
         let panel_fill = ui.style().visuals.panel_fill;
-        let bar_fill = darken(panel_fill, 10);
+        let bar_fill = shade(ui.visuals(), panel_fill, 10);
         let organizer_open = self.organizer.open;
         let current = self.current.query_id();
         let schema = Arc::clone(&self.schema);
@@ -467,7 +467,7 @@ fn draw_one_tab(
     let fill = if selected {
         panel_fill
     } else if body.hovered() {
-        darken(bar_fill, 8)
+        shade(ui.visuals(), bar_fill, 8)
     } else {
         bar_fill
     };
@@ -479,7 +479,7 @@ fn draw_one_tab(
         ui.painter().rect_filled(
             egui::Rect::from_min_size(rect.left_top(), egui::vec2(rect.width(), 4.0)),
             corner,
-            crate::HOVER_BLUE,
+            crate::HOVER_BLUE.get(ui.visuals()),
         );
     }
     if dragged {
@@ -487,21 +487,21 @@ fn draw_one_tab(
         ui.painter().rect_stroke(
             rect,
             corner,
-            egui::Stroke::new(1.0, crate::HOVER_BLUE),
+            egui::Stroke::new(1.0, crate::HOVER_BLUE.get(ui.visuals())),
             egui::StrokeKind::Inside,
         );
     }
     // Right-edge separator between handles.
     ui.painter().line_segment(
         [rect.right_top(), rect.right_bottom()],
-        egui::Stroke::new(1.0, darken(bar_fill, 22)),
+        egui::Stroke::new(1.0, shade(ui.visuals(), bar_fill, 22)),
     );
 
     // Inactive tabs read as secondary: their icon and name dim to the weak text
     // color. Hover feedback on the pin/close buttons always uses full-strength
     // text, regardless of the tab's active state.
     let icon_color = if selected {
-        icons::DEFAULT_COLOR
+        icons::DEFAULT_COLOR.get(ui.visuals())
     } else {
         ui.visuals().weak_text_color()
     };
@@ -525,7 +525,7 @@ fn draw_one_tab(
             egui::Sense::click(),
         );
         let tint = if pin.hovered() {
-            crate::HOVER_BLUE
+            crate::HOVER_BLUE.get(ui.visuals())
         } else {
             icon_color
         };
@@ -567,7 +567,8 @@ fn draw_one_tab(
         egui::Sense::click(),
     );
     if close.hovered() {
-        ui.painter().rect_filled(close_rect, 3.0, darken(fill, 16));
+        ui.painter()
+            .rect_filled(close_rect, 3.0, shade(ui.visuals(), fill, 16));
     }
     ui.painter().text(
         close_rect.center(),

@@ -53,4 +53,4 @@ uuid = { version = "1", features = ["js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm-streams = "0.4"
-web-sys = { version = "0.3", features = ["CssStyleDeclaration", "Document", "Element", "HtmlAudioElement", "HtmlCanvasElement", "HtmlElement", "HtmlMediaElement", "Node", "ReadableStream", "Response", "Window"] }
+web-sys = { version = "0.3", features = ["CssStyleDeclaration", "Document", "Element", "HtmlAudioElement", "HtmlCanvasElement", "HtmlElement", "HtmlMediaElement", "Node", "ReadableStream", "Response", "Storage", "Window"] }

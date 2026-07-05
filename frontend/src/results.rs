@@ -10,6 +10,7 @@ use egui::text::{LayoutJob, TextWrapping};
 use crate::columns::{ColumnMetadata, FontColor, FontSize, TextAlign};
 use crate::field_layout::{ColSize, FieldLayout, LayoutKey, Placement, compute_field_layout};
 use crate::rows::CellValue;
+use crate::theme;
 use crate::{ACCENT_BLUE, App, QueryState};
 
 /// Vertical padding above and below a row's content.
@@ -18,13 +19,13 @@ const ROW_PAD_Y: f32 = 6.0;
 const TEXT_PAD_X: f32 = 8.0;
 /// Horizontal gap between adjacent columns on a line.
 const COL_GAP: f32 = 16.0;
-/// How much darker an un-selected row gets on hover (per RGB channel). Small, so
-/// the hover effect is only slightly darker than an un-hovered row.
-pub(crate) const ROW_HOVER_DARKEN: u8 = 10;
 
 /// Background for the pills a list cell renders its elements as: a warm cream
-/// no other UI element uses.
-const PILL_BG: egui::Color32 = egui::Color32::from_rgb(0xF8, 0xE4, 0xB2);
+/// (a deep warm brown on the dark theme) no other UI element uses.
+const PILL_BG: theme::Duo = theme::Duo {
+    light: egui::Color32::from_rgb(0xF8, 0xE4, 0xB2),
+    dark: egui::Color32::from_rgb(0x5C, 0x4B, 0x1F),
+};
 /// Horizontal padding inside a pill, on each side of its text.
 const PILL_PAD_X: f32 = 6.0;
 /// Vertical padding inside a pill, above and below its text.
@@ -41,14 +42,25 @@ const PILL_LINE_EXTRA: f32 = PILL_PAD_Y * 2.0 + 2.0;
 /// Padding inside the "+N" overflow bubble.
 const BUBBLE_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
 
-/// Top of an un-selected row's background gradient: white.
-const ROW_BG_TOP: egui::Color32 = egui::Color32::WHITE;
-/// Bottom of an un-selected row's background gradient: a very light grey, giving
-/// each row a subtle top-lit sheen.
-const ROW_BG_BOTTOM: egui::Color32 = egui::Color32::from_gray(0xF2);
+/// Top of an un-selected row's background gradient: white (a gray a couple of
+/// steps above the dark panel fill on the dark theme — rows pop slightly
+/// brighter than the surrounding chrome in both themes).
+const ROW_BG_TOP: theme::Duo = theme::Duo {
+    light: egui::Color32::WHITE,
+    dark: egui::Color32::from_gray(0x30),
+};
+/// Bottom of an un-selected row's background gradient: slightly darker than the
+/// top, giving each row a subtle top-lit sheen in both themes.
+const ROW_BG_BOTTOM: theme::Duo = theme::Duo {
+    light: egui::Color32::from_gray(0xF2),
+    dark: egui::Color32::from_gray(0x26),
+};
 
 /// Background of a selected result row
-const SELECTED_ROW_BG: egui::Color32 = egui::Color32::from_rgb(0xC8, 0xE4, 0xFF);
+const SELECTED_ROW_BG: theme::Duo = theme::Duo {
+    light: egui::Color32::from_rgb(0xC8, 0xE4, 0xFF),
+    dark: egui::Color32::from_rgb(0x28, 0x45, 0x63),
+};
 /// Opacity of the top-lit sheen gradient layered on top of a selected row's flat
 /// fill, so the sheen reads without hiding the selection color underneath.
 const SELECTED_ROW_GRADIENT_ALPHA: u8 = 90;
@@ -79,16 +91,6 @@ fn paint_vertical_gradient(
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(2, 1, 3);
     painter.add(mesh);
-}
-
-/// Returns `color` darkened by `amount` on each RGB channel (alpha unchanged).
-pub(crate) fn darken(color: egui::Color32, amount: u8) -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(
-        color.r().saturating_sub(amount),
-        color.g().saturating_sub(amount),
-        color.b().saturating_sub(amount),
-        color.a(),
-    )
 }
 
 impl App {
@@ -428,23 +430,24 @@ fn draw_row(
     let ppp = ui.ctx().pixels_per_point();
     let rect = rect.round_to_pixels(ppp);
 
+    let visuals = ui.visuals();
     let hovered = response.hovered();
     let (top, bottom) = if hovered {
         (
-            darken(ROW_BG_TOP, ROW_HOVER_DARKEN),
-            darken(ROW_BG_BOTTOM, ROW_HOVER_DARKEN),
+            theme::shade(visuals, ROW_BG_TOP.get(visuals), theme::HOVER_SHADE),
+            theme::shade(visuals, ROW_BG_BOTTOM.get(visuals), theme::HOVER_SHADE),
         )
     } else {
-        (ROW_BG_TOP, ROW_BG_BOTTOM)
+        (ROW_BG_TOP.get(visuals), ROW_BG_BOTTOM.get(visuals))
     };
     if selected {
-        // A flat light-blue fill (darkened a touch on hover) marks the selection,
-        // then the same top-lit sheen every row gets is layered on top of it, at
+        // A flat blue fill (shaded a touch on hover) marks the selection, then
+        // the same top-lit sheen every row gets is layered on top of it, at
         // reduced opacity so the blue still reads through.
         let base = if hovered {
-            darken(SELECTED_ROW_BG, 20)
+            theme::shade(visuals, SELECTED_ROW_BG.get(visuals), 20)
         } else {
-            SELECTED_ROW_BG
+            SELECTED_ROW_BG.get(visuals)
         };
         ui.painter().rect_filled(rect, 0.0, base);
         paint_vertical_gradient(
@@ -454,8 +457,8 @@ fn draw_row(
             translucent(bottom, SELECTED_ROW_GRADIENT_ALPHA),
         );
     } else {
-        // Un-selected rows get a white→light-grey vertical gradient, nudged
-        // slightly darker on hover so the effect stays subtle.
+        // Un-selected rows get a top-lit vertical gradient, nudged slightly on
+        // hover so the effect stays subtle.
         paint_vertical_gradient(ui.painter(), rect, top, bottom);
     }
 
@@ -470,7 +473,8 @@ fn draw_row(
     if is_current {
         let accent_rect =
             egui::Rect::from_min_size(rect.left_top(), egui::vec2(3.0, rect.height()));
-        ui.painter().rect_filled(accent_rect, 0.0, ACCENT_BLUE);
+        ui.painter()
+            .rect_filled(accent_rect, 0.0, ACCENT_BLUE.get(ui.visuals()));
     }
 
     // Thin separator along the bottom of the row. Drawn as a pixel-aligned filled
@@ -684,7 +688,7 @@ fn draw_pills(ui: &egui::Ui, cell: &Cell, items: &[String]) {
             natural[i]
         };
         let pill_rect = egui::Rect::from_min_size(egui::pos2(x, pill_top), egui::vec2(w, pill_h));
-        painter.rect_filled(pill_rect, crate::button::RADIUS, PILL_BG);
+        painter.rect_filled(pill_rect, crate::button::RADIUS, PILL_BG.get(ui.visuals()));
         let galley = if w < natural[i] {
             let mut job = LayoutJob::single_section(texts[i].clone(), format.clone());
             job.wrap = TextWrapping::truncate_at_width((w - PILL_PAD_X * 2.0).max(0.0));
@@ -701,7 +705,11 @@ fn draw_pills(ui: &egui::Ui, cell: &Cell, items: &[String]) {
         // Superscript: the bubble hugs the top of the line instead of centering.
         let size = galley.size() + BUBBLE_PAD * 2.0;
         let rect = egui::Rect::from_min_size(egui::pos2(x, cell.line_top), size);
-        painter.rect_filled(rect, size.y * 0.5, darken(PILL_BG, 30));
+        painter.rect_filled(
+            rect,
+            size.y * 0.5,
+            theme::shade(ui.visuals(), PILL_BG.get(ui.visuals()), 30),
+        );
         painter.galley(rect.min + BUBBLE_PAD, galley, cell.color);
     }
 }

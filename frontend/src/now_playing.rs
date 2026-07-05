@@ -163,15 +163,7 @@ impl App {
         duration: Option<f64>,
     ) -> (bool, Option<MenuAction>) {
         let panel_fill = ui.style().visuals.panel_fill;
-        let sheet_fill = {
-            let [r, g, b, a] = panel_fill.to_array();
-            egui::Color32::from_rgba_unmultiplied(
-                r.saturating_sub(8),
-                g.saturating_sub(8),
-                b.saturating_sub(8),
-                a,
-            )
-        };
+        let sheet_fill = crate::theme::shade(ui.visuals(), panel_fill, 8);
 
         let mut toggle = false;
         let mut action: Option<MenuAction> = None;
@@ -377,7 +369,8 @@ fn draw_now_playing_timeline(
             egui::vec2((played_w - gap * 0.5).max(0.0), timeline_height),
         );
         if played_rect.width() > 0.0 {
-            ui.painter().rect_filled(played_rect, rounding, ACCENT_BLUE);
+            ui.painter()
+                .rect_filled(played_rect, rounding, ACCENT_BLUE.get(ui.visuals()));
         }
     }
     let unplayed_start = track_rect.min.x + (played_w + gap * 0.5).max(0.0);

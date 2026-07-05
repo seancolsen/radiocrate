@@ -9,10 +9,13 @@ use eframe::egui;
 pub(crate) use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons as mi;
 
-/// Default color for icon glyphs: a dark gray, distinct from the fully-black body
-/// text, so icons read as secondary chrome. Call sites that need a semantic tint
-/// (e.g. destructive red) override it per icon.
-pub(crate) const DEFAULT_COLOR: egui::Color32 = egui::Color32::from_gray(0x5A);
+/// Default color for icon glyphs: a gray a step short of the theme's body text
+/// (fully black / near-white), so icons read as secondary chrome. Call sites
+/// that need a semantic tint (e.g. destructive red) override it per icon.
+pub(crate) const DEFAULT_COLOR: crate::theme::Duo = crate::theme::Duo {
+    light: egui::Color32::from_gray(0x5A),
+    dark: egui::Color32::from_gray(0xAE),
+};
 
 // Query sections.
 /// The query's source table.
@@ -83,6 +86,12 @@ pub(crate) const MANAGE_PRESETS: MaterialIcon = mi::ICON_HANDYMAN;
 pub(crate) const SETTINGS: MaterialIcon = mi::ICON_SETTINGS;
 /// The Keyboard Shortcuts settings entry and its tab handle.
 pub(crate) const KEYBOARD: MaterialIcon = mi::ICON_KEYBOARD_ALT;
+/// The "follow the system theme" entry in the Settings menu.
+pub(crate) const THEME_SYSTEM: MaterialIcon = mi::ICON_BRIGHTNESS_AUTO;
+/// The light-theme entry in the Settings menu.
+pub(crate) const THEME_LIGHT: MaterialIcon = mi::ICON_LIGHT_MODE;
+/// The dark-theme entry in the Settings menu.
+pub(crate) const THEME_DARK: MaterialIcon = mi::ICON_DARK_MODE;
 
 // Playback.
 pub(crate) const PLAY: MaterialIcon = mi::ICON_PLAY_ARROW;
