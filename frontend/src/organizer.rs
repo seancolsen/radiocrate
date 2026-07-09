@@ -36,6 +36,10 @@ pub(crate) struct Organizer {
 #[allow(clippy::struct_excessive_bools)]
 struct OpenedItem {
     id: Uuid,
+    /// Whether this is the currently-showing page (drives the active highlight).
+    /// Computed by total equality against [`crate::CurrentPage`] so every tab
+    /// type — not just queries — can be active.
+    active: bool,
     name: String,
     unsaved: bool,
     pinned: bool,
@@ -131,7 +135,6 @@ impl App {
         let screen_height = viewport.height();
         let opened = self.opened_items();
         let saved = self.saved_items();
-        let current = self.current.query_id();
         let collapse = (
             self.organizer.opened_collapsed,
             self.organizer.queries_collapsed,
@@ -171,7 +174,6 @@ impl App {
                     ui,
                     &opened,
                     &saved,
-                    current,
                     collapse,
                     &mut self.filter,
                     &mut self.rename,
@@ -195,7 +197,6 @@ impl App {
     ) {
         let opened = self.opened_items();
         let saved = self.saved_items();
-        let current = self.current.query_id();
         let collapse = (
             self.organizer.opened_collapsed,
             self.organizer.queries_collapsed,
@@ -212,7 +213,6 @@ impl App {
                     ui,
                     &opened,
                     &saved,
-                    current,
                     collapse,
                     &mut self.filter,
                     &mut self.rename,
@@ -301,27 +301,32 @@ impl App {
     fn opened_items(&self) -> Vec<OpenedItem> {
         self.pages
             .iter()
-            .map(|p| match p {
-                crate::page::Page::Query(q) => OpenedItem {
-                    id: q.live.id,
-                    name: q.live.name.clone(),
-                    unsaved: q.unsaved(),
-                    pinned: q.pinned,
-                    settings: false,
-                    base_table: q.live.definition.base.clone(),
-                    full_mode: q.live.definition.is_full(),
-                    show_revert: q.is_persisted() && q.unsaved(),
-                },
-                crate::page::Page::KeyboardShortcuts => OpenedItem {
-                    id: crate::page::SHORTCUTS_PAGE_ID,
-                    name: "Keyboard Shortcuts".to_owned(),
-                    unsaved: false,
-                    pinned: true,
-                    settings: true,
-                    base_table: String::new(),
-                    full_mode: false,
-                    show_revert: false,
-                },
+            .map(|p| {
+                let active = self.current == p.marker();
+                match p {
+                    crate::page::Page::Query(q) => OpenedItem {
+                        id: q.live.id,
+                        active,
+                        name: q.live.name.clone(),
+                        unsaved: q.unsaved(),
+                        pinned: q.pinned,
+                        settings: false,
+                        base_table: q.live.definition.base.clone(),
+                        full_mode: q.live.definition.is_full(),
+                        show_revert: q.is_persisted() && q.unsaved(),
+                    },
+                    crate::page::Page::KeyboardShortcuts => OpenedItem {
+                        id: crate::page::SHORTCUTS_PAGE_ID,
+                        active,
+                        name: "Keyboard Shortcuts".to_owned(),
+                        unsaved: false,
+                        pinned: true,
+                        settings: true,
+                        base_table: String::new(),
+                        full_mode: false,
+                        show_revert: false,
+                    },
+                }
             })
             .collect()
     }
@@ -393,7 +398,6 @@ fn draw_explorer(
     ui: &mut egui::Ui,
     opened: &[OpenedItem],
     saved: &[SavedItem],
-    current: Option<Uuid>,
     collapse: (bool, bool),
     filter: &mut String,
     rename: &mut Option<Rename>,
@@ -435,7 +439,7 @@ fn draw_explorer(
                     section_hint(ui, "No open queries");
                 }
                 for item in opened {
-                    let out = opened_row_widget(ui, item, current == Some(item.id), schema);
+                    let out = opened_row_widget(ui, item, item.active, schema);
                     if out.clicked {
                         actions.select = Some(item.id);
                     }
@@ -1107,6 +1111,18 @@ mod snapshot_tests {
         let mut app = populated();
         app.organizer.queries_collapsed = true;
         snapshot("queries_collapsed", app);
+    }
+
+    #[test]
+    fn shortcuts_tab_active() {
+        // The Keyboard Shortcuts tab open and active: the "Opened" section marks
+        // it with the same active highlight a query tab gets. Regression guard for
+        // the polymorphic-tab active check (a non-query current page must still
+        // light up its row).
+        let mut app = populated();
+        app.pages.push(crate::page::Page::KeyboardShortcuts);
+        app.current = crate::CurrentPage::KeyboardShortcuts;
+        snapshot("shortcuts_tab_active", app);
     }
 
     #[test]

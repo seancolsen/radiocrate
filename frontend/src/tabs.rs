@@ -71,6 +71,10 @@ enum TabKind {
 #[allow(clippy::struct_excessive_bools)]
 struct TabInfo {
     id: Uuid,
+    /// Whether this is the currently-showing page (drives the active highlight).
+    /// Computed by total equality against [`crate::CurrentPage`] so every tab
+    /// type — not just queries — can be active.
+    selected: bool,
     kind: TabKind,
     name: String,
     pinned: bool,
@@ -109,33 +113,38 @@ impl App {
         let panel_fill = ui.style().visuals.panel_fill;
         let bar_fill = shade(ui.visuals(), panel_fill, 10);
         let organizer_open = self.organizer.open;
-        let current = self.current.query_id();
+        let current = self.current;
         let schema = Arc::clone(&self.schema);
 
         let tabs: Vec<TabInfo> = self
             .pages
             .iter()
-            .map(|p| match p {
-                Page::Query(q) => TabInfo {
-                    id: q.live.id,
-                    kind: TabKind::Query,
-                    name: q.live.name.clone(),
-                    pinned: q.pinned,
-                    unsaved: q.unsaved(),
-                    base_table: q.live.definition.base.clone(),
-                    full_mode: q.live.definition.is_full(),
-                    show_revert: q.is_persisted() && q.unsaved(),
-                },
-                Page::KeyboardShortcuts => TabInfo {
-                    id: SHORTCUTS_PAGE_ID,
-                    kind: TabKind::Shortcuts,
-                    name: "Keyboard Shortcuts".to_owned(),
-                    pinned: true,
-                    unsaved: false,
-                    base_table: String::new(),
-                    full_mode: false,
-                    show_revert: false,
-                },
+            .map(|p| {
+                let selected = current == p.marker();
+                match p {
+                    Page::Query(q) => TabInfo {
+                        id: q.live.id,
+                        selected,
+                        kind: TabKind::Query,
+                        name: q.live.name.clone(),
+                        pinned: q.pinned,
+                        unsaved: q.unsaved(),
+                        base_table: q.live.definition.base.clone(),
+                        full_mode: q.live.definition.is_full(),
+                        show_revert: q.is_persisted() && q.unsaved(),
+                    },
+                    Page::KeyboardShortcuts => TabInfo {
+                        id: SHORTCUTS_PAGE_ID,
+                        selected,
+                        kind: TabKind::Shortcuts,
+                        name: "Keyboard Shortcuts".to_owned(),
+                        pinned: true,
+                        unsaved: false,
+                        base_table: String::new(),
+                        full_mode: false,
+                        show_revert: false,
+                    },
+                }
             })
             .collect();
 
@@ -184,7 +193,6 @@ impl App {
                         ui,
                         strip_rect,
                         &tabs,
-                        current,
                         rename,
                         drag,
                         panel_fill,
@@ -313,7 +321,6 @@ fn draw_tab_strip(
     ui: &mut egui::Ui,
     strip_rect: egui::Rect,
     tabs: &[TabInfo],
-    current: Option<Uuid>,
     rename: &mut Option<Rename>,
     drag: Option<DragSnapshot>,
     panel_fill: egui::Color32,
@@ -369,7 +376,7 @@ fn draw_tab_strip(
             info,
             rect,
             fixed[i],
-            current == Some(info.id),
+            info.selected,
             false,
             rename,
             panel_fill,
@@ -398,7 +405,7 @@ fn draw_tab_strip(
             &tabs[d],
             rect,
             fixed[d],
-            current == Some(tabs[d].id),
+            tabs[d].selected,
             true,
             rename,
             panel_fill,
