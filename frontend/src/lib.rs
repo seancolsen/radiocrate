@@ -28,7 +28,6 @@ mod query_def;
 mod results;
 mod rows;
 mod rpc;
-mod schema;
 mod shortcuts_tab;
 mod skew;
 #[cfg(test)]

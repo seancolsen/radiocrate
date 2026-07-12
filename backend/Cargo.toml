@@ -14,6 +14,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+introspection = { path = "../introspection" }
 arrow-ipc = "58"
 axum = "0.8"
 blake3 = "1"

@@ -876,6 +876,7 @@ dependencies = [
  "bytes",
  "clap",
  "duckdb",
+ "introspection",
  "jiff",
  "ogg",
  "rayon",
@@ -2087,6 +2088,7 @@ dependencies = [
  "futures-util",
  "gloo-net",
  "image",
+ "introspection",
  "jiff",
  "js-sys",
  "polyglot-sql",
@@ -2759,6 +2761,14 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "introspection"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

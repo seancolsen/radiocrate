@@ -72,6 +72,33 @@ pub(crate) struct RpcResponse {
 struct RpcError {
     code: i32,
     message: String,
+    /// Optional structured payload. Present (possibly `null`) for handlers that opt into structured
+    /// errors — e.g. the `dml` handler reports which operation failed here; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
+}
+
+/// A handler error rich enough for the JSON-RPC `error` object: a numeric `code`, a `message`, and
+/// an optional structured `data` payload.
+///
+/// Most handlers just produce a `String`; `From<String>` maps that to a generic server error with no
+/// `data`. The `dml` handler builds these directly to attach an error `code` and a `data` object
+/// naming the failing operation (see [`crate::dml`]).
+#[derive(Debug)]
+pub(crate) struct RpcErr {
+    pub(crate) code: i32,
+    pub(crate) message: String,
+    pub(crate) data: Option<Value>,
+}
+
+impl From<String> for RpcErr {
+    fn from(message: String) -> Self {
+        RpcErr {
+            code: -32000,
+            message,
+            data: None,
+        }
+    }
 }
 
 pub(crate) async fn rpc(
@@ -89,12 +116,13 @@ pub(crate) async fn rpc(
             error: None,
             id,
         }),
-        Ok(Err(message)) => Json(RpcResponse {
+        Ok(Err(err)) => Json(RpcResponse {
             jsonrpc: "2.0",
             result: None,
             error: Some(RpcError {
-                code: -32000,
-                message,
+                code: err.code,
+                message: err.message,
+                data: err.data,
             }),
             id,
         }),
@@ -104,16 +132,26 @@ pub(crate) async fn rpc(
             error: Some(RpcError {
                 code: -32603,
                 message: "rpc task panicked".to_string(),
+                data: None,
             }),
             id,
         }),
     }
 }
 
-// A flat match over every RPC method; splitting it up would just scatter the
+// Routes a method to its handler. The `dml` handler opts into the structured [`RpcErr`] error shape;
+// every other method uses a plain `String` error, which `From<String>` widens.
+fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, RpcErr> {
+    match method {
+        "dml" => crate::dml::handle(state, params),
+        _ => dispatch_legacy(state, method, params).map_err(RpcErr::from),
+    }
+}
+
+// A flat match over the CRUD RPC methods; splitting it up would just scatter the
 // per-method param structs and handlers.
 #[allow(clippy::too_many_lines)]
-fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
+fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
     match method {
         "query.list" => state.read(|conn| -> Result<Value, String> {
             let queries = list_queries(conn)?;

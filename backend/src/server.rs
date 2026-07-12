@@ -43,6 +43,24 @@ impl AppState {
             .map_err(|e| format!("checkpoint failed after write: {e}"))?;
         Ok(value)
     }
+
+    /// Like [`AppState::write`], but hands the closure a `&mut Connection` so it can open a
+    /// transaction (`DuckDB`'s `Connection::transaction` requires `&mut`). Used by the DML API, which
+    /// runs a whole batch of operations inside one `BEGIN … COMMIT` and then checkpoints once.
+    ///
+    /// The same checkpoint invariant applies: on success the WAL is flushed to the main file. The
+    /// error type is generic so callers can carry structured errors (e.g. [`crate::rpc::RpcErr`]); a
+    /// checkpoint failure is surfaced through `E: From<String>`.
+    pub fn write_mut<T, E: From<String>>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut conn = self.db.lock().unwrap();
+        let value = f(&mut conn)?;
+        conn.execute_batch("CHECKPOINT;")
+            .map_err(|e| E::from(format!("checkpoint failed after write: {e}")))?;
+        Ok(value)
+    }
 }
 
 pub fn app_state(conn: Connection, collection_path: PathBuf) -> Arc<AppState> {

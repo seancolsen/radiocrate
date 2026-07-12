@@ -24,6 +24,7 @@ egui_kittest = { version = "0.34", features = ["wgpu", "snapshot"] }
 image = { version = "0.25", default-features = false }
 
 [dependencies]
+introspection = { path = "../introspection" }
 arrow-array = "56"
 arrow-buffer = "56"
 arrow-cast = "56"

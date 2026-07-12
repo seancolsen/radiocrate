@@ -34,10 +34,10 @@ pub(crate) fn run_query(query: String, state: &Arc<Mutex<QueryState>>, ctx: &egu
 /// Introspects the database into Querydown schema JSON once at startup and stores
 /// the result in `schema`.
 ///
-/// Querydown supplies the introspection SQL, which we run through the ordinary query
-/// API like any other query. It returns a single JSON document, which we then enrich
-/// with our convention-inferred table links (see [`crate::schema`]) before storing it
-/// for the compiler to use.
+/// The shared [`introspection`] crate supplies the introspection SQL, which we run through
+/// the ordinary query API like any other query. It returns a single JSON document, which we
+/// then enrich with our convention-inferred table links (see [`introspection`]) before storing
+/// it for the compiler to use.
 pub(crate) fn fetch_schema(schema: Arc<Mutex<Option<String>>>, ctx: egui::Context) {
     let raw_json: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let handler = {
@@ -56,12 +56,16 @@ pub(crate) fn fetch_schema(schema: Arc<Mutex<Option<String>>>, ctx: egui::Contex
         let Some(raw) = raw_json.lock().unwrap().take() else {
             return;
         };
-        if let Ok(enriched) = crate::schema::add_inferred_links(&raw) {
+        if let Ok(enriched) = introspection::add_inferred_links(&raw) {
             *schema.lock().unwrap() = Some(enriched);
             ctx.request_repaint();
         }
     };
-    stream_query(crate::schema::introspection_sql(), handler, on_done);
+    stream_query(
+        introspection::introspection_sql().to_string(),
+        handler,
+        on_done,
+    );
 }
 
 /// Extracts the first row's first column as a string, for queries (like schema
