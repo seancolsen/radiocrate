@@ -4,7 +4,7 @@ Begin implementing a dynamic form system for CRUD on arbitrary records in the da
 
 ## Scope
 
-The scope for this session is as follows:
+The scope for this phase is as follows:
 
 1. Modify the query results view to allow for this new functionality.
 1. Render the edit form with all its data initialized.
@@ -13,7 +13,7 @@ The scope for this session is as follows:
 
 Out of scope:
 
-- Handling submission of the form to actually save the results. (We'll handle that in a separate session.)
+- Handling submission of the form to actually save the results. (We'll handle that later.)
 
 ## Product-level design philosophy
 
@@ -61,7 +61,7 @@ Notes on the mockup:
 
     - (B) The user should be able to execute a command from the command pallette or keyboard shortcut. Label this command "Results: Edit selected rows"
 
-1. I would ideally like the record editor UI to open inline within the query results, as shown in the mockup. It should open underneath the row being edited, between it and the next row. The record editor UI will have a dynamic height, potentially changing as the user interacts with it. I'm not sure how easy it will be to incorporate this dynamically-sized element into the results pane. If it poses a significant challenge, then we could consider moving the record editor UI to a modal side panel on the right. But I would like you to try to get it implemented within the results, even if it means refactoring some code. There should only be one vertical scrollbar ­— the main results scrollbar. And no horizontal scrollbars.
+1. The record editor UI should open in a right sidebar as shown in the mockup.
 
 1. As you can see in the mockup, the record editor UI follows a tree structure. The user should be able to collapse and expand items, where indicated by the chevron icons. Initially, all items should be collapsed.
 
@@ -69,11 +69,11 @@ Notes on the mockup:
 
 1. When a field has been modified, we should render a red star as a superscript on the field label.
 
-1. When the form has any unsaved changes, the Save button should become enabled. (But remember: we don't need to handle its submission within this session.)
+1. When the form has any unsaved changes, the Save button should become enabled. (But remember: we don't need to handle its submission right now.)
 
-1. With the edit form open, the user should still be able to scroll to see and interact with other results. The user should even be able to open multiple editor forms simultaneously.
+1. With the record editor sidebar open, the user should still be able to interact with the query results. If the user selects another query result, then the record editor should switch contexts to the record that the user selects. If the user selects multiple records, then the sidebar should display text like "2 records selected. Bulk editing not yet supported", and it should not render a record editor form.
 
-1. When the user clicks "Cancel", the form should close.
+1. When the user clicks "Cancel", the sidebar should close.
 
 ## Form structure and data loading
 
@@ -89,11 +89,11 @@ Notes on the mockup:
 
 ## Selection and focus
 
-- When a record editor form is opened for a query result row, that result row and all other result rows in the query should still be selectable. In addition to the user being able to select query result rows, the user should also be able to select field labels and embedded records.
+- Within the record editor form, the user should be able to select field labels and embedded records.
 
-- We should support selection of multiple things — but only homogeneous selections. For example, in the attached mockup, the user should be able to select multiple `credit` records but not select an `album` record and a `file` record at the same time. Likewise, we should also not allow selection of records in the top level of the query results (outside the record editor form) combined with selection of embedded records. If the user tries to use Ctrl or Shift to select multiple heterogeneous records, the selection should not change. And any time the user single-clicks to select something (embedded or query-level), then we should un-select everything else.
+- We should support selection of embedded records — but only when they are siblings within a multi-record field. Field labels and embedded records in linked record fields should only support single selection.
 
-- Field labels should only support single selection, not multiple selection.
+- When an element is selected, it should also receive focus.
 
 - Modify the label of several existing command actions to make them more general-purpose so that they apply to the selection of UI elements within the record editor form.
 
@@ -116,6 +116,8 @@ Notes on the mockup:
 ## Form modification
 
 - **Ephemeral changes**: Changes to the form should be stored in memory until the user clicks "Save". A user's changes should persist even after collapsing and expanding sections of the tree. Given all the intricate and dynamic nesting of this form system, I'm not sure of the best data structure to meet this requirement. I'll leave that to you.
+
+- **Form state within the query page**: Changes within the record editor form should persist within the query page tab, stored per record, keyed on the record's primary key value. If a record has unsaved changes, a red star should display within the query result row. The user should be able to select a record, make changes, leave the form unsaved, then switch to another record, then select the original record and save it.
 
 - **Field modification status indicators**: Use a red star to indicate fields that the user has modified. Propagate this status up through the tree so that field modification will be visible even when sections of the tree are collapsed.
 
