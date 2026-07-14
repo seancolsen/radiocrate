@@ -217,6 +217,12 @@ Notes on the mockup:
 
 - At the bottom of the modal, include a "New record" button. This should close the record picker and scaffold the UI necessary to add a record and link it. Upon doing so, the user's entire Querydown filtering code should be copied and pasted into the first text field within the nested new record form. (This won't be a perfect mapping of search terms to fields, but it will probably be helpful in many cases, and we can improve this logic later if needed.)
 
+## Adding a new record to a multi-record field
+
+- When the user clicks the "+" button within a multi-record field, scaffold the UI for the user to add a new record.
+
+- Put the new record UI at the _top_ of the record list, expand it, and activate/focus the first editable field so the user may begin typing immediately.
+
 ## The embedded record widget
 
 - This widget should function much in the same way as our query result row widget. For example, it should have the same field layout logic.
@@ -230,5 +236,19 @@ Notes on the mockup:
 
 - The embedded record widget might need to render its content on multiple lines due to the same sort of field layout logic present for query result rows. If that wrapping happens, keep the border radius the same as it is shown in the mockup. If it grows in height, it will end up with flat sides, not round sides, and that's okay.
 
+- When the embedded record widget represents a _new record being added_, it should look a bit different. Render the text "New" in italics, centered within the widget. Don't attempt to piece together the user's field values into the data necessary to render the embedded record widget (because we could be missing things like aggregates).
 
+## Expandable text
+
+Text fields have some special behavior to strike a balance between information density at a high level and smooth UX at a low level.
+
+- When we're able to render the entire text content of a field value, do not provide an expansion toggle for the field.
+
+- When the text content of a field is too tall or too wide to fit within the available space, then provide an expansion toggle.
+
+- When a text field is collapsed and not activated, display its content in the field value area on one line — even if the text contains multiple lines or exceeds the available space. In this display mode, render newlines as spaces and use an ellipses to indicate truncation.
+
+- When a text field is collapsed and _activated_ (in edit mode), render the text editing box using the full height necessary to fit the content of the text with soft wrapping.
+
+- When a text field is expanded, display its content _below_ the field label (instead of in the field value area to the right of the label). This gives the text more horizontal space. Render linebreaks as linebreaks. Use however much height is necessary to display the text with soft wrapping. Keep this layout the same whether the text field is activated or not.
 
