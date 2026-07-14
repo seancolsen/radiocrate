@@ -186,6 +186,12 @@ impl App {
         // simply hasn't run yet doesn't flash "No results" before it gets the
         // chance to.
         let fetched = self.current_page().is_some_and(|p| p.results_fetched);
+        // The query's base table, used both for the "Edit {base}" context-menu
+        // label and to build the record editor form when it's chosen.
+        let base_table = self
+            .current_page()
+            .map(|p| p.live.definition.base.clone())
+            .unwrap_or_default();
         egui::CentralPanel::default()
             .frame(frame)
             .show_inside(ui, |ui| {
@@ -206,6 +212,12 @@ impl App {
 
                 let mut clicked: Option<(usize, egui::Modifiers)> = None;
                 let mut double_clicked: Option<(usize, String)> = None;
+                // A right-click that should (re)select a single row before its
+                // context menu opens.
+                let mut secondary_select: Option<usize> = None;
+                // The row whose "Edit {base}" context-menu item was chosen, with
+                // that row's record id (when the results carry one).
+                let mut edit_record: Option<Option<String>> = None;
 
                 let pending_scroll = self
                     .pending_scroll
@@ -293,15 +305,51 @@ impl App {
                             let mods = ui.input(|i| i.modifiers);
                             clicked = Some((index, mods));
                         }
+
+                        // The context menu is offered for a single row only: it's
+                        // suppressed on a right-click that lands on one of several
+                        // already-selected rows (no bulk edit yet). Any other
+                        // right-click first selects that row alone, then opens.
+                        let part_of_multi = selection.contains(&index) && selection.len() > 1;
+                        if !part_of_multi {
+                            if resp.secondary_clicked() {
+                                secondary_select = Some(index);
+                            }
+                            let menu = egui::Popup::context_menu(&resp).show(|ui| {
+                                ui.set_width(160.0);
+                                crate::now_playing::menu_item(
+                                    ui,
+                                    crate::icons::EDIT,
+                                    &format!("Edit {base_table}"),
+                                    true,
+                                    None,
+                                )
+                                .clicked()
+                            });
+                            if menu.is_some_and(|m| m.inner) {
+                                edit_record = Some(track_id.map(str::to_string));
+                            }
+                        }
                     }
                 });
                 drop(state);
 
+                // A right-click selects the targeted row (clearing others) before
+                // its menu opens, matching the plan's single-row semantics.
+                if let Some(index) = secondary_select {
+                    self.selection.clear();
+                    self.selection.insert(index);
+                    self.selection_anchor = Some(index);
+                    self.selection_lead = Some(index);
+                }
                 if let Some((index, mods)) = clicked {
                     self.handle_row_click(index, mods);
                 }
                 if let Some((index, id)) = double_clicked {
                     self.play_track(current_id, index, &id, &ctx);
+                }
+                if let Some(record_id) = edit_record {
+                    self.open_record_editor(&base_table, record_id);
                 }
             });
     }

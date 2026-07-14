@@ -15,6 +15,7 @@ mod columns;
 mod commands;
 mod compile;
 mod field_layout;
+mod form;
 mod format;
 mod http;
 mod icons;
@@ -291,6 +292,9 @@ pub struct App {
     /// Memoized result-row field layout, reused across rows and frames until the column
     /// set or available width changes.
     pub(crate) field_layout_cache: Option<(field_layout::LayoutKey, Rc<FieldLayout>)>,
+    /// The open record editor form, shown in a right-hand sidebar, if any. `None`
+    /// when the sidebar is closed.
+    pub(crate) record_editor: Option<form::RecordEditor>,
 }
 
 impl Default for App {
@@ -337,6 +341,7 @@ impl Default for App {
             schema: Arc::new(Mutex::new(None)),
             schema_fetch_started: false,
             field_layout_cache: None,
+            record_editor: None,
         }
     }
 }
@@ -407,6 +412,10 @@ impl App {
         }
         self.render_now_playing(ui);
         self.maybe_revalidate_current_track_index();
+
+        // The record editor sidebar (a right panel) must be added before the
+        // central panel so the central content lays out in the remaining space.
+        self.render_record_editor_panel(ui);
 
         // Central panel.
         match self.current {
@@ -1019,6 +1028,61 @@ impl App {
         }
     }
 
+    /// Opens the record editor sidebar for a record from the `base` table,
+    /// building the form structure from the introspected schema and seeding the
+    /// primary-key id so the form shows which record it's editing. A no-op if the
+    /// schema isn't loaded yet or `base` isn't a known table.
+    pub(crate) fn open_record_editor(&mut self, base: &str, record_id: Option<String>) {
+        let Some(schema_json) = self.schema.lock().unwrap().clone() else {
+            return;
+        };
+        let Ok(schema) = introspection::Schema::parse(&schema_json) else {
+            return;
+        };
+        let Some(mut editor) = form::RecordEditor::structure(&schema, base) else {
+            return;
+        };
+        if let Some(id) = record_id {
+            editor.set_record_id(id);
+        }
+        self.record_editor = Some(editor);
+    }
+
+    /// Renders the record editor as a resizable right-hand sidebar when one is
+    /// open. The toolbar is pinned to the top and the fields scroll below it.
+    /// Clicking *Cancel* closes the sidebar (dropping the form). A no-op when no
+    /// editor is open.
+    pub(crate) fn render_record_editor_panel(&mut self, ui: &mut egui::Ui) {
+        // Take the editor out for the duration of the render so the closures can
+        // borrow it without conflicting with the `self.record_editor = ...`
+        // write below; put it back unless Cancel was clicked.
+        let Some(editor) = self.record_editor.take() else {
+            return;
+        };
+        let mut keep = true;
+        egui::Panel::right("record_editor")
+            .resizable(true)
+            .default_size(360.0)
+            .size_range(300.0..=620.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(6.0);
+                if editor.toolbar(ui).cancel {
+                    keep = false;
+                }
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        editor.body(ui);
+                    });
+            });
+        if keep {
+            self.record_editor = Some(editor);
+        }
+    }
+
     /// Compiles and runs the current page's live query, replacing its results.
     pub(crate) fn run_query(&mut self, ctx: &egui::Context) {
         let Some((results, definition)) = self
@@ -1201,7 +1265,7 @@ fn format_sql(sql: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_sql;
+    use super::{App, form, format_sql};
 
     #[test]
     fn format_sql_pretty_prints() {
@@ -1209,6 +1273,62 @@ mod tests {
         let out = format_sql("select a, b from t where a > 1");
         assert!(out.contains('\n'), "expected multi-line output, got: {out}");
         assert!(out.to_uppercase().contains("SELECT"));
+    }
+
+    /// `open_record_editor` parses the loaded schema, builds the form structure
+    /// for the base table, and seeds the record's id — the whole context-menu
+    /// "Edit {base}" outcome, minus the UI event plumbing.
+    #[test]
+    fn open_record_editor_builds_form_and_seeds_id() {
+        let schema = r#"{ "tables": [
+            { "name": "track", "unique_constraints": [["id"]], "columns": [
+                { "name": "id", "type": "UUID", "nullable": false },
+                { "name": "title", "type": "VARCHAR", "nullable": true },
+                { "name": "album", "type": "UUID", "nullable": true }
+            ] },
+            { "name": "album", "unique_constraints": [["id"]], "columns": [
+                { "name": "id", "type": "UUID", "nullable": false }
+            ] },
+            { "name": "credit", "unique_constraints": [["track", "artist"]], "columns": [
+                { "name": "track", "type": "UUID", "nullable": false },
+                { "name": "artist", "type": "UUID", "nullable": false }
+            ] }
+        ], "links": [] }"#;
+        let mut app = App::default();
+        *app.schema.lock().unwrap() = Some(schema.to_string());
+
+        app.open_record_editor("track", Some("abc-123".to_string()));
+
+        let editor = app.record_editor.as_ref().expect("editor should open");
+        assert_eq!(editor.base_table, "track");
+        // The id field is seeded with the record's id.
+        let id_field = editor.fields.iter().find(|f| f.name == "id").unwrap();
+        assert!(matches!(
+            &id_field.kind,
+            form::FieldKind::Primitive { ty: form::Primitive::Id, value: Some(v) } if v == "abc-123"
+        ));
+        // `album` (a UUID named after a table) is a scalar link; `credit`
+        // (references track) is a multi-record field.
+        assert!(
+            editor
+                .fields
+                .iter()
+                .any(|f| f.name == "album" && matches!(f.kind, form::FieldKind::ScalarLink { .. }))
+        );
+        assert!(
+            editor.fields.iter().any(
+                |f| f.name == "credit" && matches!(f.kind, form::FieldKind::MultiRecord { .. })
+            )
+        );
+    }
+
+    /// A form isn't opened when the base table isn't in the schema.
+    #[test]
+    fn open_record_editor_ignores_unknown_base() {
+        let mut app = App::default();
+        *app.schema.lock().unwrap() = Some(r#"{ "tables": [], "links": [] }"#.to_string());
+        app.open_record_editor("track", None);
+        assert!(app.record_editor.is_none());
     }
 }
 

@@ -69,6 +69,20 @@ pub(crate) const EXPAND_OPEN: MaterialIcon = mi::ICON_EXPAND_MORE;
 /// Collapsed disclosure arrow on a collapsible preset card.
 pub(crate) const EXPAND_CLOSED: MaterialIcon = mi::ICON_CHEVRON_RIGHT;
 
+// Record editor form field kinds. Each field's label pill shows the glyph for
+// its kind; the concept-per-kind mapping lives here so the form module refers to
+// the kind, never a raw glyph.
+/// A plain text (string) field.
+pub(crate) const FIELD_TEXT: MaterialIcon = mi::ICON_SUBJECT;
+/// A numeric field.
+pub(crate) const FIELD_NUMBER: MaterialIcon = mi::ICON_TAG;
+/// A `UUID` field (typically the record's own id).
+pub(crate) const FIELD_ID: MaterialIcon = mi::ICON_FINGERPRINT;
+/// A scalar field backed by a foreign key referencing another table's record.
+pub(crate) const FIELD_LINK: MaterialIcon = mi::ICON_LINK;
+/// A multi-record field: the set of records that reference this one.
+pub(crate) const FIELD_RECORDS: MaterialIcon = mi::ICON_TABLE;
+
 // Presets.
 /// A hand-written ("custom") query fragment, shown on the "Custom …" rows of the
 /// section options menus. (Material Symbols 0.6 has no `wand_shine`; this

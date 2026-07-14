@@ -576,3 +576,110 @@ fn no_results() {
     let app = results_only_app(page);
     snapshot_results_app("no_results", app, false);
 }
+
+/// A representative record editor form for exercising the sidebar integration —
+/// covers every field kind and value state (text, number, a NULL primitive and
+/// scalar link showing the pencil, a populated scalar link, a UUID id, and a
+/// multi-record field).
+fn sample_record_editor() -> crate::form::RecordEditor {
+    use crate::form::{FieldKind, FormField, Primitive};
+    let text = |name: &str, value: &str| FormField {
+        name: name.to_owned(),
+        kind: FieldKind::Primitive {
+            ty: Primitive::Text,
+            value: Some(value.to_owned()),
+        },
+        collapsed: true,
+    };
+    let number = |name: &str, value: &str| FormField {
+        name: name.to_owned(),
+        kind: FieldKind::Primitive {
+            ty: Primitive::Number,
+            value: Some(value.to_owned()),
+        },
+        collapsed: true,
+    };
+    crate::form::RecordEditor {
+        base_table: "track".to_owned(),
+        fields: vec![
+            text("title", "Goldregen"),
+            FormField {
+                name: "album".to_owned(),
+                kind: FieldKind::ScalarLink {
+                    target: "album".to_owned(),
+                    id: None,
+                },
+                collapsed: true,
+            },
+            number("track_number", "13"),
+            FormField {
+                name: "id".to_owned(),
+                kind: FieldKind::Primitive {
+                    ty: Primitive::Id,
+                    value: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
+                },
+                collapsed: true,
+            },
+            FormField {
+                name: "credit".to_owned(),
+                kind: FieldKind::MultiRecord {
+                    table: "credit".to_owned(),
+                    count: 3,
+                },
+                collapsed: true,
+            },
+        ],
+    }
+}
+
+/// The record editor open as a right-hand sidebar beside the results, driving the
+/// real `render_record_editor_panel` path (the resizable right panel, the pinned
+/// toolbar, and the scrolling field list).
+#[test]
+fn record_editor_sidebar() {
+    let page = lemonade_page();
+    let mut app = results_only_app(page);
+    app.record_editor = Some(sample_record_editor());
+    app.organizer.open = false;
+
+    let mut harness = snapshot_harness::harness(egui::vec2(1040.0, 380.0), move |ui| {
+        app.render_root(ui);
+    });
+    harness.run();
+    snapshot_dual(&mut harness, "app/record_editor_sidebar");
+}
+
+/// Right-clicking a result row selects it and opens its context menu, offering a
+/// single "Edit {base}" action (here "Edit track") — the entry point that opens
+/// the record editor sidebar.
+#[test]
+fn results_context_menu() {
+    let page = lemonade_page();
+    let mut app = results_only_app(page);
+    app.organizer.open = false;
+
+    let mut harness = snapshot_harness::harness(egui::vec2(1040.0, 340.0), move |ui| {
+        app.render_root(ui);
+    });
+    harness.run();
+
+    // Right-click the first result row: move the pointer there, then press and
+    // release the secondary button. This selects the row and opens its menu.
+    let pos = egui::pos2(200.0, 90.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(pos));
+    harness.run();
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    harness.run();
+
+    snapshot_dual(&mut harness, "app/results_context_menu");
+}
