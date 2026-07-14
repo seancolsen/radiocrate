@@ -23,14 +23,14 @@ My vision is that the schema structure of tables and columns that gets installed
 
 ## Attached mockup
 
-In this repo, see `plans/2026-07-dml-ui/mockup.png` for a mockup of the UI for editing records.
+In this repo, see `plans/2026-07-dml-ui-form/mockup.png` for a mockup of the UI for editing records.
 
 Notes on the mockup:
 
 - This is a relatively high-fidelity mockup. The spacing of things is not necessarily consistent and perfect, but the colors and styling reflect my intended outcome.
 - It's modeled after a scenario in which the user is editing a track. The track results are not shown, but the record editing UI is placed between two track result rows.
 - The fields show in the mockup are not a perfect representation of the fields in our model. That's okay because the form is to work dynamically anyway.
-- The red text is annotation to explain terminology for that we use in this prompt.
+- The red text is annotation explaining terminology that we use in this prompt.
 
 ## Terminology
 
@@ -54,10 +54,10 @@ Notes on the mockup:
 1. From the query results view, there should be two ways to begin editing a record:
 
     - (A) The user should be able to trigger a context menu on a result row. Currently there is no context menu action. Here are some more details about how the context menu should work:
-        - If the context menu is triggered on a result row that is not currently selected, then the row should become selected and all other rows should become unselected. Then The context menu should open for the selected row.
+        - If the context menu is triggered on a result row that is not currently selected, then the row should become selected and all other rows should become unselected. Then the context menu should open for the selected row.
         - If a single row is selected and the context menu is triggered on that row, then the context menu should open for that row.
         - When the context menu opens for a single row that is selected, It should contain one menu option with a label like "Edit track" where "track" is the name of the query base table. This is the entry point to open our new form.
-        - If multiple rows are selected and the context menu is triggered on one of them, Then the rows should remain selected and the context menu should not open. This is because we are not yet supporting bulk editing of rows, so we won't have any options to show in the context menu for multiple rows.
+        - If multiple rows are selected and the context menu is triggered on one of them, then the rows should remain selected and the context menu should not open. This is because we are not yet supporting bulk editing of rows, so we won't have any options to show in the context menu for multiple rows.
 
     - (B) The user should be able to execute a command from the command pallette or keyboard shortcut. Label this command "Results: Edit selected rows"
 
@@ -77,15 +77,15 @@ Notes on the mockup:
 
 ## Form structure and data loading
 
-- **Introspection:** We should use the introspection information to build the structure of the form. Every time this form loads, it will be editing one record from a specific base table. Each column in the base table should become a field in the form. Additionally, each table which references the base table should also become a field in the form.
+- **Introspection**: We should use the introspection information to build the structure of the form. Every time this form loads, it will be editing one record from a specific base table. Each column in the base table should become a field in the form. Additionally, each table which references the base table should also become a field in the form.
 
 - **Field order**: Eventually we will give the user control over customizing the order of the fields in this form. But for now, display them with the table's intrinsic fields first, listed in the order given from introspection, then the referencing fields afterward, listed alphabetically by table.
 
-- **Data query:** To populate the data for the form, use the introspection info to generate a Querydown query. Then compile it to SQL and run it through the query API. We'll need the value for each intrinsic field, plus the number of related records for each of the referencing fields. This should be a very straightforward Querydown query. Note that we do _not_ want to load data for any of the nested fields initially.
+- **Data query**: To populate the data for the form, use the introspection info to generate a Querydown query. Then compile it to SQL and run it through the query API. We'll need the value for each intrinsic field, plus the number of related records for each of the referencing fields. This should be a very straightforward Querydown query. Note that we do _not_ want to load data for any of the nested fields initially.
 
-- **Loading data for a scalar linked record field**: When the top level of the form loads, each linked record field will only have an id value where we need to display an embedded record widget. Load the data for this widget with a subsequent request to the query endpoint. Use a querydown query with a filter for the id and with a result column set defined by the default display preset for the table. Load this data even when the field is collapsed, because we show the embedded record when the field is collapsed. When the user expands the field, then load the data for _all_ fields (not just the default display preset), and do this using the same logic as with the top-level form, recursively.
+- **Loading data for a scalar linked record field**: When the top level of the form loads, each linked record field will only have an id value where we need to display an embedded record widget. Load the data for this widget with a subsequent request to the query endpoint. Use a Querydown query with a filter for the id and with a result column set defined by the default display preset for the table. Load this data even when the field is collapsed, because we show the embedded record when the field is collapsed. When the user expands the field, then load the data for _all_ fields (not just the default display preset), and do this using the same logic as with the top-level form, recursively.
 
-- **Loading data for a multi-record field**: When the top-level form loads, we'll have a record count for each multi-record field. Don't load anything else until the user expands the field. When the user expands the field, then run a single query to load the data for all the related records. Use querydown. Set a filter to show only the records related to this record. And use the default display preset for the table.
+- **Loading data for a multi-record field**: When the top-level form loads, we'll have a record count for each multi-record field. Don't load anything else until the user expands the field. When the user expands the field, then run a single query to load the data for all the related records. Use Querydown. Set a filter to show only the records related to this record. And use the default display preset for the table.
 
 ## Selection and focus
 
@@ -111,7 +111,7 @@ Notes on the mockup:
         - When a scalar field label is selected, it should set the field value to NULL (ephemerally, within the form).
         - When a multi-record field label is selected, it should delete all linked records (ephemerally, within the form).
         - When an embedded record widget within a multi-record field is selected, it should delete that single record (ephemerally, within the form).
-        - When an embedded record widget within a scalar liked record field is selected, it should set the field to NULL (ephemerally, within the form).
+        - When an embedded record widget within a scalar linked record field is selected, it should set the field to NULL (ephemerally, within the form).
 
 ## Form modification
 
@@ -179,7 +179,7 @@ Notes on the mockup:
     - Clear
 - **"Selection: Delete" action**: Set field to NULL
 
-### Embedded record underneath a multi-record field
+### Embedded record in a multi-record field
 
 - **Single click**: Select
 - **Double click**: Toggle expand/collapse
@@ -201,13 +201,13 @@ Notes on the mockup:
 
 - The title bar should have an X close button at the top right which cancels the operation, leaving the form as it was before the modal opened.
 
-- Below the title, render a search box for the user to filter. Accept querydown filtering code, just as we do in the filter section of the query.
+- Below the title, render a search box for the user to filter. Accept Querydown filtering code, just as we do in the filter section of the query.
 
 - Along with the user-entered filtering code, use the default sorting preset and the default display preset to formulate a Querydown query. Execute this against the query endpoint and render the results within the modal.
 
 - Single-clicking a result should close the modal and submit the entire loaded record back up to the form so that the form may immediately render the embedded record widget without making any subsequent requests.
 
-- To the right of the filter bar include a icon-only buttons for sorting and display. These each toggle on a sorting builder UI and display builder UI identical to the query builder.
+- To the right of the search box, include icon-only buttons for sorting and display. These each toggle on a sorting builder UI and display builder UI identical to the query builder.
 
 - Unlike the query page, the search UX should be a bit different within the record picker.
     - Search as the user types, instead of waiting for Ctrl+Enter.
@@ -215,7 +215,7 @@ Notes on the mockup:
     - Handle Up/Down arrow keys to select results without moving focus away from the filter input
     - Handle the Enter key as picking a record.
 
-- At the bottom of the modal, include a "New record" button. This should close the record picker and scaffold the UI necessary to add a record and link it. Upon doing so, the user's entire querydown filtering code should be copied and pasted into the first text field within the nested new record form. (This won't be a perfect mapping of search terms to fields, but it will probably be helpful in many cases, and we can improve this logic later if needed.)
+- At the bottom of the modal, include a "New record" button. This should close the record picker and scaffold the UI necessary to add a record and link it. Upon doing so, the user's entire Querydown filtering code should be copied and pasted into the first text field within the nested new record form. (This won't be a perfect mapping of search terms to fields, but it will probably be helpful in many cases, and we can improve this logic later if needed.)
 
 ## The embedded record widget
 
