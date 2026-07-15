@@ -601,6 +601,7 @@ fn sample_record_editor() -> crate::form::RecordEditor {
     };
     crate::form::RecordEditor {
         base_table: "track".to_owned(),
+        record_id: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
         fields: vec![
             text("title", "Goldregen"),
             FormField {
@@ -639,7 +640,7 @@ fn sample_record_editor() -> crate::form::RecordEditor {
 fn record_editor_sidebar() {
     let page = lemonade_page();
     let mut app = results_only_app(page);
-    app.record_editor = Some(sample_record_editor());
+    app.current_page_mut().unwrap().record_editor = Some(sample_record_editor());
     app.organizer.open = false;
 
     let mut harness = snapshot_harness::harness(egui::vec2(1040.0, 380.0), move |ui| {

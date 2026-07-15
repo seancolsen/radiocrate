@@ -109,6 +109,11 @@ pub(crate) struct RecordEditor {
     /// The base table whose record is being edited (drives the toolbar title).
     pub(crate) base_table: String,
     pub(crate) fields: Vec<FormField>,
+    /// The primary-key value of the record being edited, once seeded (see
+    /// [`set_record_id`](Self::set_record_id)). Held separately from the fields
+    /// so the app can tell whether a newly selected result row is a *different*
+    /// record without re-deriving which field is the key.
+    pub(crate) record_id: Option<String>,
 }
 
 impl RecordEditor {
@@ -166,26 +171,44 @@ impl RecordEditor {
         Some(Self {
             base_table: base.to_owned(),
             fields,
+            record_id: None,
         })
     }
 
-    /// Populates the primary-key `id` field with the record's id, so a freshly
-    /// opened form shows which record it's editing even before the other field
-    /// values are loaded.
-    pub(crate) fn set_record_id(&mut self, id: String) {
+    /// Populates the primary-key field (`pk_column`) with the record's id, so a
+    /// freshly opened form shows which record it's editing even before the other
+    /// field values are loaded. Also records the id on [`record_id`](Self::record_id)
+    /// so the app can compare it against the current selection.
+    pub(crate) fn set_record_id(&mut self, pk_column: &str, id: String) {
         for field in &mut self.fields {
-            if field.name == "id" {
-                if let FieldKind::Primitive {
-                    ty: Primitive::Id,
-                    value,
-                } = &mut field.kind
-                {
-                    *value = Some(id);
+            if field.name == pk_column {
+                if let FieldKind::Primitive { value, .. } = &mut field.kind {
+                    *value = Some(id.clone());
                 }
-                return;
+                break;
             }
         }
+        self.record_id = Some(id);
     }
+}
+
+/// The column that identifies a single record in `table`, by Collectune's
+/// convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
+/// preferring one named `id` when a table has several. Returns `None` for a
+/// table keyed only by a composite constraint (e.g. `credit (track, artist)`),
+/// which has no single id column to seed the form or match against a result row.
+pub(crate) fn primary_key(table: &introspection::Table) -> Option<&str> {
+    let singles = || {
+        table
+            .unique_constraints
+            .iter()
+            .filter(|cols| cols.len() == 1)
+            .map(|cols| cols[0].as_str())
+            .filter(|name| table.column(name).is_some_and(|c| !c.nullable))
+    };
+    singles()
+        .find(|name| *name == "id")
+        .or_else(|| singles().next())
 }
 
 /// Classifies a column into a [`Primitive`] type for icon/color purposes.
@@ -673,6 +696,16 @@ mod tests {
     }
 
     #[test]
+    fn primary_key_prefers_id_and_skips_composite_keys() {
+        let schema = Schema::parse(SAMPLE).unwrap();
+        // Single-column `id` constraint -> `id`.
+        assert_eq!(primary_key(schema.table("track").unwrap()), Some("id"));
+        assert_eq!(primary_key(schema.table("album").unwrap()), Some("id"));
+        // `credit` is keyed only by the composite `(track, artist)` -> no single key.
+        assert_eq!(primary_key(schema.table("credit").unwrap()), None);
+    }
+
+    #[test]
     fn numeric_type_detection_covers_parameterized_decimals() {
         assert!(is_numeric_type("DECIMAL(18,3)"));
         assert!(is_numeric_type("bigint"));
@@ -755,6 +788,7 @@ mod snapshot_tests {
     fn sample_form() -> RecordEditor {
         RecordEditor {
             base_table: "track".to_owned(),
+            record_id: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
             fields: vec![
                 text("title", Some("Goldregen")),
                 link("album", "album", None),
@@ -788,6 +822,7 @@ mod snapshot_tests {
         // tight to the fields so the kinds' styling is easy to compare.
         let form = RecordEditor {
             base_table: "track".to_owned(),
+            record_id: None,
             fields: vec![
                 text("title", Some("Goldregen")),
                 number("track_number", Some("13")),

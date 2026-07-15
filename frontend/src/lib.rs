@@ -144,6 +144,11 @@ pub(crate) struct QueryState {
     /// cleared up front, so a reload doesn't blank the pane while it loads.
     pub(crate) awaiting_first_batch: bool,
     pub(crate) track_id_column: Option<usize>,
+    /// The result column carrying the query base table's primary key, detected by
+    /// lineage (see [`lineage::detect_id_columns`]). Identifies which record each
+    /// result row edits, so the record editor can be opened for and kept in sync
+    /// with the selection. `None` until lineage resolves it (or if none is found).
+    pub(crate) record_id_column: Option<usize>,
     pub(crate) lineage_done: bool,
     pub(crate) needs_revalidation: bool,
 }
@@ -292,9 +297,6 @@ pub struct App {
     /// Memoized result-row field layout, reused across rows and frames until the column
     /// set or available width changes.
     pub(crate) field_layout_cache: Option<(field_layout::LayoutKey, Rc<FieldLayout>)>,
-    /// The open record editor form, shown in a right-hand sidebar, if any. `None`
-    /// when the sidebar is closed.
-    pub(crate) record_editor: Option<form::RecordEditor>,
 }
 
 impl Default for App {
@@ -341,7 +343,6 @@ impl Default for App {
             schema: Arc::new(Mutex::new(None)),
             schema_fetch_started: false,
             field_layout_cache: None,
-            record_editor: None,
         }
     }
 }
@@ -1028,10 +1029,21 @@ impl App {
         }
     }
 
-    /// Opens the record editor sidebar for a record from the `base` table,
-    /// building the form structure from the introspected schema and seeding the
-    /// primary-key id so the form shows which record it's editing. A no-op if the
-    /// schema isn't loaded yet or `base` isn't a known table.
+    /// The primary-key column of `base`, per Collectune's convention, or `None`
+    /// when the schema isn't loaded, `base` is unknown, or the table has only a
+    /// composite key. See [`form::primary_key`].
+    fn base_primary_key(&self, base: &str) -> Option<String> {
+        let json = self.schema.lock().unwrap().clone()?;
+        let schema = introspection::Schema::parse(&json).ok()?;
+        let table = schema.table(base)?;
+        form::primary_key(table).map(str::to_owned)
+    }
+
+    /// Opens the record editor sidebar on the current query page, for a record
+    /// from the `base` table: builds the form structure from the introspected
+    /// schema and seeds the primary-key id so the form shows which record it's
+    /// editing. A no-op if there's no current query page, the schema isn't loaded
+    /// yet, or `base` isn't a known table.
     pub(crate) fn open_record_editor(&mut self, base: &str, record_id: Option<String>) {
         let Some(schema_json) = self.schema.lock().unwrap().clone() else {
             return;
@@ -1042,21 +1054,23 @@ impl App {
         let Some(mut editor) = form::RecordEditor::structure(&schema, base) else {
             return;
         };
-        if let Some(id) = record_id {
-            editor.set_record_id(id);
+        if let (Some(id), Some(pk)) = (record_id, schema.table(base).and_then(form::primary_key)) {
+            editor.set_record_id(pk, id);
         }
-        self.record_editor = Some(editor);
+        if let Some(page) = self.current_page_mut() {
+            page.record_editor = Some(editor);
+        }
     }
 
-    /// Renders the record editor as a resizable right-hand sidebar when one is
-    /// open. The toolbar is pinned to the top and the fields scroll below it.
-    /// Clicking *Cancel* closes the sidebar (dropping the form). A no-op when no
-    /// editor is open.
+    /// Renders the current query page's record editor as a resizable right-hand
+    /// sidebar when one is open. The toolbar is pinned to the top and the fields
+    /// scroll below it. Clicking *Cancel* closes the sidebar (dropping the form).
+    /// A no-op when the current page has no editor open. Because the editor lives
+    /// on the page, switching tabs shows each page's own editor (or none).
     pub(crate) fn render_record_editor_panel(&mut self, ui: &mut egui::Ui) {
-        // Take the editor out for the duration of the render so the closures can
-        // borrow it without conflicting with the `self.record_editor = ...`
-        // write below; put it back unless Cancel was clicked.
-        let Some(editor) = self.record_editor.take() else {
+        // Take the editor out of its page for the duration of the render so the
+        // closures can borrow it freely; put it back unless Cancel was clicked.
+        let Some(editor) = self.current_page_mut().and_then(|p| p.record_editor.take()) else {
             return;
         };
         let mut keep = true;
@@ -1078,8 +1092,60 @@ impl App {
                         editor.body(ui);
                     });
             });
-        if keep {
-            self.record_editor = Some(editor);
+        if keep && let Some(page) = self.current_page_mut() {
+            page.record_editor = Some(editor);
+        }
+    }
+
+    /// Keeps the current page's record editor in step with the result selection:
+    /// closes it when nothing is selected, and re-points it at the newly selected
+    /// record when a single, *different* record is selected. Multi-selection is
+    /// left alone (bulk editing isn't supported yet). Called only after
+    /// user-driven selection changes (row clicks, keyboard navigation) — never on
+    /// a tab switch, which clears the selection programmatically and would
+    /// otherwise spuriously close a page's editor.
+    pub(crate) fn reconcile_record_editor_selection(&mut self) {
+        let Some(page) = self.current_page() else {
+            return;
+        };
+        // Nothing to reconcile unless an editor is open on this page.
+        if page.record_editor.is_none() {
+            return;
+        }
+        let base = page.live.definition.base.clone();
+        let current_id = page
+            .record_editor
+            .as_ref()
+            .and_then(|e| e.record_id.clone());
+        // Own the results handle so the immutable borrow of `page` (and thus
+        // `self`) ends here, freeing `self` for the mutable calls below.
+        let results = Arc::clone(&page.results);
+
+        if self.selection.is_empty() {
+            // The user deselected the record — close the editor.
+            if let Some(page) = self.current_page_mut() {
+                page.record_editor = None;
+            }
+            return;
+        }
+        if self.selection.len() > 1 {
+            // Multiple records selected: bulk editing isn't supported, so leave
+            // the editor on whichever record it was already showing.
+            return;
+        }
+        let index = *self.selection.iter().next().unwrap();
+        let selected_id = {
+            let state = results.lock().unwrap();
+            state
+                .record_id_column
+                .and_then(|col| state.rows.cell_text(index, col))
+        };
+        // Propagate only a genuinely different id (an equal or missing id leaves
+        // the editor untouched).
+        if let Some(new_id) = selected_id
+            && current_id.as_deref() != Some(new_id.as_str())
+        {
+            self.open_record_editor(&base, Some(new_id));
         }
     }
 
@@ -1111,6 +1177,7 @@ impl App {
             s.running = true;
             s.awaiting_first_batch = true;
             s.track_id_column = None;
+            s.record_id_column = None;
             s.lineage_done = false;
             s.needs_revalidation = true;
         }
@@ -1146,7 +1213,15 @@ impl App {
             }
         };
 
-        lineage::detect_track_column(sql.clone(), Arc::clone(&results), ctx.clone());
+        let base_table = definition.base.clone();
+        let base_pk = self.base_primary_key(&base_table);
+        lineage::detect_id_columns(
+            sql.clone(),
+            base_table,
+            base_pk,
+            Arc::clone(&results),
+            ctx.clone(),
+        );
         http::run_query(sql, &results, &ctx);
     }
 
@@ -1296,11 +1371,18 @@ mod tests {
         ], "links": [] }"#;
         let mut app = App::default();
         *app.schema.lock().unwrap() = Some(schema.to_string());
+        // The editor lives on the current query page, so open one first.
+        app.add_query_page();
 
         app.open_record_editor("track", Some("abc-123".to_string()));
 
-        let editor = app.record_editor.as_ref().expect("editor should open");
+        let editor = app
+            .current_page()
+            .and_then(|p| p.record_editor.as_ref())
+            .expect("editor should open");
         assert_eq!(editor.base_table, "track");
+        // The record id is tracked on the editor for selection comparisons.
+        assert_eq!(editor.record_id.as_deref(), Some("abc-123"));
         // The id field is seeded with the record's id.
         let id_field = editor.fields.iter().find(|f| f.name == "id").unwrap();
         assert!(matches!(
@@ -1327,8 +1409,9 @@ mod tests {
     fn open_record_editor_ignores_unknown_base() {
         let mut app = App::default();
         *app.schema.lock().unwrap() = Some(r#"{ "tables": [], "links": [] }"#.to_string());
+        app.add_query_page();
         app.open_record_editor("track", None);
-        assert!(app.record_editor.is_none());
+        assert!(app.current_page().unwrap().record_editor.is_none());
     }
 }
 

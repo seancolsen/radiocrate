@@ -295,6 +295,10 @@ pub(crate) struct QueryPage {
     /// (VS Code semantics): opening another query reuses/closes the single
     /// unpinned tab rather than piling up tabs. See [`crate::App::open_query`].
     pub(crate) pinned: bool,
+    /// The record editor form open in this page's right-hand sidebar, if any.
+    /// Living on the page (rather than the app) keeps each tab's editor its own:
+    /// switching tabs hides one page's editor and reveals the other's.
+    pub(crate) record_editor: Option<crate::form::RecordEditor>,
 }
 
 impl QueryPage {
@@ -307,6 +311,7 @@ impl QueryPage {
             results: Arc::new(Mutex::new(QueryState::default())),
             results_fetched: false,
             pinned: false,
+            record_editor: None,
         }
     }
 
@@ -320,6 +325,7 @@ impl QueryPage {
             results: Arc::new(Mutex::new(QueryState::default())),
             results_fetched: false,
             pinned: true,
+            record_editor: None,
         }
     }
 

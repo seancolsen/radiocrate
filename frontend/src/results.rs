@@ -268,6 +268,10 @@ impl App {
                 let rows = &state.rows;
                 let selection = &self.selection;
                 let track_id_column = state.track_id_column;
+                // The column identifying which record each row edits (the base
+                // table's primary key) — may differ from the track-id column when
+                // the query isn't track-based.
+                let record_id_column = state.record_id_column;
 
                 // Rows are drawn edge-to-edge with no inter-row spacing. `show_rows`
                 // reads `item_spacing.y` *here* (before the callback) to size the
@@ -289,6 +293,7 @@ impl App {
                     for index in range {
                         let cells = rows.row_values(index);
                         let track_id = track_id_column.and_then(|i| cells.get(i)?.as_single());
+                        let record_id = record_id_column.and_then(|i| cells.get(i)?.as_single());
                         let is_current = current_row == Some(index);
                         let resp = draw_row(
                             ui,
@@ -327,7 +332,7 @@ impl App {
                                 .clicked()
                             });
                             if menu.is_some_and(|m| m.inner) {
-                                edit_record = Some(track_id.map(str::to_string));
+                                edit_record = Some(record_id.map(str::to_string));
                             }
                         }
                     }
@@ -341,9 +346,15 @@ impl App {
                     self.selection.insert(index);
                     self.selection_anchor = Some(index);
                     self.selection_lead = Some(index);
+                    // Re-selecting a row for its context menu also re-points any
+                    // open record editor at that row's record.
+                    self.reconcile_record_editor_selection();
                 }
                 if let Some((index, mods)) = clicked {
                     self.handle_row_click(index, mods);
+                    // A click changed the selection; keep any open record editor
+                    // in step (re-point at the new record, or close on deselect).
+                    self.reconcile_record_editor_selection();
                 }
                 if let Some((index, id)) = double_clicked {
                     self.play_track(current_id, index, &id, &ctx);
@@ -428,6 +439,9 @@ impl App {
             row: target,
             select: false,
         });
+        // Keyboard navigation changed the selection; keep any open record editor
+        // in step with the newly selected record.
+        self.reconcile_record_editor_selection();
     }
 }
 
