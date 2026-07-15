@@ -395,6 +395,16 @@ impl App {
         // above the query toolbar for every page type (it carries the explorer
         // toggle and the new-tab button even on the welcome page).
         self.render_tab_bar(ui);
+
+        // The now-playing bar (bottom) and the record editor sidebar (right) are
+        // added *before* the query builder toolbar so they reserve their space
+        // first: the sidebar then spans the full height between the tab bar and
+        // the now-playing bar, and pushes the builder toolbar (added next)
+        // narrower — while the tab bar above stays full width.
+        self.render_now_playing(ui);
+        self.maybe_revalidate_current_track_index();
+        self.render_record_editor_panel(ui);
+
         if let CurrentPage::Query(_) = self.current {
             self.render_menu_bar(ui);
             // In full mode the panel is the full-query editor (gated by its
@@ -411,12 +421,6 @@ impl App {
                 self.render_builder_panel(ui);
             }
         }
-        self.render_now_playing(ui);
-        self.maybe_revalidate_current_track_index();
-
-        // The record editor sidebar (a right panel) must be added before the
-        // central panel so the central content lays out in the remaining space.
-        self.render_record_editor_panel(ui);
 
         // Central panel.
         match self.current {
@@ -1074,24 +1078,59 @@ impl App {
             return;
         };
         let mut keep = true;
-        egui::Panel::right("record_editor")
+        let panel_fill = ui.visuals().panel_fill;
+        let inner = egui::Panel::right("record_editor")
             .resizable(true)
             .default_size(360.0)
             .size_range(300.0..=620.0)
+            // Zero inner margin on the panel itself so the toolbar's bottom border
+            // spans the full sidebar width; the toolbar and body inset their own
+            // content below.
+            .frame(egui::Frame::new().fill(panel_fill))
             .show_inside(ui, |ui| {
-                ui.add_space(6.0);
-                if editor.toolbar(ui).cancel {
-                    keep = false;
-                }
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        editor.body(ui);
+                // Toolbar: a fixed-height top panel matched to the query builder
+                // toolbar's height. Its bottom separator line supplies the
+                // full-width border under the toolbar.
+                egui::Panel::top("record_editor_toolbar")
+                    .exact_size(form::TOOLBAR_HEIGHT)
+                    .frame(
+                        egui::Frame::new()
+                            .fill(panel_fill)
+                            .inner_margin(egui::Margin::symmetric(8, 0)),
+                    )
+                    .show_inside(ui, |ui| {
+                        if editor.toolbar(ui).cancel {
+                            keep = false;
+                        }
+                    });
+                // Body: the scrolling field list, inset from the panel edges.
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::new()
+                            .fill(panel_fill)
+                            .inner_margin(egui::Margin {
+                                left: 8,
+                                right: 8,
+                                top: 0,
+                                bottom: 6,
+                            }),
+                    )
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add_space(6.0);
+                                editor.body(ui);
+                            });
                     });
             });
+
+        // A soft shadow down the panel's left edge lifts the sidebar above the
+        // results and the builder toolbar. Painted on a layer above the
+        // background panels (so it shows over them) as pure paint, so it never
+        // intercepts pointer input.
+        paint_left_shadow(ui.ctx(), inner.response.rect);
+
         if keep && let Some(page) = self.current_page_mut() {
             page.record_editor = Some(editor);
         }
@@ -1336,6 +1375,40 @@ fn format_sql(sql: &str) -> String {
         Ok(statements) if !statements.is_empty() => statements.join(";\n\n"),
         _ => sql.to_owned(),
     }
+}
+
+/// Paints a soft drop shadow fading leftward off the left edge of `panel_rect`,
+/// giving the record editor sidebar depth over the content beneath it. Drawn on
+/// a layer above the background panels so it shows over the results and builder
+/// toolbar, but as pure paint (no `interact`) so it never eats pointer input.
+fn paint_left_shadow(ctx: &egui::Context, panel_rect: egui::Rect) {
+    /// How far the shadow reaches out from the panel edge.
+    const WIDTH: f32 = 12.0;
+
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Middle,
+        egui::Id::new("record_editor_shadow"),
+    ));
+    // Darkest against the panel edge, fading to fully transparent outward. A
+    // touch stronger on dark theme, where a fainter shadow would vanish.
+    let edge = if ctx.theme() == egui::Theme::Dark {
+        egui::Color32::from_black_alpha(90)
+    } else {
+        egui::Color32::from_black_alpha(28)
+    };
+    let clear = egui::Color32::TRANSPARENT;
+    let x_edge = panel_rect.left();
+    let x_out = x_edge - WIDTH;
+    let (y_top, y_bot) = (panel_rect.top(), panel_rect.bottom());
+
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(egui::pos2(x_out, y_top), clear);
+    mesh.colored_vertex(egui::pos2(x_out, y_bot), clear);
+    mesh.colored_vertex(egui::pos2(x_edge, y_top), edge);
+    mesh.colored_vertex(egui::pos2(x_edge, y_bot), edge);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(2, 1, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 #[cfg(test)]

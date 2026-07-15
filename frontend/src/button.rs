@@ -36,6 +36,7 @@ pub(crate) struct Button {
     enabled: bool,
     spin: bool,
     tint: Option<egui::Color32>,
+    hover_fill: bool,
 }
 
 impl Button {
@@ -46,11 +47,20 @@ impl Button {
             enabled: true,
             spin: false,
             tint: None,
+            hover_fill: false,
         }
     }
 
     pub(crate) fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// On hover, fill the button with a blue background instead of drawing the
+    /// blue hover outline. Used for the small in-form action buttons (the pencil
+    /// and the "+"), which read better as a solid blue chip on hover.
+    pub(crate) fn hover_fill(mut self, hover_fill: bool) -> Self {
+        self.hover_fill = hover_fill;
         self
     }
 
@@ -94,19 +104,29 @@ impl Button {
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(SIZE, SIZE), sense);
 
         if ui.is_rect_visible(rect) {
-            // Hover outline, painted just inside the rect so it costs no layout
-            // space; transparent otherwise so hovering never shifts anything.
-            let stroke_color = if self.enabled && resp.hovered() {
-                ACCENT_BLUE.get(ui.visuals())
+            let hovered = self.enabled && resp.hovered();
+            if self.hover_fill {
+                // A solid blue chip on hover (transparent otherwise, so hovering
+                // never shifts layout).
+                if hovered {
+                    ui.painter()
+                        .rect_filled(rect.shrink(0.5), RADIUS, ACTIVE_BG.get(ui.visuals()));
+                }
             } else {
-                egui::Color32::TRANSPARENT
-            };
-            ui.painter().rect_stroke(
-                rect.shrink(0.5),
-                RADIUS,
-                egui::Stroke::new(1.0, stroke_color),
-                egui::StrokeKind::Inside,
-            );
+                // Hover outline, painted just inside the rect so it costs no layout
+                // space; transparent otherwise so hovering never shifts anything.
+                let stroke_color = if hovered {
+                    ACCENT_BLUE.get(ui.visuals())
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                ui.painter().rect_stroke(
+                    rect.shrink(0.5),
+                    RADIUS,
+                    egui::Stroke::new(1.0, stroke_color),
+                    egui::StrokeKind::Inside,
+                );
+            }
 
             let pos = rect.center() - galley.size() / 2.0;
             if self.spin {

@@ -25,6 +25,7 @@ use eframe::egui;
 use egui::text::LayoutJob;
 use introspection::Schema;
 
+use crate::button::{Button, SplitButton};
 use crate::icons::{self, MaterialIcon};
 use crate::theme::Duo;
 
@@ -309,8 +310,11 @@ const PILL_ICON_GAP: f32 = 5.0;
 /// Width of the gutter reserved on the left of every field for the expansion
 /// chevron (empty for non-collapsible fields, so their pills still align).
 const CHEVRON_GUTTER: f32 = 18.0;
-/// Chevron glyph size.
-const CHEVRON_SIZE: f32 = 16.0;
+/// Chevron glyph size (10% larger than the base 16.0 for a touch more presence).
+const CHEVRON_SIZE: f32 = 17.6;
+/// Radius of the background disc painted behind the expansion chevron, sized to
+/// cover the tree spine beneath the glyph.
+const CHEVRON_DISC_RADIUS: f32 = 8.0;
 /// Gap between a field's label pill and its value.
 const VALUE_GAP: f32 = 8.0;
 /// Vertical space between successive field rows.
@@ -319,6 +323,12 @@ const ROW_SPACING: f32 = 5.0;
 const COUNT_TEXT_SIZE: f32 = 12.0;
 /// Value text size (scalar values shown to the right of a label).
 const VALUE_TEXT_SIZE: f32 = 14.0;
+/// Text size for a `UUID` field value, rendered in a monospace font (a step
+/// smaller than the proportional [`VALUE_TEXT_SIZE`] since it reads denser).
+const UUID_TEXT_SIZE: f32 = 12.0;
+/// Height of the record editor toolbar — matched to the query builder toolbar
+/// (`menu_bar`) so the two read as one continuous bar across the tab content.
+pub(crate) const TOOLBAR_HEIGHT: f32 = 30.0;
 
 /// The outcome of showing a [`RecordEditor`]: whether the user asked to close it.
 #[derive(Default)]
@@ -334,30 +344,53 @@ impl RecordEditor {
     /// [`body`](Self::body) instead.
     #[allow(dead_code)]
     pub(crate) fn show(&self, ui: &mut egui::Ui) -> FormResponse {
-        let resp = self.toolbar(ui);
+        // Mirror the app's panel: a fixed-height toolbar with a full-width bottom
+        // border, then the scrolling body.
+        let inner = ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), TOOLBAR_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| self.toolbar(ui),
+        );
+        let border_y = inner.response.rect.bottom();
+        ui.painter().hline(
+            inner.response.rect.x_range(),
+            border_y,
+            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        );
         ui.add_space(6.0);
         self.body(ui);
-        resp
+        inner.inner
     }
 
-    /// The toolbar: the "Edit {table}" title on the left and the Cancel/Save
-    /// actions on the right. Save is always disabled in this slice (no mutation
-    /// yet). Returns whether Cancel was clicked.
+    /// The toolbar: the "Edit {table}" title on the left, then Save and a close
+    /// ("X") button on the right. Save sits to the *left* of the close button and
+    /// is always disabled in this slice (no mutation yet). Returns whether the
+    /// close button was clicked. Meant to be shown in a vertically-centered,
+    /// full-height row (e.g. a fixed-height toolbar panel).
     pub(crate) fn toolbar(&self, ui: &mut egui::Ui) -> FormResponse {
         let mut resp = FormResponse::default();
-        ui.horizontal(|ui| {
-            ui.add_space(2.0);
+        ui.horizontal_centered(|ui| {
             ui.label(
                 egui::RichText::new(format!("Edit {}", self.base_table))
                     .size(13.0)
                     .color(ui.visuals().weak_text_color()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Save has nothing to save yet, so it renders disabled.
-                labeled_button(ui, icons::SAVE, "Save", false);
-                if labeled_button(ui, icons::REVERT, "Cancel", true).clicked() {
+                // The close ("X") button reads as dismissing the sidebar rather
+                // than a "cancel" action, so it's icon-only.
+                if Button::icon(icons::CLOSE).show(ui).clicked() {
                     resp.cancel = true;
                 }
+                ui.add_space(2.0);
+                // Save has nothing to save yet, so it renders disabled. A
+                // menu-less, inactive split button gives it the app's standard
+                // "no background, blue hover outline" button look with a label.
+                ui.add_enabled_ui(false, |ui| {
+                    SplitButton::new(icons::SAVE, "Save")
+                        .active(false)
+                        .show_menu(false)
+                        .show(ui);
+                });
             });
         });
         resp
@@ -369,6 +402,10 @@ impl RecordEditor {
         if self.fields.is_empty() {
             return;
         }
+        // The top of the tree area — the spine is drawn up to here so it reads as
+        // connecting to the toolbar's bottom border above, rather than starting at
+        // the first field.
+        let top_y = ui.max_rect().top().round();
         // Reserve a shape slot up front so the tree lines paint *behind* the rows
         // (a collapsible field's chevron sits on the vertical spine). We fill it
         // in once every row's geometry is known.
@@ -389,10 +426,11 @@ impl RecordEditor {
         let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
         let spine_x = ticks[0].0;
         let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
-        // The vertical spine runs from the first sibling's center to the last's.
+        // The vertical spine runs from the top of the tree area down to the last
+        // sibling's center.
         shapes.push(egui::Shape::line_segment(
             [
-                egui::pos2(spine_x, ticks.first().unwrap().2),
+                egui::pos2(spine_x, top_y),
                 egui::pos2(spine_x, ticks.last().unwrap().2),
             ],
             stroke,
@@ -440,6 +478,14 @@ fn draw_field(ui: &mut egui::Ui, field: &FormField) -> egui::Rect {
         let (gutter, _) =
             ui.allocate_exact_size(egui::vec2(CHEVRON_GUTTER, 1.0), egui::Sense::hover());
         if field.kind.is_collapsible() {
+            // A solid disc, in the form's background color, sits behind the chevron
+            // so the glyph reads as floating *on top of* the tree spine (which is
+            // painted behind every row) — giving the tree a sense of depth.
+            ui.painter().circle_filled(
+                gutter.center(),
+                CHEVRON_DISC_RADIUS,
+                ui.visuals().panel_fill,
+            );
             // `collapsed` is always true here, but branch on it so the glyph is
             // already correct once expansion lands.
             let glyph = if field.collapsed {
@@ -502,17 +548,19 @@ fn draw_label_pill(ui: &mut egui::Ui, icon: MaterialIcon, name: &str, bg: Duo) {
 /// Draws a field's value area to the right of its label.
 fn draw_value(ui: &mut egui::Ui, kind: &FieldKind) {
     match kind {
+        // A UUID value (the record's own id) renders in small monospace so its
+        // fixed-width digits line up and it reads as machine data.
         FieldKind::Primitive {
             ty: Primitive::Id,
             value: Some(v),
-        } => draw_scalar(ui, v, ui.visuals().weak_text_color()),
+        } => draw_uuid(ui, v),
         FieldKind::Primitive { value: Some(v), .. } => {
             draw_scalar(ui, v, ui.visuals().text_color());
         }
         // A scalar-linked field shows its raw foreign-key id (embedded records
-        // aren't rendered yet); its label color/icon already mark it as a link.
+        // aren't rendered yet) — also a UUID, so monospace like the id above.
         FieldKind::ScalarLink { id: Some(id), .. } => {
-            draw_scalar(ui, id, ui.visuals().weak_text_color());
+            draw_uuid(ui, id);
         }
         // A NULL (or absent) primitive or scalar link shows the pencil
         // affordance, like the mockup — non-interactive in this slice.
@@ -523,28 +571,50 @@ fn draw_value(ui: &mut egui::Ui, kind: &FieldKind) {
     }
 }
 
-/// Draws a scalar value as plain text in `color`.
+/// Draws a scalar value as text in `color`, truncated with an ellipsis to the
+/// remaining row width. Truncation (rather than wrapping/expanding) is what keeps
+/// a long value from forcing the sidebar panel wider than the user sized it.
 fn draw_scalar(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
-    ui.label(egui::RichText::new(text).size(VALUE_TEXT_SIZE).color(color));
+    draw_truncated(ui, text, color, egui::FontId::proportional(VALUE_TEXT_SIZE));
 }
 
-/// Draws the pencil affordance shown for a `NULL`/empty field.
-fn draw_pencil(ui: &mut egui::Ui) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(PILL_ICON_SIZE + 4.0, 1.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        icons::EDIT.codepoint,
-        icons::font_id(PILL_ICON_SIZE),
+/// Draws a UUID field value in small monospace, weak color, truncated to fit.
+fn draw_uuid(ui: &mut egui::Ui, text: &str) {
+    draw_truncated(
+        ui,
+        text,
         ui.visuals().weak_text_color(),
+        egui::FontId::monospace(UUID_TEXT_SIZE),
     );
 }
 
+/// Lays out `text` in `font`/`color`, truncated with an ellipsis to the row's
+/// remaining width, and paints it.
+fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egui::FontId) {
+    let avail = ui.available_width().max(0.0);
+    let mut job = LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+    let galley = ui.painter().layout_job(job);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+    ui.painter().galley(rect.min, galley, color);
+}
+
+/// Draws the pencil affordance shown for a `NULL`/empty field, as a small button
+/// with a blue hover fill (non-interactive in this slice).
+fn draw_pencil(ui: &mut egui::Ui) {
+    Button::icon(icons::EDIT).hover_fill(true).show(ui);
+}
+
 /// Draws a multi-record field's value: a rounded count badge followed by the
-/// (non-interactive) "add record" plus glyph.
+/// "add record" button (a "+" with a blue hover fill; non-interactive here).
 fn draw_count(ui: &mut egui::Ui, count: usize) {
-    let weak = ui.visuals().weak_text_color();
     let text = ui.painter().layout_no_wrap(
         count.to_string(),
         egui::FontId::proportional(COUNT_TEXT_SIZE),
@@ -558,59 +628,7 @@ fn draw_count(ui: &mut egui::Ui, count: usize) {
     ui.painter().galley(pos, text, ui.visuals().text_color());
 
     ui.add_space(4.0);
-    let (plus, _) =
-        ui.allocate_exact_size(egui::vec2(PILL_ICON_SIZE + 4.0, 1.0), egui::Sense::hover());
-    ui.painter().text(
-        plus.center(),
-        egui::Align2::CENTER_CENTER,
-        icons::ADD.codepoint,
-        icons::font_id(PILL_ICON_SIZE + 2.0),
-        weak,
-    );
-}
-
-/// A small toolbar button: an icon glyph plus a label. Rendered through
-/// `add_enabled` so a disabled button (e.g. Save with nothing to save) reads as
-/// grayed-out.
-fn labeled_button(
-    ui: &mut egui::Ui,
-    icon: MaterialIcon,
-    label: &str,
-    enabled: bool,
-) -> egui::Response {
-    let color = if enabled {
-        ui.visuals().text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let icon_color = if enabled {
-        icons::DEFAULT_COLOR.get(ui.visuals())
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let mut job = LayoutJob::default();
-    job.append(
-        icon.codepoint,
-        0.0,
-        egui::TextFormat {
-            font_id: icons::font_id(15.0),
-            color: icon_color,
-            valign: egui::Align::Center,
-            ..Default::default()
-        },
-    );
-    job.append(
-        label,
-        5.0,
-        egui::TextFormat {
-            font_id: egui::FontId::proportional(13.0),
-            color,
-            valign: egui::Align::Center,
-            ..Default::default()
-        },
-    );
-    let galley = ui.painter().layout_job(job);
-    ui.add_enabled(enabled, egui::Button::new(galley))
+    Button::icon(icons::ADD).hover_fill(true).show(ui);
 }
 
 #[cfg(test)]
