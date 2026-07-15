@@ -297,6 +297,11 @@ pub struct App {
     /// Memoized result-row field layout, reused across rows and frames until the column
     /// set or available width changes.
     pub(crate) field_layout_cache: Option<(field_layout::LayoutKey, Rc<FieldLayout>)>,
+    /// Inbox for finished record-editor data loads, each tagged with the token of
+    /// the tree slot it belongs to; drained each frame into the open editor(s).
+    pub(crate) form_inbox: Arc<Mutex<Vec<form::FormLoadMsg>>>,
+    /// Monotonic source of form-load tokens (see [`form::FormCtx`]).
+    pub(crate) form_load_seq: u64,
 }
 
 impl Default for App {
@@ -343,6 +348,8 @@ impl Default for App {
             schema: Arc::new(Mutex::new(None)),
             schema_fetch_started: false,
             field_layout_cache: None,
+            form_inbox: Arc::new(Mutex::new(Vec::new())),
+            form_load_seq: 0,
         }
     }
 }
@@ -363,6 +370,7 @@ impl App {
         self.drain_loaded_queries();
         self.drain_loaded_presets();
         self.drain_loaded_keybindings();
+        self.drain_form_inbox();
 
         // Global keyboard shortcuts run before any panel so a matched chord's key
         // events are consumed before widgets (e.g. text fields) can see them.
@@ -478,6 +486,25 @@ impl App {
         if !self.keybindings_fetch_started {
             self.keybindings_fetch_started = true;
             rpc::list_keybindings(Arc::clone(&self.loaded_keybindings), ctx.clone());
+        }
+    }
+
+    /// Routes each finished record-editor data load to the editor that owns its
+    /// token. A message travels as an `Option` offered to every open editor in turn
+    /// (see [`form::RecordEditor::deliver`]); the one holding the token consumes it,
+    /// and an unclaimed message (its editor was closed mid-flight) is dropped.
+    fn drain_form_inbox(&mut self) {
+        let msgs = std::mem::take(&mut *self.form_inbox.lock().unwrap());
+        for msg in msgs {
+            let mut slot = Some(msg.result);
+            for page in self.pages.iter_mut().filter_map(Page::as_query_mut) {
+                if let Some(editor) = page.record_editor.as_mut() {
+                    editor.deliver(msg.token, &mut slot);
+                    if slot.is_none() {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -1055,12 +1082,17 @@ impl App {
         let Ok(schema) = introspection::Schema::parse(&schema_json) else {
             return;
         };
-        let Some(mut editor) = form::RecordEditor::structure(&schema, base) else {
+        let Some(editor) = form::RecordEditor::structure(&schema, base) else {
             return;
         };
-        if let (Some(id), Some(pk)) = (record_id, schema.table(base).and_then(form::primary_key)) {
-            editor.set_record_id(pk, id);
-        }
+        // Seed the identifying key so the form knows which record to fetch. When the
+        // record is keyed by a single id column and we know its value, use it;
+        // otherwise the form opens keyed only structurally (its values won't load
+        // until a key is known).
+        let editor = match (record_id, schema.table(base).and_then(form::primary_key)) {
+            (Some(id), Some(pk)) => editor.with_key(vec![(pk.to_owned(), id)]),
+            _ => editor,
+        };
         if let Some(page) = self.current_page_mut() {
             page.record_editor = Some(editor);
         }
@@ -1074,62 +1106,94 @@ impl App {
     pub(crate) fn render_record_editor_panel(&mut self, ui: &mut egui::Ui) {
         // Take the editor out of its page for the duration of the render so the
         // closures can borrow it freely; put it back unless Cancel was clicked.
-        let Some(editor) = self.current_page_mut().and_then(|p| p.record_editor.take()) else {
+        let Some(mut editor) = self.current_page_mut().and_then(|p| p.record_editor.take()) else {
             return;
         };
         let mut keep = true;
         let panel_fill = ui.visuals().panel_fill;
-        let inner = egui::Panel::right("record_editor")
-            .resizable(true)
-            .default_size(360.0)
-            .size_range(300.0..=620.0)
-            // Zero inner margin on the panel itself so the toolbar's bottom border
-            // spans the full sidebar width; the toolbar and body inset their own
-            // content below.
-            .frame(egui::Frame::new().fill(panel_fill))
-            .show_inside(ui, |ui| {
-                // Toolbar: a fixed-height top panel matched to the query builder
-                // toolbar's height. Its bottom separator line supplies the
-                // full-width border under the toolbar.
-                egui::Panel::top("record_editor_toolbar")
-                    .exact_size(form::TOOLBAR_HEIGHT)
-                    .frame(
-                        egui::Frame::new()
-                            .fill(panel_fill)
-                            .inner_margin(egui::Margin::symmetric(8, 0)),
-                    )
-                    .show_inside(ui, |ui| {
-                        if editor.toolbar(ui).cancel {
-                            keep = false;
-                        }
-                    });
-                // Body: the scrolling field list, inset from the panel edges.
-                egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::new()
-                            .fill(panel_fill)
-                            .inner_margin(egui::Margin {
-                                left: 8,
-                                right: 8,
-                                top: 0,
-                                bottom: 6,
-                            }),
-                    )
-                    .show_inside(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.add_space(6.0);
-                                editor.body(ui);
-                            });
-                    });
-            });
+
+        // Everything the form needs to fetch data, extracted into locals so the
+        // render closures borrow these (not `self`). The token counter round-trips
+        // through `seq`. When the schema isn't loaded the form still renders (via
+        // `None`), it just can't dispatch queries yet.
+        let schema_json = self.schema.lock().unwrap().clone();
+        let schema = schema_json
+            .as_deref()
+            .and_then(|j| introspection::Schema::parse(j).ok());
+        let presets = self.presets.clone();
+        let egui_ctx = ui.ctx().clone();
+        let inbox = Arc::clone(&self.form_inbox);
+        let mut seq = self.form_load_seq;
+        // `form_ctx` borrows `seq`; confine it to this block so the borrow ends
+        // (and `seq` can be written back) once the panel has rendered.
+        let inner_rect = {
+            let mut form_ctx = match (&schema, &schema_json) {
+                (Some(schema), Some(json)) => Some(form::FormCtx {
+                    schema,
+                    schema_json: json,
+                    presets: &presets,
+                    egui_ctx: &egui_ctx,
+                    inbox: &inbox,
+                    next_token: &mut seq,
+                }),
+                _ => None,
+            };
+            let inner = egui::Panel::right("record_editor")
+                .resizable(true)
+                .default_size(360.0)
+                .size_range(300.0..=620.0)
+                // Zero inner margin on the panel itself so the toolbar's bottom border
+                // spans the full sidebar width; the toolbar and body inset their own
+                // content below.
+                .frame(egui::Frame::new().fill(panel_fill))
+                .show_inside(ui, |ui| {
+                    // Toolbar: a fixed-height top panel matched to the query builder
+                    // toolbar's height. Its bottom separator line supplies the
+                    // full-width border under the toolbar.
+                    egui::Panel::top("record_editor_toolbar")
+                        .exact_size(form::TOOLBAR_HEIGHT)
+                        .frame(
+                            egui::Frame::new()
+                                .fill(panel_fill)
+                                .inner_margin(egui::Margin::symmetric(8, 0)),
+                        )
+                        .show_inside(ui, |ui| {
+                            if editor.toolbar(ui).cancel {
+                                keep = false;
+                            }
+                        });
+                    // Body: the scrolling field list, inset from the panel edges.
+                    egui::CentralPanel::default()
+                        .frame(
+                            egui::Frame::new()
+                                .fill(panel_fill)
+                                .inner_margin(egui::Margin {
+                                    left: 8,
+                                    right: 8,
+                                    top: 0,
+                                    bottom: 6,
+                                }),
+                        )
+                        .show_inside(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.add_space(6.0);
+                                    editor.body(ui, form_ctx.as_mut());
+                                });
+                        });
+                });
+            inner.response.rect
+        };
 
         // A soft shadow down the panel's left edge lifts the sidebar above the
         // results and the builder toolbar. Painted on a layer above the
         // background panels (so it shows over them) as pure paint, so it never
         // intercepts pointer input.
-        paint_left_shadow(ui.ctx(), inner.response.rect);
+        paint_left_shadow(ui.ctx(), inner_rect);
+
+        // Persist the tokens the form handed out this frame.
+        self.form_load_seq = seq;
 
         if keep && let Some(page) = self.current_page_mut() {
             page.record_editor = Some(editor);
@@ -1155,7 +1219,7 @@ impl App {
         let current_id = page
             .record_editor
             .as_ref()
-            .and_then(|e| e.record_id.clone());
+            .and_then(|e| e.record_id().map(str::to_owned));
         // Own the results handle so the immutable borrow of `page` (and thus
         // `self`) ends here, freeing `self` for the mutable calls below.
         let results = Arc::clone(&page.results);
@@ -1455,7 +1519,7 @@ mod tests {
             .expect("editor should open");
         assert_eq!(editor.base_table, "track");
         // The record id is tracked on the editor for selection comparisons.
-        assert_eq!(editor.record_id.as_deref(), Some("abc-123"));
+        assert_eq!(editor.record_id(), Some("abc-123"));
         // The id field is seeded with the record's id.
         let id_field = editor.fields.iter().find(|f| f.name == "id").unwrap();
         assert!(matches!(

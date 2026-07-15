@@ -29,7 +29,7 @@ impl CellValue {
 
 /// The accumulated result rows of a query: the decoded Arrow batches plus an
 /// index mapping an overall row number to its batch.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct ResultRows {
     batches: Vec<RecordBatch>,
     /// Starting overall row index of each batch (parallel to `batches`).
@@ -111,6 +111,34 @@ impl ResultRows {
             .iter()
             .map(|col| format_cell(col, local))
             .collect()
+    }
+
+    /// Test helper: builds rows from plain string cells (`None` -> `NULL`), one
+    /// inner `Vec` per row, so form snapshots can stand up embedded-record data
+    /// without a live backend. All columns are `Utf8`.
+    #[cfg(test)]
+    pub(crate) fn from_cells(rows: &[Vec<Option<&str>>]) -> Self {
+        use std::sync::Arc;
+
+        use arrow_array::StringArray;
+        let col_count = rows.iter().map(Vec::len).max().unwrap_or(0);
+        let columns: Vec<(String, ArrayRef)> = (0..col_count)
+            .map(|c| {
+                let col: Vec<Option<String>> = rows
+                    .iter()
+                    .map(|r| r.get(c).and_then(|v| v.map(str::to_owned)))
+                    .collect();
+                (
+                    format!("c{c}"),
+                    Arc::new(StringArray::from(col)) as ArrayRef,
+                )
+            })
+            .collect();
+        let mut out = Self::default();
+        if !rows.is_empty() {
+            out.push_batch(RecordBatch::try_from_iter(columns).expect("build test batch"));
+        }
+        out
     }
 }
 

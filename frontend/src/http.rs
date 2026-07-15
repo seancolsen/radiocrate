@@ -16,6 +16,51 @@ pub(crate) const BASE: &str = "/api";
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const BASE: &str = "http://localhost:3000";
 
+/// Streams `query` to the query API, accumulating every batch into a
+/// [`ResultRows`], and hands the whole set (or an error) to `on_done` when the
+/// stream finishes. Used by the record editor form to load a record's data
+/// independently of the page's main [`QueryState`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn load_rows<F>(query: String, on_done: F)
+where
+    F: FnOnce(Result<crate::rows::ResultRows, String>) + Send + 'static,
+{
+    let acc = Arc::new(Mutex::new(crate::rows::ResultRows::default()));
+    let handler = {
+        let acc = Arc::clone(&acc);
+        move |batch: &RecordBatch| {
+            acc.lock().unwrap().push_batch(batch.clone());
+            Ok(())
+        }
+    };
+    let on_done = move |result: Result<(), String>| {
+        let rows = std::mem::take(&mut *acc.lock().unwrap());
+        on_done(result.map(|()| rows));
+    };
+    stream_query(query, handler, on_done);
+}
+
+/// Wasm build of [`load_rows`]: identical, but the callbacks needn't be `Send`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn load_rows<F>(query: String, on_done: F)
+where
+    F: FnOnce(Result<crate::rows::ResultRows, String>) + 'static,
+{
+    let acc = Arc::new(Mutex::new(crate::rows::ResultRows::default()));
+    let handler = {
+        let acc = Arc::clone(&acc);
+        move |batch: &RecordBatch| {
+            acc.lock().unwrap().push_batch(batch.clone());
+            Ok(())
+        }
+    };
+    let on_done = move |result: Result<(), String>| {
+        let rows = std::mem::take(&mut *acc.lock().unwrap());
+        on_done(result.map(|()| rows));
+    };
+    stream_query(query, handler, on_done);
+}
+
 pub(crate) fn run_query(query: String, state: &Arc<Mutex<QueryState>>, ctx: &egui::Context) {
     let handler = {
         let state = Arc::clone(state);

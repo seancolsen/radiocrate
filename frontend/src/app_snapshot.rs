@@ -582,7 +582,7 @@ fn no_results() {
 /// scalar link showing the pencil, a populated scalar link, a UUID id, and a
 /// multi-record field).
 fn sample_record_editor() -> crate::form::RecordEditor {
-    use crate::form::{FieldKind, FormField, Primitive};
+    use crate::form::{FieldKind, FormField, Load, Primitive};
     let text = |name: &str, value: &str| FormField {
         name: name.to_owned(),
         kind: FieldKind::Primitive {
@@ -599,9 +599,16 @@ fn sample_record_editor() -> crate::form::RecordEditor {
         },
         collapsed: true,
     };
+    // `values: Ready` so the sidebar renders the loaded fields (not a loading
+    // overlay). The scalar link is NULL (pencil) and the multi-record field stays
+    // collapsed, so no embedded-record data needs to be provided.
     crate::form::RecordEditor {
         base_table: "track".to_owned(),
-        record_id: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
+        key: vec![(
+            "id".to_owned(),
+            "d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned(),
+        )],
+        values: Load::Ready(()),
         fields: vec![
             text("title", "Goldregen"),
             FormField {
@@ -609,6 +616,8 @@ fn sample_record_editor() -> crate::form::RecordEditor {
                 kind: FieldKind::ScalarLink {
                     target: "album".to_owned(),
                     id: None,
+                    embedded: Load::Idle,
+                    expanded: None,
                 },
                 collapsed: true,
             },
@@ -625,7 +634,10 @@ fn sample_record_editor() -> crate::form::RecordEditor {
                 name: "credit".to_owned(),
                 kind: FieldKind::MultiRecord {
                     table: "credit".to_owned(),
+                    link_column: "track".to_owned(),
+                    parent_column: "id".to_owned(),
                     count: 3,
+                    data: Load::Idle,
                 },
                 collapsed: true,
             },

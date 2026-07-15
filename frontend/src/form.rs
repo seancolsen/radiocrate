@@ -1,32 +1,45 @@
 //! The record editor form: a dynamic, introspection-driven form for editing one
 //! record from a base table.
 //!
-//! # This is the render-only foundation
+//! # A recursive, lazily-loaded tree
 //!
-//! The full feature (see `plans/2026-07-dml-ui-form/plan.md`) is a large,
-//! interactive tree form. This module is the first slice of it: it renders the
-//! form in its **initial, fully-collapsed state** and handles only one
-//! interaction — closing the sidebar via *Cancel*. Deliberately deferred to
-//! later sessions: expand/collapse, edit mode and mutation, embedded-record
-//! widgets (for now a scalar-linked field shows its raw id value in place),
-//! long-vs-short text handling, selection, keyboard shortcuts, and the record
-//! picker.
+//! The form is a tree of [`RecordEditor`]s. The root edits the selected record;
+//! each *scalar-linked* field can expand into a nested `RecordEditor` for the
+//! record it points at, and each *multi-record* field expands into a list of
+//! embedded records, any of which can itself expand into a nested `RecordEditor`.
+//! The recursion is unbounded — the user can drill in arbitrarily deep — because
+//! nested editors are only built (and their data only fetched) once the user
+//! expands into them.
 //!
-//! # Decoupled from data loading
+//! # Data loading
 //!
-//! Rendering is driven entirely by an in-memory [`RecordEditor`] value — a flat
-//! list of [`FormField`]s. [`RecordEditor::structure`] derives that list from the
-//! introspection [`Schema`] (which columns become which kind of field, in what
-//! order); the field *values* are filled in separately (from a query, eventually).
-//! Keeping the model free of any HTTP/async lets the snapshot tests construct a
-//! form directly and exercise the rendering in isolation.
+//! Structure comes from introspection (synchronous); *values* come from the query
+//! API (asynchronous). Every asynchronously-loaded piece of the tree holds a
+//! [`Load`] state carrying a unique token. [`FormCtx`] dispatches a query for any
+//! `Idle` slot it renders, flipping it to `Loading(token)`; when the query
+//! finishes it posts a [`FormLoadMsg`] to the app's inbox, and [`RecordEditor::deliver`]
+//! walks the tree to deliver the payload to the slot whose token matches. A slot
+//! whose node was dropped (e.g. the form was rebuilt for a new record) simply
+//! never matches, so stale responses are ignored without any bookkeeping.
+//!
+//! While a region loads, its skeleton renders under a translucent [`panel_fill`]
+//! overlay (a subtle dimming) and its widgets are drawn non-interactively.
+
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use egui::text::LayoutJob;
+use egui::text::{LayoutJob, TextWrapping};
 use introspection::Schema;
 
 use crate::button::{Button, SplitButton};
+use crate::columns::ColumnMetadata;
+use crate::compile;
+use crate::field_layout::{ColSize, compute_field_layout};
+use crate::http;
 use crate::icons::{self, MaterialIcon};
+use crate::query_def::{CompileSource, QuerySections};
+use crate::rows::{CellValue, ResultRows};
+use crate::rpc::Preset;
 use crate::theme::Duo;
 
 /// The type of a primitive (non-linked) field, which picks its label color and
@@ -41,27 +54,106 @@ pub(crate) enum Primitive {
     Id,
 }
 
-/// What a form field represents, along with the data needed to render it in the
-/// collapsed initial state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The async lifecycle of one query-loaded piece of the form.
+#[derive(Debug, Default)]
+pub(crate) enum Load<T> {
+    /// Not requested yet. Rendering an `Idle` slot (with a [`FormCtx`]) dispatches
+    /// its query.
+    #[default]
+    Idle,
+    /// A query is in flight; `token` matches the pending [`FormLoadMsg`].
+    Loading(u64),
+    Ready(T),
+    Failed(String),
+}
+
+impl<T> Load<T> {
+    fn is_idle(&self) -> bool {
+        matches!(self, Load::Idle)
+    }
+
+    fn is_loading(&self) -> bool {
+        matches!(self, Load::Loading(_))
+    }
+
+    /// The token this slot is waiting on, if any.
+    fn token(&self) -> Option<u64> {
+        match self {
+            Load::Loading(t) => Some(*t),
+            _ => None,
+        }
+    }
+}
+
+/// A single row's worth of display data for an embedded-record widget: the
+/// resolved column metadata and the (one) row's Arrow cells.
+#[derive(Debug)]
+pub(crate) struct RecordDisplay {
+    pub(crate) columns: Vec<ColumnMetadata>,
+    /// Exactly one row (the linked record), kept in Arrow form so it renders
+    /// through the same cell/pill logic as query results.
+    pub(crate) rows: ResultRows,
+}
+
+/// The loaded contents of a multi-record field: the display columns, the related
+/// rows, and per-row UI state.
+#[derive(Debug)]
+pub(crate) struct MultiData {
+    pub(crate) columns: Vec<ColumnMetadata>,
+    pub(crate) rows: ResultRows,
+    /// Number of leading columns that carry the row's identifying key (prepended
+    /// to the query so each record can be re-fetched on expand); skipped when
+    /// drawing the embedded widget.
+    pub(crate) display_offset: usize,
+    /// One entry per row, parallel to `rows`.
+    pub(crate) entries: Vec<MultiEntry>,
+}
+
+/// UI state for one record within a multi-record field.
+#[derive(Debug)]
+pub(crate) struct MultiEntry {
+    /// Column/value pairs identifying this record, for re-fetching its full form.
+    pub(crate) key: Vec<(String, String)>,
+    pub(crate) collapsed: bool,
+    /// The nested editor for this record, built when first expanded.
+    pub(crate) expanded: Option<Box<RecordEditor>>,
+}
+
+/// What a form field represents, plus the state needed to render and load it.
+#[derive(Debug)]
 pub(crate) enum FieldKind {
     /// A plain column value. `value` is the display text; `None` means `NULL`.
     Primitive {
         ty: Primitive,
         value: Option<String>,
     },
-    /// A foreign-key column referencing a single record in `target` table. Until
-    /// embedded records are implemented, `id` (the raw foreign-key value, or
-    /// `None` for `NULL`) is shown in the value area.
-    ScalarLink { target: String, id: Option<String> },
-    /// The set of records in `table` that reference this record. `count` is how
-    /// many there are (loaded up front; the records themselves are not).
-    MultiRecord { table: String, count: usize },
+    /// A foreign-key column referencing a single record in `target`. `id` is the
+    /// raw key value (`None` for `NULL`); `embedded` is the collapsed-preview data
+    /// (loaded even while collapsed); `expanded` is the nested editor built when
+    /// the user drills in.
+    ScalarLink {
+        target: String,
+        id: Option<String>,
+        embedded: Load<RecordDisplay>,
+        expanded: Option<Box<RecordEditor>>,
+    },
+    /// The set of records in `table` referencing this record through
+    /// `link_column`. `count` is loaded up front; `data` (the records themselves)
+    /// only once the field is expanded.
+    MultiRecord {
+        table: String,
+        /// The column in `table` that references this record.
+        link_column: String,
+        /// The referenced column on this record's table (the link target, usually
+        /// `id`) — the value the child rows filter against.
+        parent_column: String,
+        count: usize,
+        data: Load<MultiData>,
+    },
 }
 
 impl FieldKind {
-    /// Whether this kind can be expanded/collapsed (has, or can load, children).
-    /// Scalar-linked and multi-record fields are collapsible; primitives are not.
+    /// Whether this kind can be expanded/collapsed.
     pub(crate) fn is_collapsible(&self) -> bool {
         matches!(
             self,
@@ -71,15 +163,13 @@ impl FieldKind {
 }
 
 /// One field in the form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct FormField {
     /// The label shown in the field's pill — a column name, or a referencing
     /// table's name for a multi-record field.
     pub(crate) name: String,
     pub(crate) kind: FieldKind,
-    /// Whether a collapsible field is collapsed. Always `true` in this
-    /// render-only slice (expansion isn't wired up yet), but modeled so the
-    /// rendering already branches on it.
+    /// Whether a collapsible field is collapsed. Initially `true`.
     pub(crate) collapsed: bool,
 }
 
@@ -104,29 +194,31 @@ impl FormField {
 }
 
 /// A record editor form: the fields of one record from `base_table`, in display
-/// order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// order. Used both as the sidebar's root form and, recursively, as a nested
+/// editor for a linked or related record.
+#[derive(Debug)]
 pub(crate) struct RecordEditor {
     /// The base table whose record is being edited (drives the toolbar title).
     pub(crate) base_table: String,
+    /// Column/value pairs identifying which record this edits. A single `("id", …)`
+    /// for the common case; multiple entries for a composite-key table.
+    pub(crate) key: Vec<(String, String)>,
     pub(crate) fields: Vec<FormField>,
-    /// The primary-key value of the record being edited, once seeded (see
-    /// [`set_record_id`](Self::set_record_id)). Held separately from the fields
-    /// so the app can tell whether a newly selected result row is a *different*
-    /// record without re-deriving which field is the key.
-    pub(crate) record_id: Option<String>,
+    /// Load state of this record's own column values and referencing counts. The
+    /// payload is applied straight into `fields`, so the slot only tracks lifecycle.
+    pub(crate) values: Load<()>,
 }
 
 impl RecordEditor {
-    /// Builds the form *structure* for editing a record from `base` — which
-    /// fields exist, of which kind, in what order — from the introspected
-    /// `schema`. Field values are left empty (`NULL`); a later step fills them in
-    /// from a data query. Returns `None` if `base` isn't a table in the schema.
+    /// Builds the form *structure* for editing a record from `base` — which fields
+    /// exist, of which kind, in what order — from the introspected `schema`. Field
+    /// values are left empty; [`FormCtx`] fetches them when the form is rendered.
+    /// Returns `None` if `base` isn't a table in the schema.
     ///
-    /// Order follows the plan: the base table's own columns first, in
-    /// introspection order, then one multi-record field per table that references
-    /// the base, listed alphabetically. A base column that is an inferred foreign
-    /// key becomes a scalar-linked field; otherwise it's a primitive typed by its
+    /// Order follows the plan: the base table's own columns first, in introspection
+    /// order, then one multi-record field per (table, column) that references the
+    /// base, listed alphabetically. A base column that is an inferred foreign key
+    /// becomes a scalar-linked field; otherwise it's a primitive typed by its
     /// column type.
     pub(crate) fn structure(schema: &Schema, base: &str) -> Option<Self> {
         let table = schema.table(base)?;
@@ -141,6 +233,8 @@ impl RecordEditor {
                         FieldKind::ScalarLink {
                             target: link.to_table.clone(),
                             id: None,
+                            embedded: Load::Idle,
+                            expanded: None,
                         },
                     )
                 } else {
@@ -149,55 +243,159 @@ impl RecordEditor {
             })
             .collect();
 
-        // Referencing tables become multi-record fields, alphabetical by table.
-        // A table may reference the base through more than one column; each such
-        // link is its own field (deduped by table+column and sorted for
-        // stability).
-        let mut incoming: Vec<(&str, &str)> = schema
+        // Referencing tables become multi-record fields, alphabetical by
+        // (table, column). A table may reference the base through more than one
+        // column; each such link is its own field.
+        let mut incoming: Vec<(&str, &str, &str)> = schema
             .incoming_links(base)
-            .map(|l| (l.from_table.as_str(), l.from_column.as_str()))
+            .map(|l| {
+                (
+                    l.from_table.as_str(),
+                    l.from_column.as_str(),
+                    l.to_column.as_str(),
+                )
+            })
             .collect();
         incoming.sort_unstable();
         incoming.dedup();
-        for (table_name, _column) in incoming {
+        for (table_name, link_column, parent_column) in incoming {
             fields.push(FormField::collapsible(
                 table_name.to_owned(),
                 FieldKind::MultiRecord {
                     table: table_name.to_owned(),
+                    link_column: link_column.to_owned(),
+                    parent_column: parent_column.to_owned(),
                     count: 0,
+                    data: Load::Idle,
                 },
             ));
         }
 
         Some(Self {
             base_table: base.to_owned(),
+            key: Vec::new(),
             fields,
-            record_id: None,
+            values: Load::Idle,
         })
     }
 
-    /// Populates the primary-key field (`pk_column`) with the record's id, so a
-    /// freshly opened form shows which record it's editing even before the other
-    /// field values are loaded. Also records the id on [`record_id`](Self::record_id)
-    /// so the app can compare it against the current selection.
-    pub(crate) fn set_record_id(&mut self, pk_column: &str, id: String) {
-        for field in &mut self.fields {
-            if field.name == pk_column {
-                if let FieldKind::Primitive { value, .. } = &mut field.kind {
-                    *value = Some(id.clone());
+    /// Sets this editor's identifying key, seeding the corresponding primitive
+    /// fields with their values so the form shows which record it edits before its
+    /// data loads.
+    pub(crate) fn with_key(mut self, key: Vec<(String, String)>) -> Self {
+        for (col, val) in &key {
+            for field in &mut self.fields {
+                if field.name == *col
+                    && let FieldKind::Primitive { value, .. } = &mut field.kind
+                {
+                    *value = Some(val.clone());
                 }
-                break;
             }
         }
-        self.record_id = Some(id);
+        self.key = key;
+        self
+    }
+
+    /// The record's `id` value, when it's keyed by a single `id` column. Used to
+    /// compare a freshly-selected result row against the open editor.
+    pub(crate) fn record_id(&self) -> Option<&str> {
+        self.key
+            .iter()
+            .find(|(c, _)| c == "id")
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Attempts to deliver `slot`'s payload to the node awaiting `token`, taking it
+    /// out of the `Option` on a match. Threading an `Option` (rather than the value)
+    /// lets a caller try the same message against several editors in turn — only the
+    /// one that owns the token consumes it.
+    pub(crate) fn deliver(&mut self, token: u64, slot: &mut Option<Result<FormPayload, String>>) {
+        if slot.is_none() {
+            return;
+        }
+        if self.values.token() == Some(token) {
+            self.values = match slot.take().unwrap() {
+                Ok(FormPayload::Values(rows)) => {
+                    self.apply_values(&rows);
+                    Load::Ready(())
+                }
+                Ok(_) => Load::Failed("unexpected payload".to_owned()),
+                Err(e) => Load::Failed(e),
+            };
+            return;
+        }
+
+        for field in &mut self.fields {
+            if slot.is_none() {
+                return;
+            }
+            match &mut field.kind {
+                FieldKind::ScalarLink {
+                    embedded, expanded, ..
+                } => {
+                    if embedded.token() == Some(token) {
+                        *embedded = match slot.take().unwrap() {
+                            Ok(FormPayload::Embedded(d)) => Load::Ready(d),
+                            Ok(_) => Load::Failed("unexpected payload".to_owned()),
+                            Err(e) => Load::Failed(e),
+                        };
+                        return;
+                    }
+                    if let Some(sub) = expanded {
+                        sub.deliver(token, slot);
+                    }
+                }
+                FieldKind::MultiRecord { data, .. } => {
+                    if data.token() == Some(token) {
+                        *data = match slot.take().unwrap() {
+                            Ok(FormPayload::Multi(d)) => Load::Ready(d),
+                            Ok(_) => Load::Failed("unexpected payload".to_owned()),
+                            Err(e) => Load::Failed(e),
+                        };
+                        return;
+                    }
+                    if let Load::Ready(d) = data {
+                        for entry in &mut d.entries {
+                            if let Some(sub) = &mut entry.expanded {
+                                sub.deliver(token, slot);
+                                if slot.is_none() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                FieldKind::Primitive { .. } => {}
+            }
+        }
+    }
+
+    /// Maps a one-row values result positionally onto the fields: each primitive or
+    /// scalar-link field consumes the next cell as its value/id, and each
+    /// multi-record field consumes the next cell as its count. The query's result
+    /// columns are emitted in exactly this order (see [`values_display`]).
+    fn apply_values(&mut self, rows: &ResultRows) {
+        for (col, field) in self.fields.iter_mut().enumerate() {
+            let cell = rows.cell_text(0, col);
+            match &mut field.kind {
+                FieldKind::Primitive { value, .. } => {
+                    *value = cell.filter(|s| !s.is_empty());
+                }
+                FieldKind::ScalarLink { id, .. } => {
+                    *id = cell.filter(|s| !s.is_empty());
+                }
+                FieldKind::MultiRecord { count, .. } => {
+                    *count = cell.and_then(|s| s.parse().ok()).unwrap_or(0);
+                }
+            }
+        }
     }
 }
 
 /// The column that identifies a single record in `table`, by Collectune's
 /// convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
 /// preferring one named `id` when a table has several. Returns `None` for a
-/// table keyed only by a composite constraint (e.g. `credit (track, artist)`),
-/// which has no single id column to seed the form or match against a result row.
+/// table keyed only by a composite constraint (e.g. `credit (track, artist)`).
 pub(crate) fn primary_key(table: &introspection::Table) -> Option<&str> {
     let singles = || {
         table
@@ -212,6 +410,21 @@ pub(crate) fn primary_key(table: &introspection::Table) -> Option<&str> {
         .or_else(|| singles().next())
 }
 
+/// The columns that identify one record in `table` for re-fetching: the single
+/// primary key when there is one, otherwise the first unique constraint (e.g. the
+/// composite `(track, artist)` of `credit`). Empty when the table has no unique
+/// constraint at all.
+fn identifying_columns(table: &introspection::Table) -> Vec<String> {
+    if let Some(pk) = primary_key(table) {
+        return vec![pk.to_owned()];
+    }
+    table
+        .unique_constraints
+        .first()
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// Classifies a column into a [`Primitive`] type for icon/color purposes.
 fn primitive_type(col: &introspection::Column) -> Primitive {
     match col.type_name.as_deref() {
@@ -224,8 +437,6 @@ fn primitive_type(col: &introspection::Column) -> Primitive {
 /// Whether a `DuckDB` type name denotes a number (so its field gets the numeric
 /// styling).
 fn is_numeric_type(type_name: &str) -> bool {
-    // Match the family by prefix so parameterized types like `DECIMAL(18,3)` are
-    // caught too.
     const NUMERIC_PREFIXES: &[&str] = &[
         "TINYINT",
         "SMALLINT",
@@ -248,7 +459,240 @@ fn is_numeric_type(type_name: &str) -> bool {
     NUMERIC_PREFIXES.iter().any(|p| t.starts_with(p))
 }
 
-// --- Rendering -------------------------------------------------------------
+// --- Query building --------------------------------------------------------
+
+/// A Querydown string literal: single-quoted with `'` and `\` escaped.
+fn qd_str(s: &str) -> String {
+    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+/// A backtick-quoted Querydown identifier (so reserved words / odd names are safe).
+fn qd_ident(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// The filter section matching a record by its identifying key: one
+/// `col:=='value'` equality per key column, space-joined (top-level AND).
+fn key_filter(key: &[(String, String)]) -> String {
+    key.iter()
+        .map(|(col, val)| format!("{}:=={}", qd_ident(col), qd_str(val)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The display section for a record's own values query: one result column per
+/// field, in field order — the column value for primitives/scalar links, a related
+/// count for multi-record fields — so the result can be mapped back positionally.
+fn values_display(fields: &[FormField]) -> String {
+    fields
+        .iter()
+        .map(|field| match &field.kind {
+            FieldKind::Primitive { .. } | FieldKind::ScalarLink { .. } => {
+                format!("${}", qd_ident(&field.name))
+            }
+            FieldKind::MultiRecord {
+                table, link_column, ..
+            } => format!("$#{}({})", qd_ident(table), qd_ident(link_column)),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The [`CompileSource`] for a record's own values: filter by key, select each
+/// field's value or count.
+fn values_source(editor: &RecordEditor) -> CompileSource {
+    CompileSource::Sections(QuerySections {
+        base: editor.base_table.clone(),
+        filter: key_filter(&editor.key),
+        sort: String::new(),
+        display: values_display(&editor.fields),
+    })
+}
+
+// --- Async loading ---------------------------------------------------------
+
+/// A finished form query, ready to be applied to the tree by [`RecordEditor::apply`].
+#[derive(Debug)]
+pub(crate) enum FormPayload {
+    /// One row of the record's own column values and referencing counts.
+    Values(ResultRows),
+    /// The single linked record for a scalar-link preview.
+    Embedded(RecordDisplay),
+    /// The related records for an expanded multi-record field.
+    Multi(MultiData),
+}
+
+/// A completed form query posted to the app inbox: which slot (`token`) it belongs
+/// to and its result.
+pub(crate) struct FormLoadMsg {
+    pub(crate) token: u64,
+    pub(crate) result: Result<FormPayload, String>,
+}
+
+/// How to interpret a query's rows when it finishes.
+enum LoadShape {
+    Values,
+    Embedded,
+    /// Multi-record: the `key` columns prepended to the display, for building each
+    /// entry's identity.
+    Multi {
+        key_columns: Vec<String>,
+    },
+}
+
+/// The environment a form render needs to fetch data: the schema (for building
+/// nested structure), the compiler inputs, and the inbox/token machinery that
+/// carries query results back to the tree.
+pub(crate) struct FormCtx<'a> {
+    pub(crate) schema: &'a Schema,
+    pub(crate) schema_json: &'a str,
+    pub(crate) presets: &'a [Preset],
+    pub(crate) egui_ctx: &'a egui::Context,
+    pub(crate) inbox: &'a Arc<Mutex<Vec<FormLoadMsg>>>,
+    /// Monotonic token source; each dispatched query claims the next value.
+    pub(crate) next_token: &'a mut u64,
+}
+
+impl FormCtx<'_> {
+    fn alloc_token(&mut self) -> u64 {
+        let t = *self.next_token;
+        *self.next_token += 1;
+        t
+    }
+
+    /// The default display-preset fragment for `table`, or `$*` (all columns) when
+    /// none is configured.
+    fn default_display(&self, table: &str) -> String {
+        self.presets
+            .iter()
+            .find(|p| {
+                p.is_default
+                    && p.base_table == table
+                    && p.section == crate::query_def::Section::Display
+            })
+            .map(|p| p.definition.clone())
+            .filter(|d| !d.trim().is_empty())
+            .unwrap_or_else(|| "$*".to_owned())
+    }
+
+    /// Compiles `source` and streams it, posting a [`FormLoadMsg`] tagged `token`
+    /// when it finishes. `shape` says how to turn the rows into a [`FormPayload`].
+    fn run(&mut self, token: u64, source: &CompileSource, shape: LoadShape) {
+        let compiled = match compile::querydown_to_duckdb(source, self.schema_json) {
+            Ok(c) => c,
+            Err(e) => {
+                self.post(token, Err(e));
+                return;
+            }
+        };
+        let columns = compiled.columns;
+        let inbox = Arc::clone(self.inbox);
+        let ctx = self.egui_ctx.clone();
+        http::load_rows(compiled.sql, move |result| {
+            let payload = result.map(|rows| match shape {
+                LoadShape::Values => FormPayload::Values(rows),
+                LoadShape::Embedded => FormPayload::Embedded(RecordDisplay { columns, rows }),
+                LoadShape::Multi { key_columns } => {
+                    let display_offset = key_columns.len();
+                    let entries = (0..rows.len())
+                        .map(|r| MultiEntry {
+                            key: key_columns
+                                .iter()
+                                .enumerate()
+                                .map(|(i, name)| {
+                                    (name.clone(), rows.cell_text(r, i).unwrap_or_default())
+                                })
+                                .collect(),
+                            collapsed: true,
+                            expanded: None,
+                        })
+                        .collect();
+                    FormPayload::Multi(MultiData {
+                        columns,
+                        rows,
+                        display_offset,
+                        entries,
+                    })
+                }
+            });
+            inbox.lock().unwrap().push(FormLoadMsg {
+                token,
+                result: payload,
+            });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Posts a result to the inbox directly (used for synchronous compile errors).
+    fn post(&self, token: u64, result: Result<FormPayload, String>) {
+        self.inbox
+            .lock()
+            .unwrap()
+            .push(FormLoadMsg { token, result });
+        self.egui_ctx.request_repaint();
+    }
+
+    /// Dispatches a record's own values query, returning the claimed token.
+    fn load_values(&mut self, editor: &RecordEditor) -> u64 {
+        let token = self.alloc_token();
+        self.run(token, &values_source(editor), LoadShape::Values);
+        token
+    }
+
+    /// Dispatches a scalar-link's collapsed-preview query (one row, default display
+    /// preset).
+    fn load_embedded(&mut self, target: &str, id: &str) -> u64 {
+        let token = self.alloc_token();
+        let source = CompileSource::Sections(QuerySections {
+            base: target.to_owned(),
+            filter: format!("{}:=={}", qd_ident("id"), qd_str(id)),
+            sort: String::new(),
+            display: self.default_display(target),
+        });
+        self.run(token, &source, LoadShape::Embedded);
+        token
+    }
+
+    /// Dispatches a multi-record field's related-records query. Prepends the child
+    /// table's identifying columns to the display (so each row carries its key) and
+    /// filters by the link column pointing back at `parent_value`.
+    fn load_multi(
+        &mut self,
+        table: &str,
+        link_column: &str,
+        parent_value: &str,
+        key_columns: &[String],
+    ) -> u64 {
+        let token = self.alloc_token();
+        let keys_display = key_columns
+            .iter()
+            .map(|c| format!("${}", qd_ident(c)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let preset = self.default_display(table);
+        let display = if keys_display.is_empty() {
+            preset
+        } else {
+            format!("{keys_display} {preset}")
+        };
+        let source = CompileSource::Sections(QuerySections {
+            base: table.to_owned(),
+            filter: format!("{}:=={}", qd_ident(link_column), qd_str(parent_value)),
+            sort: String::new(),
+            display,
+        });
+        self.run(
+            token,
+            &source,
+            LoadShape::Multi {
+                key_columns: key_columns.to_vec(),
+            },
+        );
+        token
+    }
+}
+
+// --- Rendering: constants --------------------------------------------------
 
 /// Field-label background per kind: a light pastel on the light theme, a deep
 /// desaturated tone on the dark one. The light values are taken from the mockup.
@@ -273,9 +717,7 @@ const MULTI_BG: Duo = Duo {
     dark: egui::Color32::from_rgb(0x2A, 0x47, 0x66),
 };
 
-/// Icon + text color inside a label pill. The pill fills are pale on light /
-/// deep on dark, so a near-black (light) / near-white (dark) foreground reads on
-/// both.
+/// Icon + text color inside a label pill.
 const LABEL_FG: Duo = Duo {
     light: egui::Color32::from_gray(0x22),
     dark: egui::Color32::from_gray(0xEC),
@@ -287,65 +729,67 @@ const COUNT_BG: Duo = Duo {
     dark: egui::Color32::from_gray(0x3A),
 };
 
-/// Color of the hierarchy tree lines drawn down the left gutter connecting the
-/// sibling fields — a light gray that reads as quiet structure in either theme.
+/// Color of the hierarchy tree lines down the left gutter.
 const TREE_LINE: Duo = Duo {
     light: egui::Color32::from_gray(0xC8),
     dark: egui::Color32::from_gray(0x50),
 };
 
-/// Corner radius of a field-label pill (rounder than the app's buttons, per the
-/// mockup).
+/// Border of an embedded-record widget.
+const EMBED_BORDER: Duo = Duo {
+    light: egui::Color32::from_gray(0xCF),
+    dark: egui::Color32::from_gray(0x4A),
+};
+/// Fill of an embedded-record widget (a hair off the panel so its border reads).
+const EMBED_FILL: Duo = Duo {
+    light: egui::Color32::from_gray(0xFB),
+    dark: egui::Color32::from_gray(0x2C),
+};
+/// Fill of a not-yet-loaded embedded-record skeleton.
+const SKELETON_FILL: Duo = Duo {
+    light: egui::Color32::from_gray(0xEC),
+    dark: egui::Color32::from_gray(0x33),
+};
+
 const PILL_RADIUS: f32 = 6.0;
-/// Horizontal padding inside a label pill.
 const PILL_PAD_X: f32 = 7.0;
-/// Vertical padding inside a label pill.
 const PILL_PAD_Y: f32 = 2.0;
-/// Icon glyph size inside a label pill.
 const PILL_ICON_SIZE: f32 = 14.0;
-/// Label text size inside a label pill.
 const PILL_TEXT_SIZE: f32 = 13.0;
-/// Gap between a pill's icon and its text.
 const PILL_ICON_GAP: f32 = 5.0;
-/// Width of the gutter reserved on the left of every field for the expansion
-/// chevron (empty for non-collapsible fields, so their pills still align).
+/// Width of the chevron gutter reserved on the left of every field.
 const CHEVRON_GUTTER: f32 = 18.0;
-/// Chevron glyph size (10% larger than the base 16.0 for a touch more presence).
 const CHEVRON_SIZE: f32 = 17.6;
-/// Radius of the background disc painted behind the expansion chevron, sized to
-/// cover the tree spine beneath the glyph.
 const CHEVRON_DISC_RADIUS: f32 = 8.0;
-/// Gap between a field's label pill and its value.
 const VALUE_GAP: f32 = 8.0;
-/// Vertical space between successive field rows.
 const ROW_SPACING: f32 = 5.0;
-/// Diameter/height of the count-badge pill and the value-size of the count text.
 const COUNT_TEXT_SIZE: f32 = 12.0;
-/// Value text size (scalar values shown to the right of a label).
 const VALUE_TEXT_SIZE: f32 = 14.0;
-/// Text size for a `UUID` field value, rendered in a monospace font (a step
-/// smaller than the proportional [`VALUE_TEXT_SIZE`] since it reads denser).
 const UUID_TEXT_SIZE: f32 = 12.0;
-/// Height of the record editor toolbar — matched to the query builder toolbar
-/// (`menu_bar`) so the two read as one continuous bar across the tab content.
+/// Left indent added per level of nesting.
+const INDENT: f32 = 16.0;
+/// Embedded-record widget: inner padding, gaps, corner radius.
+const EMBED_PAD_X: f32 = 9.0;
+const EMBED_PAD_Y: f32 = 5.0;
+const EMBED_COL_GAP: f32 = 12.0;
+const EMBED_RADIUS: f32 = 11.0;
+const EMBED_TEXT_SIZE: f32 = 12.0;
+
+/// Height of the record editor toolbar — matched to the query builder toolbar.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 30.0;
 
 /// The outcome of showing a [`RecordEditor`]: whether the user asked to close it.
 #[derive(Default)]
 pub(crate) struct FormResponse {
-    /// The user clicked *Cancel* (the toolbar's close action).
     pub(crate) cancel: bool,
 }
 
 impl RecordEditor {
-    /// Renders the whole form (toolbar then fields) into `ui`. Used by the
-    /// snapshot tests to drive the form standalone; the app's sidebar pins the
-    /// toolbar and scrolls the body via [`toolbar`](Self::toolbar) /
-    /// [`body`](Self::body) instead.
+    /// Renders the whole form (toolbar then body). Used by snapshot tests to drive
+    /// the form standalone with no data loading (`ctx` is `None`, so nothing is
+    /// dispatched and the tree renders exactly as constructed).
     #[allow(dead_code)]
-    pub(crate) fn show(&self, ui: &mut egui::Ui) -> FormResponse {
-        // Mirror the app's panel: a fixed-height toolbar with a full-width bottom
-        // border, then the scrolling body.
+    pub(crate) fn show(&mut self, ui: &mut egui::Ui) -> FormResponse {
         let inner = ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), TOOLBAR_HEIGHT),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -358,15 +802,12 @@ impl RecordEditor {
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
         ui.add_space(6.0);
-        self.body(ui);
+        self.body(ui, None);
         inner.inner
     }
 
-    /// The toolbar: the "Edit {table}" title on the left, then Save and a close
-    /// ("X") button on the right. Save sits to the *left* of the close button and
-    /// is always disabled in this slice (no mutation yet). Returns whether the
-    /// close button was clicked. Meant to be shown in a vertically-centered,
-    /// full-height row (e.g. a fixed-height toolbar panel).
+    /// The toolbar: the "Edit {table}" title, then a disabled Save and a close
+    /// ("X") button. Returns whether close was clicked.
     pub(crate) fn toolbar(&self, ui: &mut egui::Ui) -> FormResponse {
         let mut resp = FormResponse::default();
         ui.horizontal_centered(|ui| {
@@ -376,15 +817,10 @@ impl RecordEditor {
                     .color(ui.visuals().weak_text_color()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // The close ("X") button reads as dismissing the sidebar rather
-                // than a "cancel" action, so it's icon-only.
                 if Button::icon(icons::CLOSE).show(ui).clicked() {
                     resp.cancel = true;
                 }
                 ui.add_space(2.0);
-                // Save has nothing to save yet, so it renders disabled. A
-                // menu-less, inactive split button gives it the app's standard
-                // "no background, blue hover outline" button look with a label.
                 ui.add_enabled_ui(false, |ui| {
                     SplitButton::new(icons::SAVE, "Save")
                         .active(false)
@@ -396,55 +832,331 @@ impl RecordEditor {
         resp
     }
 
-    /// The form body: one row per field, with hierarchy tree lines connecting
-    /// the sibling fields down the left gutter.
-    pub(crate) fn body(&self, ui: &mut egui::Ui) {
-        if self.fields.is_empty() {
-            return;
-        }
-        // The top of the tree area — the spine is drawn up to here so it reads as
-        // connecting to the toolbar's bottom border above, rather than starting at
-        // the first field.
-        let top_y = ui.max_rect().top().round();
-        // Reserve a shape slot up front so the tree lines paint *behind* the rows
-        // (a collapsible field's chevron sits on the vertical spine). We fill it
-        // in once every row's geometry is known.
-        let tree_idx = ui.painter().add(egui::Shape::Noop);
+    /// The form body: the recursive field tree. Pass a [`FormCtx`] to fetch data
+    /// for any not-yet-loaded slots that come into view.
+    pub(crate) fn body(&mut self, ui: &mut egui::Ui, ctx: Option<&mut FormCtx>) {
+        render_record(ui, ctx, self, 0);
+    }
+}
 
-        // Per row: (spine x, label-pill left edge, row vertical center).
-        let mut ticks: Vec<(f32, f32, f32)> = Vec::with_capacity(self.fields.len());
-        for (i, field) in self.fields.iter().enumerate() {
+// --- Rendering: the recursive tree -----------------------------------------
+
+/// Renders one record editor's fields as a sibling group (with the left-gutter
+/// tree spine), then any expanded children beneath each field, indented one level.
+/// Dispatches this record's values query if it hasn't loaded yet.
+fn render_record(
+    ui: &mut egui::Ui,
+    mut ctx: Option<&mut FormCtx>,
+    editor: &mut RecordEditor,
+    depth: usize,
+) {
+    // Fetch this record's values once, but only when we know which record it is —
+    // an empty key would otherwise match the whole table.
+    if editor.values.is_idle()
+        && !editor.key.is_empty()
+        && let Some(ctx) = ctx.as_deref_mut()
+    {
+        editor.values = Load::Loading(ctx.load_values(editor));
+    }
+    let loading = editor.values.is_loading();
+    let indent = depth as f32 * INDENT;
+
+    if editor.fields.is_empty() {
+        return;
+    }
+
+    let top_y = ui.min_rect().top().round();
+    let tree_idx = ui.painter().add(egui::Shape::Noop);
+    // Per top-level sibling: (spine x, pill left, row center y).
+    let mut ticks: Vec<(f32, f32, f32)> = Vec::with_capacity(editor.fields.len());
+
+    // While this record's own values load, the fields are placeholders; draw them
+    // under a dimming overlay and don't let them take input.
+    let key = editor.key.clone();
+    let group = ui.scope(|ui| {
+        for (i, field) in editor.fields.iter_mut().enumerate() {
             if i > 0 {
                 ui.add_space(ROW_SPACING);
             }
-            let rect = draw_field(ui, field);
-            let spine_x = (rect.left() + CHEVRON_GUTTER * 0.5).round();
-            let pill_left = rect.left() + CHEVRON_GUTTER;
+            let rect = render_field(ui, ctx.as_deref_mut(), field, &key, depth, indent, loading);
+            let spine_x = (rect.left() + indent + CHEVRON_GUTTER * 0.5).round();
+            let pill_left = rect.left() + indent + CHEVRON_GUTTER;
             ticks.push((spine_x, pill_left, rect.center().y.round()));
         }
+    });
 
-        let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
-        let spine_x = ticks[0].0;
-        let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
-        // The vertical spine runs from the top of the tree area down to the last
-        // sibling's center.
+    let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
+    let spine_x = ticks[0].0;
+    let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
+    shapes.push(egui::Shape::line_segment(
+        [
+            egui::pos2(spine_x, top_y),
+            egui::pos2(spine_x, ticks.last().unwrap().2),
+        ],
+        stroke,
+    ));
+    for (tx, pill_left, cy) in &ticks {
         shapes.push(egui::Shape::line_segment(
-            [
-                egui::pos2(spine_x, top_y),
-                egui::pos2(spine_x, ticks.last().unwrap().2),
-            ],
+            [egui::pos2(*tx, *cy), egui::pos2(*pill_left, *cy)],
             stroke,
         ));
-        // A horizontal tick joins the spine to each field's label pill.
-        for (tx, pill_left, cy) in &ticks {
-            shapes.push(egui::Shape::line_segment(
-                [egui::pos2(*tx, *cy), egui::pos2(*pill_left, *cy)],
-                stroke,
-            ));
-        }
-        ui.painter().set(tree_idx, egui::Shape::Vec(shapes));
+    }
+    ui.painter().set(tree_idx, egui::Shape::Vec(shapes));
+
+    if loading {
+        paint_overlay(ui, group.response.rect);
     }
 }
+
+/// Renders one field row (chevron gutter, label pill, value) at `indent`, then —
+/// if it's an expanded collapsible field — its children beneath. Returns the
+/// header row's rect (for the parent's tree ticks).
+#[allow(clippy::too_many_arguments)]
+fn render_field(
+    ui: &mut egui::Ui,
+    mut ctx: Option<&mut FormCtx>,
+    field: &mut FormField,
+    parent_key: &[(String, String)],
+    depth: usize,
+    indent: f32,
+    parent_loading: bool,
+) -> egui::Rect {
+    let collapsible = field.kind.is_collapsible();
+    let (bg, icon) = kind_style(&field.kind);
+
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        // Chevron gutter — clickable for a collapsible field (unless the parent
+        // record is still loading its structure/values).
+        let (gutter, gutter_resp) = ui.allocate_exact_size(
+            egui::vec2(CHEVRON_GUTTER, ui.text_style_height(&egui::TextStyle::Body)),
+            if collapsible && !parent_loading {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        if collapsible {
+            ui.painter().circle_filled(
+                gutter.center(),
+                CHEVRON_DISC_RADIUS,
+                ui.visuals().panel_fill,
+            );
+            let glyph = if field.collapsed {
+                icons::EXPAND_CLOSED
+            } else {
+                icons::EXPAND_OPEN
+            };
+            let color = if gutter_resp.hovered() {
+                ui.visuals().text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            ui.painter().text(
+                gutter.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph.codepoint,
+                icons::font_id(CHEVRON_SIZE),
+                color,
+            );
+            if gutter_resp.clicked() {
+                field.collapsed = !field.collapsed;
+            }
+        }
+
+        draw_label_pill(ui, icon, &field.name, bg);
+        ui.add_space(VALUE_GAP);
+        draw_value(ui, ctx.as_deref_mut(), field);
+    });
+
+    // Children of an expanded collapsible field.
+    if collapsible && !field.collapsed {
+        render_children(ui, ctx, field, parent_key, depth);
+    }
+
+    row.response.rect
+}
+
+/// Renders the expanded children of a collapsible field one level deeper: a
+/// scalar link's nested editor, or a multi-record field's list of embedded records
+/// (each itself expandable into a nested editor).
+fn render_children(
+    ui: &mut egui::Ui,
+    mut ctx: Option<&mut FormCtx>,
+    field: &mut FormField,
+    parent_key: &[(String, String)],
+    depth: usize,
+) {
+    ui.add_space(ROW_SPACING);
+    match &mut field.kind {
+        FieldKind::ScalarLink {
+            target,
+            id,
+            expanded,
+            ..
+        } => {
+            let Some(id) = id.clone() else { return };
+            // Build the nested editor lazily on first expand.
+            if expanded.is_none()
+                && let Some(ctx) = ctx.as_deref_mut()
+                && let Some(sub) = RecordEditor::structure(ctx.schema, target)
+            {
+                *expanded = Some(Box::new(sub.with_key(vec![("id".to_owned(), id)])));
+            }
+            if let Some(sub) = expanded {
+                render_record(ui, ctx, sub, depth + 1);
+            }
+        }
+        FieldKind::MultiRecord {
+            table,
+            link_column,
+            parent_column,
+            count,
+            data,
+        } => {
+            // Dispatch the related-records query on first expand.
+            if data.is_idle()
+                && let Some(ctx) = ctx.as_deref_mut()
+                && let Some(parent_value) = parent_key
+                    .iter()
+                    .find(|(c, _)| c == parent_column)
+                    .map(|(_, v)| v.clone())
+            {
+                let key_columns = ctx
+                    .schema
+                    .table(table)
+                    .map(identifying_columns)
+                    .unwrap_or_default();
+                *data =
+                    Load::Loading(ctx.load_multi(table, link_column, &parent_value, &key_columns));
+            }
+            render_multi(ui, ctx, table, *count, data, depth + 1);
+        }
+        FieldKind::Primitive { .. } => {}
+    }
+}
+
+/// Renders a multi-record field's related records at `depth`: `count` skeleton
+/// widgets while loading (under an overlay), or the loaded rows once ready — each
+/// an embedded record with its own chevron that expands into a nested editor.
+fn render_multi(
+    ui: &mut egui::Ui,
+    mut ctx: Option<&mut FormCtx>,
+    table: &str,
+    count: usize,
+    data: &mut Load<MultiData>,
+    depth: usize,
+) {
+    let indent = depth as f32 * INDENT;
+    match data {
+        Load::Ready(d) => {
+            let cols = d.columns.clone();
+            let offset = d.display_offset;
+            for (i, entry) in d.entries.iter_mut().enumerate() {
+                if i > 0 {
+                    ui.add_space(ROW_SPACING);
+                }
+                let cells = d.rows.row_values(i);
+                render_entry(
+                    ui,
+                    ctx.as_deref_mut(),
+                    &cols,
+                    &cells,
+                    offset,
+                    entry,
+                    table,
+                    depth,
+                    indent,
+                );
+            }
+        }
+        Load::Loading(_) | Load::Idle => {
+            let group = ui.scope(|ui| {
+                for i in 0..count.max(1) {
+                    if i > 0 {
+                        ui.add_space(ROW_SPACING);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.add_space(indent + CHEVRON_GUTTER);
+                        draw_skeleton(ui);
+                    });
+                }
+            });
+            paint_overlay(ui, group.response.rect);
+        }
+        Load::Failed(e) => {
+            ui.horizontal(|ui| {
+                ui.add_space(indent + CHEVRON_GUTTER);
+                ui.colored_label(egui::Color32::RED, e.as_str());
+            });
+        }
+    }
+}
+
+/// Renders one embedded record within a multi-record field: a chevron plus the
+/// embedded widget, and (when expanded) its nested editor beneath.
+#[allow(clippy::too_many_arguments)]
+fn render_entry(
+    ui: &mut egui::Ui,
+    mut ctx: Option<&mut FormCtx>,
+    columns: &[ColumnMetadata],
+    cells: &[CellValue],
+    offset: usize,
+    entry: &mut MultiEntry,
+    table: &str,
+    depth: usize,
+    indent: f32,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        let (gutter, gutter_resp) = ui.allocate_exact_size(
+            egui::vec2(CHEVRON_GUTTER, ui.text_style_height(&egui::TextStyle::Body)),
+            egui::Sense::click(),
+        );
+        let glyph = if entry.collapsed {
+            icons::EXPAND_CLOSED
+        } else {
+            icons::EXPAND_OPEN
+        };
+        ui.painter().text(
+            gutter.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph.codepoint,
+            icons::font_id(CHEVRON_SIZE),
+            if gutter_resp.hovered() {
+                ui.visuals().text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            },
+        );
+        let widget = draw_embedded(ui, &columns[offset..], &cells[offset..]);
+        if gutter_resp.clicked() || widget.double_clicked() {
+            entry.collapsed = !entry.collapsed;
+        }
+    });
+
+    if !entry.collapsed {
+        if entry.expanded.is_none()
+            && let Some(ctx) = ctx.as_deref_mut()
+            && let Some(sub) = RecordEditor::structure(ctx.schema, table)
+        {
+            entry.expanded = Some(Box::new(sub.with_key(entry.key.clone())));
+        }
+        if let Some(sub) = &mut entry.expanded {
+            ui.add_space(ROW_SPACING);
+            render_record(ui, ctx, sub, depth + 1);
+        }
+    }
+}
+
+// --- Rendering: primitives -------------------------------------------------
 
 /// The label color and glyph for a field kind.
 fn kind_style(kind: &FieldKind) -> (Duo, MaterialIcon) {
@@ -463,53 +1175,6 @@ fn kind_style(kind: &FieldKind) -> (Duo, MaterialIcon) {
         FieldKind::ScalarLink { .. } => (LINK_BG, icons::FIELD_LINK),
         FieldKind::MultiRecord { .. } => (MULTI_BG, icons::FIELD_RECORDS),
     }
-}
-
-/// Draws one field row: the chevron gutter, the label pill, then the value.
-/// Returns the row's rect so the caller can route the tree lines through the
-/// gutter.
-fn draw_field(ui: &mut egui::Ui, field: &FormField) -> egui::Rect {
-    ui.horizontal(|ui| {
-        // Manage the row's inter-element gaps explicitly (below) so the tree-line
-        // tick lands exactly on the label pill's left edge.
-        ui.spacing_mut().item_spacing.x = 0.0;
-        // Chevron gutter — a right-pointing chevron for a collapsed collapsible
-        // field, empty otherwise (keeping every pill's left edge aligned).
-        let (gutter, _) =
-            ui.allocate_exact_size(egui::vec2(CHEVRON_GUTTER, 1.0), egui::Sense::hover());
-        if field.kind.is_collapsible() {
-            // A solid disc, in the form's background color, sits behind the chevron
-            // so the glyph reads as floating *on top of* the tree spine (which is
-            // painted behind every row) — giving the tree a sense of depth.
-            ui.painter().circle_filled(
-                gutter.center(),
-                CHEVRON_DISC_RADIUS,
-                ui.visuals().panel_fill,
-            );
-            // `collapsed` is always true here, but branch on it so the glyph is
-            // already correct once expansion lands.
-            let glyph = if field.collapsed {
-                icons::EXPAND_CLOSED
-            } else {
-                icons::EXPAND_OPEN
-            };
-            ui.painter().text(
-                gutter.center(),
-                egui::Align2::CENTER_CENTER,
-                glyph.codepoint,
-                icons::font_id(CHEVRON_SIZE),
-                ui.visuals().weak_text_color(),
-            );
-        }
-
-        let (bg, icon) = kind_style(&field.kind);
-        draw_label_pill(ui, icon, &field.name, bg);
-
-        ui.add_space(VALUE_GAP);
-        draw_value(ui, &field.kind);
-    })
-    .response
-    .rect
 }
 
 /// Draws a rounded, colored label pill containing `icon` and `name`.
@@ -546,10 +1211,8 @@ fn draw_label_pill(ui: &mut egui::Ui, icon: MaterialIcon, name: &str, bg: Duo) {
 }
 
 /// Draws a field's value area to the right of its label.
-fn draw_value(ui: &mut egui::Ui, kind: &FieldKind) {
-    match kind {
-        // A UUID value (the record's own id) renders in small monospace so its
-        // fixed-width digits line up and it reads as machine data.
+fn draw_value(ui: &mut egui::Ui, ctx: Option<&mut FormCtx>, field: &mut FormField) {
+    match &mut field.kind {
         FieldKind::Primitive {
             ty: Primitive::Id,
             value: Some(v),
@@ -557,23 +1220,52 @@ fn draw_value(ui: &mut egui::Ui, kind: &FieldKind) {
         FieldKind::Primitive { value: Some(v), .. } => {
             draw_scalar(ui, v, ui.visuals().text_color());
         }
-        // A scalar-linked field shows its raw foreign-key id (embedded records
-        // aren't rendered yet) — also a UUID, so monospace like the id above.
-        FieldKind::ScalarLink { id: Some(id), .. } => {
-            draw_uuid(ui, id);
-        }
-        // A NULL (or absent) primitive or scalar link shows the pencil
-        // affordance, like the mockup — non-interactive in this slice.
-        FieldKind::Primitive { value: None, .. } | FieldKind::ScalarLink { id: None, .. } => {
-            draw_pencil(ui);
-        }
+        FieldKind::Primitive { value: None, .. } => draw_pencil(ui),
+        FieldKind::ScalarLink {
+            target,
+            id,
+            embedded,
+            ..
+        } => draw_scalar_link(ui, ctx, target, id.as_deref(), embedded),
         FieldKind::MultiRecord { count, .. } => draw_count(ui, *count),
     }
 }
 
-/// Draws a scalar value as text in `color`, truncated with an ellipsis to the
-/// remaining row width. Truncation (rather than wrapping/expanding) is what keeps
-/// a long value from forcing the sidebar panel wider than the user sized it.
+/// Draws a scalar-linked field's value: the pencil affordance when `NULL`,
+/// otherwise the embedded-record widget (a skeleton while its preview loads).
+/// Dispatches the preview query once the id is known.
+fn draw_scalar_link(
+    ui: &mut egui::Ui,
+    ctx: Option<&mut FormCtx>,
+    target: &str,
+    id: Option<&str>,
+    embedded: &mut Load<RecordDisplay>,
+) {
+    let Some(id) = id else {
+        draw_pencil(ui);
+        return;
+    };
+    if embedded.is_idle()
+        && let Some(ctx) = ctx
+    {
+        *embedded = Load::Loading(ctx.load_embedded(target, id));
+    }
+    match embedded {
+        Load::Ready(d) => {
+            let cells = d.rows.row_values(0);
+            draw_embedded(ui, &d.columns, &cells);
+        }
+        Load::Failed(e) => {
+            ui.colored_label(egui::Color32::RED, e.as_str());
+        }
+        Load::Loading(_) | Load::Idle => {
+            let rect = draw_skeleton(ui);
+            paint_overlay(ui, rect);
+        }
+    }
+}
+
+/// Draws a scalar value as text in `color`, truncated with an ellipsis.
 fn draw_scalar(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     draw_truncated(ui, text, color, egui::FontId::proportional(VALUE_TEXT_SIZE));
 }
@@ -588,8 +1280,7 @@ fn draw_uuid(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Lays out `text` in `font`/`color`, truncated with an ellipsis to the row's
-/// remaining width, and paints it.
+/// Lays out `text` truncated with an ellipsis to the row's remaining width.
 fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egui::FontId) {
     let avail = ui.available_width().max(0.0);
     let mut job = LayoutJob::single_section(
@@ -600,20 +1291,19 @@ fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egu
             ..Default::default()
         },
     );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+    job.wrap = TextWrapping::truncate_at_width(avail);
     let galley = ui.painter().layout_job(job);
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     ui.painter().galley(rect.min, galley, color);
 }
 
-/// Draws the pencil affordance shown for a `NULL`/empty field, as a small button
-/// with a blue hover fill (non-interactive in this slice).
+/// Draws the pencil affordance shown for a `NULL`/empty field.
 fn draw_pencil(ui: &mut egui::Ui) {
     Button::icon(icons::EDIT).hover_fill(true).show(ui);
 }
 
 /// Draws a multi-record field's value: a rounded count badge followed by the
-/// "add record" button (a "+" with a blue hover fill; non-interactive here).
+/// "add record" button.
 fn draw_count(ui: &mut egui::Ui, count: usize) {
     let text = ui.painter().layout_no_wrap(
         count.to_string(),
@@ -629,6 +1319,135 @@ fn draw_count(ui: &mut egui::Ui, count: usize) {
 
     ui.add_space(4.0);
     Button::icon(icons::ADD).hover_fill(true).show(ui);
+}
+
+// --- Rendering: embedded records -------------------------------------------
+
+/// Draws an embedded-record widget filling the remaining row width: a bordered,
+/// large-radius rounded rect whose fields render like a query result row but forced
+/// to small, light text. Returns the widget's [`egui::Response`] (for double-click
+/// to expand).
+fn draw_embedded(
+    ui: &mut egui::Ui,
+    columns: &[ColumnMetadata],
+    cells: &[CellValue],
+) -> egui::Response {
+    let avail = ui.available_width().max(EMBED_RADIUS * 2.0);
+    let content_w = (avail - EMBED_PAD_X * 2.0).max(0.0);
+
+    let visible: Vec<(usize, &ColumnMetadata)> = columns
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| !m.hide)
+        .collect();
+    let col_sizes: Vec<ColSize> = visible
+        .iter()
+        .map(|(_, m)| ColSize {
+            min: m.min_width,
+            max: m.max_width,
+        })
+        .collect();
+    let layout = compute_field_layout(&col_sizes, content_w, EMBED_COL_GAP);
+
+    let line_h = embed_line_height(ui);
+    let lines = layout.line_count.max(1);
+    let content_h = line_h * lines as f32;
+    let widget_h = content_h + EMBED_PAD_Y * 2.0;
+
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(avail, widget_h), egui::Sense::click());
+    ui.painter()
+        .rect_filled(rect, EMBED_RADIUS, EMBED_FILL.get(ui.visuals()));
+    ui.painter().rect_stroke(
+        rect,
+        EMBED_RADIUS,
+        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
+        egui::StrokeKind::Inside,
+    );
+
+    let color = ui.visuals().weak_text_color();
+    let font = egui::FontId::proportional(EMBED_TEXT_SIZE);
+    for (vis_idx, (col_idx, meta)) in visible.iter().enumerate() {
+        let p = layout.placements[vis_idx];
+        let cell_left = rect.left() + EMBED_PAD_X + p.x;
+        let line_top = rect.top() + EMBED_PAD_Y + line_h * p.line as f32;
+        let width = p.width.max(0.0);
+        let value = match cells.get(*col_idx) {
+            Some(CellValue::Single(s)) => s.clone(),
+            Some(CellValue::List(items)) => items.join(", "),
+            None => String::new(),
+        };
+        if value.is_empty() {
+            continue;
+        }
+        let text = display_text(meta, &value);
+        let mut job = LayoutJob::single_section(
+            text,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+        job.wrap = TextWrapping::truncate_at_width(width);
+        let galley = ui.painter().layout_job(job);
+        let y = line_top + (line_h - galley.size().y) * 0.5;
+        ui.painter().galley(egui::pos2(cell_left, y), galley, color);
+    }
+    resp
+}
+
+/// Draws a not-yet-loaded embedded record as an empty skeleton widget filling the
+/// remaining row width. Returns its rect (for the loading overlay).
+fn draw_skeleton(ui: &mut egui::Ui) -> egui::Rect {
+    let avail = ui.available_width().max(EMBED_RADIUS * 2.0);
+    let line_h = embed_line_height(ui);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(avail, line_h + EMBED_PAD_Y * 2.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, EMBED_RADIUS, SKELETON_FILL.get(ui.visuals()));
+    ui.painter().rect_stroke(
+        rect,
+        EMBED_RADIUS,
+        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
+        egui::StrokeKind::Inside,
+    );
+    rect
+}
+
+/// The height of one line of embedded-record text, measured from a sample galley.
+fn embed_line_height(ui: &egui::Ui) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            "Xg".to_owned(),
+            egui::FontId::proportional(EMBED_TEXT_SIZE),
+            egui::Color32::PLACEHOLDER,
+        )
+        .size()
+        .y
+}
+
+/// Paints the subtle loading overlay — a translucent wash in the panel color —
+/// over `rect`, dimming whatever's beneath.
+fn paint_overlay(ui: &egui::Ui, rect: egui::Rect) {
+    let fill = ui.visuals().panel_fill;
+    let wash = egui::Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 150);
+    ui.painter().rect_filled(rect, 0.0, wash);
+}
+
+/// Applies a column's formatter and prefix/suffix to one raw cell value. Mirrors
+/// the result-row logic so embedded records format identically.
+fn display_text(meta: &ColumnMetadata, value: &str) -> String {
+    let formatted = match &meta.formatter {
+        Some(f) => f.format(value).unwrap_or_else(|| value.to_string()),
+        None => value.to_string(),
+    };
+    if meta.prefix.is_empty() && meta.suffix.is_empty() {
+        formatted
+    } else {
+        format!("{}{}{}", meta.prefix, formatted, meta.suffix)
+    }
 }
 
 #[cfg(test)]
@@ -658,13 +1477,14 @@ mod tests {
         "links": []
     }"#;
 
+    fn schema() -> Schema {
+        Schema::parse(SAMPLE).unwrap()
+    }
+
     #[test]
     fn structure_orders_columns_then_referencing_tables() {
-        let schema = Schema::parse(SAMPLE).unwrap();
-        let form = RecordEditor::structure(&schema, "track").unwrap();
+        let form = RecordEditor::structure(&schema(), "track").unwrap();
         let names: Vec<&str> = form.fields.iter().map(|f| f.name.as_str()).collect();
-        // Intrinsic columns in introspection order, then referencing tables
-        // alphabetically (credit, play).
         assert_eq!(
             names,
             ["id", "title", "album", "track_number", "credit", "play"]
@@ -673,21 +1493,12 @@ mod tests {
 
     #[test]
     fn structure_classifies_field_kinds() {
-        let schema = Schema::parse(SAMPLE).unwrap();
-        let form = RecordEditor::structure(&schema, "track").unwrap();
+        let form = RecordEditor::structure(&schema(), "track").unwrap();
         let kind = |name: &str| &form.fields.iter().find(|f| f.name == name).unwrap().kind;
-
         assert!(matches!(
             kind("id"),
             FieldKind::Primitive {
                 ty: Primitive::Id,
-                ..
-            }
-        ));
-        assert!(matches!(
-            kind("title"),
-            FieldKind::Primitive {
-                ty: Primitive::Text,
                 ..
             }
         ));
@@ -698,29 +1509,49 @@ mod tests {
                 ..
             }
         ));
-        // `album` is a UUID column named after the `album` table -> scalar link.
         assert!(matches!(
             kind("album"),
             FieldKind::ScalarLink { target, .. } if target == "album"
         ));
-        assert!(matches!(kind("credit"), FieldKind::MultiRecord { .. }));
-        assert!(matches!(kind("play"), FieldKind::MultiRecord { .. }));
+        assert!(matches!(
+            kind("credit"),
+            FieldKind::MultiRecord { link_column, .. } if link_column == "track"
+        ));
     }
 
     #[test]
     fn structure_returns_none_for_unknown_table() {
-        let schema = Schema::parse(SAMPLE).unwrap();
-        assert!(RecordEditor::structure(&schema, "nonexistent").is_none());
+        assert!(RecordEditor::structure(&schema(), "nonexistent").is_none());
     }
 
     #[test]
     fn primary_key_prefers_id_and_skips_composite_keys() {
-        let schema = Schema::parse(SAMPLE).unwrap();
-        // Single-column `id` constraint -> `id`.
-        assert_eq!(primary_key(schema.table("track").unwrap()), Some("id"));
-        assert_eq!(primary_key(schema.table("album").unwrap()), Some("id"));
-        // `credit` is keyed only by the composite `(track, artist)` -> no single key.
-        assert_eq!(primary_key(schema.table("credit").unwrap()), None);
+        let s = schema();
+        assert_eq!(primary_key(s.table("track").unwrap()), Some("id"));
+        assert_eq!(primary_key(s.table("credit").unwrap()), None);
+    }
+
+    #[test]
+    fn identifying_columns_use_composite_key_when_no_single_id() {
+        let s = schema();
+        assert_eq!(identifying_columns(s.table("track").unwrap()), ["id"]);
+        assert_eq!(
+            identifying_columns(s.table("credit").unwrap()),
+            ["track", "artist"]
+        );
+    }
+
+    #[test]
+    fn with_key_seeds_primitive_field_values() {
+        let form = RecordEditor::structure(&schema(), "track")
+            .unwrap()
+            .with_key(vec![("id".to_owned(), "abc".to_owned())]);
+        assert_eq!(form.record_id(), Some("abc"));
+        let id_field = form.fields.iter().find(|f| f.name == "id").unwrap();
+        assert!(matches!(
+            &id_field.kind,
+            FieldKind::Primitive { value: Some(v), .. } if v == "abc"
+        ));
     }
 
     #[test]
@@ -730,131 +1561,217 @@ mod tests {
         assert!(!is_numeric_type("VARCHAR"));
         assert!(!is_numeric_type("UUID"));
     }
+
+    #[test]
+    fn values_query_compiles_to_sql() {
+        // The generated values query must compile: filter by id, select each
+        // column value and a count per referencing table.
+        let form = RecordEditor::structure(&schema(), "track")
+            .unwrap()
+            .with_key(vec![("id".to_owned(), "abc-123".to_owned())]);
+        let source = values_source(&form);
+        // The compiler needs the convention-inferred links (which the app adds to
+        // the stored schema) to resolve the referencing-table counts.
+        let enriched = introspection::add_inferred_links(SAMPLE).unwrap();
+        let compiled =
+            compile::querydown_to_duckdb(&source, &enriched).expect("values query should compile");
+        // One result column per field (4 columns + credit + play = 6).
+        assert_eq!(compiled.columns.len(), 6);
+        assert!(compiled.sql.to_lowercase().contains("select"));
+    }
+
+    #[test]
+    fn key_filter_escapes_and_quotes() {
+        let f = key_filter(&[("id".to_owned(), "a'b".to_owned())]);
+        assert_eq!(f, "`id`:=='a\\'b'");
+    }
 }
 
 #[cfg(test)]
 mod snapshot_tests {
     //! Headless snapshot tests for the record editor form, rendered in isolation
-    //! (no app, no data loading) from a hand-built [`RecordEditor`]. Each renders
-    //! one scene to a PNG under `tests/snapshots/record_editor/` — eyeballed
-    //! against the mockup and, once correct, committed as a regression baseline.
-    //! Generate/refresh with `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
+    //! (no app, no data loading) from a hand-built [`RecordEditor`] whose slots are
+    //! pre-populated. Generate/refresh with `UPDATE_SNAPSHOTS=1 cargo test -p frontend`.
 
     use eframe::egui;
 
-    use super::{FieldKind, FormField, Primitive, RecordEditor};
+    use super::{
+        FieldKind, FormField, Load, MultiData, MultiEntry, Primitive, RecordDisplay, RecordEditor,
+    };
+    use crate::columns::ColumnMetadata;
+    use crate::rows::ResultRows;
     use crate::snapshot_harness::{self, snapshot_dual};
 
-    fn text(name: &str, value: Option<&str>) -> FormField {
+    fn text(name: &str, value: &str) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::Primitive {
                 ty: Primitive::Text,
-                value: value.map(str::to_owned),
+                value: Some(value.to_owned()),
             },
             collapsed: true,
         }
     }
 
-    fn number(name: &str, value: Option<&str>) -> FormField {
+    fn number(name: &str, value: &str) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::Primitive {
                 ty: Primitive::Number,
-                value: value.map(str::to_owned),
+                value: Some(value.to_owned()),
             },
             collapsed: true,
         }
     }
 
-    fn id_field(name: &str, value: Option<&str>) -> FormField {
+    fn id_field(name: &str, value: &str) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::Primitive {
                 ty: Primitive::Id,
-                value: value.map(str::to_owned),
+                value: Some(value.to_owned()),
             },
             collapsed: true,
         }
     }
 
-    fn link(name: &str, target: &str, id: Option<&str>) -> FormField {
+    fn cols(n: usize) -> Vec<ColumnMetadata> {
+        (0..n).map(|_| ColumnMetadata::default()).collect()
+    }
+
+    /// A collapsed scalar link with a loaded one-row preview.
+    fn linked(name: &str, target: &str, preview: &[Option<&str>]) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::ScalarLink {
                 target: target.to_owned(),
-                id: id.map(str::to_owned),
+                id: Some("x".to_owned()),
+                embedded: Load::Ready(RecordDisplay {
+                    columns: cols(preview.len()),
+                    rows: ResultRows::from_cells(&[preview.to_vec()]),
+                }),
+                expanded: None,
             },
             collapsed: true,
         }
     }
 
-    fn multi(name: &str, count: usize) -> FormField {
+    /// An expanded multi-record field named `name`, backed by `data`.
+    fn multi(name: &str, count: usize, data: Load<MultiData>) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::MultiRecord {
                 table: name.to_owned(),
+                link_column: "track".to_owned(),
+                parent_column: "id".to_owned(),
                 count,
+                data,
             },
-            collapsed: true,
+            collapsed: false,
         }
     }
 
-    /// A representative track form covering every field kind and value state:
-    /// text, number, a NULL primitive (pencil), a NULL and a populated scalar
-    /// link, a UUID id, and two multi-record fields.
-    fn sample_form() -> RecordEditor {
+    /// The rich scene: a track form with a loaded scalar link, and an expanded
+    /// `credit` multi-record field whose middle record is itself expanded into a
+    /// nested editor (a scalar link + primitives).
+    fn nested_form() -> RecordEditor {
+        // The nested editor for the expanded "Noha" credit record.
+        let noha = RecordEditor {
+            base_table: "credit".to_owned(),
+            key: vec![
+                ("track".to_owned(), "t".to_owned()),
+                ("artist".to_owned(), "a2".to_owned()),
+            ],
+            values: Load::Ready(()),
+            fields: vec![
+                linked("artist", "artist", &[Some("Noha")]),
+                text("role", "Remix by"),
+                number("ord", "2"),
+            ],
+        };
+
+        let credit_data = MultiData {
+            columns: cols(4),
+            // Columns: [track (key), artist (key), name, role].
+            rows: ResultRows::from_cells(&[
+                vec![Some("t"), Some("a1"), Some("Deladap"), None],
+                vec![Some("t"), Some("a2"), Some("Noha"), Some("Remix by")],
+                vec![Some("t"), Some("a3"), Some("17 Hippies"), Some("Featured")],
+            ]),
+            display_offset: 2,
+            entries: vec![
+                MultiEntry {
+                    key: vec![("track".into(), "t".into()), ("artist".into(), "a1".into())],
+                    collapsed: true,
+                    expanded: None,
+                },
+                MultiEntry {
+                    key: vec![("track".into(), "t".into()), ("artist".into(), "a2".into())],
+                    collapsed: false,
+                    expanded: Some(Box::new(noha)),
+                },
+                MultiEntry {
+                    key: vec![("track".into(), "t".into()), ("artist".into(), "a3".into())],
+                    collapsed: true,
+                    expanded: None,
+                },
+            ],
+        };
+
         RecordEditor {
             base_table: "track".to_owned(),
-            record_id: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
+            key: vec![("id".to_owned(), "d289fa9e".to_owned())],
+            values: Load::Ready(()),
             fields: vec![
-                text("title", Some("Goldregen")),
-                link("album", "album", None),
-                number("track_number", Some("13")),
-                number("disc_number", None),
-                link("file", "file", Some("e2b1c0d4-5a6f-4b8e-9c0d-1a2b3c4d5e6f")),
-                text(
-                    "lyrics",
-                    Some("Keca ne kale balengi taje sukare jakhengi joj temerau"),
-                ),
-                id_field("id", Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304")),
-                multi("credit", 3),
-                multi("play", 19),
+                text("title", "Goldregen"),
+                linked("album", "album", &[Some("The Balkan Club Night")]),
+                multi("credit", 3, Load::Ready(credit_data)),
+                id_field("id", "d289fa9e-8354-4e4b-9df3-5f8b64eb5304"),
             ],
         }
     }
 
     #[test]
-    fn full_form() {
-        let form = sample_form();
-        let mut harness = snapshot_harness::harness(egui::vec2(380.0, 340.0), move |ui| {
+    fn nested_records() {
+        let mut form = nested_form();
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 420.0), move |ui| {
             form.show(ui);
         });
         harness.run();
-        snapshot_dual(&mut harness, "record_editor/full_form");
+        snapshot_dual(&mut harness, "record_editor/nested_records");
+    }
+
+    /// Loading states: an expanded multi-record field showing skeleton widgets under
+    /// the dimming overlay, plus a scalar link whose preview is still loading.
+    fn loading_form() -> RecordEditor {
+        RecordEditor {
+            base_table: "track".to_owned(),
+            key: vec![("id".to_owned(), "d289fa9e".to_owned())],
+            values: Load::Ready(()),
+            fields: vec![
+                text("title", "Goldregen"),
+                FormField {
+                    name: "album".to_owned(),
+                    kind: FieldKind::ScalarLink {
+                        target: "album".to_owned(),
+                        id: Some("x".to_owned()),
+                        embedded: Load::Loading(2),
+                        expanded: None,
+                    },
+                    collapsed: true,
+                },
+                multi("credit", 3, Load::Loading(1)),
+            ],
+        }
     }
 
     #[test]
-    fn field_kinds() {
-        // Just the body (no toolbar), one field of each kind/value state, cropped
-        // tight to the fields so the kinds' styling is easy to compare.
-        let form = RecordEditor {
-            base_table: "track".to_owned(),
-            record_id: None,
-            fields: vec![
-                text("title", Some("Goldregen")),
-                number("track_number", Some("13")),
-                id_field("id", Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304")),
-                link("album", "album", None),
-                link("file", "file", Some("e2b1c0d4-5a6f-4b8e-9c0d-1a2b3c4d5e6f")),
-                multi("credit", 3),
-            ],
-        };
-        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 260.0), move |ui| {
-            form.body(ui);
+    fn loading_states() {
+        let mut form = loading_form();
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 300.0), move |ui| {
+            form.show(ui);
         });
         harness.run();
-        harness.fit_contents();
-        snapshot_dual(&mut harness, "record_editor/field_kinds");
+        snapshot_dual(&mut harness, "record_editor/loading_states");
     }
 }
