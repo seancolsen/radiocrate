@@ -14,6 +14,7 @@ mod button;
 mod columns;
 mod commands;
 mod compile;
+mod display_gen;
 mod field_layout;
 mod form;
 mod format;
@@ -1123,7 +1124,6 @@ impl App {
         let schema = schema_json
             .as_deref()
             .and_then(|j| introspection::Schema::parse(j).ok());
-        let presets = self.presets.clone();
         let egui_ctx = ui.ctx().clone();
         let inbox = Arc::clone(&self.form_inbox);
         let mut seq = self.form_load_seq;
@@ -1134,7 +1134,6 @@ impl App {
                 (Some(schema), Some(json)) => Some(form::FormCtx {
                     schema,
                     schema_json: json,
-                    presets: &presets,
                     egui_ctx: &egui_ctx,
                     inbox: &inbox,
                     next_token: &mut seq,

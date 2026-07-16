@@ -35,12 +35,12 @@ use introspection::Schema;
 use crate::button::{Button, SplitButton};
 use crate::columns::ColumnMetadata;
 use crate::compile;
+use crate::display_gen;
 use crate::field_layout::{ColSize, compute_field_layout};
 use crate::http;
 use crate::icons::{self, MaterialIcon};
 use crate::query_def::{CompileSource, QuerySections};
 use crate::rows::{CellValue, ResultRows};
-use crate::rpc::Preset;
 use crate::theme::{self, Duo};
 
 /// The type of a primitive (non-linked) field, which picks its label color and
@@ -923,7 +923,7 @@ pub(crate) fn primary_key(table: &introspection::Table) -> Option<&str> {
 /// primary key when there is one, otherwise the first unique constraint (e.g. the
 /// composite `(track, artist)` of `credit`). Empty when the table has no unique
 /// constraint at all.
-fn identifying_columns(table: &introspection::Table) -> Vec<String> {
+pub(crate) fn identifying_columns(table: &introspection::Table) -> Vec<String> {
     if let Some(pk) = primary_key(table) {
         return vec![pk.to_owned()];
     }
@@ -1055,7 +1055,6 @@ enum LoadShape {
 pub(crate) struct FormCtx<'a> {
     pub(crate) schema: &'a Schema,
     pub(crate) schema_json: &'a str,
-    pub(crate) presets: &'a [Preset],
     pub(crate) egui_ctx: &'a egui::Context,
     pub(crate) inbox: &'a Arc<Mutex<Vec<FormLoadMsg>>>,
     /// Monotonic token source; each dispatched query claims the next value.
@@ -1067,21 +1066,6 @@ impl FormCtx<'_> {
         let t = *self.next_token;
         *self.next_token += 1;
         t
-    }
-
-    /// The default display-preset fragment for `table`, or `$*` (all columns) when
-    /// none is configured.
-    fn default_display(&self, table: &str) -> String {
-        self.presets
-            .iter()
-            .find(|p| {
-                p.is_default
-                    && p.base_table == table
-                    && p.section == crate::query_def::Section::Display
-            })
-            .map(|p| p.definition.clone())
-            .filter(|d| !d.trim().is_empty())
-            .unwrap_or_else(|| "$*".to_owned())
     }
 
     /// Compiles `source` and streams it, posting a [`FormLoadMsg`] tagged `token`
@@ -1149,15 +1133,16 @@ impl FormCtx<'_> {
         token
     }
 
-    /// Dispatches a scalar-link's collapsed-preview query (one row, default display
-    /// preset).
+    /// Dispatches a scalar-link's collapsed-preview query (one row), with a
+    /// dynamically-generated display derived from the target table's schema.
     fn load_embedded(&mut self, target: &str, id: &str) -> u64 {
         let token = self.alloc_token();
+        let generated = display_gen::generate(self.schema, target, None);
         let source = CompileSource::Sections(QuerySections {
             base: target.to_owned(),
             filter: format!("{}:=={}", qd_ident("id"), qd_str(id)),
             sort: String::new(),
-            display: self.default_display(target),
+            display: generated.display,
         });
         self.run(token, &source, LoadShape::Embedded);
         token
@@ -1179,16 +1164,18 @@ impl FormCtx<'_> {
             .map(|c| format!("${}", qd_ident(c)))
             .collect::<Vec<_>>()
             .join(" ");
-        let preset = self.default_display(table);
+        // The link column is the contextual filter: excluded from the display and
+        // factored into the dynamic column scoring/sorting.
+        let generated = display_gen::generate(self.schema, table, Some(link_column));
         let display = if keys_display.is_empty() {
-            preset
+            generated.display
         } else {
-            format!("{keys_display} {preset}")
+            format!("{keys_display} {}", generated.display)
         };
         let source = CompileSource::Sections(QuerySections {
             base: table.to_owned(),
             filter: format!("{}:=={}", qd_ident(link_column), qd_str(parent_value)),
-            sort: String::new(),
+            sort: generated.sort,
             display,
         });
         self.run(
