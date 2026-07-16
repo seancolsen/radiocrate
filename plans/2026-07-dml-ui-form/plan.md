@@ -141,7 +141,7 @@ Notes on the mockup:
 ### Field label for a scalar linked record field
 
 - **Single click**: Select
-- **Double click**: Open the record picker
+- **Double click**: Toggle expansion
 - **Context menu**:
     - Pick a record
     - Enter a new record
@@ -151,7 +151,7 @@ Notes on the mockup:
 ### Field label for a multi-record field
 
 - **Single click**: Select
-- **Double click**: begin adding a new record at the top of the list
+- **Double click**: Toggle expansion
 - **Context menu**:
     - New record
     - Delete all records
