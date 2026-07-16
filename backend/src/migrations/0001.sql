@@ -54,7 +54,7 @@ create table track (
   file uuid not null,
   start_position real,
   end_position real,
-  title text,
+  title text not null,
   album uuid,
   disc_number utinyint,
   track_number utinyint,
