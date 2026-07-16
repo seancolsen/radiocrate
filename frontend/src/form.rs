@@ -40,7 +40,7 @@ use crate::icons::{self, MaterialIcon};
 use crate::query_def::{CompileSource, QuerySections};
 use crate::rows::{CellValue, ResultRows};
 use crate::rpc::Preset;
-use crate::theme::Duo;
+use crate::theme::{self, Duo};
 
 /// The type of a primitive (non-linked) field, which picks its label color and
 /// glyph.
@@ -735,15 +735,11 @@ const TREE_LINE: Duo = Duo {
     dark: egui::Color32::from_gray(0x50),
 };
 
-/// Border of an embedded-record widget.
+/// Border of an embedded-record widget — kept faint (a small step off the panel)
+/// so the widget reads without a hard outline.
 const EMBED_BORDER: Duo = Duo {
-    light: egui::Color32::from_gray(0xCF),
-    dark: egui::Color32::from_gray(0x4A),
-};
-/// Fill of an embedded-record widget (a hair off the panel so its border reads).
-const EMBED_FILL: Duo = Duo {
-    light: egui::Color32::from_gray(0xFB),
-    dark: egui::Color32::from_gray(0x2C),
+    light: egui::Color32::from_gray(0xDC),
+    dark: egui::Color32::from_gray(0x3E),
 };
 /// Fill of a not-yet-loaded embedded-record skeleton.
 const SKELETON_FILL: Duo = Duo {
@@ -760,7 +756,13 @@ const PILL_ICON_GAP: f32 = 5.0;
 /// Width of the chevron gutter reserved on the left of every field.
 const CHEVRON_GUTTER: f32 = 18.0;
 const CHEVRON_SIZE: f32 = 17.6;
-const CHEVRON_DISC_RADIUS: f32 = 8.0;
+/// Radius of the panel-colored disc drawn behind a chevron to break the tree
+/// line. Kept a touch smaller than the glyph so the tree lines read right up
+/// close to the chevron.
+const CHEVRON_DISC_RADIUS: f32 = 6.5;
+/// Extra horizontal space between the chevron gutter and the rest of the form
+/// item, exposing more of the tree line's connecting segment.
+const TICK_EXTRA: f32 = 5.0;
 const VALUE_GAP: f32 = 8.0;
 const ROW_SPACING: f32 = 5.0;
 const COUNT_TEXT_SIZE: f32 = 12.0;
@@ -768,11 +770,10 @@ const VALUE_TEXT_SIZE: f32 = 14.0;
 const UUID_TEXT_SIZE: f32 = 12.0;
 /// Left indent added per level of nesting.
 const INDENT: f32 = 16.0;
-/// Embedded-record widget: inner padding, gaps, corner radius.
+/// Embedded-record widget: inner padding, gaps, text size.
 const EMBED_PAD_X: f32 = 9.0;
 const EMBED_PAD_Y: f32 = 5.0;
 const EMBED_COL_GAP: f32 = 12.0;
-const EMBED_RADIUS: f32 = 11.0;
 const EMBED_TEXT_SIZE: f32 = 12.0;
 
 /// Height of the record editor toolbar — matched to the query builder toolbar.
@@ -835,20 +836,61 @@ impl RecordEditor {
     /// The form body: the recursive field tree. Pass a [`FormCtx`] to fetch data
     /// for any not-yet-loaded slots that come into view.
     pub(crate) fn body(&mut self, ui: &mut egui::Ui, ctx: Option<&mut FormCtx>) {
-        render_record(ui, ctx, self, 0);
+        render_record(ui, ctx, self, 0, None);
     }
 }
 
 // --- Rendering: the recursive tree -----------------------------------------
 
+/// One sibling's anchors for the tree spine: `(spine x, tick end x, row center y)`.
+type Tick = (f32, f32, f32);
+
+/// Draws a sibling group's tree lines into the reserved `idx` slot (so the rows'
+/// chevron discs, painted later, break the spine): a vertical spine at the shared
+/// `spine_x`, plus a horizontal tick from the spine to each row. `spine_top` fixes
+/// where the spine begins — the bottom of the element the branch descends from, so
+/// it never rides up into the parent; when `None` (the root) it starts at the first
+/// row's center.
+fn draw_tree(ui: &egui::Ui, idx: egui::layers::ShapeIdx, ticks: &[Tick], spine_top: Option<f32>) {
+    let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
+    let spine_x = ticks[0].0;
+    let top = spine_top.map_or(ticks[0].2, f32::round);
+    let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
+    shapes.push(egui::Shape::line_segment(
+        [
+            egui::pos2(spine_x, top),
+            egui::pos2(spine_x, ticks.last().unwrap().2),
+        ],
+        stroke,
+    ));
+    for (tx, tick_end, cy) in ticks {
+        shapes.push(egui::Shape::line_segment(
+            [egui::pos2(*tx, *cy), egui::pos2(*tick_end, *cy)],
+            stroke,
+        ));
+    }
+    ui.painter().set(idx, egui::Shape::Vec(shapes));
+}
+
+/// The spine x and tick-end x for a row whose content starts at `row_left`, at the
+/// given `indent`: the spine runs through the chevron gutter's center; the tick
+/// reaches the left edge of the row's pill/widget.
+fn tick_anchors(row_left: f32, indent: f32) -> (f32, f32) {
+    let spine_x = (row_left + indent + CHEVRON_GUTTER * 0.5).round();
+    let tick_end = row_left + indent + CHEVRON_GUTTER + TICK_EXTRA;
+    (spine_x, tick_end)
+}
+
 /// Renders one record editor's fields as a sibling group (with the left-gutter
 /// tree spine), then any expanded children beneath each field, indented one level.
-/// Dispatches this record's values query if it hasn't loaded yet.
+/// Dispatches this record's values query if it hasn't loaded yet. `spine_top` is
+/// where this group's spine begins (see [`draw_tree`]).
 fn render_record(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
     editor: &mut RecordEditor,
     depth: usize,
+    spine_top: Option<f32>,
 ) {
     // Fetch this record's values once, but only when we know which record it is —
     // an empty key would otherwise match the whole table.
@@ -865,10 +907,8 @@ fn render_record(
         return;
     }
 
-    let top_y = ui.min_rect().top().round();
     let tree_idx = ui.painter().add(egui::Shape::Noop);
-    // Per top-level sibling: (spine x, pill left, row center y).
-    let mut ticks: Vec<(f32, f32, f32)> = Vec::with_capacity(editor.fields.len());
+    let mut ticks: Vec<Tick> = Vec::with_capacity(editor.fields.len());
 
     // While this record's own values load, the fields are placeholders; draw them
     // under a dimming overlay and don't let them take input.
@@ -879,29 +919,12 @@ fn render_record(
                 ui.add_space(ROW_SPACING);
             }
             let rect = render_field(ui, ctx.as_deref_mut(), field, &key, depth, indent, loading);
-            let spine_x = (rect.left() + indent + CHEVRON_GUTTER * 0.5).round();
-            let pill_left = rect.left() + indent + CHEVRON_GUTTER;
-            ticks.push((spine_x, pill_left, rect.center().y.round()));
+            let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
+            ticks.push((spine_x, tick_end, rect.center().y.round()));
         }
     });
 
-    let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
-    let spine_x = ticks[0].0;
-    let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
-    shapes.push(egui::Shape::line_segment(
-        [
-            egui::pos2(spine_x, top_y),
-            egui::pos2(spine_x, ticks.last().unwrap().2),
-        ],
-        stroke,
-    ));
-    for (tx, pill_left, cy) in &ticks {
-        shapes.push(egui::Shape::line_segment(
-            [egui::pos2(*tx, *cy), egui::pos2(*pill_left, *cy)],
-            stroke,
-        ));
-    }
-    ui.painter().set(tree_idx, egui::Shape::Vec(shapes));
+    draw_tree(ui, tree_idx, &ticks, spine_top);
 
     if loading {
         paint_overlay(ui, group.response.rect);
@@ -911,6 +934,12 @@ fn render_record(
 /// Renders one field row (chevron gutter, label pill, value) at `indent`, then —
 /// if it's an expanded collapsible field — its children beneath. Returns the
 /// header row's rect (for the parent's tree ticks).
+///
+/// Every inline element is vertically centered on a single line. The row is pinned
+/// to a fixed height up front (a zero-width spacer) so left-to-right center
+/// alignment lines every element up on the same center regardless of the order
+/// they're added — needed because a value's embedded-record widget can be taller
+/// than the label pill.
 #[allow(clippy::too_many_arguments)]
 fn render_field(
     ui: &mut egui::Ui,
@@ -923,16 +952,26 @@ fn render_field(
 ) -> egui::Rect {
     let collapsible = field.kind.is_collapsible();
     let (bg, icon) = kind_style(&field.kind);
+    let galley = layout_pill(ui, icon, &field.name);
+    let pill_size = pill_size(&galley);
+
+    // Width left for the value area, matching what `draw_value` sees once the
+    // chevron gutter, pill and gaps are consumed — so a dynamic embedded widget's
+    // height can be measured to size the row before anything is drawn.
+    let value_left = indent + CHEVRON_GUTTER + TICK_EXTRA + pill_size.x + VALUE_GAP;
+    let value_avail = (ui.available_width() - value_left).max(0.0);
+    let row_h = pill_size.y.max(value_height(ui, &field.kind, value_avail));
 
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
+        ui.allocate_exact_size(egui::vec2(0.0, row_h), egui::Sense::hover());
         if indent > 0.0 {
             ui.add_space(indent);
         }
         // Chevron gutter — clickable for a collapsible field (unless the parent
         // record is still loading its structure/values).
         let (gutter, gutter_resp) = ui.allocate_exact_size(
-            egui::vec2(CHEVRON_GUTTER, ui.text_style_height(&egui::TextStyle::Body)),
+            egui::vec2(CHEVRON_GUTTER, row_h),
             if collapsible && !parent_loading {
                 egui::Sense::click()
             } else {
@@ -940,41 +979,29 @@ fn render_field(
             },
         );
         if collapsible {
-            ui.painter().circle_filled(
-                gutter.center(),
-                CHEVRON_DISC_RADIUS,
-                ui.visuals().panel_fill,
-            );
-            let glyph = if field.collapsed {
-                icons::EXPAND_CLOSED
-            } else {
-                icons::EXPAND_OPEN
-            };
-            let color = if gutter_resp.hovered() {
-                ui.visuals().text_color()
-            } else {
-                ui.visuals().weak_text_color()
-            };
-            ui.painter().text(
-                gutter.center(),
-                egui::Align2::CENTER_CENTER,
-                glyph.codepoint,
-                icons::font_id(CHEVRON_SIZE),
-                color,
-            );
+            draw_chevron(ui, gutter.center(), field.collapsed, gutter_resp.hovered());
             if gutter_resp.clicked() {
                 field.collapsed = !field.collapsed;
             }
         }
 
-        draw_label_pill(ui, icon, &field.name, bg);
+        ui.add_space(TICK_EXTRA);
+        paint_pill(ui, galley, pill_size, bg);
         ui.add_space(VALUE_GAP);
         draw_value(ui, ctx.as_deref_mut(), field);
     });
 
-    // Children of an expanded collapsible field.
+    // Children of an expanded collapsible field: their spine descends from the
+    // bottom of this header row.
     if collapsible && !field.collapsed {
-        render_children(ui, ctx, field, parent_key, depth);
+        render_children(
+            ui,
+            ctx,
+            field,
+            parent_key,
+            depth,
+            row.response.rect.bottom(),
+        );
     }
 
     row.response.rect
@@ -982,13 +1009,15 @@ fn render_field(
 
 /// Renders the expanded children of a collapsible field one level deeper: a
 /// scalar link's nested editor, or a multi-record field's list of embedded records
-/// (each itself expandable into a nested editor).
+/// (each itself expandable into a nested editor). `parent_bottom` is where the
+/// children's tree spine begins.
 fn render_children(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
     field: &mut FormField,
     parent_key: &[(String, String)],
     depth: usize,
+    parent_bottom: f32,
 ) {
     ui.add_space(ROW_SPACING);
     match &mut field.kind {
@@ -1007,7 +1036,7 @@ fn render_children(
                 *expanded = Some(Box::new(sub.with_key(vec![("id".to_owned(), id)])));
             }
             if let Some(sub) = expanded {
-                render_record(ui, ctx, sub, depth + 1);
+                render_record(ui, ctx, sub, depth + 1, Some(parent_bottom));
             }
         }
         FieldKind::MultiRecord {
@@ -1033,7 +1062,7 @@ fn render_children(
                 *data =
                     Load::Loading(ctx.load_multi(table, link_column, &parent_value, &key_columns));
             }
-            render_multi(ui, ctx, table, *count, data, depth + 1);
+            render_multi(ui, ctx, table, *count, data, depth + 1, parent_bottom);
         }
         FieldKind::Primitive { .. } => {}
     }
@@ -1041,7 +1070,9 @@ fn render_children(
 
 /// Renders a multi-record field's related records at `depth`: `count` skeleton
 /// widgets while loading (under an overlay), or the loaded rows once ready — each
-/// an embedded record with its own chevron that expands into a nested editor.
+/// an embedded record with its own chevron that expands into a nested editor. Once
+/// loaded, the embedded records get their own tree spine (descending from
+/// `parent_bottom`) connecting their chevrons.
 fn render_multi(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
@@ -1049,18 +1080,21 @@ fn render_multi(
     count: usize,
     data: &mut Load<MultiData>,
     depth: usize,
+    parent_bottom: f32,
 ) {
     let indent = depth as f32 * INDENT;
     match data {
         Load::Ready(d) => {
             let cols = d.columns.clone();
             let offset = d.display_offset;
+            let tree_idx = ui.painter().add(egui::Shape::Noop);
+            let mut ticks: Vec<Tick> = Vec::with_capacity(d.entries.len());
             for (i, entry) in d.entries.iter_mut().enumerate() {
                 if i > 0 {
                     ui.add_space(ROW_SPACING);
                 }
                 let cells = d.rows.row_values(i);
-                render_entry(
+                let rect = render_entry(
                     ui,
                     ctx.as_deref_mut(),
                     &cols,
@@ -1071,7 +1105,10 @@ fn render_multi(
                     depth,
                     indent,
                 );
+                let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
+                ticks.push((spine_x, tick_end, rect.center().y.round()));
             }
+            draw_tree(ui, tree_idx, &ticks, Some(parent_bottom));
         }
         Load::Loading(_) | Load::Idle => {
             let group = ui.scope(|ui| {
@@ -1081,7 +1118,7 @@ fn render_multi(
                     }
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.add_space(indent + CHEVRON_GUTTER);
+                        ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
                         draw_skeleton(ui);
                     });
                 }
@@ -1090,7 +1127,7 @@ fn render_multi(
         }
         Load::Failed(e) => {
             ui.horizontal(|ui| {
-                ui.add_space(indent + CHEVRON_GUTTER);
+                ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
                 ui.colored_label(egui::Color32::RED, e.as_str());
             });
         }
@@ -1098,7 +1135,8 @@ fn render_multi(
 }
 
 /// Renders one embedded record within a multi-record field: a chevron plus the
-/// embedded widget, and (when expanded) its nested editor beneath.
+/// embedded widget (vertically centered together), and (when expanded) its nested
+/// editor beneath. Returns the header row's rect (for the parent's tree ticks).
 #[allow(clippy::too_many_arguments)]
 fn render_entry(
     ui: &mut egui::Ui,
@@ -1110,32 +1148,20 @@ fn render_entry(
     table: &str,
     depth: usize,
     indent: f32,
-) {
-    ui.horizontal(|ui| {
+) -> egui::Rect {
+    let value_avail = (ui.available_width() - indent - CHEVRON_GUTTER - TICK_EXTRA).max(0.0);
+    let row_h = embed_size(ui, &columns[offset..], value_avail).y;
+
+    let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
+        ui.allocate_exact_size(egui::vec2(0.0, row_h), egui::Sense::hover());
         if indent > 0.0 {
             ui.add_space(indent);
         }
-        let (gutter, gutter_resp) = ui.allocate_exact_size(
-            egui::vec2(CHEVRON_GUTTER, ui.text_style_height(&egui::TextStyle::Body)),
-            egui::Sense::click(),
-        );
-        let glyph = if entry.collapsed {
-            icons::EXPAND_CLOSED
-        } else {
-            icons::EXPAND_OPEN
-        };
-        ui.painter().text(
-            gutter.center(),
-            egui::Align2::CENTER_CENTER,
-            glyph.codepoint,
-            icons::font_id(CHEVRON_SIZE),
-            if gutter_resp.hovered() {
-                ui.visuals().text_color()
-            } else {
-                ui.visuals().weak_text_color()
-            },
-        );
+        let (gutter, gutter_resp) =
+            ui.allocate_exact_size(egui::vec2(CHEVRON_GUTTER, row_h), egui::Sense::click());
+        draw_chevron(ui, gutter.center(), entry.collapsed, gutter_resp.hovered());
+        ui.add_space(TICK_EXTRA);
         let widget = draw_embedded(ui, &columns[offset..], &cells[offset..]);
         if gutter_resp.clicked() || widget.double_clicked() {
             entry.collapsed = !entry.collapsed;
@@ -1151,9 +1177,11 @@ fn render_entry(
         }
         if let Some(sub) = &mut entry.expanded {
             ui.add_space(ROW_SPACING);
-            render_record(ui, ctx, sub, depth + 1);
+            render_record(ui, ctx, sub, depth + 1, Some(row.response.rect.bottom()));
         }
     }
+
+    row.response.rect
 }
 
 // --- Rendering: primitives -------------------------------------------------
@@ -1177,8 +1205,33 @@ fn kind_style(kind: &FieldKind) -> (Duo, MaterialIcon) {
     }
 }
 
-/// Draws a rounded, colored label pill containing `icon` and `name`.
-fn draw_label_pill(ui: &mut egui::Ui, icon: MaterialIcon, name: &str, bg: Duo) {
+/// Draws the expansion chevron for a collapsible item, centered at `center`: a
+/// panel-colored disc (breaking the tree line behind it) with the open/closed
+/// glyph on top, brightened on hover.
+fn draw_chevron(ui: &egui::Ui, center: egui::Pos2, collapsed: bool, hovered: bool) {
+    ui.painter()
+        .circle_filled(center, CHEVRON_DISC_RADIUS, ui.visuals().panel_fill);
+    let glyph = if collapsed {
+        icons::EXPAND_CLOSED
+    } else {
+        icons::EXPAND_OPEN
+    };
+    let color = if hovered {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    ui.painter().text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        glyph.codepoint,
+        icons::font_id(CHEVRON_SIZE),
+        color,
+    );
+}
+
+/// Lays out a label pill's icon-and-name content (without the surrounding padding).
+fn layout_pill(ui: &egui::Ui, icon: MaterialIcon, name: &str) -> Arc<egui::Galley> {
     let fg = LABEL_FG.get(ui.visuals());
     let mut job = LayoutJob::default();
     job.append(
@@ -1201,13 +1254,52 @@ fn draw_label_pill(ui: &mut egui::Ui, icon: MaterialIcon, name: &str, bg: Duo) {
             ..Default::default()
         },
     );
-    let galley = ui.painter().layout_job(job);
-    let size = galley.size() + egui::vec2(PILL_PAD_X * 2.0, PILL_PAD_Y * 2.0);
+    ui.painter().layout_job(job)
+}
+
+/// The full outer size of a label pill (content plus padding).
+fn pill_size(galley: &Arc<egui::Galley>) -> egui::Vec2 {
+    galley.size() + egui::vec2(PILL_PAD_X * 2.0, PILL_PAD_Y * 2.0)
+}
+
+/// Allocates and paints a pre-laid-out label pill: a rounded, colored rect with the
+/// icon-and-name galley inside.
+fn paint_pill(ui: &mut egui::Ui, galley: Arc<egui::Galley>, size: egui::Vec2, bg: Duo) {
+    let fg = LABEL_FG.get(ui.visuals());
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, PILL_RADIUS, bg.get(ui.visuals()));
     ui.painter()
         .galley(rect.min + egui::vec2(PILL_PAD_X, PILL_PAD_Y), galley, fg);
+}
+
+/// The static height of a field's value area (everything but a dynamic embedded
+/// widget), used to size the row before drawing. `value_avail` is the width the
+/// value has, needed to measure an embedded record's wrapped height.
+fn value_height(ui: &egui::Ui, kind: &FieldKind, value_avail: f32) -> f32 {
+    match kind {
+        // A loaded scalar link shows an embedded widget whose height depends on how
+        // its content wraps; everything else is a fixed-height affordance.
+        FieldKind::ScalarLink {
+            id: Some(_),
+            embedded: Load::Ready(d),
+            ..
+        } => embed_size(ui, &d.columns, value_avail).y,
+        FieldKind::ScalarLink {
+            id: Some(_),
+            embedded: Load::Loading(_) | Load::Idle,
+            ..
+        } => skeleton_height(ui),
+        // A NULL link and a NULL primitive both show the pencil button; a
+        // multi-record field shows the count badge and "+" button.
+        FieldKind::ScalarLink { .. }
+        | FieldKind::Primitive { value: None, .. }
+        | FieldKind::MultiRecord { .. } => crate::button::SIZE,
+        FieldKind::Primitive {
+            ty: Primitive::Id, ..
+        } => embed_line_height_for(ui, UUID_TEXT_SIZE),
+        FieldKind::Primitive { .. } => embed_line_height_for(ui, VALUE_TEXT_SIZE),
+    }
 }
 
 /// Draws a field's value area to the right of its label.
@@ -1299,7 +1391,7 @@ fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egu
 
 /// Draws the pencil affordance shown for a `NULL`/empty field.
 fn draw_pencil(ui: &mut egui::Ui) {
-    Button::icon(icons::EDIT).hover_fill(true).show(ui);
+    Button::icon(icons::EDIT).show(ui);
 }
 
 /// Draws a multi-record field's value: a rounded count badge followed by the
@@ -1318,23 +1410,37 @@ fn draw_count(ui: &mut egui::Ui, count: usize) {
     ui.painter().galley(pos, text, ui.visuals().text_color());
 
     ui.add_space(4.0);
-    Button::icon(icons::ADD).hover_fill(true).show(ui);
+    Button::icon(icons::ADD).show(ui);
 }
 
 // --- Rendering: embedded records -------------------------------------------
 
-/// Draws an embedded-record widget filling the remaining row width: a bordered,
-/// large-radius rounded rect whose fields render like a query result row but forced
-/// to small, light text. Returns the widget's [`egui::Response`] (for double-click
-/// to expand).
-fn draw_embedded(
-    ui: &mut egui::Ui,
-    columns: &[ColumnMetadata],
-    cells: &[CellValue],
-) -> egui::Response {
-    let avail = ui.available_width().max(EMBED_RADIUS * 2.0);
-    let content_w = (avail - EMBED_PAD_X * 2.0).max(0.0);
+/// The corner radius of an embedded-record widget: half the height of a
+/// single-line widget, so a one-line record has semicircular ends. Kept static, so
+/// a record that wraps to multiple lines grows taller and gains flat sides.
+fn embed_radius(ui: &egui::Ui) -> f32 {
+    skeleton_height(ui) * 0.5
+}
 
+/// The height of a single-line embedded-record widget (one text line plus padding).
+fn skeleton_height(ui: &egui::Ui) -> f32 {
+    embed_line_height(ui) + EMBED_PAD_Y * 2.0
+}
+
+/// The layout of an embedded record within `avail` width: the visible columns and
+/// their field layout, plus the resulting widget size.
+struct EmbedLayout<'a> {
+    visible: Vec<(usize, &'a ColumnMetadata)>,
+    layout: crate::field_layout::FieldLayout,
+    line_h: f32,
+    size: egui::Vec2,
+}
+
+/// Computes an embedded record's layout (and outer size) for the given columns and
+/// available width, mirroring the query result-row field layout.
+fn embed_layout<'a>(ui: &egui::Ui, columns: &'a [ColumnMetadata], avail: f32) -> EmbedLayout<'a> {
+    let width = avail.max(embed_radius(ui) * 2.0);
+    let content_w = (width - EMBED_PAD_X * 2.0).max(0.0);
     let visible: Vec<(usize, &ColumnMetadata)> = columns
         .iter()
         .enumerate()
@@ -1348,28 +1454,49 @@ fn draw_embedded(
         })
         .collect();
     let layout = compute_field_layout(&col_sizes, content_w, EMBED_COL_GAP);
-
     let line_h = embed_line_height(ui);
-    let lines = layout.line_count.max(1);
-    let content_h = line_h * lines as f32;
-    let widget_h = content_h + EMBED_PAD_Y * 2.0;
+    let widget_h = line_h * layout.line_count.max(1) as f32 + EMBED_PAD_Y * 2.0;
+    EmbedLayout {
+        visible,
+        layout,
+        line_h,
+        size: egui::vec2(width, widget_h),
+    }
+}
 
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(avail, widget_h), egui::Sense::click());
-    ui.painter()
-        .rect_filled(rect, EMBED_RADIUS, EMBED_FILL.get(ui.visuals()));
+/// The outer size of the embedded record for `columns` within `avail` width.
+fn embed_size(ui: &egui::Ui, columns: &[ColumnMetadata], avail: f32) -> egui::Vec2 {
+    embed_layout(ui, columns, avail).size
+}
+
+/// Draws an embedded-record widget filling the remaining row width: a rounded rect
+/// with the same top-lit gradient (and hover shading) as a query result row, a
+/// faint border, and fields rendered like a result row but forced to small, light
+/// text. Returns the widget's [`egui::Response`] (for double-click to expand).
+fn draw_embedded(
+    ui: &mut egui::Ui,
+    columns: &[ColumnMetadata],
+    cells: &[CellValue],
+) -> egui::Response {
+    let el = embed_layout(ui, columns, ui.available_width());
+    let radius = embed_radius(ui);
+
+    let (rect, resp) = ui.allocate_exact_size(el.size, egui::Sense::click());
+    let (top, bottom) = embed_gradient(ui, resp.hovered());
+    paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
     ui.painter().rect_stroke(
         rect,
-        EMBED_RADIUS,
+        radius,
         egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
 
     let color = ui.visuals().weak_text_color();
     let font = egui::FontId::proportional(EMBED_TEXT_SIZE);
-    for (vis_idx, (col_idx, meta)) in visible.iter().enumerate() {
-        let p = layout.placements[vis_idx];
+    for (vis_idx, (col_idx, meta)) in el.visible.iter().enumerate() {
+        let p = el.layout.placements[vis_idx];
         let cell_left = rect.left() + EMBED_PAD_X + p.x;
-        let line_top = rect.top() + EMBED_PAD_Y + line_h * p.line as f32;
+        let line_top = rect.top() + EMBED_PAD_Y + el.line_h * p.line as f32;
         let width = p.width.max(0.0);
         let value = match cells.get(*col_idx) {
             Some(CellValue::Single(s)) => s.clone(),
@@ -1390,7 +1517,7 @@ fn draw_embedded(
         );
         job.wrap = TextWrapping::truncate_at_width(width);
         let galley = ui.painter().layout_job(job);
-        let y = line_top + (line_h - galley.size().y) * 0.5;
+        let y = line_top + (el.line_h - galley.size().y) * 0.5;
         ui.painter().galley(egui::pos2(cell_left, y), galley, color);
     }
     resp
@@ -1399,33 +1526,130 @@ fn draw_embedded(
 /// Draws a not-yet-loaded embedded record as an empty skeleton widget filling the
 /// remaining row width. Returns its rect (for the loading overlay).
 fn draw_skeleton(ui: &mut egui::Ui) -> egui::Rect {
-    let avail = ui.available_width().max(EMBED_RADIUS * 2.0);
-    let line_h = embed_line_height(ui);
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(avail, line_h + EMBED_PAD_Y * 2.0),
-        egui::Sense::hover(),
-    );
+    let avail = ui.available_width().max(embed_radius(ui) * 2.0);
+    let radius = embed_radius(ui);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(avail, skeleton_height(ui)), egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect, EMBED_RADIUS, SKELETON_FILL.get(ui.visuals()));
+        .rect_filled(rect, radius, SKELETON_FILL.get(ui.visuals()));
     ui.painter().rect_stroke(
         rect,
-        EMBED_RADIUS,
+        radius,
         egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
     rect
 }
 
-/// The height of one line of embedded-record text, measured from a sample galley.
+/// The top/bottom colors of an embedded record's background gradient — the same
+/// top-lit gradient as a query result row, nudged on hover to match.
+fn embed_gradient(ui: &egui::Ui, hovered: bool) -> (egui::Color32, egui::Color32) {
+    let v = ui.visuals();
+    let (top, bottom) = (
+        crate::results::ROW_BG_TOP.get(v),
+        crate::results::ROW_BG_BOTTOM.get(v),
+    );
+    if hovered {
+        (
+            theme::shade(v, top, theme::HOVER_SHADE),
+            theme::shade(v, bottom, theme::HOVER_SHADE),
+        )
+    } else {
+        (top, bottom)
+    }
+}
+
+/// The height of one line of embedded-record text.
 fn embed_line_height(ui: &egui::Ui) -> f32 {
+    embed_line_height_for(ui, EMBED_TEXT_SIZE)
+}
+
+/// The height of one line of proportional text at `size`, from a sample galley.
+fn embed_line_height_for(ui: &egui::Ui, size: f32) -> f32 {
     ui.painter()
         .layout_no_wrap(
             "Xg".to_owned(),
-            egui::FontId::proportional(EMBED_TEXT_SIZE),
+            egui::FontId::proportional(size),
             egui::Color32::PLACEHOLDER,
         )
         .size()
         .y
+}
+
+/// Paints a vertical `top`→`bottom` gradient clipped to a rounded rect, so the
+/// embedded record's gradient fill respects its rounded (semicircular) corners.
+/// The rounded rect is convex, so it triangulates cleanly as a fan from its center.
+fn paint_rounded_gradient(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: f32,
+    top: egui::Color32,
+    bottom: egui::Color32,
+) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// Line segments used to approximate each rounded corner's quarter-arc.
+    const SEG: usize = 6;
+
+    let r = radius
+        .min(rect.width() * 0.5)
+        .min(rect.height() * 0.5)
+        .max(0.0);
+    let color_at = |y: f32| {
+        let t = if rect.height() > 0.0 {
+            ((y - rect.top()) / rect.height()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        lerp_color(top, bottom, t)
+    };
+
+    // Perimeter points, clockwise from the top edge, rounding each corner.
+    let arc = |center: egui::Pos2, start: f32, pts: &mut Vec<egui::Pos2>| {
+        for i in 0..=SEG {
+            let a = start + (i as f32 / SEG as f32) * FRAC_PI_2;
+            pts.push(egui::pos2(center.x + r * a.cos(), center.y + r * a.sin()));
+        }
+    };
+    let mut pts: Vec<egui::Pos2> = Vec::with_capacity((SEG + 1) * 4);
+    arc(
+        egui::pos2(rect.right() - r, rect.top() + r),
+        -FRAC_PI_2,
+        &mut pts,
+    ); // top-right
+    arc(
+        egui::pos2(rect.right() - r, rect.bottom() - r),
+        0.0,
+        &mut pts,
+    ); // bottom-right
+    arc(
+        egui::pos2(rect.left() + r, rect.bottom() - r),
+        FRAC_PI_2,
+        &mut pts,
+    ); // bottom-left
+    arc(egui::pos2(rect.left() + r, rect.top() + r), PI, &mut pts); // top-left
+
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.center(), color_at(rect.center().y));
+    for p in &pts {
+        mesh.colored_vertex(*p, color_at(p.y));
+    }
+    let n = pts.len() as u32;
+    for i in 0..n {
+        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+    }
+    painter.add(mesh);
+}
+
+/// Linearly interpolates between two colors, per channel.
+fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let c = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    egui::Color32::from_rgba_unmultiplied(
+        c(a.r(), b.r()),
+        c(a.g(), b.g()),
+        c(a.b(), b.b()),
+        c(a.a(), b.a()),
+    )
 }
 
 /// Paints the subtle loading overlay — a translucent wash in the panel color —

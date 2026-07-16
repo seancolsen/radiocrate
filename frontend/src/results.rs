@@ -45,13 +45,13 @@ const BUBBLE_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
 /// Top of an un-selected row's background gradient: white (a gray a couple of
 /// steps above the dark panel fill on the dark theme — rows pop slightly
 /// brighter than the surrounding chrome in both themes).
-const ROW_BG_TOP: theme::Duo = theme::Duo {
+pub(crate) const ROW_BG_TOP: theme::Duo = theme::Duo {
     light: egui::Color32::WHITE,
     dark: egui::Color32::from_gray(0x30),
 };
 /// Bottom of an un-selected row's background gradient: slightly darker than the
 /// top, giving each row a subtle top-lit sheen in both themes.
-const ROW_BG_BOTTOM: theme::Duo = theme::Duo {
+pub(crate) const ROW_BG_BOTTOM: theme::Duo = theme::Duo {
     light: egui::Color32::from_gray(0xF2),
     dark: egui::Color32::from_gray(0x26),
 };
