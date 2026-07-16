@@ -765,6 +765,8 @@ const CHEVRON_DISC_RADIUS: f32 = 6.5;
 const TICK_EXTRA: f32 = 5.0;
 const VALUE_GAP: f32 = 8.0;
 const ROW_SPACING: f32 = 5.0;
+/// Space between the toolbar's bottom border and the first field row.
+const BODY_HEADROOM: f32 = 6.0;
 const COUNT_TEXT_SIZE: f32 = 12.0;
 const VALUE_TEXT_SIZE: f32 = 14.0;
 const UUID_TEXT_SIZE: f32 = 12.0;
@@ -802,7 +804,6 @@ impl RecordEditor {
             border_y,
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
-        ui.add_space(6.0);
         self.body(ui, None);
         inner.inner
     }
@@ -835,8 +836,15 @@ impl RecordEditor {
 
     /// The form body: the recursive field tree. Pass a [`FormCtx`] to fetch data
     /// for any not-yet-loaded slots that come into view.
+    ///
+    /// The caller places the body immediately below the toolbar's bottom border;
+    /// we capture that border position first, then inset the fields with a little
+    /// headroom — so the root tree spine can rise all the way up to the border,
+    /// visually anchoring the tree to the toolbar.
     pub(crate) fn body(&mut self, ui: &mut egui::Ui, ctx: Option<&mut FormCtx>) {
-        render_record(ui, ctx, self, 0, None);
+        let toolbar_border = ui.cursor().top();
+        ui.add_space(BODY_HEADROOM);
+        render_record(ui, ctx, self, 0, Some(toolbar_border));
     }
 }
 

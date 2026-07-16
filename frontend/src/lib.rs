@@ -1178,7 +1178,6 @@ impl App {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    ui.add_space(6.0);
                                     editor.body(ui, form_ctx.as_mut());
                                 });
                         });
