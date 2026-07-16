@@ -139,6 +139,9 @@ pub(crate) enum CommandId {
     ResultsSelectPrevious,
     ResultsExtendSelectionDown,
     ResultsExtendSelectionUp,
+    SelectionExpandNested,
+    SelectionCollapseNested,
+    SelectionDelete,
     TabsCloseActive,
     TabsNext,
     TabsPrevious,
@@ -165,6 +168,9 @@ pub(crate) const ALL_COMMANDS: &[CommandId] = &[
     CommandId::ResultsSelectPrevious,
     CommandId::ResultsExtendSelectionDown,
     CommandId::ResultsExtendSelectionUp,
+    CommandId::SelectionExpandNested,
+    CommandId::SelectionCollapseNested,
+    CommandId::SelectionDelete,
     CommandId::TabsSaveActive,
     CommandId::TabsSaveAll,
     CommandId::TabsCloseActive,
@@ -194,6 +200,9 @@ impl CommandId {
             CommandId::ResultsSelectPrevious => "results.select_previous",
             CommandId::ResultsExtendSelectionDown => "results.extend_selection_down",
             CommandId::ResultsExtendSelectionUp => "results.extend_selection_up",
+            CommandId::SelectionExpandNested => "selection.expand_nested",
+            CommandId::SelectionCollapseNested => "selection.collapse_nested",
+            CommandId::SelectionDelete => "selection.delete",
             CommandId::TabsCloseActive => "tabs.close_active",
             CommandId::TabsNext => "tabs.next",
             CommandId::TabsPrevious => "tabs.previous",
@@ -224,10 +233,13 @@ impl CommandId {
             CommandId::QueryFocusSort => "Query: Focus sort builder",
             CommandId::QueryFocusDisplay => "Query: Focus display builder",
             CommandId::QueryNew => "Query: New query",
-            CommandId::ResultsSelectNext => "Results: Select next result row",
-            CommandId::ResultsSelectPrevious => "Results: Select previous result row",
-            CommandId::ResultsExtendSelectionDown => "Results: Extend result row selection down",
-            CommandId::ResultsExtendSelectionUp => "Results: Extend result row selection up",
+            CommandId::ResultsSelectNext => "Selection: Select down",
+            CommandId::ResultsSelectPrevious => "Selection: Select up",
+            CommandId::ResultsExtendSelectionDown => "Selection: Extend selection down",
+            CommandId::ResultsExtendSelectionUp => "Selection: Extend selection up",
+            CommandId::SelectionExpandNested => "Selection: Expand nested items",
+            CommandId::SelectionCollapseNested => "Selection: Collapse nested items",
+            CommandId::SelectionDelete => "Selection: Delete",
             CommandId::TabsCloseActive => "Tabs: Close active tab",
             CommandId::TabsNext => "Tabs: Go to next tab",
             CommandId::TabsPrevious => "Tabs: Go to previous tab",
@@ -258,7 +270,10 @@ impl CommandId {
             CommandId::ResultsSelectNext
             | CommandId::ResultsSelectPrevious
             | CommandId::ResultsExtendSelectionDown
-            | CommandId::ResultsExtendSelectionUp => When::ResultsAvailable,
+            | CommandId::ResultsExtendSelectionUp => When::SelectionAvailable,
+            CommandId::SelectionExpandNested
+            | CommandId::SelectionCollapseNested
+            | CommandId::SelectionDelete => When::FormSelectionActive,
             CommandId::TabsCloseActive | CommandId::TabsMoveLeft | CommandId::TabsMoveRight => {
                 When::ActiveTab
             }
@@ -276,7 +291,8 @@ impl CommandId {
         let c = |mods, key| Some(Chord::new(mods, key));
         match self {
             CommandId::PaletteOpen => c(MOD | shift, Key::P),
-            CommandId::ShortcutsConfigure => None,
+            // Ships unbound (assign in the shortcuts editor).
+            CommandId::ShortcutsConfigure | CommandId::SelectionDelete => None,
             CommandId::ExplorerToggle => c(MOD, Key::B),
             CommandId::PlaybackNextTrack => c(shift, Key::N),
             CommandId::PlaybackTogglePlay => c(shift, Key::Space),
@@ -288,6 +304,8 @@ impl CommandId {
             CommandId::ResultsSelectPrevious => c(Modifiers::NONE, Key::ArrowUp),
             CommandId::ResultsExtendSelectionDown => c(shift, Key::ArrowDown),
             CommandId::ResultsExtendSelectionUp => c(shift, Key::ArrowUp),
+            CommandId::SelectionExpandNested => c(Modifiers::NONE, Key::ArrowRight),
+            CommandId::SelectionCollapseNested => c(Modifiers::NONE, Key::ArrowLeft),
             CommandId::TabsCloseActive => c(MOD | alt, Key::W),
             CommandId::TabsNext => c(MOD | alt, Key::ArrowRight),
             CommandId::TabsPrevious => c(MOD | alt, Key::ArrowLeft),
@@ -313,8 +331,13 @@ pub(crate) enum When {
     AnyTabOpen,
     /// The current tab is a query page.
     QueryTabActive,
-    /// The current query page has at least one result row.
-    ResultsAvailable,
+    /// Something is selectable: either result rows are available, or the record
+    /// editor form has an active selection. Gates the general Select/Extend
+    /// commands, which apply to whichever surface owns the selection.
+    SelectionAvailable,
+    /// The record editor form has an active selection (drives the form-only
+    /// expand/collapse/delete commands).
+    FormSelectionActive,
     /// A track is loaded in the now-playing bar.
     TrackLoaded,
 }
@@ -326,7 +349,8 @@ impl When {
             When::ActiveTab => c.active_tab,
             When::AnyTabOpen => c.any_tab_open,
             When::QueryTabActive => c.query_tab_active,
-            When::ResultsAvailable => c.results_available,
+            When::SelectionAvailable => c.results_available || c.form_selection_active,
+            When::FormSelectionActive => c.form_selection_active,
             When::TrackLoaded => c.track_loaded,
         }
     }
@@ -338,7 +362,8 @@ impl When {
             When::ActiveTab => "tab open",
             When::AnyTabOpen => "tabs open",
             When::QueryTabActive => "query tab active",
-            When::ResultsAvailable => "results shown",
+            When::SelectionAvailable => "selection",
+            When::FormSelectionActive => "form selection",
             When::TrackLoaded => "track loaded",
         }
     }
@@ -353,6 +378,7 @@ pub(crate) struct CommandContext {
     pub(crate) any_tab_open: bool,
     pub(crate) query_tab_active: bool,
     pub(crate) results_available: bool,
+    pub(crate) form_selection_active: bool,
     pub(crate) track_loaded: bool,
 }
 
@@ -470,6 +496,7 @@ impl crate::App {
             any_tab_open: !self.pages.is_empty(),
             query_tab_active: self.current.query_id().is_some(),
             results_available,
+            form_selection_active: self.form_selection_active(),
             track_loaded: self.current_track.lock().unwrap().is_some(),
         }
     }
@@ -539,10 +566,13 @@ impl crate::App {
             CommandId::QueryFocusSort => self.focus_builder_section(Section::Sort),
             CommandId::QueryFocusDisplay => self.focus_builder_section(Section::Display),
             CommandId::QueryNew => self.add_query_page(),
-            CommandId::ResultsSelectNext => self.select_row_delta(true, false),
-            CommandId::ResultsSelectPrevious => self.select_row_delta(false, false),
-            CommandId::ResultsExtendSelectionDown => self.select_row_delta(true, true),
-            CommandId::ResultsExtendSelectionUp => self.select_row_delta(false, true),
+            CommandId::ResultsSelectNext => self.selection_move(true, false),
+            CommandId::ResultsSelectPrevious => self.selection_move(false, false),
+            CommandId::ResultsExtendSelectionDown => self.selection_move(true, true),
+            CommandId::ResultsExtendSelectionUp => self.selection_move(false, true),
+            CommandId::SelectionExpandNested => self.form_set_selection_collapsed(false),
+            CommandId::SelectionCollapseNested => self.form_set_selection_collapsed(true),
+            CommandId::SelectionDelete => self.form_delete_selection(),
             CommandId::TabsCloseActive => {
                 if let Some(id) = self.current.page_id() {
                     self.close_tab(id);

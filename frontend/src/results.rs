@@ -349,12 +349,16 @@ impl App {
                     // Re-selecting a row for its context menu also re-points any
                     // open record editor at that row's record.
                     self.reconcile_record_editor_selection();
+                    // Interacting with the results returns keyboard navigation to
+                    // the rows, so drop any in-form selection.
+                    self.clear_form_selection();
                 }
                 if let Some((index, mods)) = clicked {
                     self.handle_row_click(index, mods);
                     // A click changed the selection; keep any open record editor
                     // in step (re-point at the new record, or close on deselect).
                     self.reconcile_record_editor_selection();
+                    self.clear_form_selection();
                 }
                 if let Some((index, id)) = double_clicked {
                     self.play_track(current_id, index, &id, &ctx);

@@ -609,6 +609,8 @@ fn sample_record_editor() -> crate::form::RecordEditor {
             "d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned(),
         )],
         values: Load::Ready(()),
+        selection: None,
+        scroll_to_selection: false,
         fields: vec![
             text("title", "Goldregen"),
             FormField {

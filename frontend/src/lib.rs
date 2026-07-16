@@ -1110,6 +1110,9 @@ impl App {
             return;
         };
         let mut keep = true;
+        // A click on a selectable form element, captured during the body render and
+        // applied to the editor's selection afterward.
+        let mut body_out: Option<form::FormOutput> = None;
         let panel_fill = ui.visuals().panel_fill;
 
         // Everything the form needs to fetch data, extracted into locals so the
@@ -1178,7 +1181,7 @@ impl App {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    editor.body(ui, form_ctx.as_mut());
+                                    body_out = Some(editor.body(ui, form_ctx.as_mut()));
                                 });
                         });
                 });
@@ -1193,6 +1196,12 @@ impl App {
 
         // Persist the tokens the form handed out this frame.
         self.form_load_seq = seq;
+
+        // Apply a click on a form element to the selection (single-click select,
+        // Shift/Ctrl for sibling embedded records).
+        if let Some((path, mods)) = body_out.and_then(|o| o.clicked) {
+            editor.select_click(path, mods);
+        }
 
         if keep && let Some(page) = self.current_page_mut() {
             page.record_editor = Some(editor);
@@ -1248,6 +1257,54 @@ impl App {
             && current_id.as_deref() != Some(new_id.as_str())
         {
             self.open_record_editor(&base, Some(new_id));
+        }
+    }
+
+    /// The current page's open record editor, if any.
+    fn current_record_editor_mut(&mut self) -> Option<&mut form::RecordEditor> {
+        self.current_page_mut()
+            .and_then(|p| p.record_editor.as_mut())
+    }
+
+    /// Whether the current page's record editor has an active form selection.
+    /// Gates the form-scoped selection commands.
+    pub(crate) fn form_selection_active(&self) -> bool {
+        self.current_page()
+            .and_then(|p| p.record_editor.as_ref())
+            .is_some_and(form::RecordEditor::has_selection)
+    }
+
+    /// Routes a Select/Extend command: moves the record editor's form selection when
+    /// it has one, otherwise the result-row selection.
+    pub(crate) fn selection_move(&mut self, forward: bool, extend: bool) {
+        if let Some(editor) = self.current_record_editor_mut()
+            && editor.has_selection()
+        {
+            editor.select_delta(forward, extend);
+        } else {
+            self.select_row_delta(forward, extend);
+        }
+    }
+
+    /// Expands (`false`) or collapses (`true`) the record editor's selected items.
+    pub(crate) fn form_set_selection_collapsed(&mut self, collapsed: bool) {
+        if let Some(editor) = self.current_record_editor_mut() {
+            editor.set_selection_collapsed(collapsed);
+        }
+    }
+
+    /// Applies the "Selection: Delete" action to the record editor's selection.
+    pub(crate) fn form_delete_selection(&mut self) {
+        if let Some(editor) = self.current_record_editor_mut() {
+            editor.delete_selection();
+        }
+    }
+
+    /// Drops the record editor's form selection — used when the user shifts focus
+    /// back to the results (so arrow keys resume row navigation).
+    pub(crate) fn clear_form_selection(&mut self) {
+        if let Some(editor) = self.current_record_editor_mut() {
+            editor.clear_selection();
         }
     }
 

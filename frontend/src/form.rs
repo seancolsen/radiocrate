@@ -25,6 +25,7 @@
 //! While a region loads, its skeleton renders under a translucent [`panel_fill`]
 //! overlay (a subtle dimming) and its widgets are drawn non-interactively.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
@@ -117,6 +118,9 @@ pub(crate) struct MultiEntry {
     pub(crate) collapsed: bool,
     /// The nested editor for this record, built when first expanded.
     pub(crate) expanded: Option<Box<RecordEditor>>,
+    /// Set when the user has ephemerally deleted this record within the form; a
+    /// deleted entry is skipped when rendering, navigating, and counting.
+    pub(crate) deleted: bool,
 }
 
 /// What a form field represents, plus the state needed to render and load it.
@@ -153,12 +157,16 @@ pub(crate) enum FieldKind {
 }
 
 impl FieldKind {
-    /// Whether this kind can be expanded/collapsed.
-    pub(crate) fn is_collapsible(&self) -> bool {
-        matches!(
-            self,
-            FieldKind::ScalarLink { .. } | FieldKind::MultiRecord { .. }
-        )
+    /// Whether this field currently has anything to expand into. A collapsible
+    /// field is *not* expandable when it's empty — a scalar link with a `NULL`
+    /// target, or a multi-record field with no related records — so no expansion
+    /// toggle is shown for it.
+    pub(crate) fn is_expandable(&self) -> bool {
+        match self {
+            FieldKind::ScalarLink { id, .. } => id.is_some(),
+            FieldKind::MultiRecord { count, .. } => *count > 0,
+            FieldKind::Primitive { .. } => false,
+        }
     }
 }
 
@@ -193,6 +201,109 @@ impl FormField {
     }
 }
 
+/// One step down the form tree from the root editor. A path is a sequence of
+/// steps; its last step names the selectable element it addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormStep {
+    /// Field `index` of the editor reached so far. As a non-final step it means
+    /// "descend into this scalar-link field's expanded editor"; as the final step
+    /// it names the field's label (for a scalar link, its embedded value too).
+    Field(usize),
+    /// Embedded-record entry `index` of the multi-record field reached by the
+    /// preceding `Field` step. As a non-final step it means "descend into this
+    /// entry's expanded editor"; as the final step it names the embedded record.
+    Entry(usize),
+}
+
+/// A path from the root editor to a selectable element.
+pub(crate) type FormPath = Vec<FormStep>;
+
+/// The current selection within a record editor form. Field labels and embedded
+/// records in scalar-link fields are single-selection; sibling embedded records
+/// within one multi-record field support multi-selection.
+#[derive(Debug, Clone)]
+pub(crate) enum FormSelection {
+    /// A single selected element: a field label, or a single embedded record.
+    Single(FormPath),
+    /// Several sibling embedded records within one multi-record field. `parent` is
+    /// the path to (and including) the multi-record `Field` step; each selected
+    /// record is `parent` + `Entry(i)` for `i` in `indices`. `anchor`/`lead` are
+    /// the entry indices a range extension grows between.
+    Entries {
+        parent: FormPath,
+        indices: std::collections::HashSet<usize>,
+        anchor: usize,
+        lead: usize,
+    },
+}
+
+impl FormSelection {
+    /// Whether `path` is one of the selected elements.
+    fn contains(&self, path: &[FormStep]) -> bool {
+        match self {
+            FormSelection::Single(p) => p.as_slice() == path,
+            FormSelection::Entries {
+                parent, indices, ..
+            } => {
+                path.len() == parent.len() + 1
+                    && path.starts_with(parent.as_slice())
+                    && matches!(path.last(), Some(FormStep::Entry(i)) if indices.contains(i))
+            }
+        }
+    }
+
+    /// The lead (primary) element's path — the one a keyboard move grows from and
+    /// that is scrolled into view.
+    fn lead_path(&self) -> FormPath {
+        match self {
+            FormSelection::Single(p) => p.clone(),
+            FormSelection::Entries { parent, lead, .. } => {
+                let mut p = parent.clone();
+                p.push(FormStep::Entry(*lead));
+                p
+            }
+        }
+    }
+}
+
+/// Interactions captured while rendering a form body, applied by the caller after
+/// the render (so selection updates don't fight the borrow of the tree).
+#[derive(Default)]
+pub(crate) struct FormOutput {
+    /// A selectable element was primary-clicked, with the modifiers then held.
+    pub(crate) clicked: Option<(FormPath, egui::Modifiers)>,
+}
+
+/// The selection state threaded through the recursive render: the current
+/// selection to highlight against, whether to scroll the lead into view this
+/// frame, and the output accumulator for click interactions.
+struct SelCtx<'a> {
+    sel: Option<&'a FormSelection>,
+    scroll: bool,
+    out: &'a mut FormOutput,
+}
+
+impl SelCtx<'_> {
+    /// Whether the element at `path` is selected.
+    fn selected(&self, path: &[FormStep]) -> bool {
+        self.sel.is_some_and(|s| s.contains(path))
+    }
+
+    /// Whether the element at `path` is the lead of the selection (the one to
+    /// scroll into view).
+    fn is_lead(&self, path: &[FormStep]) -> bool {
+        self.sel.is_some_and(|s| s.lead_path().as_slice() == path)
+    }
+
+    /// Records a primary click on the element at `path`.
+    fn click(&mut self, path: &[FormStep], resp: &egui::Response) {
+        if resp.clicked() {
+            let mods = resp.ctx.input(|i| i.modifiers);
+            self.out.clicked = Some((path.to_vec(), mods));
+        }
+    }
+}
+
 /// A record editor form: the fields of one record from `base_table`, in display
 /// order. Used both as the sidebar's root form and, recursively, as a nested
 /// editor for a linked or related record.
@@ -207,6 +318,12 @@ pub(crate) struct RecordEditor {
     /// Load state of this record's own column values and referencing counts. The
     /// payload is applied straight into `fields`, so the slot only tracks lifecycle.
     pub(crate) values: Load<()>,
+    /// The current selection within the form. Only meaningful on the *root* editor
+    /// (paths are absolute from the root); nested editors leave it `None`.
+    pub(crate) selection: Option<FormSelection>,
+    /// Set when the selection changed via keyboard so the next render scrolls the
+    /// lead element into view; cleared once consumed.
+    pub(crate) scroll_to_selection: bool,
 }
 
 impl RecordEditor {
@@ -276,6 +393,8 @@ impl RecordEditor {
             key: Vec::new(),
             fields,
             values: Load::Idle,
+            selection: None,
+            scroll_to_selection: false,
         })
     }
 
@@ -389,6 +508,396 @@ impl RecordEditor {
                 }
             }
         }
+    }
+}
+
+// --- Selection & focus -----------------------------------------------------
+
+/// A resolved mutable reference to the node a [`FormPath`] addresses.
+enum Target<'a> {
+    Field(&'a mut FormField),
+    Entry(&'a mut MultiEntry),
+}
+
+/// `prefix` extended by one more step.
+fn child(prefix: &[FormStep], step: FormStep) -> FormPath {
+    let mut v = prefix.to_vec();
+    v.push(step);
+    v
+}
+
+/// The selection that a click/keyboard-navigation to `path` produces on its own:
+/// an entry target becomes a single-entry [`FormSelection::Entries`]; anything else
+/// is a [`FormSelection::Single`].
+fn selection_for_target(path: FormPath) -> FormSelection {
+    if let Some(FormStep::Entry(k)) = path.last().copied() {
+        let mut parent = path;
+        parent.pop();
+        FormSelection::Entries {
+            parent,
+            indices: std::iter::once(k).collect(),
+            anchor: k,
+            lead: k,
+        }
+    } else {
+        FormSelection::Single(path)
+    }
+}
+
+/// The set of `live` indices spanning `anchor`..=`k` inclusive (a contiguous range
+/// over the *live* order, so deleted entries in between are skipped). Falls back to
+/// just `{k}` if either endpoint isn't live.
+fn range_indices(live: &[usize], anchor: usize, k: usize) -> HashSet<usize> {
+    let (Some(a), Some(b)) = (
+        live.iter().position(|&x| x == anchor),
+        live.iter().position(|&x| x == k),
+    ) else {
+        return std::iter::once(k).collect();
+    };
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    live[lo..=hi].iter().copied().collect()
+}
+
+/// Clears a field's value ephemerally (the "Selection: Delete" action on a field
+/// label): a primitive becomes `NULL`, a scalar link becomes unset, and a
+/// multi-record field is emptied.
+fn clear_field(field: &mut FormField) {
+    let mut collapse = false;
+    match &mut field.kind {
+        FieldKind::Primitive { value, .. } => *value = None,
+        FieldKind::ScalarLink {
+            id,
+            embedded,
+            expanded,
+            ..
+        } => {
+            *id = None;
+            *embedded = Load::Idle;
+            *expanded = None;
+            collapse = true;
+        }
+        FieldKind::MultiRecord { count, data, .. } => {
+            *count = 0;
+            *data = Load::Idle;
+            collapse = true;
+        }
+    }
+    if collapse {
+        field.collapsed = true;
+    }
+}
+
+impl RecordEditor {
+    /// The paths of every currently-visible selectable element (field labels and
+    /// embedded records), in top-to-bottom tree order. Collapsed subtrees and
+    /// deleted entries are omitted. Drives keyboard selection movement.
+    pub(crate) fn visible_targets(&self) -> Vec<FormPath> {
+        let mut out = Vec::new();
+        self.collect_targets(&[], &mut out);
+        out
+    }
+
+    fn collect_targets(&self, prefix: &[FormStep], out: &mut Vec<FormPath>) {
+        for (i, field) in self.fields.iter().enumerate() {
+            let fp = child(prefix, FormStep::Field(i));
+            out.push(fp.clone());
+            if field.collapsed || !field.kind.is_expandable() {
+                continue;
+            }
+            match &field.kind {
+                FieldKind::ScalarLink {
+                    expanded: Some(sub),
+                    ..
+                } => sub.collect_targets(&fp, out),
+                FieldKind::MultiRecord {
+                    data: Load::Ready(d),
+                    ..
+                } => {
+                    for (j, entry) in d.entries.iter().enumerate() {
+                        if entry.deleted {
+                            continue;
+                        }
+                        let ep = child(&fp, FormStep::Entry(j));
+                        out.push(ep.clone());
+                        if !entry.collapsed
+                            && let Some(sub) = &entry.expanded
+                        {
+                            sub.collect_targets(&ep, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The field a path (ending in a `Field` step) addresses, if it resolves.
+    fn field_at(&self, path: &[FormStep]) -> Option<&FormField> {
+        match path.split_first()? {
+            (FormStep::Field(fi), []) => self.fields.get(*fi),
+            (FormStep::Field(fi), rest) => {
+                let field = self.fields.get(*fi)?;
+                match (&field.kind, rest.split_first()?) {
+                    (
+                        FieldKind::ScalarLink {
+                            expanded: Some(sub),
+                            ..
+                        },
+                        (FormStep::Field(_), _),
+                    ) => sub.field_at(rest),
+                    (
+                        FieldKind::MultiRecord {
+                            data: Load::Ready(d),
+                            ..
+                        },
+                        (FormStep::Entry(ej), erest),
+                    ) => d.entries.get(*ej)?.expanded.as_ref()?.field_at(erest),
+                    _ => None,
+                }
+            }
+            (FormStep::Entry(_), _) => None,
+        }
+    }
+
+    /// A mutable reference to the field or entry a path addresses, if it resolves.
+    fn resolve_mut(&mut self, path: &[FormStep]) -> Option<Target<'_>> {
+        match path.split_first()? {
+            (FormStep::Field(fi), []) => Some(Target::Field(self.fields.get_mut(*fi)?)),
+            (FormStep::Field(fi), rest) => {
+                let field = self.fields.get_mut(*fi)?;
+                match (&mut field.kind, rest.split_first()?) {
+                    (
+                        FieldKind::ScalarLink {
+                            expanded: Some(sub),
+                            ..
+                        },
+                        (FormStep::Field(_), _),
+                    ) => sub.resolve_mut(rest),
+                    (
+                        FieldKind::MultiRecord {
+                            data: Load::Ready(d),
+                            ..
+                        },
+                        (FormStep::Entry(ej), erest),
+                    ) => {
+                        let entry = d.entries.get_mut(*ej)?;
+                        if erest.is_empty() {
+                            Some(Target::Entry(entry))
+                        } else {
+                            entry.expanded.as_mut()?.resolve_mut(erest)
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            (FormStep::Entry(_), _) => None,
+        }
+    }
+
+    /// The non-deleted entry indices, in order, of the multi-record field addressed
+    /// by `parent` (ending in that field's `Field` step). Empty if it doesn't
+    /// resolve to a loaded multi-record field.
+    fn live_entry_indices(&self, parent: &[FormStep]) -> Vec<usize> {
+        match self.field_at(parent) {
+            Some(FormField {
+                kind:
+                    FieldKind::MultiRecord {
+                        data: Load::Ready(d),
+                        ..
+                    },
+                ..
+            }) => d
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.deleted)
+                .map(|(i, _)| i)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Updates the selection from a click on the element at `path` with `mods` held.
+    /// Field labels are single-selection; sibling embedded records within one
+    /// multi-record field extend (Shift) or toggle (Ctrl/⌘).
+    pub(crate) fn select_click(&mut self, path: FormPath, mods: egui::Modifiers) {
+        let Some(FormStep::Entry(k)) = path.last().copied() else {
+            // A field label (or scalar-link embedded record): single selection only.
+            self.selection = Some(FormSelection::Single(path));
+            return;
+        };
+        let mut parent = path;
+        parent.pop();
+        // The already-selected sibling entries, if the current selection is under
+        // this same multi-record field.
+        let existing = match &self.selection {
+            Some(FormSelection::Entries {
+                parent: p,
+                indices,
+                anchor,
+                ..
+            }) if *p == parent => Some((indices.clone(), *anchor)),
+            _ => None,
+        };
+
+        self.selection = Some(if mods.shift {
+            let anchor = existing.map_or(k, |(_, a)| a);
+            let live = self.live_entry_indices(&parent);
+            FormSelection::Entries {
+                indices: range_indices(&live, anchor, k),
+                anchor,
+                lead: k,
+                parent,
+            }
+        } else if mods.command || mods.ctrl {
+            let mut indices = existing.map(|(i, _)| i).unwrap_or_default();
+            if !indices.remove(&k) {
+                indices.insert(k);
+            }
+            if indices.is_empty() {
+                self.selection = None;
+                return;
+            }
+            FormSelection::Entries {
+                indices,
+                anchor: k,
+                lead: k,
+                parent,
+            }
+        } else {
+            FormSelection::Entries {
+                indices: std::iter::once(k).collect(),
+                anchor: k,
+                lead: k,
+                parent,
+            }
+        });
+    }
+
+    /// Moves the form selection one element down (`forward`) or up. With `extend`,
+    /// grows a sibling-embedded-record range from the anchor (Shift+Arrow); for a
+    /// non-entry selection, or nothing selected, `extend` behaves like a plain move.
+    /// A no-op when the form has no selectable elements. Flags the lead for
+    /// scroll-into-view.
+    pub(crate) fn select_delta(&mut self, forward: bool, extend: bool) {
+        let targets = self.visible_targets();
+        if targets.is_empty() {
+            return;
+        }
+
+        if extend
+            && let Some(FormSelection::Entries {
+                parent,
+                anchor,
+                lead,
+                ..
+            }) = self.selection.clone()
+        {
+            let live = self.live_entry_indices(&parent);
+            if let Some(pos) = live.iter().position(|&x| x == lead) {
+                let new_pos = if forward {
+                    (pos + 1).min(live.len().saturating_sub(1))
+                } else {
+                    pos.saturating_sub(1)
+                };
+                let new_lead = live[new_pos];
+                self.selection = Some(FormSelection::Entries {
+                    indices: range_indices(&live, anchor, new_lead),
+                    anchor,
+                    lead: new_lead,
+                    parent,
+                });
+                self.scroll_to_selection = true;
+                return;
+            }
+        }
+
+        let last = targets.len() - 1;
+        let cur = self.selection.as_ref().map(FormSelection::lead_path);
+        let pos = cur
+            .as_ref()
+            .and_then(|c| targets.iter().position(|t| t == c));
+        let idx = match pos {
+            Some(i) if forward => (i + 1).min(last),
+            Some(i) => i.saturating_sub(1),
+            None if forward => 0,
+            None => last,
+        };
+        self.selection = Some(selection_for_target(targets[idx].clone()));
+        self.scroll_to_selection = true;
+    }
+
+    /// Collapses or expands the selected form items (the "Selection: Expand/Collapse
+    /// nested items" actions). Only affects expandable fields and embedded records.
+    pub(crate) fn set_selection_collapsed(&mut self, collapsed: bool) {
+        let Some(sel) = self.selection.clone() else {
+            return;
+        };
+        for path in selected_paths(&sel) {
+            match self.resolve_mut(&path) {
+                Some(Target::Field(f)) if f.kind.is_expandable() => f.collapsed = collapsed,
+                Some(Target::Entry(e)) => e.collapsed = collapsed,
+                _ => {}
+            }
+        }
+    }
+
+    /// Applies the "Selection: Delete" action to the current selection: clears a
+    /// field label's value, or ephemerally deletes the selected embedded records
+    /// from their multi-record field. Clears the selection afterward.
+    pub(crate) fn delete_selection(&mut self) {
+        let Some(sel) = self.selection.take() else {
+            return;
+        };
+        match sel {
+            FormSelection::Single(path) => {
+                if let Some(Target::Field(f)) = self.resolve_mut(&path) {
+                    clear_field(f);
+                }
+            }
+            FormSelection::Entries {
+                parent, indices, ..
+            } => {
+                if let Some(Target::Field(f)) = self.resolve_mut(&parent)
+                    && let FieldKind::MultiRecord {
+                        count,
+                        data: Load::Ready(d),
+                        ..
+                    } = &mut f.kind
+                {
+                    for i in &indices {
+                        if let Some(e) = d.entries.get_mut(*i) {
+                            e.deleted = true;
+                            e.expanded = None;
+                        }
+                    }
+                    *count = d.entries.iter().filter(|e| !e.deleted).count();
+                }
+            }
+        }
+    }
+
+    /// Whether the form currently has a selection.
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    /// Drops any form selection (e.g. when the user shifts focus to the results).
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+}
+
+/// Every selected element's path.
+fn selected_paths(sel: &FormSelection) -> Vec<FormPath> {
+    match sel {
+        FormSelection::Single(p) => vec![p.clone()],
+        FormSelection::Entries {
+            parent, indices, ..
+        } => indices
+            .iter()
+            .map(|&i| child(parent, FormStep::Entry(i)))
+            .collect(),
     }
 }
 
@@ -605,6 +1114,7 @@ impl FormCtx<'_> {
                                 .collect(),
                             collapsed: true,
                             expanded: None,
+                            deleted: false,
                         })
                         .collect();
                     FormPayload::Multi(MultiData {
@@ -748,6 +1258,9 @@ const SKELETON_FILL: Duo = Duo {
 };
 
 const PILL_RADIUS: f32 = 6.0;
+/// Focus ring drawn around a selected form element: its outward inset and width.
+const SELECT_RING_INSET: f32 = 1.5;
+const SELECT_RING_WIDTH: f32 = 1.5;
 const PILL_PAD_X: f32 = 7.0;
 const PILL_PAD_Y: f32 = 2.0;
 const PILL_ICON_SIZE: f32 = 14.0;
@@ -764,7 +1277,7 @@ const CHEVRON_DISC_RADIUS: f32 = 6.5;
 /// item, exposing more of the tree line's connecting segment.
 const TICK_EXTRA: f32 = 5.0;
 const VALUE_GAP: f32 = 8.0;
-const ROW_SPACING: f32 = 5.0;
+const ROW_SPACING: f32 = 3.0;
 /// Space between the toolbar's bottom border and the first field row.
 const BODY_HEADROOM: f32 = 6.0;
 const COUNT_TEXT_SIZE: f32 = 12.0;
@@ -804,7 +1317,7 @@ impl RecordEditor {
             border_y,
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
-        self.body(ui, None);
+        let _ = self.body(ui, None);
         inner.inner
     }
 
@@ -841,10 +1354,22 @@ impl RecordEditor {
     /// we capture that border position first, then inset the fields with a little
     /// headroom — so the root tree spine can rise all the way up to the border,
     /// visually anchoring the tree to the toolbar.
-    pub(crate) fn body(&mut self, ui: &mut egui::Ui, ctx: Option<&mut FormCtx>) {
+    pub(crate) fn body(&mut self, ui: &mut egui::Ui, ctx: Option<&mut FormCtx>) -> FormOutput {
+        // Clone the selection so it can be read while the tree is borrowed mutably
+        // for rendering; consume the one-shot scroll request.
+        let sel = self.selection.clone();
+        let scroll = self.scroll_to_selection;
+        self.scroll_to_selection = false;
+        let mut out = FormOutput::default();
+        let mut sc = SelCtx {
+            sel: sel.as_ref(),
+            scroll,
+            out: &mut out,
+        };
         let toolbar_border = ui.cursor().top();
         ui.add_space(BODY_HEADROOM);
-        render_record(ui, ctx, self, 0, Some(toolbar_border));
+        render_record(ui, ctx, self, 0, Some(toolbar_border), &[], &mut sc);
+        out
     }
 }
 
@@ -899,6 +1424,8 @@ fn render_record(
     editor: &mut RecordEditor,
     depth: usize,
     spine_top: Option<f32>,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) {
     // Fetch this record's values once, but only when we know which record it is —
     // an empty key would otherwise match the whole table.
@@ -926,7 +1453,18 @@ fn render_record(
             if i > 0 {
                 ui.add_space(ROW_SPACING);
             }
-            let rect = render_field(ui, ctx.as_deref_mut(), field, &key, depth, indent, loading);
+            let field_path = child(path, FormStep::Field(i));
+            let rect = render_field(
+                ui,
+                ctx.as_deref_mut(),
+                field,
+                &key,
+                depth,
+                indent,
+                loading,
+                &field_path,
+                sc,
+            );
             let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
             ticks.push((spine_x, tick_end, rect.center().y.round()));
         }
@@ -957,8 +1495,13 @@ fn render_field(
     depth: usize,
     indent: f32,
     parent_loading: bool,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) -> egui::Rect {
-    let collapsible = field.kind.is_collapsible();
+    // A collapsible field shows an expansion toggle only when it's non-empty; an
+    // empty scalar link (NULL) or empty multi-record field has nothing to expand.
+    let expandable = field.kind.is_expandable();
+    let selected = sc.selected(path);
     let (bg, icon) = kind_style(&field.kind);
     let galley = layout_pill(ui, icon, &field.name);
     let pill_size = pill_size(&galley);
@@ -976,17 +1519,17 @@ fn render_field(
         if indent > 0.0 {
             ui.add_space(indent);
         }
-        // Chevron gutter — clickable for a collapsible field (unless the parent
+        // Chevron gutter — clickable for an expandable field (unless the parent
         // record is still loading its structure/values).
         let (gutter, gutter_resp) = ui.allocate_exact_size(
             egui::vec2(CHEVRON_GUTTER, row_h),
-            if collapsible && !parent_loading {
-                egui::Sense::click()
+            if expandable && !parent_loading {
+                egui::Sense::CLICK
             } else {
                 egui::Sense::hover()
             },
         );
-        if collapsible {
+        if expandable {
             draw_chevron(ui, gutter.center(), field.collapsed, gutter_resp.hovered());
             if gutter_resp.clicked() {
                 field.collapsed = !field.collapsed;
@@ -994,14 +1537,19 @@ fn render_field(
         }
 
         ui.add_space(TICK_EXTRA);
-        paint_pill(ui, galley, pill_size, bg);
+        // The label pill selects the field on click; its ring shows the selection.
+        let pill_resp = paint_pill(ui, galley, pill_size, bg, selected);
+        sc.click(path, &pill_resp);
+        if sc.scroll && sc.is_lead(path) {
+            ui.scroll_to_rect(pill_resp.rect, None);
+        }
         ui.add_space(VALUE_GAP);
-        draw_value(ui, ctx.as_deref_mut(), field);
+        draw_value(ui, ctx.as_deref_mut(), field, path, sc);
     });
 
-    // Children of an expanded collapsible field: their spine descends from the
+    // Children of an expanded expandable field: their spine descends from the
     // bottom of this header row.
-    if collapsible && !field.collapsed {
+    if expandable && !field.collapsed {
         render_children(
             ui,
             ctx,
@@ -1009,6 +1557,8 @@ fn render_field(
             parent_key,
             depth,
             row.response.rect.bottom(),
+            path,
+            sc,
         );
     }
 
@@ -1019,6 +1569,7 @@ fn render_field(
 /// scalar link's nested editor, or a multi-record field's list of embedded records
 /// (each itself expandable into a nested editor). `parent_bottom` is where the
 /// children's tree spine begins.
+#[allow(clippy::too_many_arguments)]
 fn render_children(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
@@ -1026,6 +1577,8 @@ fn render_children(
     parent_key: &[(String, String)],
     depth: usize,
     parent_bottom: f32,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) {
     ui.add_space(ROW_SPACING);
     match &mut field.kind {
@@ -1044,7 +1597,7 @@ fn render_children(
                 *expanded = Some(Box::new(sub.with_key(vec![("id".to_owned(), id)])));
             }
             if let Some(sub) = expanded {
-                render_record(ui, ctx, sub, depth + 1, Some(parent_bottom));
+                render_record(ui, ctx, sub, depth + 1, Some(parent_bottom), path, sc);
             }
         }
         FieldKind::MultiRecord {
@@ -1070,7 +1623,17 @@ fn render_children(
                 *data =
                     Load::Loading(ctx.load_multi(table, link_column, &parent_value, &key_columns));
             }
-            render_multi(ui, ctx, table, *count, data, depth + 1, parent_bottom);
+            render_multi(
+                ui,
+                ctx,
+                table,
+                *count,
+                data,
+                depth + 1,
+                parent_bottom,
+                path,
+                sc,
+            );
         }
         FieldKind::Primitive { .. } => {}
     }
@@ -1081,6 +1644,7 @@ fn render_children(
 /// an embedded record with its own chevron that expands into a nested editor. Once
 /// loaded, the embedded records get their own tree spine (descending from
 /// `parent_bottom`) connecting their chevrons.
+#[allow(clippy::too_many_arguments)]
 fn render_multi(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
@@ -1089,6 +1653,8 @@ fn render_multi(
     data: &mut Load<MultiData>,
     depth: usize,
     parent_bottom: f32,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) {
     let indent = depth as f32 * INDENT;
     match data {
@@ -1097,11 +1663,18 @@ fn render_multi(
             let offset = d.display_offset;
             let tree_idx = ui.painter().add(egui::Shape::Noop);
             let mut ticks: Vec<Tick> = Vec::with_capacity(d.entries.len());
+            let mut first = true;
             for (i, entry) in d.entries.iter_mut().enumerate() {
-                if i > 0 {
+                // Ephemerally-deleted records leave the list entirely.
+                if entry.deleted {
+                    continue;
+                }
+                if !first {
                     ui.add_space(ROW_SPACING);
                 }
+                first = false;
                 let cells = d.rows.row_values(i);
+                let entry_path = child(path, FormStep::Entry(i));
                 let rect = render_entry(
                     ui,
                     ctx.as_deref_mut(),
@@ -1112,11 +1685,15 @@ fn render_multi(
                     table,
                     depth,
                     indent,
+                    &entry_path,
+                    sc,
                 );
                 let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
                 ticks.push((spine_x, tick_end, rect.center().y.round()));
             }
-            draw_tree(ui, tree_idx, &ticks, Some(parent_bottom));
+            if !ticks.is_empty() {
+                draw_tree(ui, tree_idx, &ticks, Some(parent_bottom));
+            }
         }
         Load::Loading(_) | Load::Idle => {
             let group = ui.scope(|ui| {
@@ -1156,9 +1733,12 @@ fn render_entry(
     table: &str,
     depth: usize,
     indent: f32,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) -> egui::Rect {
     let value_avail = (ui.available_width() - indent - CHEVRON_GUTTER - TICK_EXTRA).max(0.0);
     let row_h = embed_size(ui, &columns[offset..], value_avail).y;
+    let selected = sc.selected(path);
 
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1167,10 +1747,19 @@ fn render_entry(
             ui.add_space(indent);
         }
         let (gutter, gutter_resp) =
-            ui.allocate_exact_size(egui::vec2(CHEVRON_GUTTER, row_h), egui::Sense::click());
+            ui.allocate_exact_size(egui::vec2(CHEVRON_GUTTER, row_h), egui::Sense::CLICK);
         draw_chevron(ui, gutter.center(), entry.collapsed, gutter_resp.hovered());
         ui.add_space(TICK_EXTRA);
+        // The embedded record selects on single click (multi-selectable among its
+        // siblings) and toggles expand on double click.
         let widget = draw_embedded(ui, &columns[offset..], &cells[offset..]);
+        if selected {
+            paint_embed_ring(ui, widget.rect);
+        }
+        if sc.scroll && sc.is_lead(path) {
+            ui.scroll_to_rect(widget.rect, None);
+        }
+        sc.click(path, &widget);
         if gutter_resp.clicked() || widget.double_clicked() {
             entry.collapsed = !entry.collapsed;
         }
@@ -1185,7 +1774,15 @@ fn render_entry(
         }
         if let Some(sub) = &mut entry.expanded {
             ui.add_space(ROW_SPACING);
-            render_record(ui, ctx, sub, depth + 1, Some(row.response.rect.bottom()));
+            render_record(
+                ui,
+                ctx,
+                sub,
+                depth + 1,
+                Some(row.response.rect.bottom()),
+                path,
+                sc,
+            );
         }
     }
 
@@ -1271,14 +1868,46 @@ fn pill_size(galley: &Arc<egui::Galley>) -> egui::Vec2 {
 }
 
 /// Allocates and paints a pre-laid-out label pill: a rounded, colored rect with the
-/// icon-and-name galley inside.
-fn paint_pill(ui: &mut egui::Ui, galley: Arc<egui::Galley>, size: egui::Vec2, bg: Duo) {
+/// icon-and-name galley inside. The pill senses clicks (to select its field) and,
+/// when `selected`, is wrapped in a focus ring. Returns its click response.
+fn paint_pill(
+    ui: &mut egui::Ui,
+    galley: Arc<egui::Galley>,
+    size: egui::Vec2,
+    bg: Duo,
+    selected: bool,
+) -> egui::Response {
     let fg = LABEL_FG.get(ui.visuals());
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // `CLICK` (not `click()`) so the pill senses clicks without becoming
+    // keyboard-focusable — form selection is app state, and a focused egui widget
+    // would suppress the plain-arrow selection commands.
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::CLICK);
     ui.painter()
         .rect_filled(rect, PILL_RADIUS, bg.get(ui.visuals()));
     ui.painter()
         .galley(rect.min + egui::vec2(PILL_PAD_X, PILL_PAD_Y), galley, fg);
+    if selected {
+        paint_selection_ring(ui, rect, PILL_RADIUS);
+    }
+    resp
+}
+
+/// Draws a focus ring just outside `rect` (with matching rounded corners), marking
+/// a selected form element.
+fn paint_selection_ring(ui: &egui::Ui, rect: egui::Rect, radius: f32) {
+    let color = ui.visuals().selection.stroke.color;
+    ui.painter().rect_stroke(
+        rect.expand(SELECT_RING_INSET),
+        radius + SELECT_RING_INSET,
+        egui::Stroke::new(SELECT_RING_WIDTH, color),
+        egui::StrokeKind::Outside,
+    );
+}
+
+/// Draws the focus ring for a selected embedded-record widget, matching its
+/// (semicircular) corner radius.
+fn paint_embed_ring(ui: &egui::Ui, rect: egui::Rect) {
+    paint_selection_ring(ui, rect, embed_radius(ui));
 }
 
 /// The static height of a field's value area (everything but a dynamic embedded
@@ -1310,8 +1939,16 @@ fn value_height(ui: &egui::Ui, kind: &FieldKind, value_avail: f32) -> f32 {
     }
 }
 
-/// Draws a field's value area to the right of its label.
-fn draw_value(ui: &mut egui::Ui, ctx: Option<&mut FormCtx>, field: &mut FormField) {
+/// Draws a field's value area to the right of its label. `path`/`sc` let a
+/// scalar-link's embedded record participate in selection (clicking it selects the
+/// field, same as clicking the label).
+fn draw_value(
+    ui: &mut egui::Ui,
+    ctx: Option<&mut FormCtx>,
+    field: &mut FormField,
+    path: &[FormStep],
+    sc: &mut SelCtx,
+) {
     match &mut field.kind {
         FieldKind::Primitive {
             ty: Primitive::Id,
@@ -1326,20 +1963,24 @@ fn draw_value(ui: &mut egui::Ui, ctx: Option<&mut FormCtx>, field: &mut FormFiel
             id,
             embedded,
             ..
-        } => draw_scalar_link(ui, ctx, target, id.as_deref(), embedded),
+        } => draw_scalar_link(ui, ctx, target, id.as_deref(), embedded, path, sc),
         FieldKind::MultiRecord { count, .. } => draw_count(ui, *count),
     }
 }
 
 /// Draws a scalar-linked field's value: the pencil affordance when `NULL`,
 /// otherwise the embedded-record widget (a skeleton while its preview loads).
-/// Dispatches the preview query once the id is known.
+/// Dispatches the preview query once the id is known. A click on the embedded
+/// record selects the field (`path`).
+#[allow(clippy::too_many_arguments)]
 fn draw_scalar_link(
     ui: &mut egui::Ui,
     ctx: Option<&mut FormCtx>,
     target: &str,
     id: Option<&str>,
     embedded: &mut Load<RecordDisplay>,
+    path: &[FormStep],
+    sc: &mut SelCtx,
 ) {
     let Some(id) = id else {
         draw_pencil(ui);
@@ -1353,7 +1994,8 @@ fn draw_scalar_link(
     match embedded {
         Load::Ready(d) => {
             let cells = d.rows.row_values(0);
-            draw_embedded(ui, &d.columns, &cells);
+            let widget = draw_embedded(ui, &d.columns, &cells);
+            sc.click(path, &widget);
         }
         Load::Failed(e) => {
             ui.colored_label(egui::Color32::RED, e.as_str());
@@ -1489,7 +2131,7 @@ fn draw_embedded(
     let el = embed_layout(ui, columns, ui.available_width());
     let radius = embed_radius(ui);
 
-    let (rect, resp) = ui.allocate_exact_size(el.size, egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(el.size, egui::Sense::CLICK);
     let (top, bottom) = embed_gradient(ui, resp.hovered());
     paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
     ui.painter().rect_stroke(
@@ -1828,7 +2470,8 @@ mod snapshot_tests {
     use eframe::egui;
 
     use super::{
-        FieldKind, FormField, Load, MultiData, MultiEntry, Primitive, RecordDisplay, RecordEditor,
+        FieldKind, FormField, FormSelection, FormStep, Load, MultiData, MultiEntry, Primitive,
+        RecordDisplay, RecordEditor,
     };
     use crate::columns::ColumnMetadata;
     use crate::rows::ResultRows;
@@ -1915,6 +2558,8 @@ mod snapshot_tests {
                 ("artist".to_owned(), "a2".to_owned()),
             ],
             values: Load::Ready(()),
+            selection: None,
+            scroll_to_selection: false,
             fields: vec![
                 linked("artist", "artist", &[Some("Noha")]),
                 text("role", "Remix by"),
@@ -1936,16 +2581,19 @@ mod snapshot_tests {
                     key: vec![("track".into(), "t".into()), ("artist".into(), "a1".into())],
                     collapsed: true,
                     expanded: None,
+                    deleted: false,
                 },
                 MultiEntry {
                     key: vec![("track".into(), "t".into()), ("artist".into(), "a2".into())],
                     collapsed: false,
                     expanded: Some(Box::new(noha)),
+                    deleted: false,
                 },
                 MultiEntry {
                     key: vec![("track".into(), "t".into()), ("artist".into(), "a3".into())],
                     collapsed: true,
                     expanded: None,
+                    deleted: false,
                 },
             ],
         };
@@ -1954,6 +2602,8 @@ mod snapshot_tests {
             base_table: "track".to_owned(),
             key: vec![("id".to_owned(), "d289fa9e".to_owned())],
             values: Load::Ready(()),
+            selection: None,
+            scroll_to_selection: false,
             fields: vec![
                 text("title", "Goldregen"),
                 linked("album", "album", &[Some("The Balkan Club Night")]),
@@ -1980,6 +2630,8 @@ mod snapshot_tests {
             base_table: "track".to_owned(),
             key: vec![("id".to_owned(), "d289fa9e".to_owned())],
             values: Load::Ready(()),
+            selection: None,
+            scroll_to_selection: false,
             fields: vec![
                 text("title", "Goldregen"),
                 FormField {
@@ -2005,5 +2657,41 @@ mod snapshot_tests {
         });
         harness.run();
         snapshot_dual(&mut harness, "record_editor/loading_states");
+    }
+
+    /// A selected field label draws a focus ring around its pill (here the nested
+    /// `role` field within the expanded "Noha" credit record).
+    #[test]
+    fn selection_field_label() {
+        let mut form = nested_form();
+        // Path: credit (field 2) → Noha entry (1) → role (field 1).
+        form.selection = Some(FormSelection::Single(vec![
+            FormStep::Field(2),
+            FormStep::Entry(1),
+            FormStep::Field(1),
+        ]));
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 420.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/selection_field_label");
+    }
+
+    /// Multiple sibling embedded records selected within a multi-record field each
+    /// draw a focus ring (here the first and third `credit` records).
+    #[test]
+    fn selection_records() {
+        let mut form = nested_form();
+        form.selection = Some(FormSelection::Entries {
+            parent: vec![FormStep::Field(2)],
+            indices: [0, 2].into_iter().collect(),
+            anchor: 0,
+            lead: 2,
+        });
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 420.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/selection_records");
     }
 }
