@@ -175,6 +175,22 @@ pub(crate) fn delete_keybinding(command_id: &str) {
     dispatch_call("keybinding.delete", params, |_| {});
 }
 
+/// Submits a batch of DML `operations` (built by the record editor form) as a
+/// single transactional `dml` request. The result — the map of operation id to
+/// returned row, or an error message — is stored in `out` for the UI to route back
+/// to the originating editor.
+pub(crate) fn submit_dml(
+    operations: &[Value],
+    out: Arc<Mutex<Option<Result<Value, String>>>>,
+    ctx: egui::Context,
+) {
+    let params = json!({ "operations": operations });
+    dispatch_call("dml", params, move |result| {
+        *out.lock().unwrap() = Some(result);
+        ctx.request_repaint();
+    });
+}
+
 fn extract_result(value: &Value) -> Result<Value, String> {
     if let Some(error) = value.get("error") {
         let message = error

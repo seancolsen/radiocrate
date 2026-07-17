@@ -191,6 +191,15 @@ pub(crate) struct PendingDelete {
     pub(crate) unsaved: bool,
 }
 
+/// An in-flight record-editor save: the `dml` response lands in `slot`, and `token`
+/// and `editor_key` route it back to the editor that started the save (which may
+/// have been stashed if the user switched records meanwhile).
+pub(crate) struct PendingSave {
+    pub(crate) editor_key: String,
+    pub(crate) token: u64,
+    pub(crate) slot: Arc<Mutex<Option<Result<serde_json::Value, String>>>>,
+}
+
 // Several independent one-shot startup/UI flags; grouping them into a sub-struct
 // wouldn't make any of them clearer.
 #[allow(clippy::struct_excessive_bools)]
@@ -304,6 +313,11 @@ pub struct App {
     pub(crate) form_inbox: Arc<Mutex<Vec<form::FormLoadMsg>>>,
     /// Monotonic source of form-load tokens (see [`form::FormCtx`]).
     pub(crate) form_load_seq: u64,
+    /// In-flight record-editor saves (DML submissions), each carrying the token and
+    /// key of the editor that started it; drained each frame once its response lands.
+    pub(crate) save_pending: Vec<PendingSave>,
+    /// Monotonic source of save tokens.
+    pub(crate) save_seq: u64,
     /// The modal record picker's state when open (`None` when closed). Opened from a
     /// scalar-link field to choose or scaffold its linked record.
     pub(crate) record_picker: Option<picker::RecordPicker>,
@@ -355,6 +369,8 @@ impl Default for App {
             field_layout_cache: None,
             form_inbox: Arc::new(Mutex::new(Vec::new())),
             form_load_seq: 0,
+            save_pending: Vec::new(),
+            save_seq: 0,
             record_picker: None,
         }
     }
@@ -377,6 +393,7 @@ impl App {
         self.drain_loaded_presets();
         self.drain_loaded_keybindings();
         self.drain_form_inbox();
+        self.drain_save_inbox();
 
         // Global keyboard shortcuts run before any panel so a matched chord's key
         // events are consumed before widgets (e.g. text fields) can see them.
@@ -520,6 +537,33 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Routes each finished record-editor save back to the editor that started it.
+    /// A save whose response hasn't arrived yet stays pending; a delivered one is
+    /// matched to the editor by key + token (searching the on-screen and stashed
+    /// editors), then dropped.
+    fn drain_save_inbox(&mut self) {
+        let mut still_pending = Vec::new();
+        for pending in std::mem::take(&mut self.save_pending) {
+            let Some(result) = pending.slot.lock().unwrap().take() else {
+                still_pending.push(pending);
+                continue;
+            };
+            'pages: for page in self.pages.iter_mut().filter_map(Page::as_query_mut) {
+                for editor in page
+                    .record_editor
+                    .iter_mut()
+                    .chain(page.record_editor_stash.values_mut())
+                {
+                    if editor.key_string() == pending.editor_key {
+                        editor.deliver_save(pending.token, result);
+                        break 'pages;
+                    }
+                }
+            }
+        }
+        self.save_pending = still_pending;
     }
 
     /// If a `preset.list` response has arrived, replace the local preset list.
@@ -1145,6 +1189,9 @@ impl App {
             return;
         };
         let mut keep = true;
+        // Set when Save is clicked; the DML request is dispatched after the panel
+        // render (it needs `self`, which the render closures can't borrow).
+        let mut save_clicked = false;
         // A click on a selectable form element, captured during the body render and
         // applied to the editor's selection afterward.
         let mut body_out: Option<form::FormOutput> = None;
@@ -1194,9 +1241,9 @@ impl App {
                                 .inner_margin(egui::Margin::symmetric(8, 0)),
                         )
                         .show_inside(ui, |ui| {
-                            if editor.toolbar(ui).cancel {
-                                keep = false;
-                            }
+                            let resp = editor.toolbar(ui);
+                            keep = keep && !resp.cancel;
+                            save_clicked = resp.save;
                         });
                     // Body: the scrolling field list, inset from the panel edges.
                     egui::CentralPanel::default()
@@ -1211,6 +1258,11 @@ impl App {
                                 }),
                         )
                         .show_inside(ui, |ui| {
+                            // A failed save surfaces its error as a red banner pinned
+                            // above the scrolling fields; the edits stay in the form.
+                            if let Some(err) = editor.save.error() {
+                                render_save_error(ui, err);
+                            }
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
@@ -1243,6 +1295,13 @@ impl App {
             }
             editor.apply_output(out, schema.as_ref());
         }
+
+        // Dispatch the save now that the render borrows have ended, so it can touch
+        // `self` (token counter, pending list) and set the editor's in-flight state.
+        if save_clicked {
+            self.start_editor_save(&mut editor, &egui_ctx);
+        }
+
         let editor_key = editor.key_string();
 
         if keep && let Some(page) = self.current_page_mut() {
@@ -1252,6 +1311,25 @@ impl App {
         if keep && let Some((field_path, target)) = open_picker {
             self.open_record_picker(field_path, target, editor_key);
         }
+    }
+
+    /// Builds the DML operations for `editor`'s unsaved changes and dispatches them
+    /// as a single `dml` request, flipping the editor into its in-flight save state.
+    /// A no-op when there is nothing to save.
+    fn start_editor_save(&mut self, editor: &mut form::RecordEditor, ctx: &egui::Context) {
+        let Some((operations, plan)) = editor.build_dml_operations() else {
+            return;
+        };
+        let token = self.save_seq;
+        self.save_seq += 1;
+        let slot = Arc::new(Mutex::new(None));
+        rpc::submit_dml(&operations, Arc::clone(&slot), ctx.clone());
+        self.save_pending.push(PendingSave {
+            editor_key: editor.key_string(),
+            token,
+            slot,
+        });
+        editor.begin_save(token, plan);
     }
 
     /// Keeps the current page's record editor in step with the result selection:
@@ -1548,6 +1626,27 @@ fn format_sql(sql: &str) -> String {
 /// giving the record editor sidebar depth over the content beneath it. Drawn on
 /// a layer above the background panels so it shows over the results and builder
 /// toolbar, but as pure paint (no `interact`) so it never eats pointer input.
+/// Renders a failed save's error message as a red banner at the top of the form
+/// body: a tinted, rounded strip with the (wrapping) message.
+fn render_save_error(ui: &mut egui::Ui, message: &str) {
+    let red = egui::Color32::from_rgb(0xD3, 0x2F, 0x2F);
+    egui::Frame::new()
+        .fill(red.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0, red.gamma_multiply(0.5)))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .outer_margin(egui::Margin {
+            left: 0,
+            right: 0,
+            top: 6,
+            bottom: 2,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(message).size(12.0).color(red));
+        });
+}
+
 fn paint_left_shadow(ctx: &egui::Context, panel_rect: egui::Rect) {
     /// How far the shadow reaches out from the panel edge.
     const WIDTH: f32 = 12.0;

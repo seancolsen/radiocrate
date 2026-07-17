@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use egui::text::{LayoutJob, TextWrapping};
 use introspection::Schema;
+use serde_json::{Map, Value, json};
 
 use crate::button::{Button, SplitButton};
 use crate::columns::ColumnMetadata;
@@ -309,6 +310,10 @@ pub(crate) enum FormStep {
 /// A path from the root editor to a selectable element.
 pub(crate) type FormPath = Vec<FormStep>;
 
+/// The plan for applying a save response: for each newly-inserted linked record,
+/// the form path of its field and the operation id carrying its new record's id.
+pub(crate) type SavePlan = Vec<(FormPath, String)>;
+
 /// The current focus/selection within a record editor form. A field label carries
 /// *focus* (single, exclusive); sibling embedded records within one multi-record
 /// field carry a *selection* (multi). Only one of the two is active at a time — the
@@ -461,6 +466,46 @@ pub(crate) struct RecordEditor {
     /// Set when the selection changed via keyboard so the next render scrolls the
     /// lead element into view; cleared once consumed.
     pub(crate) scroll_to_selection: bool,
+    /// The in-flight/failed state of a DML save. Only meaningful on the *root*
+    /// editor — nested editors are saved as part of the root's single request.
+    pub(crate) save: SaveState,
+}
+
+/// The state of the root editor's DML save (form submission).
+#[derive(Debug, Default)]
+pub(crate) enum SaveState {
+    /// No save in flight and no error to show.
+    #[default]
+    Idle,
+    /// A `dml` request is in flight. `token` correlates the response; `plan` records
+    /// where the returned rows of newly-inserted linked records land back in the tree
+    /// (see [`RecordEditor::build_dml_operations`]).
+    Saving { token: u64, plan: SavePlan },
+    /// The last save failed; the message is shown in the form and the changes are
+    /// retained so the user can retry.
+    Failed(String),
+}
+
+impl SaveState {
+    /// The in-flight save's token, if any.
+    fn token(&self) -> Option<u64> {
+        match self {
+            SaveState::Saving { token, .. } => Some(*token),
+            _ => None,
+        }
+    }
+
+    /// The error message from the last failed save, if any.
+    pub(crate) fn error(&self) -> Option<&str> {
+        match self {
+            SaveState::Failed(msg) => Some(msg),
+            _ => None,
+        }
+    }
+
+    fn is_saving(&self) -> bool {
+        matches!(self, SaveState::Saving { .. })
+    }
 }
 
 /// A field activated for inline editing: the path to the (primitive) field, the
@@ -546,6 +591,7 @@ impl RecordEditor {
             selection: None,
             editing: None,
             scroll_to_selection: false,
+            save: SaveState::Idle,
         })
     }
 
@@ -1374,6 +1420,360 @@ impl RecordEditor {
     }
 }
 
+// --- DML submission --------------------------------------------------------
+
+/// Accumulates the ordered operations of a single DML request as the form tree is
+/// walked. Operations are appended in dependency order: an inserted record is
+/// emitted before whatever references it, so its `{ "id": op }` reference resolves.
+struct DmlBuilder {
+    ops: Vec<Value>,
+    /// Monotonic source of (request-local, semantically meaningless) operation ids.
+    next: usize,
+    /// For each newly-inserted *scalar-linked* record, the form path of its field
+    /// and the operation id whose returned row carries the record's new id. Consumed
+    /// after a successful save to point the link at its freshly-created record.
+    linked_inserts: SavePlan,
+}
+
+impl DmlBuilder {
+    fn new() -> Self {
+        Self {
+            ops: Vec::new(),
+            next: 0,
+            linked_inserts: Vec::new(),
+        }
+    }
+
+    fn alloc_id(&mut self) -> String {
+        let id = format!("op{}", self.next);
+        self.next += 1;
+        id
+    }
+}
+
+/// How to reference the record an operation's descendants hang off of: an existing
+/// record (referenced by a literal key value) or a record inserted earlier in this
+/// same request (referenced by its operation id).
+enum ParentRef {
+    /// The parent already exists; child links carry a literal foreign-key value.
+    Existing,
+    /// The parent is being inserted by operation `op_id`; child links reference it.
+    Inserted(String),
+}
+
+impl RecordEditor {
+    /// Builds the `operations` list for a DML request that saves every unsaved
+    /// change in this (root) editor's tree, along with the plan for applying the
+    /// response. Returns `None` when there is nothing to save.
+    ///
+    /// The root record already exists, so it becomes an `update` of its changed
+    /// columns; nested changes fan out into further operations — a re-pointed or
+    /// newly-entered linked record, and the inserts/updates/deletes of each
+    /// multi-record field's entries — all ordered so references resolve.
+    pub(crate) fn build_dml_operations(&self) -> Option<(Vec<Value>, SavePlan)> {
+        let mut b = DmlBuilder::new();
+        self.emit_update(map_from_key(&self.key), &[], &mut b);
+        if b.ops.is_empty() {
+            None
+        } else {
+            Some((b.ops, b.linked_inserts))
+        }
+    }
+
+    /// The value of `column` on this record, read from its identifying key or, if
+    /// absent there, from a primitive field of the same name. Used to fill in a
+    /// multi-record child's link to an *existing* parent.
+    fn column_value(&self, column: &str) -> Option<String> {
+        if let Some((_, val)) = self.key.iter().find(|(c, _)| c == column) {
+            return Some(val.clone());
+        }
+        self.fields.iter().find_map(|f| match &f.kind {
+            FieldKind::Primitive { value, .. } if f.name == column => value.clone(),
+            _ => None,
+        })
+    }
+
+    /// Emits the operations to save this *existing* record (identified by `where_`,
+    /// reached at `prefix` from the root): an `update` of its changed columns,
+    /// followed by its descendants' operations.
+    fn emit_update(&self, where_: Map<String, Value>, prefix: &[FormStep], b: &mut DmlBuilder) {
+        let values = self.own_values(false, prefix, b);
+        if !values.is_empty() {
+            let id = b.alloc_id();
+            b.ops.push(json!({
+                "id": id,
+                "operation": "update",
+                "table": self.base_table,
+                "where": Value::Object(where_),
+                "values": Value::Object(values),
+            }));
+        }
+        self.emit_children(&ParentRef::Existing, prefix, b);
+    }
+
+    /// Emits an `insert` for this *new* record (reached at `prefix`), merging in
+    /// `extra` columns (e.g. a parent link), then its descendants' operations.
+    /// Returns the insert's operation id, or `None` when the record carries no
+    /// values to insert (an empty scaffold the user never filled in).
+    fn emit_insert(
+        &self,
+        extra: &[(String, Value)],
+        prefix: &[FormStep],
+        b: &mut DmlBuilder,
+    ) -> Option<String> {
+        let mut values = self.own_values(true, prefix, b);
+        for (col, val) in extra {
+            values.insert(col.clone(), val.clone());
+        }
+        if values.is_empty() {
+            return None;
+        }
+        let id = b.alloc_id();
+        b.ops.push(json!({
+            "id": id,
+            "operation": "insert",
+            "table": self.base_table,
+            "values": Value::Object(values),
+        }));
+        self.emit_children(&ParentRef::Inserted(id.clone()), prefix, b);
+        Some(id)
+    }
+
+    /// The column values to write for this record's *own* columns: its changed (or,
+    /// when `all`, every set) primitive and scalar-link values. A scalar link that
+    /// points at a brand-new record inserts that record first and references it.
+    fn own_values(&self, all: bool, prefix: &[FormStep], b: &mut DmlBuilder) -> Map<String, Value> {
+        let mut values = Map::new();
+        for (i, field) in self.fields.iter().enumerate() {
+            match &field.kind {
+                FieldKind::Primitive {
+                    ty,
+                    value,
+                    original,
+                } => {
+                    // The record's own id is server-assigned (insert) or immutable
+                    // (update), so it is never written.
+                    if *ty == Primitive::Id {
+                        continue;
+                    }
+                    if (all && value.is_some()) || (!all && value != original) {
+                        values.insert(field.name.clone(), scalar_json(value.as_deref()));
+                    }
+                }
+                FieldKind::ScalarLink {
+                    id,
+                    original_id,
+                    expanded,
+                    ..
+                } => {
+                    let field_path = child(prefix, FormStep::Field(i));
+                    if id.is_none()
+                        && let Some(sub) = expanded
+                    {
+                        // A brand-new linked record being entered: insert it first,
+                        // then point the foreign key at it.
+                        if let Some(op_id) = sub.emit_insert(&[], &field_path, b) {
+                            b.linked_inserts.push((field_path, op_id.clone()));
+                            values.insert(field.name.clone(), json!({ "id": op_id }));
+                        }
+                    } else if (all && id.is_some()) || (!all && id != original_id) {
+                        // A re-pointed, cleared, or (on insert) set link: a literal id.
+                        values.insert(field.name.clone(), scalar_json(id.as_deref()));
+                    }
+                }
+                FieldKind::MultiRecord { .. } => {}
+            }
+        }
+        values
+    }
+
+    /// Emits the operations for this record's descendants: edits to an existing
+    /// linked record, and the inserts/updates/deletes of each multi-record field's
+    /// entries. `parent` identifies this record for the child links.
+    fn emit_children(&self, parent: &ParentRef, prefix: &[FormStep], b: &mut DmlBuilder) {
+        for (i, field) in self.fields.iter().enumerate() {
+            let field_path = child(prefix, FormStep::Field(i));
+            match &field.kind {
+                FieldKind::ScalarLink {
+                    id,
+                    original_id,
+                    expanded: Some(sub),
+                    ..
+                } => {
+                    // Edits to an *existing* linked record (the link itself unchanged):
+                    // a nested update. A newly-entered link (id `None`) was already
+                    // inserted in `own_values`; a re-pointed link drops its editor.
+                    if id.is_some() && id == original_id && sub.is_modified() {
+                        sub.emit_update(map_from_key(&sub.key), &field_path, b);
+                    }
+                }
+                FieldKind::MultiRecord {
+                    table,
+                    link_column,
+                    parent_column,
+                    entries,
+                    ..
+                } => {
+                    for (j, entry) in entries.iter().enumerate() {
+                        let entry_path = child(&field_path, FormStep::Entry(j));
+                        if entry.deleted {
+                            // A discarded new record was never saved; an ephemerally
+                            // deleted existing record becomes a delete.
+                            if !entry.is_new {
+                                let id = b.alloc_id();
+                                b.ops.push(json!({
+                                    "id": id,
+                                    "operation": "delete",
+                                    "table": table,
+                                    "where": Value::Object(map_from_key(&entry.key)),
+                                }));
+                            }
+                        } else if entry.is_new {
+                            if let Some(sub) = &entry.expanded {
+                                let link =
+                                    (link_column.clone(), self.child_link(parent, parent_column));
+                                sub.emit_insert(std::slice::from_ref(&link), &entry_path, b);
+                            }
+                        } else if let Some(sub) = &entry.expanded
+                            && sub.is_modified()
+                        {
+                            sub.emit_update(map_from_key(&entry.key), &entry_path, b);
+                        }
+                    }
+                }
+                FieldKind::ScalarLink { .. } | FieldKind::Primitive { .. } => {}
+            }
+        }
+    }
+
+    /// The foreign-key value a multi-record child uses to link back to this parent:
+    /// a literal of the parent's `parent_column` value when it exists, or a reference
+    /// to the parent's insert operation when it's being created in this request.
+    fn child_link(&self, parent: &ParentRef, parent_column: &str) -> Value {
+        match parent {
+            ParentRef::Existing => scalar_json(self.column_value(parent_column).as_deref()),
+            ParentRef::Inserted(op_id) => json!({ "id": op_id }),
+        }
+    }
+
+    /// Applies a successful DML response: adopts server-assigned ids for newly-
+    /// inserted linked records, then resets every field's baseline so nothing reads
+    /// as modified. `results` maps each operation id to its returned row.
+    fn apply_saved(&mut self, plan: &SavePlan, results: &Map<String, Value>) {
+        for (path, op_id) in plan {
+            let new_id = results
+                .get(op_id)
+                .and_then(|row| row.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if let Some(Target::Field(f)) = self.resolve_mut(path)
+                && let FieldKind::ScalarLink {
+                    id,
+                    original_id,
+                    embedded,
+                    expanded,
+                    ..
+                } = &mut f.kind
+            {
+                // Point the link at its now-saved record and drop the scaffolded
+                // editor; its collapsed preview refetches by the new id.
+                id.clone_from(&new_id);
+                original_id.clone_from(&new_id);
+                *embedded = Load::Idle;
+                *expanded = None;
+            }
+        }
+        self.reset_baselines();
+    }
+
+    /// Resets every field's saved baseline to its current value so the form reads as
+    /// unmodified. A multi-record field with *structural* changes (added or deleted
+    /// records) is reloaded from the database so it reflects the saved set; one with
+    /// only nested edits keeps its entries and resets them in place.
+    fn reset_baselines(&mut self) {
+        for field in &mut self.fields {
+            match &mut field.kind {
+                FieldKind::Primitive {
+                    value, original, ..
+                } => original.clone_from(value),
+                FieldKind::ScalarLink {
+                    id,
+                    original_id,
+                    expanded,
+                    ..
+                } => {
+                    original_id.clone_from(id);
+                    if let Some(sub) = expanded {
+                        sub.reset_baselines();
+                    }
+                }
+                FieldKind::MultiRecord {
+                    count,
+                    original_count,
+                    load,
+                    entries,
+                    ..
+                } => {
+                    if entries.iter().any(|e| e.is_new || e.deleted) {
+                        // Reload the saved set from scratch (its rows now include the
+                        // new records and exclude the deleted ones).
+                        *count = multi_display_count(*count, entries);
+                        *original_count = *count;
+                        entries.clear();
+                        *load = Load::Idle;
+                    } else {
+                        for entry in entries.iter_mut() {
+                            if let Some(sub) = &mut entry.expanded {
+                                sub.reset_baselines();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Flips the editor into its in-flight save state, holding the plan for applying
+    /// the response and clearing any prior error.
+    pub(crate) fn begin_save(&mut self, token: u64, plan: SavePlan) {
+        self.save = SaveState::Saving { token, plan };
+    }
+
+    /// Delivers a finished save (the token must match the in-flight request). On
+    /// success the tree adopts the saved state; on failure the message is stored and
+    /// the changes are retained for a retry.
+    pub(crate) fn deliver_save(&mut self, token: u64, result: Result<Value, String>) {
+        if self.save.token() != Some(token) {
+            return;
+        }
+        let plan = match std::mem::take(&mut self.save) {
+            SaveState::Saving { plan, .. } => plan,
+            other => {
+                self.save = other;
+                return;
+            }
+        };
+        match result {
+            Ok(Value::Object(results)) => self.apply_saved(&plan, &results),
+            Ok(_) => self.save = SaveState::Failed("unexpected response".to_owned()),
+            Err(e) => self.save = SaveState::Failed(e),
+        }
+    }
+}
+
+/// A `where`/key JSON object from identifying column/value pairs.
+fn map_from_key(key: &[(String, String)]) -> Map<String, Value> {
+    key.iter()
+        .map(|(col, val)| (col.clone(), Value::String(val.clone())))
+        .collect()
+}
+
+/// A form field's display string as a DML scalar value: a JSON string, or `null`
+/// when unset. Numeric and enum columns rely on the backend's implicit text casts.
+fn scalar_json(value: Option<&str>) -> Value {
+    value.map_or(Value::Null, |s| Value::String(s.to_owned()))
+}
+
 /// Every selected element's path.
 fn selected_paths(sel: &FormSelection) -> Vec<FormPath> {
     match sel {
@@ -1774,10 +2174,13 @@ const EMBED_TEXT_SIZE: f32 = 12.0;
 /// Height of the record editor toolbar — matched to the query builder toolbar.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 30.0;
 
-/// The outcome of showing a [`RecordEditor`]: whether the user asked to close it.
+/// The outcome of showing a [`RecordEditor`]: whether the user asked to close it,
+/// and whether they clicked Save.
 #[derive(Default)]
 pub(crate) struct FormResponse {
     pub(crate) cancel: bool,
+    /// The user clicked Save: submit the form's changes via the DML API.
+    pub(crate) save: bool,
 }
 
 impl RecordEditor {
@@ -1801,13 +2204,14 @@ impl RecordEditor {
         inner.inner
     }
 
-    /// The toolbar: the "Edit {table}" title, then a disabled Save and a close
-    /// ("X") button. Returns whether close was clicked.
+    /// The toolbar: the "Edit {table}" title, then a Save and a close ("X") button.
+    /// Returns whether close and/or Save were clicked.
     pub(crate) fn toolbar(&self, ui: &mut egui::Ui) -> FormResponse {
         let mut resp = FormResponse::default();
-        // The Save button enables once the form has unsaved changes. (Submission is
-        // handled elsewhere; here it just reflects modification state.)
-        let modified = self.is_modified();
+        // The Save button enables once the form has unsaved changes, and disables
+        // again while a save is in flight (to prevent a double submission).
+        let saving = self.save.is_saving();
+        let modified = self.is_modified() && !saving;
         ui.horizontal_centered(|ui| {
             ui.label(
                 egui::RichText::new(format!("Edit {}", self.base_table))
@@ -1819,12 +2223,23 @@ impl RecordEditor {
                     resp.cancel = true;
                 }
                 ui.add_space(2.0);
-                ui.add_enabled_ui(modified, |ui| {
-                    SplitButton::new(icons::SAVE, "Save")
-                        .active(false)
-                        .show_menu(false)
-                        .show(ui);
-                });
+                if saving {
+                    // While the request is in flight the button spins in place of the
+                    // save glyph, and can't be re-triggered.
+                    Button::icon(icons::SAVE).spin(true).enabled(false).show(ui);
+                } else {
+                    ui.add_enabled_ui(modified, |ui| {
+                        if SplitButton::new(icons::SAVE, "Save")
+                            .active(false)
+                            .show_menu(false)
+                            .show(ui)
+                            .main
+                            .clicked()
+                        {
+                            resp.save = true;
+                        }
+                    });
+                }
             });
         });
         resp
@@ -3535,6 +3950,261 @@ mod tests {
         assert!(form.editing.is_some());
     }
 
+    // --- DML submission -----------------------------------------------------
+
+    /// A schema with editable child columns and a linkable `artist` table, so a
+    /// multi-record insert carries real values (the leaner `SAMPLE` above can't).
+    const DML_SCHEMA: &str = r#"{
+        "tables": [
+            { "name": "track", "unique_constraints": [["id"]], "columns": [
+                { "name": "id", "type": "UUID", "nullable": false },
+                { "name": "title", "type": "VARCHAR", "nullable": true },
+                { "name": "album", "type": "UUID", "nullable": true },
+                { "name": "year", "type": "INTEGER", "nullable": true }
+            ] },
+            { "name": "album", "unique_constraints": [["id"]], "columns": [
+                { "name": "id", "type": "UUID", "nullable": false },
+                { "name": "title", "type": "VARCHAR", "nullable": true }
+            ] },
+            { "name": "artist", "unique_constraints": [["id"]], "columns": [
+                { "name": "id", "type": "UUID", "nullable": false },
+                { "name": "name", "type": "VARCHAR", "nullable": true }
+            ] },
+            { "name": "credit", "unique_constraints": [["track", "artist"]], "columns": [
+                { "name": "track", "type": "UUID", "nullable": false },
+                { "name": "artist", "type": "UUID", "nullable": false },
+                { "name": "role", "type": "VARCHAR", "nullable": true }
+            ] }
+        ],
+        "links": []
+    }"#;
+
+    fn dml_schema() -> Schema {
+        Schema::parse(DML_SCHEMA).unwrap()
+    }
+
+    /// A loaded track editor keyed by `id`, ready to accept edits.
+    fn track_editor() -> RecordEditor {
+        let mut form = RecordEditor::structure(&dml_schema(), "track")
+            .unwrap()
+            .with_key(vec![("id".to_owned(), "t1".to_owned())]);
+        form.values = Load::Ready(());
+        form
+    }
+
+    fn field_index(form: &RecordEditor, name: &str) -> usize {
+        form.fields.iter().position(|f| f.name == name).unwrap()
+    }
+
+    /// Overwrites a primitive field's current value (leaving its baseline), marking
+    /// it modified.
+    fn set_primitive(form: &mut RecordEditor, name: &str, value: Option<&str>) {
+        let i = field_index(form, name);
+        if let FieldKind::Primitive { value: v, .. } = &mut form.fields[i].kind {
+            *v = value.map(str::to_owned);
+        } else {
+            panic!("{name} is not a primitive");
+        }
+    }
+
+    #[test]
+    fn build_operations_is_none_without_changes() {
+        assert!(track_editor().build_dml_operations().is_none());
+    }
+
+    #[test]
+    fn build_operations_updates_only_changed_columns() {
+        let mut form = track_editor();
+        set_primitive(&mut form, "title", Some("Goldregen"));
+        let (ops, plan) = form.build_dml_operations().expect("has changes");
+        assert!(plan.is_empty());
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["operation"], "update");
+        assert_eq!(ops[0]["table"], "track");
+        assert_eq!(ops[0]["where"]["id"], "t1");
+        assert_eq!(ops[0]["values"]["title"], "Goldregen");
+        // Only the edited column is written — never the untouched id.
+        let values = ops[0]["values"].as_object().unwrap();
+        assert_eq!(values.len(), 1);
+    }
+
+    #[test]
+    fn build_operations_writes_repointed_link_as_literal_id() {
+        let mut form = track_editor();
+        let album_idx = field_index(&form, "album");
+        let display = RecordDisplay {
+            columns: vec![ColumnMetadata::default()],
+            rows: ResultRows::from_cells(&[vec![Some("Abbey Road")]]),
+        };
+        form.apply_picked_record(
+            &[FormStep::Field(album_idx)],
+            Some("al-9".to_owned()),
+            display,
+        );
+        let (ops, _) = form.build_dml_operations().expect("has changes");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["values"]["album"], "al-9");
+    }
+
+    #[test]
+    fn build_operations_clears_link_with_null() {
+        let mut form = track_editor();
+        let album_idx = field_index(&form, "album");
+        // Seed a loaded link, then clear it.
+        if let FieldKind::ScalarLink {
+            id, original_id, ..
+        } = &mut form.fields[album_idx].kind
+        {
+            *id = None;
+            *original_id = Some("al-1".to_owned());
+        }
+        let (ops, _) = form.build_dml_operations().expect("clearing is a change");
+        assert_eq!(ops[0]["values"]["album"], Value::Null);
+    }
+
+    #[test]
+    fn build_operations_inserts_new_linked_record_before_referencing_update() {
+        let mut form = track_editor();
+        let album_idx = field_index(&form, "album");
+        form.add_new_linked_record(&[FormStep::Field(album_idx)], &dml_schema(), String::new());
+        // Give the scaffolded album a title so it has something to insert.
+        if let FieldKind::ScalarLink {
+            expanded: Some(sub),
+            ..
+        } = &mut form.fields[album_idx].kind
+        {
+            set_primitive(sub, "title", Some("Abbey Road"));
+        }
+        let (ops, plan) = form.build_dml_operations().expect("has changes");
+        // The album is inserted first, then the track update references it.
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0]["operation"], "insert");
+        assert_eq!(ops[0]["table"], "album");
+        assert_eq!(ops[0]["values"]["title"], "Abbey Road");
+        let insert_id = ops[0]["id"].as_str().unwrap();
+        assert_eq!(ops[1]["operation"], "update");
+        assert_eq!(ops[1]["values"]["album"], json!({ "id": insert_id }));
+        // The plan points the album field at the insert, to adopt its new id on save.
+        assert_eq!(
+            plan,
+            vec![(vec![FormStep::Field(album_idx)], insert_id.to_owned())]
+        );
+    }
+
+    #[test]
+    fn build_operations_inserts_new_multi_entry_linked_to_parent() {
+        let mut form = track_editor();
+        let credit_idx = field_index(&form, "credit");
+        form.add_new_record(&[FormStep::Field(credit_idx)], &dml_schema());
+        // Fill the new credit's role.
+        if let FieldKind::MultiRecord { entries, .. } = &mut form.fields[credit_idx].kind {
+            let sub = entries[0].expanded.as_mut().unwrap();
+            set_primitive(sub, "role", Some("Vocals"));
+        }
+        let (ops, _) = form.build_dml_operations().expect("has changes");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["operation"], "insert");
+        assert_eq!(ops[0]["table"], "credit");
+        assert_eq!(ops[0]["values"]["role"], "Vocals");
+        // The child links back to the existing parent via a literal id.
+        assert_eq!(ops[0]["values"]["track"], "t1");
+    }
+
+    #[test]
+    fn build_operations_deletes_ephemerally_removed_entry() {
+        let mut form = track_editor();
+        let credit_idx = field_index(&form, "credit");
+        // A loaded (existing) credit the user then deletes within the form.
+        if let FieldKind::MultiRecord {
+            count,
+            original_count,
+            load,
+            entries,
+            ..
+        } = &mut form.fields[credit_idx].kind
+        {
+            *count = 1;
+            *original_count = 1;
+            *load = Load::Ready(MultiData {
+                columns: vec![ColumnMetadata::default()],
+                rows: ResultRows::from_cells(&[vec![Some("t1"), Some("a1")]]),
+                display_offset: 2,
+            });
+            entries.push(MultiEntry {
+                key: vec![
+                    ("track".to_owned(), "t1".to_owned()),
+                    ("artist".to_owned(), "a1".to_owned()),
+                ],
+                row: Some(0),
+                is_new: false,
+                collapsed: true,
+                expanded: None,
+                deleted: true,
+            });
+        }
+        let (ops, _) = form.build_dml_operations().expect("a deletion is a change");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["operation"], "delete");
+        assert_eq!(ops[0]["table"], "credit");
+        assert_eq!(ops[0]["where"]["track"], "t1");
+        assert_eq!(ops[0]["where"]["artist"], "a1");
+    }
+
+    #[test]
+    fn apply_saved_clears_modification_and_adopts_new_id() {
+        let mut form = track_editor();
+        set_primitive(&mut form, "title", Some("Goldregen"));
+        let album_idx = field_index(&form, "album");
+        form.add_new_linked_record(&[FormStep::Field(album_idx)], &dml_schema(), String::new());
+        if let FieldKind::ScalarLink {
+            expanded: Some(sub),
+            ..
+        } = &mut form.fields[album_idx].kind
+        {
+            set_primitive(sub, "title", Some("Abbey Road"));
+        }
+        let (_, plan) = form.build_dml_operations().expect("has changes");
+        assert!(form.is_modified());
+
+        // Simulate a success: the album insert returned a server-assigned id.
+        let insert_id = &plan[0].1;
+        let results: Map<String, Value> = [
+            (insert_id.clone(), json!({ "id": "al-new" })),
+            ("op1".to_owned(), json!({ "id": "t1" })),
+        ]
+        .into_iter()
+        .collect();
+        form.apply_saved(&plan, &results);
+
+        assert!(!form.is_modified(), "everything should read as saved now");
+        let FieldKind::ScalarLink {
+            id,
+            original_id,
+            expanded,
+            ..
+        } = &form.fields[album_idx].kind
+        else {
+            panic!("album should stay a scalar link");
+        };
+        assert_eq!(id.as_deref(), Some("al-new"));
+        assert_eq!(original_id.as_deref(), Some("al-new"));
+        assert!(expanded.is_none(), "the scaffold is dropped once saved");
+    }
+
+    #[test]
+    fn deliver_save_records_failure_and_retains_changes() {
+        let mut form = track_editor();
+        set_primitive(&mut form, "title", Some("Goldregen"));
+        form.begin_save(7, Vec::new());
+        // A stale token is ignored.
+        form.deliver_save(6, Ok(Value::Object(Map::new())));
+        assert!(form.save.is_saving());
+        // The matching token delivers the error and keeps the edit.
+        form.deliver_save(7, Err("boom".to_owned()));
+        assert_eq!(form.save.error(), Some("boom"));
+        assert!(form.is_modified(), "a failed save must retain the changes");
+    }
+
     #[test]
     fn apply_picked_record_points_the_link_and_stashes_the_preview() {
         let mut form = RecordEditor::structure(&schema(), "track")
@@ -3578,7 +4248,7 @@ mod snapshot_tests {
 
     use super::{
         FieldKind, FormEdit, FormField, FormSelection, FormStep, Load, MultiData, MultiEntry,
-        Primitive, RecordDisplay, RecordEditor,
+        Primitive, RecordDisplay, RecordEditor, SaveState,
     };
     use crate::columns::ColumnMetadata;
     use crate::rows::ResultRows;
@@ -3689,6 +4359,7 @@ mod snapshot_tests {
             selection: None,
             editing: None,
             scroll_to_selection: false,
+            save: SaveState::Idle,
             fields,
         }
     }

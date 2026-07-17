@@ -607,6 +607,7 @@ fn sample_record_editor() -> crate::form::RecordEditor {
         selection: None,
         editing: None,
         scroll_to_selection: false,
+        save: crate::form::SaveState::Idle,
         fields: vec![
             text("title", "Goldregen"),
             FormField {
