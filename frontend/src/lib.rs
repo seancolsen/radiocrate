@@ -498,11 +498,18 @@ impl App {
         let msgs = std::mem::take(&mut *self.form_inbox.lock().unwrap());
         for msg in msgs {
             let mut slot = Some(msg.result);
-            for page in self.pages.iter_mut().filter_map(Page::as_query_mut) {
-                if let Some(editor) = page.record_editor.as_mut() {
+            // Offer the message to every open editor — the on-screen one plus every
+            // stashed per-record editor (whose in-flight loads must still land) —
+            // until the one owning the token consumes it.
+            'pages: for page in self.pages.iter_mut().filter_map(Page::as_query_mut) {
+                for editor in page
+                    .record_editor
+                    .iter_mut()
+                    .chain(page.record_editor_stash.values_mut())
+                {
                     editor.deliver(msg.token, &mut slot);
                     if slot.is_none() {
-                        break;
+                        break 'pages;
                     }
                 }
             }
@@ -1090,13 +1097,34 @@ impl App {
         // record is keyed by a single id column and we know its value, use it;
         // otherwise the form opens keyed only structurally (its values won't load
         // until a key is known).
-        let editor = match (record_id, schema.table(base).and_then(form::primary_key)) {
+        let candidate = match (record_id, schema.table(base).and_then(form::primary_key)) {
             (Some(id), Some(pk)) => editor.with_key(vec![(pk.to_owned(), id)]),
             _ => editor,
         };
-        if let Some(page) = self.current_page_mut() {
-            page.record_editor = Some(editor);
+        let target_key = candidate.key_string();
+        let Some(page) = self.current_page_mut() else {
+            return;
+        };
+        // Already showing this record? Keep the on-screen editor (with its edits).
+        if !target_key.is_empty()
+            && page
+                .record_editor
+                .as_ref()
+                .map(form::RecordEditor::key_string)
+                .as_deref()
+                == Some(target_key.as_str())
+        {
+            return;
         }
+        // Stash the current record's editor, then restore a previously-stashed
+        // editor for the target record if one exists (preserving its unsaved edits
+        // and expansion state), otherwise open the freshly-built one.
+        page.stash_current_editor();
+        page.record_editor = Some(
+            page.record_editor_stash
+                .remove(&target_key)
+                .unwrap_or(candidate),
+        );
     }
 
     /// Renders the current query page's record editor as a resizable right-hand
@@ -1196,10 +1224,10 @@ impl App {
         // Persist the tokens the form handed out this frame.
         self.form_load_seq = seq;
 
-        // Apply a click on a form element to the selection (single-click select,
-        // Shift/Ctrl for sibling embedded records).
-        if let Some((path, mods)) = body_out.and_then(|o| o.clicked) {
-            editor.select_click(path, mods);
+        // Apply the interactions captured during the body render (selection, inline
+        // edit activation/commit, expansion toggles, new records, clears).
+        if let Some(out) = body_out {
+            editor.apply_output(out, schema.as_ref());
         }
 
         if keep && let Some(page) = self.current_page_mut() {
@@ -1232,9 +1260,10 @@ impl App {
         let results = Arc::clone(&page.results);
 
         if self.selection.is_empty() {
-            // The user deselected the record — close the editor.
+            // The user deselected the record — close the editor, but stash it so its
+            // unsaved edits (and the result-row marker) survive.
             if let Some(page) = self.current_page_mut() {
-                page.record_editor = None;
+                page.stash_current_editor();
             }
             return;
         }
@@ -1579,7 +1608,7 @@ mod tests {
         let id_field = editor.fields.iter().find(|f| f.name == "id").unwrap();
         assert!(matches!(
             &id_field.kind,
-            form::FieldKind::Primitive { ty: form::Primitive::Id, value: Some(v) } if v == "abc-123"
+            form::FieldKind::Primitive { ty: form::Primitive::Id, value: Some(v), .. } if v == "abc-123"
         ));
         // `album` (a UUID named after a table) is a scalar link; `credit`
         // (references track) is a multi-record field.

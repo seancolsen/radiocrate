@@ -299,6 +299,12 @@ pub(crate) struct QueryPage {
     /// Living on the page (rather than the app) keeps each tab's editor its own:
     /// switching tabs hides one page's editor and reveals the other's.
     pub(crate) record_editor: Option<crate::form::RecordEditor>,
+    /// Per-record form state for records *other* than the one on screen, keyed by
+    /// [`crate::form::RecordEditor::key_string`]. Switching the editor to another
+    /// record stashes the current one here (and restores a stashed one) so a
+    /// record's unsaved edits — and its expansion state — survive switching away
+    /// and back. Records with pending edits also drive the result-row markers.
+    pub(crate) record_editor_stash: std::collections::HashMap<String, crate::form::RecordEditor>,
 }
 
 impl QueryPage {
@@ -312,6 +318,7 @@ impl QueryPage {
             results_fetched: false,
             pinned: false,
             record_editor: None,
+            record_editor_stash: std::collections::HashMap::new(),
         }
     }
 
@@ -326,6 +333,7 @@ impl QueryPage {
             results_fetched: false,
             pinned: true,
             record_editor: None,
+            record_editor_stash: std::collections::HashMap::new(),
         }
     }
 
@@ -338,5 +346,35 @@ impl QueryPage {
     /// Whether this query exists in the backend database.
     pub(crate) fn is_persisted(&self) -> bool {
         self.saved.is_some()
+    }
+
+    /// Moves the on-screen record editor (if any) into the per-record stash, keyed
+    /// by its record, so its unsaved edits survive switching to another record.
+    /// A composite/unkeyed record (empty key string) is dropped rather than stashed.
+    pub(crate) fn stash_current_editor(&mut self) {
+        if let Some(editor) = self.record_editor.take() {
+            let key = editor.key_string();
+            if !key.is_empty() {
+                self.record_editor_stash.insert(key, editor);
+            }
+        }
+    }
+
+    /// The primary-key ids of the records that currently have unsaved edits — the
+    /// on-screen editor plus every stashed one. Drives the result-row markers.
+    pub(crate) fn modified_record_ids(&self) -> std::collections::HashSet<String> {
+        let mut ids = std::collections::HashSet::new();
+        for editor in self
+            .record_editor
+            .iter()
+            .chain(self.record_editor_stash.values())
+        {
+            if editor.is_modified()
+                && let Some(id) = editor.record_id()
+            {
+                ids.insert(id.to_owned());
+            }
+        }
+        ids
     }
 }

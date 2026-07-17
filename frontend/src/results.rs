@@ -192,6 +192,12 @@ impl App {
             .current_page()
             .map(|p| p.live.definition.base.clone())
             .unwrap_or_default();
+        // The record ids that currently have unsaved edits in the record editor,
+        // so their rows show the red "unsaved changes" marker.
+        let modified_ids = self
+            .current_page()
+            .map(crate::page::QueryPage::modified_record_ids)
+            .unwrap_or_default();
         egui::CentralPanel::default()
             .frame(frame)
             .show_inside(ui, |ui| {
@@ -295,12 +301,14 @@ impl App {
                         let track_id = track_id_column.and_then(|i| cells.get(i)?.as_single());
                         let record_id = record_id_column.and_then(|i| cells.get(i)?.as_single());
                         let is_current = current_row == Some(index);
+                        let unsaved = record_id.is_some_and(|id| modified_ids.contains(id));
                         let resp = draw_row(
                             ui,
                             &row_layout,
                             &cells,
                             selection.contains(&index),
                             is_current,
+                            unsaved,
                         );
                         if resp.double_clicked() {
                             if let Some(id) = track_id {
@@ -484,6 +492,7 @@ fn draw_row(
     cells: &[CellValue],
     selected: bool,
     is_current: bool,
+    unsaved: bool,
 ) -> egui::Response {
     let desired = egui::vec2(ui.available_width(), layout.row_height);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
@@ -613,6 +622,18 @@ fn draw_row(
         };
         let y = line_top + (line_height - size.y) * 0.5;
         ui.painter().galley(egui::pos2(x, y), galley, color);
+    }
+
+    // A record with unsaved edits in the record editor gets a red marker at the
+    // row's right edge.
+    if unsaved {
+        ui.painter().text(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            crate::icons::UNSAVED.codepoint,
+            crate::icons::font_id(crate::page::UNSAVED_MARKER_SIZE),
+            crate::page::UNSAVED_RED.get(ui.visuals()),
+        );
     }
 
     response

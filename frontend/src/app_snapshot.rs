@@ -583,22 +583,17 @@ fn no_results() {
 /// multi-record field).
 fn sample_record_editor() -> crate::form::RecordEditor {
     use crate::form::{FieldKind, FormField, Load, Primitive};
-    let text = |name: &str, value: &str| FormField {
+    let primitive = |name: &str, ty: Primitive, value: &str| FormField {
         name: name.to_owned(),
         kind: FieldKind::Primitive {
-            ty: Primitive::Text,
+            ty,
             value: Some(value.to_owned()),
+            original: Some(value.to_owned()),
         },
         collapsed: true,
     };
-    let number = |name: &str, value: &str| FormField {
-        name: name.to_owned(),
-        kind: FieldKind::Primitive {
-            ty: Primitive::Number,
-            value: Some(value.to_owned()),
-        },
-        collapsed: true,
-    };
+    let text = |name: &str, value: &str| primitive(name, Primitive::Text, value);
+    let number = |name: &str, value: &str| primitive(name, Primitive::Number, value);
     // `values: Ready` so the sidebar renders the loaded fields (not a loading
     // overlay). The scalar link is NULL (pencil) and the multi-record field stays
     // collapsed, so no embedded-record data needs to be provided.
@@ -610,6 +605,7 @@ fn sample_record_editor() -> crate::form::RecordEditor {
         )],
         values: Load::Ready(()),
         selection: None,
+        editing: None,
         scroll_to_selection: false,
         fields: vec![
             text("title", "Goldregen"),
@@ -618,20 +614,14 @@ fn sample_record_editor() -> crate::form::RecordEditor {
                 kind: FieldKind::ScalarLink {
                     target: "album".to_owned(),
                     id: None,
+                    original_id: None,
                     embedded: Load::Idle,
                     expanded: None,
                 },
                 collapsed: true,
             },
             number("track_number", "13"),
-            FormField {
-                name: "id".to_owned(),
-                kind: FieldKind::Primitive {
-                    ty: Primitive::Id,
-                    value: Some("d289fa9e-8354-4e4b-9df3-5f8b64eb5304".to_owned()),
-                },
-                collapsed: true,
-            },
+            primitive("id", Primitive::Id, "d289fa9e-8354-4e4b-9df3-5f8b64eb5304"),
             FormField {
                 name: "credit".to_owned(),
                 kind: FieldKind::MultiRecord {
@@ -639,7 +629,9 @@ fn sample_record_editor() -> crate::form::RecordEditor {
                     link_column: "track".to_owned(),
                     parent_column: "id".to_owned(),
                     count: 3,
-                    data: Load::Idle,
+                    original_count: 3,
+                    load: Load::Idle,
+                    entries: Vec::new(),
                 },
                 collapsed: true,
             },

@@ -96,8 +96,10 @@ pub(crate) struct RecordDisplay {
     pub(crate) rows: ResultRows,
 }
 
-/// The loaded contents of a multi-record field: the display columns, the related
-/// rows, and per-row UI state.
+/// The loaded rows of a multi-record field: the display columns and the related
+/// records' Arrow cells. Decoupled from the field's [`MultiEntry`] list, so a
+/// newly-added record can exist (and render as "New") before — or without — this
+/// ever loading.
 #[derive(Debug)]
 pub(crate) struct MultiData {
     pub(crate) columns: Vec<ColumnMetadata>,
@@ -106,44 +108,77 @@ pub(crate) struct MultiData {
     /// to the query so each record can be re-fetched on expand); skipped when
     /// drawing the embedded widget.
     pub(crate) display_offset: usize,
-    /// One entry per row, parallel to `rows`.
-    pub(crate) entries: Vec<MultiEntry>,
 }
 
-/// UI state for one record within a multi-record field.
+/// UI state for one record within a multi-record field: either a loaded record
+/// (pointing at a row of the field's [`MultiData`]) or a brand-new record the user
+/// is adding.
 #[derive(Debug)]
 pub(crate) struct MultiEntry {
     /// Column/value pairs identifying this record, for re-fetching its full form.
+    /// Empty for a not-yet-saved new record.
     pub(crate) key: Vec<(String, String)>,
+    /// Index of this record's row within the field's loaded [`MultiData`], or
+    /// `None` for a new record (which has no loaded row and renders as "New").
+    pub(crate) row: Option<usize>,
+    /// Whether this is a brand-new record the user is adding (not yet in the
+    /// database).
+    pub(crate) is_new: bool,
     pub(crate) collapsed: bool,
-    /// The nested editor for this record, built when first expanded.
+    /// The nested editor for this record, built when first expanded (or eagerly,
+    /// for a new record).
     pub(crate) expanded: Option<Box<RecordEditor>>,
     /// Set when the user has ephemerally deleted this record within the form; a
     /// deleted entry is skipped when rendering, navigating, and counting.
     pub(crate) deleted: bool,
 }
 
+impl MultiEntry {
+    /// Whether this entry currently contributes a record: not deleted.
+    fn live(&self) -> bool {
+        !self.deleted
+    }
+
+    /// Whether this entry represents an unsaved change: a live new record, a
+    /// deleted loaded record, or a loaded record whose nested editor was edited.
+    fn is_modified(&self) -> bool {
+        if self.deleted {
+            // Deleting a loaded record is a change; discarding a new one is not.
+            return !self.is_new;
+        }
+        self.is_new || self.expanded.as_ref().is_some_and(|e| e.is_modified())
+    }
+}
+
 /// What a form field represents, plus the state needed to render and load it.
 #[derive(Debug)]
 pub(crate) enum FieldKind {
-    /// A plain column value. `value` is the display text; `None` means `NULL`.
+    /// A plain column value. `value` is the current display text (`None` means
+    /// `NULL`); `original` is the value as first loaded, so an edit is detected by
+    /// `value != original`.
     Primitive {
         ty: Primitive,
         value: Option<String>,
+        original: Option<String>,
     },
     /// A foreign-key column referencing a single record in `target`. `id` is the
-    /// raw key value (`None` for `NULL`); `embedded` is the collapsed-preview data
-    /// (loaded even while collapsed); `expanded` is the nested editor built when
-    /// the user drills in.
+    /// raw key value (`None` for `NULL`); `original_id` is the value as first
+    /// loaded (so a cleared/changed link is detected); `embedded` is the
+    /// collapsed-preview data (loaded even while collapsed); `expanded` is the
+    /// nested editor built when the user drills in.
     ScalarLink {
         target: String,
         id: Option<String>,
+        original_id: Option<String>,
         embedded: Load<RecordDisplay>,
         expanded: Option<Box<RecordEditor>>,
     },
     /// The set of records in `table` referencing this record through
-    /// `link_column`. `count` is loaded up front; `data` (the records themselves)
-    /// only once the field is expanded.
+    /// `link_column`. `count` is the number of related records as first loaded
+    /// (up front); `load` is the records' display data (fetched on expand); and
+    /// `entries` holds the per-record UI state — new records the user is adding
+    /// (at the front) followed by the loaded records (materialized once `load`
+    /// completes).
     MultiRecord {
         table: String,
         /// The column in `table` that references this record.
@@ -151,8 +186,15 @@ pub(crate) enum FieldKind {
         /// The referenced column on this record's table (the link target, usually
         /// `id`) — the value the child rows filter against.
         parent_column: String,
+        /// The current baseline record count: the loaded count, or zeroed when the
+        /// user deletes all records of a not-yet-loaded field. New/deleted entries
+        /// adjust the *displayed* count on top of this (see [`multi_display_count`]).
         count: usize,
-        data: Load<MultiData>,
+        /// The record count as first loaded — the reference for detecting a
+        /// structural change (records added or removed).
+        original_count: usize,
+        load: Load<MultiData>,
+        entries: Vec<MultiEntry>,
     },
 }
 
@@ -164,10 +206,21 @@ impl FieldKind {
     pub(crate) fn is_expandable(&self) -> bool {
         match self {
             FieldKind::ScalarLink { id, .. } => id.is_some(),
-            FieldKind::MultiRecord { count, .. } => *count > 0,
+            FieldKind::MultiRecord { count, entries, .. } => {
+                multi_display_count(*count, entries) > 0
+            }
             FieldKind::Primitive { .. } => false,
         }
     }
+}
+
+/// The number of records a multi-record field currently shows: its loaded count,
+/// plus the live new records the user has added, minus the loaded records they've
+/// deleted. Equals the live-entry count once the field's records have loaded.
+fn multi_display_count(count: usize, entries: &[MultiEntry]) -> usize {
+    let added = entries.iter().filter(|e| e.is_new && e.live()).count();
+    let removed = entries.iter().filter(|e| !e.is_new && e.deleted).count();
+    (count + added).saturating_sub(removed)
 }
 
 /// One field in the form.
@@ -195,8 +248,37 @@ impl FormField {
     fn primitive(name: impl Into<String>, ty: Primitive, value: Option<String>) -> Self {
         Self {
             name: name.into(),
-            kind: FieldKind::Primitive { ty, value },
+            kind: FieldKind::Primitive {
+                ty,
+                original: value.clone(),
+                value,
+            },
             collapsed: true,
+        }
+    }
+
+    /// Whether this field (or any record nested beneath it) carries an unsaved
+    /// change — drives the red modification star, propagating up the tree.
+    pub(crate) fn is_modified(&self) -> bool {
+        match &self.kind {
+            FieldKind::Primitive {
+                value, original, ..
+            } => value != original,
+            FieldKind::ScalarLink {
+                id,
+                original_id,
+                expanded,
+                ..
+            } => id != original_id || expanded.as_ref().is_some_and(|e| e.is_modified()),
+            FieldKind::MultiRecord {
+                count,
+                original_count,
+                entries,
+                ..
+            } => {
+                multi_display_count(*count, entries) != *original_count
+                    || entries.iter().any(MultiEntry::is_modified)
+            }
         }
     }
 }
@@ -267,19 +349,43 @@ impl FormSelection {
 }
 
 /// Interactions captured while rendering a form body, applied by the caller after
-/// the render (so selection updates don't fight the borrow of the tree).
+/// the render (so state updates don't fight the borrow of the tree). At most one
+/// of these fires per frame.
 #[derive(Default)]
 pub(crate) struct FormOutput {
     /// A selectable element was primary-clicked, with the modifiers then held.
     pub(crate) clicked: Option<(FormPath, egui::Modifiers)>,
+    /// A primitive field was activated for inline editing (double-click on its
+    /// label, click on its value, the pencil affordance, or the "Edit" menu item).
+    pub(crate) activate: Option<FormEdit>,
+    /// An inline edit committed/cancelled and the field's label should become the
+    /// selection.
+    pub(crate) select: Option<FormPath>,
+    /// An inline edit committed via Tab: select the *next* field after this path.
+    pub(crate) tab_advance: Option<FormPath>,
+    /// The expansion toggle was Ctrl+clicked: toggle this item and all its
+    /// siblings to match.
+    pub(crate) ctrl_toggle: Option<FormPath>,
+    /// The user asked to add a new record to the multi-record field at this path.
+    pub(crate) new_record: Option<FormPath>,
+    /// The collapsible field at this path should toggle its expansion (a
+    /// double-click on a scalar link's embedded record).
+    pub(crate) toggle_expand: Option<FormPath>,
+    /// The field at this path should be cleared (Clear / Delete-all menu items):
+    /// a primitive → `NULL`, a scalar link → unset, a multi-record field → emptied.
+    pub(crate) clear: Option<FormPath>,
 }
 
-/// The selection state threaded through the recursive render: the current
+/// The selection/edit state threaded through the recursive render: the current
 /// selection to highlight against, whether to scroll the lead into view this
-/// frame, and the output accumulator for click interactions.
+/// frame, the active inline-edit buffer, and the output accumulator for
+/// interactions.
 struct SelCtx<'a> {
     sel: Option<&'a FormSelection>,
     scroll: bool,
+    /// The active inline edit, if any (owned here for the duration of the render,
+    /// restored to the root editor afterward).
+    editing: &'a mut Option<FormEdit>,
     out: &'a mut FormOutput,
 }
 
@@ -293,6 +399,13 @@ impl SelCtx<'_> {
     /// scroll into view).
     fn is_lead(&self, path: &[FormStep]) -> bool {
         self.sel.is_some_and(|s| s.lead_path().as_slice() == path)
+    }
+
+    /// Whether the field at `path` is the one currently activated for editing.
+    fn editing_at(&self, path: &[FormStep]) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|e| e.path.as_slice() == path)
     }
 
     /// Records a primary click on the element at `path`.
@@ -321,9 +434,22 @@ pub(crate) struct RecordEditor {
     /// The current selection within the form. Only meaningful on the *root* editor
     /// (paths are absolute from the root); nested editors leave it `None`.
     pub(crate) selection: Option<FormSelection>,
+    /// The field currently activated for inline editing, if any. Only meaningful on
+    /// the *root* editor (its path is absolute from the root).
+    pub(crate) editing: Option<FormEdit>,
     /// Set when the selection changed via keyboard so the next render scrolls the
     /// lead element into view; cleared once consumed.
     pub(crate) scroll_to_selection: bool,
+}
+
+/// A field activated for inline editing: the path to the (primitive) field, the
+/// in-progress text buffer, and a one-shot request to grab focus on the next
+/// render (set when edit mode is entered).
+#[derive(Debug, Clone)]
+pub(crate) struct FormEdit {
+    pub(crate) path: FormPath,
+    pub(crate) buffer: String,
+    pub(crate) focus: bool,
 }
 
 impl RecordEditor {
@@ -350,6 +476,7 @@ impl RecordEditor {
                         FieldKind::ScalarLink {
                             target: link.to_table.clone(),
                             id: None,
+                            original_id: None,
                             embedded: Load::Idle,
                             expanded: None,
                         },
@@ -383,7 +510,9 @@ impl RecordEditor {
                     link_column: link_column.to_owned(),
                     parent_column: parent_column.to_owned(),
                     count: 0,
-                    data: Load::Idle,
+                    original_count: 0,
+                    load: Load::Idle,
+                    entries: Vec::new(),
                 },
             ));
         }
@@ -394,8 +523,27 @@ impl RecordEditor {
             fields,
             values: Load::Idle,
             selection: None,
+            editing: None,
             scroll_to_selection: false,
         })
+    }
+
+    /// Whether any field in this editor (or any record nested within it) carries an
+    /// unsaved change. Recurses through the whole tree, so a modification stays
+    /// visible even when the intervening sections are collapsed.
+    pub(crate) fn is_modified(&self) -> bool {
+        self.fields.iter().any(FormField::is_modified)
+    }
+
+    /// A stable string identifying which record this editor edits, built from its
+    /// key column/value pairs. Used to stash per-record form state on the page so a
+    /// record's unsaved edits survive switching to another record and back.
+    pub(crate) fn key_string(&self) -> String {
+        self.key
+            .iter()
+            .map(|(col, val)| format!("{col}={val}"))
+            .collect::<Vec<_>>()
+            .join("\u{1f}")
     }
 
     /// Sets this editor's identifying key, seeding the corresponding primitive
@@ -405,9 +553,12 @@ impl RecordEditor {
         for (col, val) in &key {
             for field in &mut self.fields {
                 if field.name == *col
-                    && let FieldKind::Primitive { value, .. } = &mut field.kind
+                    && let FieldKind::Primitive {
+                        value, original, ..
+                    } = &mut field.kind
                 {
                     *value = Some(val.clone());
+                    *original = Some(val.clone());
                 }
             }
         }
@@ -476,22 +627,34 @@ impl RecordEditor {
                         sub.deliver(token, slot);
                     }
                 }
-                FieldKind::MultiRecord { data, .. } => {
-                    if data.token() == Some(token) {
-                        *data = match slot.take().unwrap() {
-                            Ok(FormPayload::Multi(d)) => Load::Ready(d),
+                FieldKind::MultiRecord { load, entries, .. } => {
+                    if load.token() == Some(token) {
+                        *load = match slot.take().unwrap() {
+                            Ok(FormPayload::Multi(payload)) => {
+                                // Materialize one loaded entry per row, appended
+                                // after any new records already at the front.
+                                for (row, key) in payload.keys.into_iter().enumerate() {
+                                    entries.push(MultiEntry {
+                                        key,
+                                        row: Some(row),
+                                        is_new: false,
+                                        collapsed: true,
+                                        expanded: None,
+                                        deleted: false,
+                                    });
+                                }
+                                Load::Ready(payload.data)
+                            }
                             Ok(_) => Load::Failed("unexpected payload".to_owned()),
                             Err(e) => Load::Failed(e),
                         };
                         return;
                     }
-                    if let Load::Ready(d) = data {
-                        for entry in &mut d.entries {
-                            if let Some(sub) = &mut entry.expanded {
-                                sub.deliver(token, slot);
-                                if slot.is_none() {
-                                    return;
-                                }
+                    for entry in entries.iter_mut() {
+                        if let Some(sub) = &mut entry.expanded {
+                            sub.deliver(token, slot);
+                            if slot.is_none() {
+                                return;
                             }
                         }
                     }
@@ -509,14 +672,25 @@ impl RecordEditor {
         for (col, field) in self.fields.iter_mut().enumerate() {
             let cell = rows.cell_text(0, col);
             match &mut field.kind {
-                FieldKind::Primitive { value, .. } => {
+                FieldKind::Primitive {
+                    value, original, ..
+                } => {
                     *value = cell.filter(|s| !s.is_empty());
+                    original.clone_from(value);
                 }
-                FieldKind::ScalarLink { id, .. } => {
+                FieldKind::ScalarLink {
+                    id, original_id, ..
+                } => {
                     *id = cell.filter(|s| !s.is_empty());
+                    original_id.clone_from(id);
                 }
-                FieldKind::MultiRecord { count, .. } => {
+                FieldKind::MultiRecord {
+                    count,
+                    original_count,
+                    ..
+                } => {
                     *count = cell.and_then(|s| s.parse().ok()).unwrap_or(0);
+                    *original_count = *count;
                 }
             }
         }
@@ -588,9 +762,24 @@ fn clear_field(field: &mut FormField) {
             *expanded = None;
             collapse = true;
         }
-        FieldKind::MultiRecord { count, data, .. } => {
-            *count = 0;
-            *data = Load::Idle;
+        FieldKind::MultiRecord {
+            count,
+            load,
+            entries,
+            ..
+        } => {
+            // Ephemerally delete every record: drop the new ones outright and mark
+            // the loaded ones deleted (so the deletion counts as a change). If the
+            // records were never loaded there are no entries to mark, so drop the
+            // baseline count to zero instead.
+            entries.retain(|e| !e.is_new);
+            for entry in entries.iter_mut() {
+                entry.deleted = true;
+                entry.expanded = None;
+            }
+            if !matches!(load, Load::Ready(_)) {
+                *count = 0;
+            }
             collapse = true;
         }
     }
@@ -621,11 +810,8 @@ impl RecordEditor {
                     expanded: Some(sub),
                     ..
                 } => sub.collect_targets(&fp, out),
-                FieldKind::MultiRecord {
-                    data: Load::Ready(d),
-                    ..
-                } => {
-                    for (j, entry) in d.entries.iter().enumerate() {
+                FieldKind::MultiRecord { entries, .. } => {
+                    for (j, entry) in entries.iter().enumerate() {
                         if entry.deleted {
                             continue;
                         }
@@ -657,13 +843,9 @@ impl RecordEditor {
                         },
                         (FormStep::Field(_), _),
                     ) => sub.field_at(rest),
-                    (
-                        FieldKind::MultiRecord {
-                            data: Load::Ready(d),
-                            ..
-                        },
-                        (FormStep::Entry(ej), erest),
-                    ) => d.entries.get(*ej)?.expanded.as_ref()?.field_at(erest),
+                    (FieldKind::MultiRecord { entries, .. }, (FormStep::Entry(ej), erest)) => {
+                        entries.get(*ej)?.expanded.as_ref()?.field_at(erest)
+                    }
                     _ => None,
                 }
             }
@@ -685,14 +867,8 @@ impl RecordEditor {
                         },
                         (FormStep::Field(_), _),
                     ) => sub.resolve_mut(rest),
-                    (
-                        FieldKind::MultiRecord {
-                            data: Load::Ready(d),
-                            ..
-                        },
-                        (FormStep::Entry(ej), erest),
-                    ) => {
-                        let entry = d.entries.get_mut(*ej)?;
+                    (FieldKind::MultiRecord { entries, .. }, (FormStep::Entry(ej), erest)) => {
+                        let entry = entries.get_mut(*ej)?;
                         if erest.is_empty() {
                             Some(Target::Entry(entry))
                         } else {
@@ -712,14 +888,9 @@ impl RecordEditor {
     fn live_entry_indices(&self, parent: &[FormStep]) -> Vec<usize> {
         match self.field_at(parent) {
             Some(FormField {
-                kind:
-                    FieldKind::MultiRecord {
-                        data: Load::Ready(d),
-                        ..
-                    },
+                kind: FieldKind::MultiRecord { entries, .. },
                 ..
-            }) => d
-                .entries
+            }) => entries
                 .iter()
                 .enumerate()
                 .filter(|(_, e)| !e.deleted)
@@ -871,19 +1042,16 @@ impl RecordEditor {
                 parent, indices, ..
             } => {
                 if let Some(Target::Field(f)) = self.resolve_mut(&parent)
-                    && let FieldKind::MultiRecord {
-                        count,
-                        data: Load::Ready(d),
-                        ..
-                    } = &mut f.kind
+                    && let FieldKind::MultiRecord { entries, .. } = &mut f.kind
                 {
                     for i in &indices {
-                        if let Some(e) = d.entries.get_mut(*i) {
+                        if let Some(e) = entries.get_mut(*i) {
                             e.deleted = true;
                             e.expanded = None;
                         }
                     }
-                    *count = d.entries.iter().filter(|e| !e.deleted).count();
+                    // A fully-discarded new record leaves the list entirely.
+                    entries.retain(|e| !(e.is_new && e.deleted));
                 }
             }
         }
@@ -897,6 +1065,187 @@ impl RecordEditor {
     /// Drops any form selection (e.g. when the user shifts focus to the results).
     pub(crate) fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    /// Applies the interactions captured during a [`RecordEditor::body`] render.
+    /// `schema` is needed to scaffold a new record's nested structure. At most one
+    /// of these fires per frame.
+    pub(crate) fn apply_output(&mut self, out: FormOutput, schema: Option<&Schema>) {
+        // An inline edit's commit-and-select is applied first, so that if the same
+        // click both ended the edit (focus lost) and landed on another element, the
+        // click's own action below wins.
+        if let Some(path) = out.select {
+            self.selection = Some(FormSelection::Single(path));
+            self.scroll_to_selection = true;
+        }
+        if let Some(path) = out.tab_advance {
+            self.select_next_field(&path);
+        }
+        if let Some((path, mods)) = out.clicked {
+            self.select_click(path, mods);
+        }
+        if let Some(path) = out.ctrl_toggle {
+            self.toggle_siblings(&path);
+        }
+        if let Some(path) = out.clear
+            && let Some(Target::Field(f)) = self.resolve_mut(&path)
+        {
+            clear_field(f);
+        }
+        if let Some(path) = out.new_record
+            && let Some(schema) = schema
+        {
+            self.add_new_record(&path, schema);
+        }
+        if let Some(path) = out.toggle_expand
+            && let Some(Target::Field(f)) = self.resolve_mut(&path)
+            && f.kind.is_expandable()
+        {
+            f.collapsed = !f.collapsed;
+        }
+        // Activation (entering edit mode) is applied last so it wins over a
+        // same-frame selection, and clears any lingering label selection.
+        if let Some(edit) = out.activate {
+            self.selection = None;
+            self.editing = Some(edit);
+        }
+    }
+
+    /// The nested editor reached by a path prefix: the root for an empty path, else
+    /// the expanded editor of the scalar link or entry the prefix addresses.
+    fn editor_at_mut(&mut self, path: &[FormStep]) -> Option<&mut RecordEditor> {
+        if path.is_empty() {
+            return Some(self);
+        }
+        match self.resolve_mut(path)? {
+            Target::Field(f) => match &mut f.kind {
+                FieldKind::ScalarLink {
+                    expanded: Some(sub),
+                    ..
+                } => Some(sub),
+                _ => None,
+            },
+            Target::Entry(e) => e.expanded.as_deref_mut(),
+        }
+    }
+
+    /// Ctrl+click on an expansion toggle: sets every sibling of the item at `path`
+    /// (the other fields of its record, or the other records of its multi-record
+    /// field) to match the item's newly-toggled collapsed state.
+    fn toggle_siblings(&mut self, path: &[FormStep]) {
+        let Some(&last) = path.last() else {
+            return;
+        };
+        let collapsed = match self.resolve_mut(path) {
+            Some(Target::Field(f)) => f.collapsed,
+            Some(Target::Entry(e)) => e.collapsed,
+            None => return,
+        };
+        let target = !collapsed;
+        let parent = &path[..path.len() - 1];
+        match last {
+            FormStep::Field(_) => {
+                if let Some(ed) = self.editor_at_mut(parent) {
+                    for f in &mut ed.fields {
+                        if f.kind.is_expandable() {
+                            f.collapsed = target;
+                        }
+                    }
+                }
+            }
+            FormStep::Entry(_) => {
+                if let Some(Target::Field(f)) = self.resolve_mut(parent)
+                    && let FieldKind::MultiRecord { entries, .. } = &mut f.kind
+                {
+                    for e in entries {
+                        e.collapsed = target;
+                    }
+                }
+            }
+        }
+    }
+
+    /// After a Tab commit, moves the selection to the next field label after `path`
+    /// (or leaves it there if this is the last field).
+    fn select_next_field(&mut self, path: &[FormStep]) {
+        let targets = self.visible_targets();
+        let Some(pos) = targets.iter().position(|t| t.as_slice() == path) else {
+            self.selection = Some(FormSelection::Single(path.to_vec()));
+            return;
+        };
+        let next = targets[pos + 1..]
+            .iter()
+            .find(|t| matches!(t.last(), Some(FormStep::Field(_))))
+            .unwrap_or(&targets[pos])
+            .clone();
+        self.selection = Some(FormSelection::Single(next));
+        self.scroll_to_selection = true;
+    }
+
+    /// Scaffolds a new record at the top of the multi-record field at `path`:
+    /// prepends an expanded, empty nested editor and activates its first editable
+    /// (primitive, non-id) field for immediate typing.
+    fn add_new_record(&mut self, path: &[FormStep], schema: &Schema) {
+        let first_field;
+        {
+            let Some(Target::Field(f)) = self.resolve_mut(path) else {
+                return;
+            };
+            let FieldKind::MultiRecord {
+                table,
+                link_column,
+                entries,
+                ..
+            } = &mut f.kind
+            else {
+                return;
+            };
+            let Some(structure) = RecordEditor::structure(schema, table) else {
+                return;
+            };
+            let mut sub = structure.without_column(link_column);
+            // A new record has no key, so nothing loads; mark it ready so it renders
+            // fully (not dimmed) with empty, editable fields.
+            sub.values = Load::Ready(());
+            first_field = sub.first_editable_index();
+            entries.insert(
+                0,
+                MultiEntry {
+                    key: Vec::new(),
+                    row: None,
+                    is_new: true,
+                    collapsed: false,
+                    expanded: Some(Box::new(sub)),
+                    deleted: false,
+                },
+            );
+            f.collapsed = false;
+        }
+        self.selection = None;
+        if let Some(fi) = first_field {
+            let mut edit_path = path.to_vec();
+            edit_path.push(FormStep::Entry(0));
+            edit_path.push(FormStep::Field(fi));
+            self.editing = Some(FormEdit {
+                path: edit_path,
+                buffer: String::new(),
+                focus: true,
+            });
+        }
+    }
+
+    /// The index of the first inline-editable field: a primitive that isn't the
+    /// record's (auto-generated) id.
+    fn first_editable_index(&self) -> Option<usize> {
+        self.fields.iter().position(|f| {
+            matches!(
+                f.kind,
+                FieldKind::Primitive {
+                    ty: Primitive::Text | Primitive::Number,
+                    ..
+                }
+            )
+        })
     }
 }
 
@@ -1032,15 +1381,24 @@ fn values_source(editor: &RecordEditor) -> CompileSource {
 
 // --- Async loading ---------------------------------------------------------
 
-/// A finished form query, ready to be applied to the tree by [`RecordEditor::apply`].
+/// A finished form query, ready to be applied to the tree by [`RecordEditor::deliver`].
 #[derive(Debug)]
 pub(crate) enum FormPayload {
     /// One row of the record's own column values and referencing counts.
     Values(ResultRows),
     /// The single linked record for a scalar-link preview.
     Embedded(RecordDisplay),
-    /// The related records for an expanded multi-record field.
-    Multi(MultiData),
+    /// The related records for an expanded multi-record field: the display data and
+    /// one identifying key per row (used to materialize the field's entries).
+    Multi(MultiPayload),
+}
+
+/// The result of a multi-record field's related-records query: the display data
+/// plus each row's identifying key (in row order).
+#[derive(Debug)]
+pub(crate) struct MultiPayload {
+    pub(crate) data: MultiData,
+    pub(crate) keys: Vec<Vec<(String, String)>>,
 }
 
 /// A completed form query posted to the app inbox: which slot (`token`) it belongs
@@ -1099,25 +1457,24 @@ impl FormCtx<'_> {
                 LoadShape::Embedded => FormPayload::Embedded(RecordDisplay { columns, rows }),
                 LoadShape::Multi { key_columns } => {
                     let display_offset = key_columns.len();
-                    let entries = (0..rows.len())
-                        .map(|r| MultiEntry {
-                            key: key_columns
+                    let keys = (0..rows.len())
+                        .map(|r| {
+                            key_columns
                                 .iter()
                                 .enumerate()
                                 .map(|(i, name)| {
                                     (name.clone(), rows.cell_text(r, i).unwrap_or_default())
                                 })
-                                .collect(),
-                            collapsed: true,
-                            expanded: None,
-                            deleted: false,
+                                .collect()
                         })
                         .collect();
-                    FormPayload::Multi(MultiData {
-                        columns,
-                        rows,
-                        display_offset,
-                        entries,
+                    FormPayload::Multi(MultiPayload {
+                        data: MultiData {
+                            columns,
+                            rows,
+                            display_offset,
+                        },
+                        keys,
                     })
                 }
             });
@@ -1324,6 +1681,9 @@ impl RecordEditor {
     /// ("X") button. Returns whether close was clicked.
     pub(crate) fn toolbar(&self, ui: &mut egui::Ui) -> FormResponse {
         let mut resp = FormResponse::default();
+        // The Save button enables once the form has unsaved changes. (Submission is
+        // handled elsewhere; here it just reflects modification state.)
+        let modified = self.is_modified();
         ui.horizontal_centered(|ui| {
             ui.label(
                 egui::RichText::new(format!("Edit {}", self.base_table))
@@ -1335,7 +1695,7 @@ impl RecordEditor {
                     resp.cancel = true;
                 }
                 ui.add_space(2.0);
-                ui.add_enabled_ui(false, |ui| {
+                ui.add_enabled_ui(modified, |ui| {
                     SplitButton::new(icons::SAVE, "Save")
                         .active(false)
                         .show_menu(false)
@@ -1359,15 +1719,22 @@ impl RecordEditor {
         let sel = self.selection.clone();
         let scroll = self.scroll_to_selection;
         self.scroll_to_selection = false;
+        // Move the active-edit state out of `self` for the render (so `self` can be
+        // borrowed as the tree while the edit buffer is threaded separately);
+        // restore whatever survives — an in-progress edit stays, a committed or
+        // cancelled one is cleared in-render.
+        let mut editing = self.editing.take();
         let mut out = FormOutput::default();
         let mut sc = SelCtx {
             sel: sel.as_ref(),
             scroll,
+            editing: &mut editing,
             out: &mut out,
         };
         let toolbar_border = ui.cursor().top();
         ui.add_space(BODY_HEADROOM);
         render_record(ui, ctx, self, 0, Some(toolbar_border), &[], &mut sc);
+        self.editing = editing;
         out
     }
 }
@@ -1501,6 +1868,7 @@ fn render_field(
     // empty scalar link (NULL) or empty multi-record field has nothing to expand.
     let expandable = field.kind.is_expandable();
     let selected = sc.selected(path);
+    let modified = field.is_modified();
     let (bg, icon) = kind_style(&field.kind);
     let galley = layout_pill(ui, icon, &field.name);
     let pill_size = pill_size(&galley);
@@ -1510,7 +1878,12 @@ fn render_field(
     // height can be measured to size the row before anything is drawn.
     let value_left = indent + CHEVRON_GUTTER + TICK_EXTRA + pill_size.x + VALUE_GAP;
     let value_avail = (ui.available_width() - value_left).max(0.0);
-    let row_h = pill_size.y.max(value_height(ui, &field.kind, value_avail));
+    // An activated field's editor lets the row grow to fit the input; otherwise the
+    // row is pinned to the taller of the pill and the value affordance.
+    let active_edit = sc.editing.as_ref().filter(|e| e.path.as_slice() == path);
+    let row_h = pill_size
+        .y
+        .max(value_height(ui, &field.kind, value_avail, active_edit));
 
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1531,14 +1904,23 @@ fn render_field(
         if expandable {
             draw_chevron(ui, gutter.center(), field.collapsed, gutter_resp.hovered());
             if gutter_resp.clicked() {
-                field.collapsed = !field.collapsed;
+                // Ctrl/⌘+click toggles this item and all its siblings together.
+                let mods = ui.input(|i| i.modifiers);
+                if mods.command || mods.ctrl {
+                    sc.out.ctrl_toggle = Some(path.to_vec());
+                } else {
+                    field.collapsed = !field.collapsed;
+                }
             }
         }
 
         ui.add_space(TICK_EXTRA);
         // The label pill selects the field on click; its ring shows the selection.
         let pill_resp = paint_pill(ui, galley, pill_size, bg, selected);
-        sc.click(path, &pill_resp);
+        if modified {
+            paint_modified_star(ui, pill_resp.rect);
+        }
+        label_interactions(ui, field, path, &pill_resp, sc);
         if sc.scroll && sc.is_lead(path) {
             ui.scroll_to_rect(pill_resp.rect, None);
         }
@@ -1604,10 +1986,15 @@ fn render_children(
             link_column,
             parent_column,
             count,
-            data,
+            load,
+            entries,
+            ..
         } => {
-            // Dispatch the related-records query on first expand.
-            if data.is_idle()
+            // Dispatch the related-records query on first expand, but only when
+            // there are loaded records to fetch — a field showing only new records
+            // never needs a query.
+            if load.is_idle()
+                && *count > 0
                 && let Some(ctx) = ctx.as_deref_mut()
                 && let Some(parent_value) = parent_key
                     .iter()
@@ -1619,7 +2006,7 @@ fn render_children(
                     .table(table)
                     .map(identifying_columns)
                     .unwrap_or_default();
-                *data =
+                *load =
                     Load::Loading(ctx.load_multi(table, link_column, &parent_value, &key_columns));
             }
             render_multi(
@@ -1628,7 +2015,8 @@ fn render_children(
                 table,
                 link_column,
                 *count,
-                data,
+                load,
+                entries,
                 depth + 1,
                 parent_bottom,
                 path,
@@ -1651,86 +2039,100 @@ fn render_multi(
     table: &str,
     link_column: &str,
     count: usize,
-    data: &mut Load<MultiData>,
+    load: &mut Load<MultiData>,
+    entries: &mut [MultiEntry],
     depth: usize,
     parent_bottom: f32,
     path: &[FormStep],
     sc: &mut SelCtx,
 ) {
     let indent = depth as f32 * INDENT;
-    match data {
-        Load::Ready(d) => {
-            let cols = d.columns.clone();
-            let offset = d.display_offset;
-            let tree_idx = ui.painter().add(egui::Shape::Noop);
-            let mut ticks: Vec<Tick> = Vec::with_capacity(d.entries.len());
-            let mut first = true;
-            for (i, entry) in d.entries.iter_mut().enumerate() {
-                // Ephemerally-deleted records leave the list entirely.
-                if entry.deleted {
-                    continue;
-                }
-                if !first {
+
+    if let Load::Failed(e) = load {
+        ui.horizontal(|ui| {
+            ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
+            ui.colored_label(egui::Color32::RED, e.as_str());
+        });
+        return;
+    }
+
+    let ready = matches!(load, Load::Ready(_));
+    let tree_idx = ui.painter().add(egui::Shape::Noop);
+    let mut ticks: Vec<Tick> = Vec::with_capacity(entries.len());
+    let mut first = true;
+    for (i, entry) in entries.iter_mut().enumerate() {
+        // Ephemerally-deleted records leave the list; before the records load only
+        // new records are materialized (loaded ones are shown as skeletons below).
+        if entry.deleted || (!entry.is_new && !ready) {
+            continue;
+        }
+        if !first {
+            ui.add_space(ROW_SPACING);
+        }
+        first = false;
+        // A loaded entry draws from its row of the loaded data; a new record has no
+        // row and renders as "New".
+        let cells = match (&*load, entry.row) {
+            (Load::Ready(d), Some(r)) => {
+                Some((d.columns.clone(), d.rows.row_values(r), d.display_offset))
+            }
+            _ => None,
+        };
+        let entry_path = child(path, FormStep::Entry(i));
+        let rect = render_entry(
+            ui,
+            ctx.as_deref_mut(),
+            cells
+                .as_ref()
+                .map(|(c, v, o)| (c.as_slice(), v.as_slice(), *o)),
+            entry,
+            table,
+            link_column,
+            depth,
+            indent,
+            &entry_path,
+            sc,
+        );
+        let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
+        ticks.push((spine_x, tick_end, rect.center().y.round()));
+    }
+
+    // Skeletons for the loaded records still in flight (shown under a dimming
+    // overlay), beneath any new records already added.
+    if !ready {
+        if !first {
+            ui.add_space(ROW_SPACING);
+        }
+        let group = ui.scope(|ui| {
+            for i in 0..count.max(1) {
+                if i > 0 {
                     ui.add_space(ROW_SPACING);
                 }
-                first = false;
-                let cells = d.rows.row_values(i);
-                let entry_path = child(path, FormStep::Entry(i));
-                let rect = render_entry(
-                    ui,
-                    ctx.as_deref_mut(),
-                    &cols,
-                    &cells,
-                    offset,
-                    entry,
-                    table,
-                    link_column,
-                    depth,
-                    indent,
-                    &entry_path,
-                    sc,
-                );
-                let (spine_x, tick_end) = tick_anchors(rect.left(), indent);
-                ticks.push((spine_x, tick_end, rect.center().y.round()));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
+                    draw_skeleton(ui);
+                });
             }
-            if !ticks.is_empty() {
-                draw_tree(ui, tree_idx, &ticks, Some(parent_bottom));
-            }
-        }
-        Load::Loading(_) | Load::Idle => {
-            let group = ui.scope(|ui| {
-                for i in 0..count.max(1) {
-                    if i > 0 {
-                        ui.add_space(ROW_SPACING);
-                    }
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
-                        draw_skeleton(ui);
-                    });
-                }
-            });
-            paint_overlay(ui, group.response.rect);
-        }
-        Load::Failed(e) => {
-            ui.horizontal(|ui| {
-                ui.add_space(indent + CHEVRON_GUTTER + TICK_EXTRA);
-                ui.colored_label(egui::Color32::RED, e.as_str());
-            });
-        }
+        });
+        paint_overlay(ui, group.response.rect);
+    }
+
+    if !ticks.is_empty() {
+        draw_tree(ui, tree_idx, &ticks, Some(parent_bottom));
     }
 }
 
 /// Renders one embedded record within a multi-record field: a chevron plus the
 /// embedded widget (vertically centered together), and (when expanded) its nested
-/// editor beneath. Returns the header row's rect (for the parent's tree ticks).
+/// editor beneath. `display` carries the loaded row's columns/cells (and their
+/// key-column offset), or `None` for a new record (rendered as "New"). Returns the
+/// header row's rect (for the parent's tree ticks).
 #[allow(clippy::too_many_arguments)]
 fn render_entry(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
-    columns: &[ColumnMetadata],
-    cells: &[CellValue],
-    offset: usize,
+    display: Option<(&[ColumnMetadata], &[CellValue], usize)>,
     entry: &mut MultiEntry,
     table: &str,
     link_column: &str,
@@ -1739,9 +2141,15 @@ fn render_entry(
     path: &[FormStep],
     sc: &mut SelCtx,
 ) -> egui::Rect {
-    let value_avail = (ui.available_width() - indent - CHEVRON_GUTTER - TICK_EXTRA).max(0.0);
-    let row_h = embed_size(ui, &columns[offset..], value_avail).y;
+    let row_h = match display {
+        Some((columns, _, offset)) => {
+            let avail = (ui.available_width() - indent - CHEVRON_GUTTER - TICK_EXTRA).max(0.0);
+            embed_size(ui, &columns[offset..], avail).y
+        }
+        None => skeleton_height(ui),
+    };
     let selected = sc.selected(path);
+    let modified = entry.is_modified();
 
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1755,9 +2163,17 @@ fn render_entry(
         ui.add_space(TICK_EXTRA);
         // The embedded record selects on single click (multi-selectable among its
         // siblings) and toggles expand on double click.
-        let widget = draw_embedded(ui, &columns[offset..], &cells[offset..]);
+        let widget = match display {
+            Some((columns, cells, offset)) => {
+                draw_embedded(ui, &columns[offset..], &cells[offset..])
+            }
+            None => draw_new_embedded(ui),
+        };
         if selected {
             paint_embed_ring(ui, widget.rect);
+        }
+        if modified {
+            paint_modified_star(ui, widget.rect);
         }
         if sc.scroll && sc.is_lead(path) {
             ui.scroll_to_rect(widget.rect, None);
@@ -1766,10 +2182,19 @@ fn render_entry(
         if gutter_resp.clicked() || widget.double_clicked() {
             entry.collapsed = !entry.collapsed;
         }
+        // Context menu: delete this single record (ephemerally).
+        egui::Popup::context_menu(&widget).show(|ui| {
+            ui.set_width(150.0);
+            if crate::now_playing::menu_item(ui, icons::DELETE, "Delete", true, None).clicked() {
+                entry.deleted = true;
+                entry.expanded = None;
+            }
+        });
     });
 
     if !entry.collapsed {
         if entry.expanded.is_none()
+            && !entry.is_new
             && let Some(ctx) = ctx.as_deref_mut()
             && let Some(sub) = RecordEditor::structure(ctx.schema, table)
         {
@@ -1919,8 +2344,13 @@ fn paint_embed_ring(ui: &egui::Ui, rect: egui::Rect) {
 
 /// The static height of a field's value area (everything but a dynamic embedded
 /// widget), used to size the row before drawing. `value_avail` is the width the
-/// value has, needed to measure an embedded record's wrapped height.
-fn value_height(ui: &egui::Ui, kind: &FieldKind, value_avail: f32) -> f32 {
+/// value has, needed to measure an embedded record's wrapped height. `edit` is the
+/// active inline edit when it targets *this* field, so the row grows to fit the
+/// input.
+fn value_height(ui: &egui::Ui, kind: &FieldKind, value_avail: f32, edit: Option<&FormEdit>) -> f32 {
+    if let (FieldKind::Primitive { ty, .. }, Some(edit)) = (kind, edit) {
+        return edit_input_height(ui, *ty, &edit.buffer);
+    }
     match kind {
         // A loaded scalar link shows an embedded widget whose height depends on how
         // its content wraps; everything else is a fixed-height affordance.
@@ -1946,9 +2376,9 @@ fn value_height(ui: &egui::Ui, kind: &FieldKind, value_avail: f32) -> f32 {
     }
 }
 
-/// Draws a field's value area to the right of its label. `path`/`sc` let a
-/// scalar-link's embedded record participate in selection (clicking it selects the
-/// field, same as clicking the label).
+/// Draws a field's value area to the right of its label, and wires the value-area
+/// interactions (click-to-edit, the value context menu, the pencil/"+" buttons).
+/// `path`/`sc` let a scalar-link's embedded record participate in selection.
 fn draw_value(
     ui: &mut egui::Ui,
     ctx: Option<&mut FormCtx>,
@@ -1956,29 +2386,99 @@ fn draw_value(
     path: &[FormStep],
     sc: &mut SelCtx,
 ) {
+    // An activated primitive replaces its value display with the edit input.
+    if sc.editing_at(path) && matches!(field.kind, FieldKind::Primitive { .. }) {
+        draw_primitive_edit(ui, field, path, sc);
+        return;
+    }
     match &mut field.kind {
         FieldKind::Primitive {
             ty: Primitive::Id,
             value: Some(v),
-        } => draw_uuid(ui, v),
-        FieldKind::Primitive { value: Some(v), .. } => {
-            draw_scalar(ui, v, ui.visuals().text_color());
+            ..
+        } => {
+            let v = v.clone();
+            let resp = draw_primitive_value(
+                ui,
+                &v,
+                egui::FontId::monospace(UUID_TEXT_SIZE),
+                ui.visuals().weak_text_color(),
+            );
+            primitive_value_interactions(path, &v, &resp, sc);
         }
-        FieldKind::Primitive { value: None, .. } => draw_pencil(ui),
+        FieldKind::Primitive { value: Some(v), .. } => {
+            let v = v.clone();
+            let resp = draw_primitive_value(
+                ui,
+                &v,
+                egui::FontId::proportional(VALUE_TEXT_SIZE),
+                ui.visuals().text_color(),
+            );
+            primitive_value_interactions(path, &v, &resp, sc);
+        }
+        FieldKind::Primitive { value: None, .. } => {
+            // A NULL/empty primitive shows a pencil that activates an empty input.
+            if Button::icon(icons::EDIT).show(ui).clicked() {
+                sc.out.activate = Some(FormEdit {
+                    path: path.to_vec(),
+                    buffer: String::new(),
+                    focus: true,
+                });
+            }
+        }
         FieldKind::ScalarLink {
             target,
             id,
             embedded,
             ..
         } => draw_scalar_link(ui, ctx, target, id.as_deref(), embedded, path, sc),
-        FieldKind::MultiRecord { count, .. } => draw_count(ui, *count),
+        FieldKind::MultiRecord { count, entries, .. } => {
+            let display = multi_display_count(*count, entries);
+            if draw_count(ui, display).clicked() {
+                sc.out.new_record = Some(path.to_vec());
+            }
+        }
+    }
+}
+
+/// Renders the inline edit input for the activated primitive `field`, handling the
+/// commit/cancel/advance keys and writing the committed value straight into the
+/// field. Clears the active edit (and records the follow-up selection) on exit.
+fn draw_primitive_edit(
+    ui: &mut egui::Ui,
+    field: &mut FormField,
+    path: &[FormStep],
+    sc: &mut SelCtx,
+) {
+    let FieldKind::Primitive { ty, .. } = field.kind else {
+        return;
+    };
+    let avail = ui.available_width().max(40.0);
+    let Some(edit) = sc.editing.as_mut() else {
+        return;
+    };
+    match edit_input(ui, ty, edit, avail) {
+        EditAction::Stay => {}
+        EditAction::Commit => {
+            commit_primitive(field, &sc.editing.take().unwrap().buffer);
+            sc.out.select = Some(path.to_vec());
+        }
+        EditAction::Advance => {
+            commit_primitive(field, &sc.editing.take().unwrap().buffer);
+            sc.out.tab_advance = Some(path.to_vec());
+        }
+        EditAction::Cancel => {
+            *sc.editing = None;
+            sc.out.select = Some(path.to_vec());
+        }
     }
 }
 
 /// Draws a scalar-linked field's value: the pencil affordance when `NULL`,
 /// otherwise the embedded-record widget (a skeleton while its preview loads).
-/// Dispatches the preview query once the id is known. A click on the embedded
-/// record selects the field (`path`).
+/// Dispatches the preview query once the id is known. Clicking the embedded record
+/// selects the field, double-clicking toggles its expansion, and its context menu
+/// clears the link.
 #[allow(clippy::too_many_arguments)]
 fn draw_scalar_link(
     ui: &mut egui::Ui,
@@ -1990,7 +2490,9 @@ fn draw_scalar_link(
     sc: &mut SelCtx,
 ) {
     let Some(id) = id else {
-        draw_pencil(ui);
+        // A NULL link shows the pencil affordance. Picking/entering a record is the
+        // (not-yet-built) modal record picker, so the pencil does nothing for now.
+        Button::icon(icons::EDIT).show(ui);
         return;
     };
     if embedded.is_idle()
@@ -2003,6 +2505,14 @@ fn draw_scalar_link(
             let cells = d.rows.row_values(0);
             let widget = draw_embedded(ui, &d.columns, &cells);
             sc.click(path, &widget);
+            if widget.double_clicked() {
+                sc.out.toggle_expand = Some(path.to_vec());
+            }
+            if embedded_context_menu(&widget, |ui| {
+                crate::now_playing::menu_item(ui, icons::CLEAR, "Clear", true, None).clicked()
+            }) {
+                sc.out.clear = Some(path.to_vec());
+            }
         }
         Load::Failed(e) => {
             ui.colored_label(egui::Color32::RED, e.as_str());
@@ -2014,23 +2524,14 @@ fn draw_scalar_link(
     }
 }
 
-/// Draws a scalar value as text in `color`, truncated with an ellipsis.
-fn draw_scalar(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
-    draw_truncated(ui, text, color, egui::FontId::proportional(VALUE_TEXT_SIZE));
-}
-
-/// Draws a UUID field value in small monospace, weak color, truncated to fit.
-fn draw_uuid(ui: &mut egui::Ui, text: &str) {
-    draw_truncated(
-        ui,
-        text,
-        ui.visuals().weak_text_color(),
-        egui::FontId::monospace(UUID_TEXT_SIZE),
-    );
-}
-
-/// Lays out `text` truncated with an ellipsis to the row's remaining width.
-fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egui::FontId) {
+/// Draws a primitive field value as truncated text, returning a click-sensing
+/// response (showing an I-beam on hover to cue that it's editable).
+fn draw_primitive_value(
+    ui: &mut egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> egui::Response {
     let avail = ui.available_width().max(0.0);
     let mut job = LayoutJob::single_section(
         text.to_owned(),
@@ -2042,18 +2543,40 @@ fn draw_truncated(ui: &mut egui::Ui, text: &str, color: egui::Color32, font: egu
     );
     job.wrap = TextWrapping::truncate_at_width(avail);
     let galley = ui.painter().layout_job(job);
-    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-    ui.painter().galley(rect.min, galley, color);
+    // Give the click target a little height so a short value is still comfortably
+    // clickable, and reserve the row's full remaining width.
+    let size = egui::vec2(avail, galley.size().y.max(embed_line_height(ui)));
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::CLICK);
+    let y = rect.top() + (rect.height() - galley.size().y) * 0.5;
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, color);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    resp
 }
 
-/// Draws the pencil affordance shown for a `NULL`/empty field.
-fn draw_pencil(ui: &mut egui::Ui) {
-    Button::icon(icons::EDIT).show(ui);
+/// Wires a primitive value's display-mode interactions: single click enters edit
+/// mode, and the context menu offers Edit / Clear / Copy.
+fn primitive_value_interactions(
+    path: &[FormStep],
+    value: &str,
+    resp: &egui::Response,
+    sc: &mut SelCtx,
+) {
+    if resp.clicked() {
+        sc.out.activate = Some(FormEdit {
+            path: path.to_vec(),
+            buffer: value.to_owned(),
+            focus: true,
+        });
+    }
+    primitive_context_menu(path, value, resp, sc);
 }
 
 /// Draws a multi-record field's value: a rounded count badge followed by the
-/// "add record" button.
-fn draw_count(ui: &mut egui::Ui, count: usize) {
+/// "add record" button. Returns the add button's response.
+fn draw_count(ui: &mut egui::Ui, count: usize) -> egui::Response {
     let text = ui.painter().layout_no_wrap(
         count.to_string(),
         egui::FontId::proportional(COUNT_TEXT_SIZE),
@@ -2067,7 +2590,245 @@ fn draw_count(ui: &mut egui::Ui, count: usize) {
     ui.painter().galley(pos, text, ui.visuals().text_color());
 
     ui.add_space(4.0);
-    Button::icon(icons::ADD).show(ui);
+    Button::icon(icons::ADD).show(ui)
+}
+
+// --- Rendering: interactions & inline editing ------------------------------
+
+/// Paints the red "modified" star as a superscript at the top-left of a field
+/// label's pill, mirroring the query tab's unsaved marker.
+fn paint_modified_star(ui: &egui::Ui, pill_rect: egui::Rect) {
+    ui.painter().text(
+        egui::pos2(pill_rect.left() + 1.0, pill_rect.top() + 1.0),
+        egui::Align2::CENTER_CENTER,
+        icons::UNSAVED.codepoint,
+        icons::font_id(crate::page::UNSAVED_MARKER_SIZE),
+        crate::page::UNSAVED_RED.get(ui.visuals()),
+    );
+}
+
+/// Wires a field label's click/double-click and context menu. Single click
+/// selects; double click enters edit mode (primitive) or toggles expansion
+/// (collapsible). The context menu varies by field kind.
+fn label_interactions(
+    ui: &egui::Ui,
+    field: &mut FormField,
+    path: &[FormStep],
+    resp: &egui::Response,
+    sc: &mut SelCtx,
+) {
+    let expandable = field.kind.is_expandable();
+    let prim_value = match &field.kind {
+        FieldKind::Primitive { value, .. } => Some(value.clone().unwrap_or_default()),
+        _ => None,
+    };
+    if resp.double_clicked() {
+        if let Some(buffer) = prim_value.clone() {
+            sc.out.activate = Some(FormEdit {
+                path: path.to_vec(),
+                buffer,
+                focus: true,
+            });
+        } else if expandable {
+            field.collapsed = !field.collapsed;
+        }
+    } else if resp.clicked() {
+        let mods = ui.input(|i| i.modifiers);
+        sc.out.clicked = Some((path.to_vec(), mods));
+    }
+    match &field.kind {
+        FieldKind::Primitive { .. } => {
+            primitive_context_menu(path, prim_value.as_deref().unwrap_or(""), resp, sc);
+        }
+        FieldKind::ScalarLink { .. } => scalar_label_menu(path, resp, sc),
+        FieldKind::MultiRecord { .. } => multi_label_menu(path, resp, sc),
+    }
+}
+
+/// The Edit / Clear / Copy context menu for a primitive field's label or value.
+fn primitive_context_menu(path: &[FormStep], value: &str, resp: &egui::Response, sc: &mut SelCtx) {
+    egui::Popup::context_menu(resp).show(|ui| {
+        ui.set_width(150.0);
+        if crate::now_playing::menu_item(ui, icons::EDIT, "Edit", true, None).clicked() {
+            sc.out.activate = Some(FormEdit {
+                path: path.to_vec(),
+                buffer: value.to_owned(),
+                focus: true,
+            });
+        }
+        if crate::now_playing::menu_item(ui, icons::CLEAR, "Clear", true, None).clicked() {
+            sc.out.clear = Some(path.to_vec());
+        }
+        if crate::now_playing::menu_item(ui, icons::DUPLICATE, "Copy", true, None).clicked() {
+            ui.ctx().copy_text(value.to_owned());
+        }
+    });
+}
+
+/// The context menu for a scalar-linked field's label. Picking/entering a record
+/// is the (not-yet-built) modal record picker, so those items are disabled for now.
+fn scalar_label_menu(path: &[FormStep], resp: &egui::Response, sc: &mut SelCtx) {
+    egui::Popup::context_menu(resp).show(|ui| {
+        ui.set_width(170.0);
+        crate::now_playing::menu_item(ui, icons::TABLE, "Pick a record", false, None);
+        crate::now_playing::menu_item(ui, icons::ADD, "Enter a new record", false, None);
+        if crate::now_playing::menu_item(ui, icons::CLEAR, "Clear", true, None).clicked() {
+            sc.out.clear = Some(path.to_vec());
+        }
+    });
+}
+
+/// The New record / Delete all records context menu for a multi-record field's
+/// label.
+fn multi_label_menu(path: &[FormStep], resp: &egui::Response, sc: &mut SelCtx) {
+    egui::Popup::context_menu(resp).show(|ui| {
+        ui.set_width(170.0);
+        if crate::now_playing::menu_item(ui, icons::ADD, "New record", true, None).clicked() {
+            sc.out.new_record = Some(path.to_vec());
+        }
+        let red = crate::page::DELETE_RED.get(ui.visuals());
+        if crate::now_playing::menu_item(ui, icons::DELETE, "Delete all records", true, Some(red))
+            .clicked()
+        {
+            sc.out.clear = Some(path.to_vec());
+        }
+    });
+}
+
+/// Shows a one-item context menu on an embedded-record widget, returning whether
+/// its item (built by `body`, which reports its own click) was chosen.
+fn embedded_context_menu(
+    widget: &egui::Response,
+    body: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    egui::Popup::context_menu(widget)
+        .show(|ui| {
+            ui.set_width(150.0);
+            body(ui)
+        })
+        .is_some_and(|m| m.inner)
+}
+
+/// The outcome of a frame of inline field editing.
+enum EditAction {
+    /// Still editing.
+    Stay,
+    /// Exit and save the field (Esc on a valid value, Enter on a number, or focus
+    /// lost).
+    Commit,
+    /// Save and move selection to the next field (Tab).
+    Advance,
+    /// Exit without saving (Esc on an unparseable value).
+    Cancel,
+}
+
+/// Renders the activated field's text input (multiline for text, single-line for a
+/// number) and interprets the edit keys. An unparseable value gets a red border and
+/// blocks Tab/Enter commits until it's fixed or cancelled with Esc.
+fn edit_input(ui: &mut egui::Ui, ty: Primitive, edit: &mut FormEdit, avail: f32) -> EditAction {
+    let id = egui::Id::new("record_editor_active_edit");
+    let multiline = ty != Primitive::Number;
+    let widget = if multiline {
+        let rows = edit.buffer.lines().count().max(1);
+        egui::TextEdit::multiline(&mut edit.buffer)
+            .id(id)
+            .desired_width(avail)
+            .desired_rows(rows)
+    } else {
+        egui::TextEdit::singleline(&mut edit.buffer)
+            .id(id)
+            .desired_width(avail)
+    };
+    let mut output = crate::text_input::show(ui, widget);
+
+    if edit.focus {
+        output.response.request_focus();
+        let end = edit.buffer.chars().count();
+        output
+            .state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(end),
+            )));
+        output.state.store(ui.ctx(), id);
+        edit.focus = false;
+    }
+
+    let valid = edit_valid(ty, &edit.buffer);
+    if !valid {
+        ui.painter().rect_stroke(
+            output.response.rect,
+            4.0,
+            egui::Stroke::new(1.0, crate::page::DELETE_RED.get(ui.visuals())),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    let has_focus = output.response.has_focus();
+    // Esc: exit; commit a valid value, discard an invalid one.
+    if has_focus && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        ui.memory_mut(|m| m.surrender_focus(id));
+        return if valid {
+            EditAction::Commit
+        } else {
+            EditAction::Cancel
+        };
+    }
+    // Tab: advance to the next field, but only once the value parses.
+    if has_focus && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) && valid
+    {
+        ui.memory_mut(|m| m.surrender_focus(id));
+        return EditAction::Advance;
+    }
+    // Focus lost some other way (Enter on a single-line number, or a click away):
+    // commit if valid, otherwise revert.
+    if output.response.lost_focus() {
+        return if valid {
+            EditAction::Commit
+        } else {
+            EditAction::Cancel
+        };
+    }
+    EditAction::Stay
+}
+
+/// Whether `buffer` parses to the field's storage type. An empty value is `NULL`
+/// (always valid); a number field requires a parseable number; text/id accept any
+/// string.
+fn edit_valid(ty: Primitive, buffer: &str) -> bool {
+    let t = buffer.trim();
+    if t.is_empty() {
+        return true;
+    }
+    match ty {
+        Primitive::Number => t.parse::<f64>().is_ok(),
+        Primitive::Text | Primitive::Id => true,
+    }
+}
+
+/// Writes an edit buffer into a primitive field: an all-whitespace buffer becomes
+/// `NULL`, otherwise the value is stored as typed.
+fn commit_primitive(field: &mut FormField, buffer: &str) {
+    if let FieldKind::Primitive { value, .. } = &mut field.kind {
+        *value = if buffer.trim().is_empty() {
+            None
+        } else {
+            Some(buffer.to_owned())
+        };
+    }
+}
+
+/// The height the inline edit input occupies for `buffer`: one line for a number,
+/// or one line per text line, plus the input's vertical padding.
+fn edit_input_height(ui: &egui::Ui, ty: Primitive, buffer: &str) -> f32 {
+    let rows = if ty == Primitive::Number {
+        1
+    } else {
+        buffer.lines().count().max(1)
+    };
+    let line = ui.text_style_height(&egui::TextStyle::Body);
+    rows as f32 * line + 8.0
 }
 
 // --- Rendering: embedded records -------------------------------------------
@@ -2177,6 +2938,40 @@ fn draw_embedded(
         let y = line_top + (el.line_h - galley.size().y) * 0.5;
         ui.painter().galley(egui::pos2(cell_left, y), galley, color);
     }
+    resp
+}
+
+/// Draws the embedded-record widget for a brand-new record being added: the same
+/// bordered, rounded surface as a loaded record, but with "New" centered in
+/// italics (we can't piece a real preview together from unsaved field values).
+/// Returns the widget's response (for click/double-click to select/expand).
+fn draw_new_embedded(ui: &mut egui::Ui) -> egui::Response {
+    let avail = ui.available_width().max(embed_radius(ui) * 2.0);
+    let radius = embed_radius(ui);
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(avail, skeleton_height(ui)), egui::Sense::CLICK);
+    let (top, bottom) = embed_gradient(ui, resp.hovered());
+    paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
+        egui::StrokeKind::Inside,
+    );
+    let mut job = LayoutJob::single_section(
+        "New".to_owned(),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(EMBED_TEXT_SIZE),
+            color: ui.visuals().weak_text_color(),
+            italics: true,
+            ..Default::default()
+        },
+    );
+    job.halign = egui::Align::Center;
+    let galley = ui.painter().layout_job(job);
+    let pos = egui::pos2(rect.center().x, rect.center().y - galley.size().y * 0.5);
+    ui.painter()
+        .galley(pos, galley, ui.visuals().weak_text_color());
     resp
 }
 
@@ -2492,44 +3287,44 @@ mod snapshot_tests {
     use eframe::egui;
 
     use super::{
-        FieldKind, FormField, FormSelection, FormStep, Load, MultiData, MultiEntry, Primitive,
-        RecordDisplay, RecordEditor,
+        FieldKind, FormEdit, FormField, FormSelection, FormStep, Load, MultiData, MultiEntry,
+        Primitive, RecordDisplay, RecordEditor,
     };
     use crate::columns::ColumnMetadata;
     use crate::rows::ResultRows;
     use crate::snapshot_harness::{self, snapshot_dual};
 
-    fn text(name: &str, value: &str) -> FormField {
+    fn primitive(name: &str, ty: Primitive, value: &str) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::Primitive {
-                ty: Primitive::Text,
+                ty,
                 value: Some(value.to_owned()),
+                original: Some(value.to_owned()),
             },
             collapsed: true,
         }
+    }
+
+    fn text(name: &str, value: &str) -> FormField {
+        primitive(name, Primitive::Text, value)
     }
 
     fn number(name: &str, value: &str) -> FormField {
-        FormField {
-            name: name.to_owned(),
-            kind: FieldKind::Primitive {
-                ty: Primitive::Number,
-                value: Some(value.to_owned()),
-            },
-            collapsed: true,
-        }
+        primitive(name, Primitive::Number, value)
     }
 
     fn id_field(name: &str, value: &str) -> FormField {
-        FormField {
-            name: name.to_owned(),
-            kind: FieldKind::Primitive {
-                ty: Primitive::Id,
-                value: Some(value.to_owned()),
-            },
-            collapsed: true,
+        primitive(name, Primitive::Id, value)
+    }
+
+    /// Marks a primitive field modified by giving it a differing original value, so
+    /// its red modification star shows.
+    fn with_original(mut field: FormField, original: Option<&str>) -> FormField {
+        if let FieldKind::Primitive { original: o, .. } = &mut field.kind {
+            *o = original.map(str::to_owned);
         }
+        field
     }
 
     fn cols(n: usize) -> Vec<ColumnMetadata> {
@@ -2543,6 +3338,7 @@ mod snapshot_tests {
             kind: FieldKind::ScalarLink {
                 target: target.to_owned(),
                 id: Some("x".to_owned()),
+                original_id: Some("x".to_owned()),
                 embedded: Load::Ready(RecordDisplay {
                     columns: cols(preview.len()),
                     rows: ResultRows::from_cells(&[preview.to_vec()]),
@@ -2553,8 +3349,33 @@ mod snapshot_tests {
         }
     }
 
-    /// An expanded multi-record field named `name`, backed by `data`.
-    fn multi(name: &str, count: usize, data: Load<MultiData>) -> FormField {
+    /// A loaded (materialized) entry for a multi-record field.
+    fn loaded_entry(
+        row: usize,
+        key: &[(&str, &str)],
+        expanded: Option<RecordEditor>,
+    ) -> MultiEntry {
+        MultiEntry {
+            key: key
+                .iter()
+                .map(|(c, v)| ((*c).into(), (*v).into()))
+                .collect(),
+            row: Some(row),
+            is_new: false,
+            collapsed: expanded.is_none(),
+            expanded: expanded.map(Box::new),
+            deleted: false,
+        }
+    }
+
+    /// An expanded multi-record field named `name`, backed by loaded `data` and
+    /// `entries`.
+    fn multi(
+        name: &str,
+        count: usize,
+        load: Load<MultiData>,
+        entries: Vec<MultiEntry>,
+    ) -> FormField {
         FormField {
             name: name.to_owned(),
             kind: FieldKind::MultiRecord {
@@ -2562,9 +3383,23 @@ mod snapshot_tests {
                 link_column: "track".to_owned(),
                 parent_column: "id".to_owned(),
                 count,
-                data,
+                original_count: count,
+                load,
+                entries,
             },
             collapsed: false,
+        }
+    }
+
+    fn editor(base: &str, key: Vec<(String, String)>, fields: Vec<FormField>) -> RecordEditor {
+        RecordEditor {
+            base_table: base.to_owned(),
+            key,
+            values: Load::Ready(()),
+            selection: None,
+            editing: None,
+            scroll_to_selection: false,
+            fields,
         }
     }
 
@@ -2573,21 +3408,18 @@ mod snapshot_tests {
     /// nested editor (a scalar link + primitives).
     fn nested_form() -> RecordEditor {
         // The nested editor for the expanded "Noha" credit record.
-        let noha = RecordEditor {
-            base_table: "credit".to_owned(),
-            key: vec![
+        let noha = editor(
+            "credit",
+            vec![
                 ("track".to_owned(), "t".to_owned()),
                 ("artist".to_owned(), "a2".to_owned()),
             ],
-            values: Load::Ready(()),
-            selection: None,
-            scroll_to_selection: false,
-            fields: vec![
+            vec![
                 linked("artist", "artist", &[Some("Noha")]),
                 text("role", "Remix by"),
                 number("ord", "2"),
             ],
-        };
+        );
 
         let credit_data = MultiData {
             columns: cols(4),
@@ -2598,41 +3430,23 @@ mod snapshot_tests {
                 vec![Some("t"), Some("a3"), Some("17 Hippies"), Some("Featured")],
             ]),
             display_offset: 2,
-            entries: vec![
-                MultiEntry {
-                    key: vec![("track".into(), "t".into()), ("artist".into(), "a1".into())],
-                    collapsed: true,
-                    expanded: None,
-                    deleted: false,
-                },
-                MultiEntry {
-                    key: vec![("track".into(), "t".into()), ("artist".into(), "a2".into())],
-                    collapsed: false,
-                    expanded: Some(Box::new(noha)),
-                    deleted: false,
-                },
-                MultiEntry {
-                    key: vec![("track".into(), "t".into()), ("artist".into(), "a3".into())],
-                    collapsed: true,
-                    expanded: None,
-                    deleted: false,
-                },
-            ],
         };
+        let entries = vec![
+            loaded_entry(0, &[("track", "t"), ("artist", "a1")], None),
+            loaded_entry(1, &[("track", "t"), ("artist", "a2")], Some(noha)),
+            loaded_entry(2, &[("track", "t"), ("artist", "a3")], None),
+        ];
 
-        RecordEditor {
-            base_table: "track".to_owned(),
-            key: vec![("id".to_owned(), "d289fa9e".to_owned())],
-            values: Load::Ready(()),
-            selection: None,
-            scroll_to_selection: false,
-            fields: vec![
+        editor(
+            "track",
+            vec![("id".to_owned(), "d289fa9e".to_owned())],
+            vec![
                 text("title", "Goldregen"),
                 linked("album", "album", &[Some("The Balkan Club Night")]),
-                multi("credit", 3, Load::Ready(credit_data)),
+                multi("credit", 3, Load::Ready(credit_data), entries),
                 id_field("id", "d289fa9e-8354-4e4b-9df3-5f8b64eb5304"),
             ],
-        }
+        )
     }
 
     #[test]
@@ -2648,27 +3462,25 @@ mod snapshot_tests {
     /// Loading states: an expanded multi-record field showing skeleton widgets under
     /// the dimming overlay, plus a scalar link whose preview is still loading.
     fn loading_form() -> RecordEditor {
-        RecordEditor {
-            base_table: "track".to_owned(),
-            key: vec![("id".to_owned(), "d289fa9e".to_owned())],
-            values: Load::Ready(()),
-            selection: None,
-            scroll_to_selection: false,
-            fields: vec![
+        editor(
+            "track",
+            vec![("id".to_owned(), "d289fa9e".to_owned())],
+            vec![
                 text("title", "Goldregen"),
                 FormField {
                     name: "album".to_owned(),
                     kind: FieldKind::ScalarLink {
                         target: "album".to_owned(),
                         id: Some("x".to_owned()),
+                        original_id: Some("x".to_owned()),
                         embedded: Load::Loading(2),
                         expanded: None,
                     },
                     collapsed: true,
                 },
-                multi("credit", 3, Load::Loading(1)),
+                multi("credit", 3, Load::Loading(1), vec![]),
             ],
-        }
+        )
     }
 
     #[test]
@@ -2715,5 +3527,83 @@ mod snapshot_tests {
         });
         harness.run();
         snapshot_dual(&mut harness, "record_editor/selection_records");
+    }
+
+    /// Modified fields show a red star that propagates up through collapsed
+    /// sections: `title` is edited directly, and the nested `role` edit surfaces a
+    /// star on the `credit` field and the "Noha" record above it.
+    #[test]
+    fn modified_fields() {
+        let mut form = nested_form();
+        form.fields[0] = with_original(text("title", "Sonnenregen"), Some("Goldregen"));
+        if let FieldKind::MultiRecord { entries, .. } = &mut form.fields[2].kind
+            && let Some(sub) = &mut entries[1].expanded
+        {
+            sub.fields[1] = with_original(text("role", "Producer"), Some("Remix by"));
+        }
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 420.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/modified_fields");
+    }
+
+    /// An activated field renders its value as a focused text input in place of the
+    /// display text (here the top-level `title`).
+    #[test]
+    fn editing_field() {
+        let mut form = nested_form();
+        form.editing = Some(FormEdit {
+            path: vec![FormStep::Field(0)],
+            buffer: "Goldregen".to_owned(),
+            focus: true,
+        });
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 300.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/editing_field");
+    }
+
+    /// A new record being added sits at the top of a multi-record field, expanded,
+    /// its embedded widget reading "New" while its (empty) fields await input.
+    #[test]
+    fn new_record() {
+        let empty = |name: &str, ty: Primitive| FormField {
+            name: name.to_owned(),
+            kind: FieldKind::Primitive {
+                ty,
+                value: None,
+                original: None,
+            },
+            collapsed: true,
+        };
+        let new_sub = editor(
+            "credit",
+            Vec::new(),
+            vec![
+                empty("role", Primitive::Text),
+                empty("ord", Primitive::Number),
+            ],
+        );
+        let mut form = nested_form();
+        if let FieldKind::MultiRecord { entries, .. } = &mut form.fields[2].kind {
+            entries.insert(
+                0,
+                MultiEntry {
+                    key: Vec::new(),
+                    row: None,
+                    is_new: true,
+                    collapsed: false,
+                    expanded: Some(Box::new(new_sub)),
+                    deleted: false,
+                },
+            );
+        }
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 480.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/new_record");
     }
 }
