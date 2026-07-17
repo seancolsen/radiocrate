@@ -26,6 +26,7 @@ mod now_playing;
 mod organizer;
 mod page;
 mod palette;
+mod picker;
 mod query_def;
 mod results;
 mod rows;
@@ -303,6 +304,9 @@ pub struct App {
     pub(crate) form_inbox: Arc<Mutex<Vec<form::FormLoadMsg>>>,
     /// Monotonic source of form-load tokens (see [`form::FormCtx`]).
     pub(crate) form_load_seq: u64,
+    /// The modal record picker's state when open (`None` when closed). Opened from a
+    /// scalar-link field to choose or scaffold its linked record.
+    pub(crate) record_picker: Option<picker::RecordPicker>,
 }
 
 impl Default for App {
@@ -351,6 +355,7 @@ impl Default for App {
             field_layout_cache: None,
             form_inbox: Arc::new(Mutex::new(Vec::new())),
             form_load_seq: 0,
+            record_picker: None,
         }
     }
 }
@@ -465,6 +470,7 @@ impl App {
         self.render_preset_save_modal(&ctx);
         self.render_manage_presets_modal(&ctx);
         self.render_view_sql_modal(&ctx);
+        self.render_record_picker_modal(&ctx);
         self.render_command_palette(&ctx);
     }
 }
@@ -1225,13 +1231,26 @@ impl App {
         self.form_load_seq = seq;
 
         // Apply the interactions captured during the body render (selection, inline
-        // edit activation/commit, expansion toggles, new records, clears).
-        if let Some(out) = body_out {
+        // edit activation/commit, expansion toggles, new records, clears). A request
+        // to open the modal record picker is app-level state, so it's pulled out and
+        // handled here rather than in `apply_output`.
+        let mut open_picker: Option<(form::FormPath, String)> = None;
+        if let Some(mut out) = body_out {
+            if let Some(path) = out.pick_record.take()
+                && let Some(target) = editor.scalar_link_target(&path)
+            {
+                open_picker = Some((path, target));
+            }
             editor.apply_output(out, schema.as_ref());
         }
+        let editor_key = editor.key_string();
 
         if keep && let Some(page) = self.current_page_mut() {
             page.record_editor = Some(editor);
+        }
+
+        if keep && let Some((field_path, target)) = open_picker {
+            self.open_record_picker(field_path, target, editor_key);
         }
     }
 

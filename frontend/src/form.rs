@@ -205,7 +205,9 @@ impl FieldKind {
     /// toggle is shown for it.
     pub(crate) fn is_expandable(&self) -> bool {
         match self {
-            FieldKind::ScalarLink { id, .. } => id.is_some(),
+            // A scalar link expands into its linked record — or into the new record
+            // the user is entering (id `None` while an editor is scaffolded).
+            FieldKind::ScalarLink { id, expanded, .. } => id.is_some() || expanded.is_some(),
             FieldKind::MultiRecord { count, entries, .. } => {
                 multi_display_count(*count, entries) > 0
             }
@@ -269,7 +271,14 @@ impl FormField {
                 original_id,
                 expanded,
                 ..
-            } => id != original_id || expanded.as_ref().is_some_and(|e| e.is_modified()),
+            } => {
+                // A change is: a re-pointed/cleared link, a brand-new record being
+                // entered (id `None` with a scaffolded editor), or edits within the
+                // nested record.
+                id != original_id
+                    || (id.is_none() && expanded.is_some())
+                    || expanded.as_ref().is_some_and(|e| e.is_modified())
+            }
             FieldKind::MultiRecord {
                 count,
                 original_count,
@@ -374,6 +383,13 @@ pub(crate) struct FormOutput {
     /// The field at this path should be cleared (Clear / Delete-all menu items):
     /// a primitive → `NULL`, a scalar link → unset, a multi-record field → emptied.
     pub(crate) clear: Option<FormPath>,
+    /// The user asked to pick an existing record for the scalar-link field at this
+    /// path (the pencil on a NULL link, or the "Pick a record" menu item). Opening
+    /// the modal picker is app-level state, so this is handled by the caller.
+    pub(crate) pick_record: Option<FormPath>,
+    /// The user asked to enter a brand-new record for the scalar-link field at this
+    /// path (the "Enter a new record" menu item).
+    pub(crate) new_linked_record: Option<FormPath>,
 }
 
 /// The selection/edit state threaded through the recursive render: the current
@@ -1097,6 +1113,11 @@ impl RecordEditor {
         {
             self.add_new_record(&path, schema);
         }
+        if let Some(path) = out.new_linked_record
+            && let Some(schema) = schema
+        {
+            self.add_new_linked_record(&path, schema, String::new());
+        }
         if let Some(path) = out.toggle_expand
             && let Some(Target::Field(f)) = self.resolve_mut(&path)
             && f.kind.is_expandable()
@@ -1246,6 +1267,99 @@ impl RecordEditor {
                 }
             )
         })
+    }
+
+    /// Scaffolds a brand-new record for the scalar-link field at `path`: replaces
+    /// the link with an expanded, empty nested editor (leaving `original_id` intact
+    /// so the change is detected), seeds its first editable field with `prefill`
+    /// (the picker's filter text, or empty), and activates that field for typing.
+    pub(crate) fn add_new_linked_record(
+        &mut self,
+        path: &[FormStep],
+        schema: &Schema,
+        prefill: String,
+    ) {
+        let first_field;
+        {
+            let Some(Target::Field(f)) = self.resolve_mut(path) else {
+                return;
+            };
+            let FieldKind::ScalarLink {
+                target,
+                id,
+                embedded,
+                expanded,
+                ..
+            } = &mut f.kind
+            else {
+                return;
+            };
+            let Some(mut sub) = RecordEditor::structure(schema, target) else {
+                return;
+            };
+            // A new record has no key, so nothing loads; mark it ready so it renders
+            // fully (not dimmed) with empty, editable fields.
+            sub.values = Load::Ready(());
+            first_field = sub.first_editable_index();
+            // Seed the first editable field with the prefill so it shows the copied
+            // filter text even before the user commits the activated edit below.
+            if let Some(fi) = first_field
+                && !prefill.is_empty()
+                && let Some(FormField {
+                    kind: FieldKind::Primitive { value, .. },
+                    ..
+                }) = sub.fields.get_mut(fi)
+            {
+                *value = Some(prefill.clone());
+            }
+            *id = None;
+            *embedded = Load::Idle;
+            *expanded = Some(Box::new(sub));
+            f.collapsed = false;
+        }
+        self.selection = None;
+        if let Some(fi) = first_field {
+            let mut edit_path = path.to_vec();
+            edit_path.push(FormStep::Field(fi));
+            self.editing = Some(FormEdit {
+                path: edit_path,
+                buffer: prefill,
+                focus: true,
+            });
+        }
+    }
+
+    /// Submits a record chosen in the modal picker into the scalar-link field at
+    /// `path`: points the link at `id` and stashes the already-loaded `display` as
+    /// the embedded preview (so no follow-up request is needed). Leaves
+    /// `original_id` and the collapsed state as-is; drops any scaffolded editor.
+    pub(crate) fn apply_picked_record(
+        &mut self,
+        path: &[FormStep],
+        id: Option<String>,
+        display: RecordDisplay,
+    ) {
+        if let Some(Target::Field(f)) = self.resolve_mut(path)
+            && let FieldKind::ScalarLink {
+                id: field_id,
+                embedded,
+                expanded,
+                ..
+            } = &mut f.kind
+        {
+            *field_id = id;
+            *embedded = Load::Ready(display);
+            *expanded = None;
+        }
+    }
+
+    /// The target table of the scalar-link field at `path`, if it resolves to one.
+    /// Used to title and query the modal record picker.
+    pub(crate) fn scalar_link_target(&self, path: &[FormStep]) -> Option<String> {
+        match &self.field_at(path)?.kind {
+            FieldKind::ScalarLink { target, .. } => Some(target.clone()),
+            _ => None,
+        }
     }
 }
 
@@ -1969,9 +2083,11 @@ fn render_children(
             expanded,
             ..
         } => {
-            let Some(id) = id.clone() else { return };
-            // Build the nested editor lazily on first expand.
+            // Build the nested editor lazily on first expand of an existing link.
+            // A new record being entered arrives with `expanded` already scaffolded
+            // (and no `id`), so it renders straight through.
             if expanded.is_none()
+                && let Some(id) = id.clone()
                 && let Some(ctx) = ctx.as_deref_mut()
                 && let Some(sub) = RecordEditor::structure(ctx.schema, target)
             {
@@ -2430,8 +2546,18 @@ fn draw_value(
             target,
             id,
             embedded,
+            expanded,
             ..
-        } => draw_scalar_link(ui, ctx, target, id.as_deref(), embedded, path, sc),
+        } => draw_scalar_link(
+            ui,
+            ctx,
+            target,
+            id.as_deref(),
+            embedded,
+            expanded.is_some(),
+            path,
+            sc,
+        ),
         FieldKind::MultiRecord { count, entries, .. } => {
             let display = multi_display_count(*count, entries);
             if draw_count(ui, display).clicked() {
@@ -2486,13 +2612,32 @@ fn draw_scalar_link(
     target: &str,
     id: Option<&str>,
     embedded: &mut Load<RecordDisplay>,
+    entering_new: bool,
     path: &[FormStep],
     sc: &mut SelCtx,
 ) {
     let Some(id) = id else {
-        // A NULL link shows the pencil affordance. Picking/entering a record is the
-        // (not-yet-built) modal record picker, so the pencil does nothing for now.
-        Button::icon(icons::EDIT).show(ui);
+        if entering_new {
+            // A brand-new record is being entered: show the "New" embedded widget
+            // (a real preview can't be pieced together from unsaved values), which
+            // selects, toggles expansion on double-click, and clears via its menu.
+            let widget = draw_new_embedded(ui);
+            sc.click(path, &widget);
+            if widget.double_clicked() {
+                sc.out.toggle_expand = Some(path.to_vec());
+            }
+            if embedded_context_menu(&widget, |ui| {
+                crate::now_playing::menu_item(ui, icons::CLEAR, "Clear", true, None).clicked()
+            }) {
+                sc.out.clear = Some(path.to_vec());
+            }
+            return;
+        }
+        // A NULL link shows the pencil affordance, which opens the modal record
+        // picker to choose an existing record.
+        if Button::icon(icons::EDIT).show(ui).clicked() {
+            sc.out.pick_record = Some(path.to_vec());
+        }
         return;
     };
     if embedded.is_idle()
@@ -2665,13 +2810,18 @@ fn primitive_context_menu(path: &[FormStep], value: &str, resp: &egui::Response,
     });
 }
 
-/// The context menu for a scalar-linked field's label. Picking/entering a record
-/// is the (not-yet-built) modal record picker, so those items are disabled for now.
+/// The context menu for a scalar-linked field's label: pick an existing record
+/// (opens the modal picker), enter a brand-new record, or clear the link.
 fn scalar_label_menu(path: &[FormStep], resp: &egui::Response, sc: &mut SelCtx) {
     egui::Popup::context_menu(resp).show(|ui| {
         ui.set_width(170.0);
-        crate::now_playing::menu_item(ui, icons::TABLE, "Pick a record", false, None);
-        crate::now_playing::menu_item(ui, icons::ADD, "Enter a new record", false, None);
+        if crate::now_playing::menu_item(ui, icons::TABLE, "Pick a record", true, None).clicked() {
+            sc.out.pick_record = Some(path.to_vec());
+        }
+        if crate::now_playing::menu_item(ui, icons::ADD, "Enter a new record", true, None).clicked()
+        {
+            sc.out.new_linked_record = Some(path.to_vec());
+        }
         if crate::now_playing::menu_item(ui, icons::CLEAR, "Clear", true, None).clicked() {
             sc.out.clear = Some(path.to_vec());
         }
@@ -2975,6 +3125,23 @@ fn draw_new_embedded(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
+/// Renders one modal-picker result as an embedded-record widget, ringed when
+/// `selected`. Reuses the same widget as scalar-link and multi-record previews so
+/// picker rows read identically to embedded records elsewhere. Returns the widget's
+/// click response.
+pub(crate) fn render_picker_result(
+    ui: &mut egui::Ui,
+    columns: &[ColumnMetadata],
+    cells: &[CellValue],
+    selected: bool,
+) -> egui::Response {
+    let widget = draw_embedded(ui, columns, cells);
+    if selected {
+        paint_embed_ring(ui, widget.rect);
+    }
+    widget
+}
+
 /// Draws a not-yet-loaded embedded record as an empty skeleton widget filling the
 /// remaining row width. Returns its rect (for the loading overlay).
 fn draw_skeleton(ui: &mut egui::Ui) -> egui::Rect {
@@ -3275,6 +3442,83 @@ mod tests {
     fn key_filter_escapes_and_quotes() {
         let f = key_filter(&[("id".to_owned(), "a'b".to_owned())]);
         assert_eq!(f, "`id`:=='a\\'b'");
+    }
+
+    #[test]
+    fn scalar_link_target_resolves_the_target_table() {
+        let form = RecordEditor::structure(&schema(), "track").unwrap();
+        let album_idx = form.fields.iter().position(|f| f.name == "album").unwrap();
+        assert_eq!(
+            form.scalar_link_target(&[FormStep::Field(album_idx)])
+                .as_deref(),
+            Some("album")
+        );
+        // A primitive field has no link target.
+        let title_idx = form.fields.iter().position(|f| f.name == "title").unwrap();
+        assert!(
+            form.scalar_link_target(&[FormStep::Field(title_idx)])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn add_new_linked_record_scaffolds_expanded_prefilled_editor() {
+        // `credit.track` is a scalar link whose target (`track`) has an editable
+        // `title` field to receive the prefill.
+        let mut form = RecordEditor::structure(&schema(), "credit").unwrap();
+        let track_idx = form.fields.iter().position(|f| f.name == "track").unwrap();
+        form.add_new_linked_record(&[FormStep::Field(track_idx)], &schema(), "Bal".to_owned());
+
+        let field = &form.fields[track_idx];
+        // Scaffolding a new record is an unsaved change and makes the field expand.
+        assert!(field.is_modified());
+        assert!(field.kind.is_expandable());
+        assert!(!field.collapsed);
+        let FieldKind::ScalarLink { id, expanded, .. } = &field.kind else {
+            panic!("track should stay a scalar link");
+        };
+        assert!(id.is_none(), "a new linked record has no id yet");
+        let sub = expanded.as_ref().expect("nested editor scaffolded");
+        // The first editable field (the track's title) is seeded with the prefill.
+        let title = sub.fields.iter().find(|f| f.name == "title").unwrap();
+        assert!(matches!(
+            &title.kind,
+            FieldKind::Primitive { value: Some(v), .. } if v == "Bal"
+        ));
+        // And it's activated for immediate typing.
+        assert!(form.editing.is_some());
+    }
+
+    #[test]
+    fn apply_picked_record_points_the_link_and_stashes_the_preview() {
+        let mut form = RecordEditor::structure(&schema(), "track")
+            .unwrap()
+            .with_key(vec![("id".to_owned(), "t1".to_owned())]);
+        let album_idx = form.fields.iter().position(|f| f.name == "album").unwrap();
+        let display = RecordDisplay {
+            columns: vec![ColumnMetadata::default()],
+            rows: ResultRows::from_cells(&[vec![Some("The Balkan Club Night")]]),
+        };
+        form.apply_picked_record(
+            &[FormStep::Field(album_idx)],
+            Some("al-9".to_owned()),
+            display,
+        );
+
+        let FieldKind::ScalarLink {
+            id,
+            embedded,
+            expanded,
+            ..
+        } = &form.fields[album_idx].kind
+        else {
+            panic!("album should stay a scalar link");
+        };
+        assert_eq!(id.as_deref(), Some("al-9"));
+        assert!(matches!(embedded, Load::Ready(_)), "preview stashed");
+        assert!(expanded.is_none());
+        // Pointing a previously-NULL link at a record is an unsaved change.
+        assert!(form.fields[album_idx].is_modified());
     }
 }
 
@@ -3605,5 +3849,58 @@ mod snapshot_tests {
         });
         harness.run();
         snapshot_dual(&mut harness, "record_editor/new_record");
+    }
+
+    /// A scalar-link field with a brand-new linked record being entered: its value
+    /// area shows the italic "New" embedded widget and its (empty) nested editor is
+    /// expanded below, the first field activated for typing.
+    #[test]
+    fn scalar_new_record() {
+        let empty = |name: &str, ty: Primitive| FormField {
+            name: name.to_owned(),
+            kind: FieldKind::Primitive {
+                ty,
+                value: None,
+                original: None,
+            },
+            collapsed: true,
+        };
+        let new_album = editor(
+            "album",
+            Vec::new(),
+            vec![
+                empty("title", Primitive::Text),
+                empty("year", Primitive::Number),
+            ],
+        );
+        let mut form = editor(
+            "track",
+            vec![("id".to_owned(), "d289fa9e".to_owned())],
+            vec![
+                text("title", "Goldregen"),
+                FormField {
+                    name: "album".to_owned(),
+                    kind: FieldKind::ScalarLink {
+                        target: "album".to_owned(),
+                        id: None,
+                        original_id: None,
+                        embedded: Load::Idle,
+                        expanded: Some(Box::new(new_album)),
+                    },
+                    collapsed: false,
+                },
+                id_field("id", "d289fa9e-8354-4e4b-9df3-5f8b64eb5304"),
+            ],
+        );
+        form.editing = Some(FormEdit {
+            path: vec![FormStep::Field(1), FormStep::Field(0)],
+            buffer: "Bal".to_owned(),
+            focus: true,
+        });
+        let mut harness = snapshot_harness::harness(egui::vec2(420.0, 360.0), move |ui| {
+            form.show(ui);
+        });
+        harness.run();
+        snapshot_dual(&mut harness, "record_editor/scalar_new_record");
     }
 }

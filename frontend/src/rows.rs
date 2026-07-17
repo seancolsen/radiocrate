@@ -101,6 +101,17 @@ impl ResultRows {
         }
     }
 
+    /// A new [`ResultRows`] holding only overall row `row` (empty when out of
+    /// range). Slices the underlying Arrow batch, so list columns stay structured —
+    /// used to hand a single picked record to the form as an embedded preview.
+    pub(crate) fn single_row(&self, row: usize) -> ResultRows {
+        let mut out = ResultRows::default();
+        if let Some((batch, local)) = self.locate(row) {
+            out.push_batch(batch.slice(local, 1));
+        }
+        out
+    }
+
     /// Stringifies every cell of one row, in column order.
     pub(crate) fn row_values(&self, row: usize) -> Vec<CellValue> {
         let Some((batch, local)) = self.locate(row) else {
