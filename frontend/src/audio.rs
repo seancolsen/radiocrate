@@ -29,6 +29,12 @@ pub trait AudioPlayer {
     /// stopped painting, so the UI can be arbitrarily behind by the time it next
     /// gets to look.
     fn take_changed(&mut self) -> Option<String>;
+    /// Drains the ids of tracks that count as completed plays since the last
+    /// call, so the UI can log each: a track that reached its end, or one that
+    /// was skipped away from after playing past its halfway mark. Populated off
+    /// the render loop (the `ended` handler, media-key skips), so several can
+    /// accumulate while the tab is backgrounded.
+    fn take_finished(&mut self) -> Vec<String>;
     /// Stops playback and tears down the play context and OS media session.
     fn stop(&mut self);
 }
@@ -82,6 +88,10 @@ mod wasm_impl {
         /// Set whenever a transition happens off the render loop, drained by the
         /// UI via [`AudioPlayer::take_changed`].
         changed: RefCell<Option<String>>,
+        /// Ids of tracks that count as completed plays — played through to their
+        /// end, or skipped away from past the halfway mark — drained by the UI
+        /// via [`AudioPlayer::take_finished`] to log each.
+        finished: RefCell<Vec<String>>,
     }
 
     impl Engine {
@@ -95,11 +105,20 @@ mod wasm_impl {
 
         /// Advances to the next queued track, pushing the current one onto the
         /// history stack. Returns `false` (leaving playback untouched) when the
-        /// queue is empty.
-        fn go_next(&self) -> bool {
+        /// queue is empty. `ended` is `true` when the current track reached its
+        /// end (auto-advance) rather than being skipped, which decides whether
+        /// it's logged as a completed play (see [`Engine::note_current_play`]).
+        fn go_next(&self, ended: bool) -> bool {
             let Some(next) = self.queue.borrow_mut().pop_front() else {
+                // Nothing to advance to. A track that ended still counts as a
+                // completed play; a skip with an empty queue leaves the current
+                // track playing, so it doesn't.
+                if ended {
+                    self.note_current_play(true);
+                }
                 return false;
             };
+            self.note_current_play(ended);
             if let Some(cur) = self.current.borrow_mut().take() {
                 self.history.borrow_mut().push(cur);
             }
@@ -109,17 +128,41 @@ mod wasm_impl {
         }
 
         /// Steps back to the previous track, returning the current one to the
-        /// front of the queue. Returns `false` when there is no history.
+        /// front of the queue. Returns `false` when there is no history. Skipping
+        /// back logs the abandoned current track as a play if it played past the
+        /// halfway mark.
         fn go_prev(&self) -> bool {
             let Some(prev) = self.history.borrow_mut().pop() else {
                 return false;
             };
+            self.note_current_play(false);
             if let Some(cur) = self.current.borrow_mut().take() {
                 self.queue.borrow_mut().push_front(cur);
             }
             self.play_id(&prev);
             *self.changed.borrow_mut() = Some(prev);
             true
+        }
+
+        /// Records the current track into the `finished` queue to be logged as a
+        /// play — either unconditionally (`force`, when it reached its end) or
+        /// when it has advanced at least halfway through its timeline (a skip).
+        fn note_current_play(&self, force: bool) {
+            let Some(cur) = self.current.borrow().clone() else {
+                return;
+            };
+            if force || self.past_halfway() {
+                self.finished.borrow_mut().push(cur);
+            }
+        }
+
+        /// Whether playback of the current track has reached its halfway point.
+        /// `false` when the duration isn't yet known.
+        fn past_halfway(&self) -> bool {
+            match self.duration() {
+                Some(d) => self.audio.current_time() >= d * 0.5,
+                None => false,
+            }
         }
 
         fn set_playback_state(&self, state: MediaSessionPlaybackState) {
@@ -216,6 +259,7 @@ mod wasm_impl {
                 history: RefCell::new(Vec::new()),
                 queue: RefCell::new(VecDeque::new()),
                 changed: RefCell::new(None),
+                finished: RefCell::new(Vec::new()),
             });
 
             let (handlers, seek_handlers) = engine.install_handlers();
@@ -249,7 +293,10 @@ mod wasm_impl {
             // is backgrounded or the screen is locked and egui isn't painting.
             let engine = Rc::clone(self);
             let on_ended = Closure::<dyn FnMut()>::new(move || {
-                engine.go_next();
+                // The track reached its end: `go_next(true)` logs it as a
+                // completed play whether or not there's a next track to advance
+                // to.
+                engine.go_next(true);
             });
             self.audio
                 .set_onended(Some(on_ended.as_ref().unchecked_ref()));
@@ -287,7 +334,7 @@ mod wasm_impl {
             on(
                 MediaSessionAction::Nexttrack,
                 Box::new(move || {
-                    engine.go_next();
+                    engine.go_next(false);
                 }),
             );
             let engine = Rc::clone(self);
@@ -334,6 +381,10 @@ mod wasm_impl {
 
     impl AudioPlayer for WebAudioPlayer {
         fn set_playlist(&mut self, preceding: Vec<String>, current: &str, upcoming: Vec<String>) {
+            // Starting a fresh track abandons whatever was playing. If that track
+            // was already past its halfway mark, it counts as a completed play —
+            // note it before `play_id` swaps in the new track's position.
+            self.engine.note_current_play(false);
             *self.engine.history.borrow_mut() = preceding;
             *self.engine.queue.borrow_mut() = VecDeque::from(upcoming);
             // A deliberate load supersedes any transition the UI hasn't consumed.
@@ -375,7 +426,7 @@ mod wasm_impl {
         }
 
         fn skip_next(&mut self) {
-            self.engine.go_next();
+            self.engine.go_next(false);
         }
 
         fn set_metadata(&mut self, title: Option<&str>, artist: Option<&str>) {
@@ -388,6 +439,10 @@ mod wasm_impl {
 
         fn take_changed(&mut self) -> Option<String> {
             self.engine.changed.borrow_mut().take()
+        }
+
+        fn take_finished(&mut self) -> Vec<String> {
+            std::mem::take(&mut self.engine.finished.borrow_mut())
         }
 
         fn stop(&mut self) {
@@ -457,6 +512,10 @@ mod native_impl {
 
         fn take_changed(&mut self) -> Option<String> {
             None
+        }
+
+        fn take_finished(&mut self) -> Vec<String> {
+            Vec::new()
         }
 
         fn stop(&mut self) {

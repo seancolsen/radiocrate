@@ -35,6 +35,14 @@ impl App {
         // or a headset. Those events keep firing while the tab is backgrounded
         // and egui is suspended, so by the time we paint again the actually
         // playing track may be ahead of (or behind) `current_track`.
+        // Log a completed play for every track that finished since we last
+        // painted: an auto-advance, the queue running dry, or a skip away from a
+        // track already played past its halfway mark. These fire off the render
+        // loop, so more than one can accumulate while the tab is backgrounded.
+        for finished_id in self.audio.take_finished() {
+            crate::rpc::log_play(&finished_id);
+        }
+
         if let Some(new_id) = self.audio.take_changed() {
             self.reconcile_track_change(&new_id, &ctx);
         }
@@ -82,6 +90,10 @@ impl App {
         match action {
             Some(MenuAction::Next) => self.skip_to_next_track(&ctx),
             Some(MenuAction::Close) => {
+                // Removing the current track from the bar counts as finishing it
+                // only if it played at least halfway; log it before tearing down
+                // the audio (which resets the position we're checking).
+                self.log_play_if_past_halfway(&ct.id);
                 self.clear_current_track();
             }
             Some(MenuAction::Locate) => {
@@ -309,6 +321,20 @@ impl App {
             self.reconcile_track_change(&new_id, ctx);
         }
         ctx.request_repaint();
+    }
+
+    /// Logs a `play` for `track_id` when playback has advanced at least halfway
+    /// through the track. Used when a still-loaded track is dismissed from the
+    /// bar; a track that plays through to its end is logged unconditionally (see
+    /// [`crate::audio::AudioPlayer::take_finished`]).
+    fn log_play_if_past_halfway(&self, track_id: &str) {
+        let position = self.audio.position();
+        if let Some(duration) = self.audio.duration()
+            && duration > 0.0
+            && position >= duration * 0.5
+        {
+            crate::rpc::log_play(track_id);
+        }
     }
 
     /// Clears the now-playing state and tears down the audio player's queue and

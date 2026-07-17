@@ -137,6 +137,29 @@ pub(crate) fn record_play(id: Uuid, last_play: i64) {
     dispatch_call("query.record_play", params, |_| {});
 }
 
+/// Logs a completed play of `track_id` by inserting a `play` record through the
+/// DML API, timestamped now. Fire-and-forget.
+pub(crate) fn log_play(track_id: &str) {
+    let params = json!({
+        "operations": [{
+            "id": "play",
+            "operation": "insert",
+            "table": "play",
+            "values": { "track": track_id, "timestamp": now_timestamp() },
+        }],
+    });
+    dispatch_call("dml", params, |_| {});
+}
+
+/// Current UTC wall-clock as a `YYYY-MM-DD HH:MM:SS` string — the literal form
+/// `DuckDB` casts into the `play.timestamp` (`timestamp_s`) column.
+pub(crate) fn now_timestamp() -> String {
+    jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
 /// Renames a saved query. Fire-and-forget.
 pub(crate) fn rename_query(id: Uuid, name: &str) {
     let params = json!({ "id": id, "name": name });
