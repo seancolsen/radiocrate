@@ -415,6 +415,18 @@ impl RecordEditor {
         self
     }
 
+    /// Drops the field for a base column named `column`, if present. Used to hide a
+    /// multi-record child's *contextual filter* column — the column that references
+    /// the parent record (e.g. `credit`'s `track` when listing a track's credits).
+    /// Its value is fixed and uninformative in that context, so it's omitted rather
+    /// than shown for every embedded record. Only direct columns are removed; a
+    /// referencing (multi-record) field that happens to share the name is kept.
+    fn without_column(mut self, column: &str) -> Self {
+        self.fields
+            .retain(|f| f.name != column || matches!(f.kind, FieldKind::MultiRecord { .. }));
+        self
+    }
+
     /// The record's `id` value, when it's keyed by a single `id` column. Used to
     /// compare a freshly-selected result row against the open editor.
     pub(crate) fn record_id(&self) -> Option<&str> {
@@ -1614,6 +1626,7 @@ fn render_children(
                 ui,
                 ctx,
                 table,
+                link_column,
                 *count,
                 data,
                 depth + 1,
@@ -1636,6 +1649,7 @@ fn render_multi(
     ui: &mut egui::Ui,
     mut ctx: Option<&mut FormCtx>,
     table: &str,
+    link_column: &str,
     count: usize,
     data: &mut Load<MultiData>,
     depth: usize,
@@ -1670,6 +1684,7 @@ fn render_multi(
                     offset,
                     entry,
                     table,
+                    link_column,
                     depth,
                     indent,
                     &entry_path,
@@ -1718,6 +1733,7 @@ fn render_entry(
     offset: usize,
     entry: &mut MultiEntry,
     table: &str,
+    link_column: &str,
     depth: usize,
     indent: f32,
     path: &[FormStep],
@@ -1757,7 +1773,11 @@ fn render_entry(
             && let Some(ctx) = ctx.as_deref_mut()
             && let Some(sub) = RecordEditor::structure(ctx.schema, table)
         {
-            entry.expanded = Some(Box::new(sub.with_key(entry.key.clone())));
+            // Hide the contextual-filter column (the one referencing the parent);
+            // its value is fixed for every record in this list.
+            entry.expanded = Some(Box::new(
+                sub.without_column(link_column).with_key(entry.key.clone()),
+            ));
         }
         if let Some(sub) = &mut entry.expanded {
             ui.add_space(ROW_SPACING);
@@ -2383,6 +2403,21 @@ mod tests {
     #[test]
     fn structure_returns_none_for_unknown_table() {
         assert!(RecordEditor::structure(&schema(), "nonexistent").is_none());
+    }
+
+    #[test]
+    fn without_column_hides_the_contextual_filter_field() {
+        // A credit listed under its track hides the `track` field (the contextual
+        // filter), keeping the rest.
+        let form = RecordEditor::structure(&schema(), "credit")
+            .unwrap()
+            .without_column("track");
+        let names: Vec<&str> = form.fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            !names.contains(&"track"),
+            "track should be hidden: {names:?}"
+        );
+        assert!(names.contains(&"artist"));
     }
 
     #[test]
