@@ -309,12 +309,14 @@ pub(crate) enum FormStep {
 /// A path from the root editor to a selectable element.
 pub(crate) type FormPath = Vec<FormStep>;
 
-/// The current selection within a record editor form. Field labels and embedded
-/// records in scalar-link fields are single-selection; sibling embedded records
-/// within one multi-record field support multi-selection.
+/// The current focus/selection within a record editor form. A field label carries
+/// *focus* (single, exclusive); sibling embedded records within one multi-record
+/// field carry a *selection* (multi). Only one of the two is active at a time — the
+/// combined state is modelled as one enum so keyboard navigation moves through both.
 #[derive(Debug, Clone)]
 pub(crate) enum FormSelection {
-    /// A single selected element: a field label, or a single embedded record.
+    /// The focused field label. (A scalar link's embedded record shares its field's
+    /// path, so focusing it focuses the label; this is always a field-label path.)
     Single(FormPath),
     /// Several sibling embedded records within one multi-record field. `parent` is
     /// the path to (and including) the multi-record `Field` step; each selected
@@ -390,6 +392,9 @@ pub(crate) struct FormOutput {
     /// The user asked to enter a brand-new record for the scalar-link field at this
     /// path (the "Enter a new record" menu item).
     pub(crate) new_linked_record: Option<FormPath>,
+    /// A primary click landed on the form body but not on any selectable element
+    /// (a field label or embedded record) — clear the focus/selection.
+    pub(crate) clear_focus: bool,
 }
 
 /// The selection/edit state threaded through the recursive render: the current
@@ -921,7 +926,8 @@ impl RecordEditor {
     /// multi-record field extend (Shift) or toggle (Ctrl/⌘).
     pub(crate) fn select_click(&mut self, path: FormPath, mods: egui::Modifiers) {
         let Some(FormStep::Entry(k)) = path.last().copied() else {
-            // A field label (or scalar-link embedded record): single selection only.
+            // A field label (or a scalar link's embedded record, which shares its
+            // field's path): focus it, clearing any multi-record selection.
             self.selection = Some(FormSelection::Single(path));
             return;
         };
@@ -1096,6 +1102,11 @@ impl RecordEditor {
         }
         if let Some(path) = out.tab_advance {
             self.select_next_field(&path);
+        }
+        // A click on empty body space clears focus/selection; a click that landed on
+        // an element (`clicked`) supersedes it below.
+        if out.clear_focus {
+            self.selection = None;
         }
         if let Some((path, mods)) = out.clicked {
             self.select_click(path, mods);
@@ -1728,9 +1739,8 @@ const SKELETON_FILL: Duo = Duo {
 };
 
 const PILL_RADIUS: f32 = 6.0;
-/// Focus ring drawn around a selected form element: its outward inset and width.
-const SELECT_RING_INSET: f32 = 1.5;
-const SELECT_RING_WIDTH: f32 = 1.5;
+/// Width of the blue border drawn tight around a focused field label's pill.
+const FOCUS_BORDER_WIDTH: f32 = 1.5;
 const PILL_PAD_X: f32 = 7.0;
 const PILL_PAD_Y: f32 = 2.0;
 const PILL_ICON_SIZE: f32 = 14.0;
@@ -1845,9 +1855,21 @@ impl RecordEditor {
             editing: &mut editing,
             out: &mut out,
         };
+        // A background click sensor spanning the whole body, registered *before* the
+        // fields so their own click regions sit on top of it. A click that misses
+        // every field/embedded record falls through to this and clears the
+        // focus/selection ("click elsewhere to unfocus").
+        let bg = ui.interact(
+            ui.available_rect_before_wrap(),
+            ui.id().with("form_bg"),
+            egui::Sense::click(),
+        );
         let toolbar_border = ui.cursor().top();
         ui.add_space(BODY_HEADROOM);
         render_record(ui, ctx, self, 0, Some(toolbar_border), &[], &mut sc);
+        if bg.clicked() {
+            out.clear_focus = true;
+        }
         self.editing = editing;
         out
     }
@@ -2278,16 +2300,14 @@ fn render_entry(
         draw_chevron(ui, gutter.center(), entry.collapsed, gutter_resp.hovered());
         ui.add_space(TICK_EXTRA);
         // The embedded record selects on single click (multi-selectable among its
-        // siblings) and toggles expand on double click.
+        // siblings) and toggles expand on double click. A selected record takes the
+        // same blue fill as a selected query result row.
         let widget = match display {
             Some((columns, cells, offset)) => {
-                draw_embedded(ui, &columns[offset..], &cells[offset..])
+                draw_embedded(ui, &columns[offset..], &cells[offset..], selected)
             }
-            None => draw_new_embedded(ui),
+            None => draw_new_embedded(ui, selected),
         };
-        if selected {
-            paint_embed_ring(ui, widget.rect);
-        }
         if modified {
             paint_modified_star(ui, widget.rect);
         }
@@ -2416,46 +2436,40 @@ fn pill_size(galley: &Arc<egui::Galley>) -> egui::Vec2 {
 }
 
 /// Allocates and paints a pre-laid-out label pill: a rounded, colored rect with the
-/// icon-and-name galley inside. The pill senses clicks (to select its field) and,
-/// when `selected`, is wrapped in a focus ring. Returns its click response.
+/// icon-and-name galley inside. The pill senses clicks (to focus its field) and,
+/// when `focused`, is wrapped in a tight blue border. Returns its click response.
 fn paint_pill(
     ui: &mut egui::Ui,
     galley: Arc<egui::Galley>,
     size: egui::Vec2,
     bg: Duo,
-    selected: bool,
+    focused: bool,
 ) -> egui::Response {
     let fg = LABEL_FG.get(ui.visuals());
     // `CLICK` (not `click()`) so the pill senses clicks without becoming
-    // keyboard-focusable — form selection is app state, and a focused egui widget
+    // keyboard-focusable — form focus is app state, and a focused egui widget
     // would suppress the plain-arrow selection commands.
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::CLICK);
     ui.painter()
         .rect_filled(rect, PILL_RADIUS, bg.get(ui.visuals()));
     ui.painter()
         .galley(rect.min + egui::vec2(PILL_PAD_X, PILL_PAD_Y), galley, fg);
-    if selected {
-        paint_selection_ring(ui, rect, PILL_RADIUS);
+    if focused {
+        paint_focus_border(ui, rect);
     }
     resp
 }
 
-/// Draws a focus ring just outside `rect` (with matching rounded corners), marking
-/// a selected form element.
-fn paint_selection_ring(ui: &egui::Ui, rect: egui::Rect, radius: f32) {
+/// Draws the blue focus border tight around a field label's pill — hugging the pill
+/// edge (drawn inside, so no gap shows between the pill and the border).
+fn paint_focus_border(ui: &egui::Ui, rect: egui::Rect) {
     let color = ui.visuals().selection.stroke.color;
     ui.painter().rect_stroke(
-        rect.expand(SELECT_RING_INSET),
-        radius + SELECT_RING_INSET,
-        egui::Stroke::new(SELECT_RING_WIDTH, color),
-        egui::StrokeKind::Outside,
+        rect,
+        PILL_RADIUS,
+        egui::Stroke::new(FOCUS_BORDER_WIDTH, color),
+        egui::StrokeKind::Inside,
     );
-}
-
-/// Draws the focus ring for a selected embedded-record widget, matching its
-/// (semicircular) corner radius.
-fn paint_embed_ring(ui: &egui::Ui, rect: egui::Rect) {
-    paint_selection_ring(ui, rect, embed_radius(ui));
 }
 
 /// The static height of a field's value area (everything but a dynamic embedded
@@ -2620,8 +2634,10 @@ fn draw_scalar_link(
         if entering_new {
             // A brand-new record is being entered: show the "New" embedded widget
             // (a real preview can't be pieced together from unsaved values), which
-            // selects, toggles expansion on double-click, and clears via its menu.
-            let widget = draw_new_embedded(ui);
+            // focuses its field, toggles expansion on double-click, and clears via its
+            // menu. A scalar link's focus reads on its label, so the widget isn't
+            // itself filled blue.
+            let widget = draw_new_embedded(ui, false);
             sc.click(path, &widget);
             if widget.double_clicked() {
                 sc.out.toggle_expand = Some(path.to_vec());
@@ -2648,7 +2664,9 @@ fn draw_scalar_link(
     match embedded {
         Load::Ready(d) => {
             let cells = d.rows.row_values(0);
-            let widget = draw_embedded(ui, &d.columns, &cells);
+            // A scalar link's focus reads on its label, so the embedded preview isn't
+            // itself filled blue.
+            let widget = draw_embedded(ui, &d.columns, &cells, false);
             sc.click(path, &widget);
             if widget.double_clicked() {
                 sc.out.toggle_expand = Some(path.to_vec());
@@ -3037,27 +3055,66 @@ fn embed_size(ui: &egui::Ui, columns: &[ColumnMetadata], avail: f32) -> egui::Ve
     embed_layout(ui, columns, avail).size
 }
 
-/// Draws an embedded-record widget filling the remaining row width: a rounded rect
-/// with the same top-lit gradient (and hover shading) as a query result row, a
-/// faint border, and fields rendered like a result row but forced to small, light
-/// text. Returns the widget's [`egui::Response`] (for double-click to expand).
-fn draw_embedded(
-    ui: &mut egui::Ui,
-    columns: &[ColumnMetadata],
-    cells: &[CellValue],
-) -> egui::Response {
-    let el = embed_layout(ui, columns, ui.available_width());
-    let radius = embed_radius(ui);
+/// Returns `color` with its alpha channel replaced by `alpha`.
+fn translucent(color: egui::Color32, alpha: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+}
 
-    let (rect, resp) = ui.allocate_exact_size(el.size, egui::Sense::CLICK);
-    let (top, bottom) = embed_gradient(ui, resp.hovered());
-    paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
+/// Paints an embedded-record widget's rounded surface (fill + faint border). By
+/// default it's the same top-lit gradient (hover-shaded) as a query result row;
+/// when `selected` it's the flat blue selection fill with the sheen layered on top
+/// at reduced opacity — matching a selected query result row.
+fn paint_embed_surface(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    radius: f32,
+    selected: bool,
+    hovered: bool,
+) {
+    if selected {
+        let v = ui.visuals();
+        let base = if hovered {
+            theme::shade(v, crate::results::SELECTED_ROW_BG.get(v), 20)
+        } else {
+            crate::results::SELECTED_ROW_BG.get(v)
+        };
+        paint_rounded_gradient(ui.painter(), rect, radius, base, base);
+        let (top, bottom) = embed_gradient(ui, hovered);
+        paint_rounded_gradient(
+            ui.painter(),
+            rect,
+            radius,
+            translucent(top, crate::results::SELECTED_ROW_GRADIENT_ALPHA),
+            translucent(bottom, crate::results::SELECTED_ROW_GRADIENT_ALPHA),
+        );
+    } else {
+        let (top, bottom) = embed_gradient(ui, hovered);
+        paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
+    }
     ui.painter().rect_stroke(
         rect,
         radius,
         egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
+}
+
+/// Draws an embedded-record widget filling the remaining row width: a rounded rect
+/// with the same top-lit gradient (and hover shading) as a query result row, a
+/// faint border, and fields rendered like a result row but forced to small, light
+/// text. When `selected`, the fill is the same blue as a selected query result row.
+/// Returns the widget's [`egui::Response`] (for double-click to expand).
+fn draw_embedded(
+    ui: &mut egui::Ui,
+    columns: &[ColumnMetadata],
+    cells: &[CellValue],
+    selected: bool,
+) -> egui::Response {
+    let el = embed_layout(ui, columns, ui.available_width());
+    let radius = embed_radius(ui);
+
+    let (rect, resp) = ui.allocate_exact_size(el.size, egui::Sense::CLICK);
+    paint_embed_surface(ui, rect, radius, selected, resp.hovered());
 
     let color = ui.visuals().weak_text_color();
     let font = egui::FontId::proportional(EMBED_TEXT_SIZE);
@@ -3095,19 +3152,12 @@ fn draw_embedded(
 /// bordered, rounded surface as a loaded record, but with "New" centered in
 /// italics (we can't piece a real preview together from unsaved field values).
 /// Returns the widget's response (for click/double-click to select/expand).
-fn draw_new_embedded(ui: &mut egui::Ui) -> egui::Response {
+fn draw_new_embedded(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     let avail = ui.available_width().max(embed_radius(ui) * 2.0);
     let radius = embed_radius(ui);
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(avail, skeleton_height(ui)), egui::Sense::CLICK);
-    let (top, bottom) = embed_gradient(ui, resp.hovered());
-    paint_rounded_gradient(ui.painter(), rect, radius, top, bottom);
-    ui.painter().rect_stroke(
-        rect,
-        radius,
-        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
-        egui::StrokeKind::Inside,
-    );
+    paint_embed_surface(ui, rect, radius, selected, resp.hovered());
     let mut job = LayoutJob::single_section(
         "New".to_owned(),
         egui::TextFormat {
@@ -3125,7 +3175,7 @@ fn draw_new_embedded(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
-/// Renders one modal-picker result as an embedded-record widget, ringed when
+/// Renders one modal-picker result as an embedded-record widget, filled blue when
 /// `selected`. Reuses the same widget as scalar-link and multi-record previews so
 /// picker rows read identically to embedded records elsewhere. Returns the widget's
 /// click response.
@@ -3135,11 +3185,7 @@ pub(crate) fn render_picker_result(
     cells: &[CellValue],
     selected: bool,
 ) -> egui::Response {
-    let widget = draw_embedded(ui, columns, cells);
-    if selected {
-        paint_embed_ring(ui, widget.rect);
-    }
-    widget
+    draw_embedded(ui, columns, cells, selected)
 }
 
 /// Draws a not-yet-loaded embedded record as an empty skeleton widget filling the
@@ -3737,10 +3783,10 @@ mod snapshot_tests {
         snapshot_dual(&mut harness, "record_editor/loading_states");
     }
 
-    /// A selected field label draws a focus ring around its pill (here the nested
-    /// `role` field within the expanded "Noha" credit record).
+    /// A focused field label draws a tight blue border hugging its pill (here the
+    /// nested `role` field within the expanded "Noha" credit record).
     #[test]
-    fn selection_field_label() {
+    fn focus_field_label() {
         let mut form = nested_form();
         // Path: credit (field 2) → Noha entry (1) → role (field 1).
         form.selection = Some(FormSelection::Single(vec![
@@ -3752,11 +3798,12 @@ mod snapshot_tests {
             form.show(ui);
         });
         harness.run();
-        snapshot_dual(&mut harness, "record_editor/selection_field_label");
+        snapshot_dual(&mut harness, "record_editor/focus_field_label");
     }
 
     /// Multiple sibling embedded records selected within a multi-record field each
-    /// draw a focus ring (here the first and third `credit` records).
+    /// take the same blue fill as a selected query result row (here the first and
+    /// third `credit` records).
     #[test]
     fn selection_records() {
         let mut form = nested_form();

@@ -56,14 +56,15 @@ pub(crate) const ROW_BG_BOTTOM: theme::Duo = theme::Duo {
     dark: egui::Color32::from_gray(0x26),
 };
 
-/// Background of a selected result row
-const SELECTED_ROW_BG: theme::Duo = theme::Duo {
+/// Background of a selected result row (also reused for a selected embedded record
+/// in the record editor form, so the two selection treatments match).
+pub(crate) const SELECTED_ROW_BG: theme::Duo = theme::Duo {
     light: egui::Color32::from_rgb(0xC8, 0xE4, 0xFF),
     dark: egui::Color32::from_rgb(0x28, 0x45, 0x63),
 };
 /// Opacity of the top-lit sheen gradient layered on top of a selected row's flat
 /// fill, so the sheen reads without hiding the selection color underneath.
-const SELECTED_ROW_GRADIENT_ALPHA: u8 = 90;
+pub(crate) const SELECTED_ROW_GRADIENT_ALPHA: u8 = 90;
 
 /// Text color for result-row cells while the current page's query is reloading:
 /// a medium gray, applied uniformly (regardless of a column's own text color) so
