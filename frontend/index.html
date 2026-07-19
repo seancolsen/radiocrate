@@ -8,6 +8,14 @@
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; }
     canvas { display: block; width: 100%; height: 100%; outline: none; }
+    /*
+     * eframe captures mobile keyboard/IME input through a hidden <input> that it
+     * focuses when a canvas-drawn text field is edited. It never sets a font-size,
+     * so the input inherits the browser default (< 16px). On iOS that triggers an
+     * automatic zoom-in on focus, and the page can't be pinched back out afterward.
+     * Forcing >= 16px suppresses the auto-zoom (Android is unaffected either way).
+     */
+    input { font-size: 16px; }
   </style>
 </head>
 <body>
