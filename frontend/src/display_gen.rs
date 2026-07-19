@@ -289,12 +289,12 @@ mod tests {
             score(credit.column("role").unwrap(), credit, true, Some("track")),
             2
         );
-        // Transitive, required, unique, UUID -> 1.
-        assert_eq!(score(artist.column("id").unwrap(), artist, false, None), 1);
-        // Transitive, required, unique, text -> 3.
+        // Transitive, required, unique, UUID -> 0.
+        assert_eq!(score(artist.column("id").unwrap(), artist, false, None), 0);
+        // Transitive, required, unique, text -> 4.
         assert_eq!(
             score(artist.column("name").unwrap(), artist, false, None),
-            3
+            4
         );
     }
 
@@ -342,13 +342,13 @@ mod tests {
         ], "links": [] }"#;
         let schema = Schema::parse(json).unwrap();
         let credit = schema.table("credit").unwrap();
-        // ord: direct(1) + required(1) + unique-with-track(1) + text(1) = 4.
+        // ord: direct(1) + required(2) + unique-with-track(1) + text(1) = 5.
         assert_eq!(
             score(credit.column("ord").unwrap(), credit, true, Some("track")),
-            4
+            5
         );
         // Without the contextual column, the paired constraint grants no uniqueness.
-        assert_eq!(score(credit.column("ord").unwrap(), credit, true, None), 3);
+        assert_eq!(score(credit.column("ord").unwrap(), credit, true, None), 4);
     }
 
     #[test]
