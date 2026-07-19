@@ -687,8 +687,8 @@ mod tests {
 
     fn insert_track(conn: &Connection, id: &str, file: &str, album: Option<&str>) {
         conn.execute(
-            "INSERT INTO track (id, file, album) VALUES (?, ?, ?)",
-            params![id, file, album],
+            "INSERT INTO track (id, file, album, title) VALUES (?, ?, ?, ?)",
+            params![id, file, album, "Track Title"],
         )
         .unwrap();
     }
