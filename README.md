@@ -1,4 +1,4 @@
-# Collectune
+# RadioCrate
 
 A client-server app for managing and playing your personal collection of music files.
 
@@ -6,9 +6,9 @@ A client-server app for managing and playing your personal collection of music f
 
 | Crate | Kind | Purpose |
 |---|---|---|
-| [`backend`](backend) | lib + bin (`collectune-server`) | Server logic (axum, DuckDB, scanner, audio stream). The bin is the dev API server. |
-| [`frontend`](frontend) | lib + bin (`collectune-ui`) | egui app. The lib is shared between the native desktop bin and the WASM build. |
-| [`collectune`](collectune) | bin (`collectune`) | **Production single binary** — depends on the `backend` lib and embeds the WASM frontend. |
+| [`backend`](backend) | lib + bin (`radiocrate-server`) | Server logic (axum, DuckDB, scanner, audio stream). The bin is the dev API server. |
+| [`frontend`](frontend) | lib + bin (`radiocrate-ui`) | egui app. The lib is shared between the native desktop bin and the WASM build. |
+| [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the WASM frontend. |
 | [`xtask`](xtask) | bin | Build orchestration (`cargo xtask build-release`). |
 
 ## Development
@@ -60,14 +60,14 @@ cargo xtask build-release
 This runs two steps:
 
 1. `trunk build --release` in [frontend/](frontend) — compiles the egui app to WASM and emits `frontend/dist/`.
-2. `cargo build --release -p collectune` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
+2. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
 
-The resulting binary is at `target/release/collectune`.
+The resulting binary is at `target/release/radiocrate`.
 
 ### Run
 
 ```sh
-./target/release/collectune /path/to/music
+./target/release/radiocrate /path/to/music
 ```
 
 Options match the dev API server (`--port`, `--no-scan`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.

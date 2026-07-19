@@ -7,7 +7,7 @@ edition = "2024"
 path = "src/lib.rs"
 
 [[bin]]
-name = "collectune-server"
+name = "radiocrate-server"
 path = "src/main.rs"
 
 [lints]

@@ -1787,7 +1787,7 @@ fn selected_paths(sel: &FormSelection) -> Vec<FormPath> {
     }
 }
 
-/// The column that identifies a single record in `table`, by Collectune's
+/// The column that identifies a single record in `table`, by RadioCrate's
 /// convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
 /// preferring one named `id` when a table has several. Returns `None` for a
 /// table keyed only by a composite constraint (e.g. `credit (track, artist)`).

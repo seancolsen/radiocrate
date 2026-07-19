@@ -8,7 +8,7 @@
 """
 Generate a test audio collection using piper-tts.
 
-This script generates FLAC audio files for testing the collectune application.
+This script generates FLAC audio files for testing the radiocrate application.
 It uses piper-tts to synthesize speech and converts the output to FLAC format
 with appropriate metadata.
 """

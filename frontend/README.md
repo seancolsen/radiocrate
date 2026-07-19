@@ -1,6 +1,6 @@
-# Collectune Frontend
+# RadioCrate Frontend
 
-Frontend application for Collectune.
+Frontend application for RadioCrate.
 
 ## Icons
 

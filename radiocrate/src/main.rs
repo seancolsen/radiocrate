@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 struct Assets;
 
 #[derive(Parser)]
-#[command(name = "collectune")]
-#[command(about = "Collectune — manage and play your audio collection")]
+#[command(name = "radiocrate")]
+#[command(about = "RadioCrate — manage and play your audio collection")]
 struct Args {
     /// Path to the collection of audio files
     collection_path: String,
@@ -21,7 +21,7 @@ struct Args {
     #[arg(long)]
     no_scan: bool,
 
-    /// Path to the database file (defaults to `collectune.db` in the collection root)
+    /// Path to the database file (defaults to `radiocrate.db` in the collection root)
     #[arg(long)]
     db_path: Option<PathBuf>,
 

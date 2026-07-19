@@ -1,4 +1,4 @@
-//! Shared database introspection for Collectune's front end and back end.
+//! Shared database introspection for RadioCrate's front end and back end.
 //!
 //! Both halves of the app need to understand the database's structure by introspecting it at
 //! runtime, and both must agree on that structure. The front end feeds it to the Querydown compiler;
@@ -14,7 +14,7 @@
 //!
 //! # Inferred links
 //!
-//! Collectune declares no foreign keys — `DuckDB` can't update rows referenced by an `FK` constraint —
+//! RadioCrate declares no foreign keys — `DuckDB` can't update rows referenced by an `FK` constraint —
 //! so the introspection SQL finds no links and always emits an empty `links` array. We recover links
 //! by convention: any `UUID` column whose name matches another table's name is treated as a link to
 //! that table's `id` column. This inference is applied two ways from one shared implementation:
@@ -29,7 +29,7 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// The SQL that introspects a `DuckDB` database into Collectune's schema JSON.
+/// The SQL that introspects a `DuckDB` database into RadioCrate's schema JSON.
 ///
 /// The query returns a single row with a single JSON-text cell. Run it through the query API, read
 /// the lone value, then either enrich it with [`add_inferred_links`] (front end) or parse it with
@@ -178,7 +178,7 @@ fn column_view(tables: &[RawTable]) -> Vec<(String, Vec<(String, String)>)> {
         .collect()
 }
 
-/// The single source of truth for Collectune's foreign-key convention: a `UUID` column whose name
+/// The single source of truth for RadioCrate's foreign-key convention: a `UUID` column whose name
 /// matches another table's name links to that table's `id` column.
 fn infer_links(tables: &[(String, Vec<(String, String)>)]) -> Vec<Link> {
     let table_names: HashSet<&str> = tables.iter().map(|(name, _)| name.as_str()).collect();

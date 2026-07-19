@@ -45,12 +45,12 @@ fn build_release() -> Result<(), String> {
         .args(["build", "--release"])
         .current_dir(&frontend))?;
 
-    println!("==> cargo build --release -p collectune");
+    println!("==> cargo build --release -p radiocrate");
     run(Command::new("cargo")
-        .args(["build", "--release", "-p", "collectune"])
+        .args(["build", "--release", "-p", "radiocrate"])
         .current_dir(&root))?;
 
-    let bin = root.join("target/release/collectune");
+    let bin = root.join("target/release/radiocrate");
     println!("\nBuilt: {}", bin.display());
     Ok(())
 }

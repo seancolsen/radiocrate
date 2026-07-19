@@ -5,7 +5,7 @@
 //
 // Spec: https://containers.dev
 {
-  "name": "collectune-dev",
+  "name": "radiocrate-dev",
   // Reuse the compose service we already built rather than redefining anything.
   "dockerComposeFile": "../docker-compose.yml",
   "service": "dev",

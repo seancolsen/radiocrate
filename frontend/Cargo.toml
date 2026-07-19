@@ -8,7 +8,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "collectune-ui"
+name = "radiocrate-ui"
 path = "src/main.rs"
 
 [lints]

@@ -1,5 +1,5 @@
 [workspace]
-members = ["backend", "frontend", "collectune", "introspection", "xtask"]
+members = ["backend", "frontend", "radiocrate", "introspection", "xtask"]
 resolver = "3"
 default-members = ["backend", "frontend"]
 

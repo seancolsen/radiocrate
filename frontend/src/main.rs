@@ -24,7 +24,7 @@ mod native {
         let cli = Cli::parse();
         let options = eframe::NativeOptions::default();
         eframe::run_native(
-            "Collectune",
+            "RadioCrate",
             options,
             Box::new(move |cc| {
                 setup_context(&cc.egui_ctx);

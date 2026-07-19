@@ -1,10 +1,10 @@
 use duckdb::Connection;
 use std::path::{Path, PathBuf};
 
-static DB_FILE_NAME: &str = "collectune.db";
+static DB_FILE_NAME: &str = "radiocrate.db";
 
 /// The default location of the database file when the user does not supply a
-/// custom path: `collectune.db` within the collection root.
+/// custom path: `radiocrate.db` within the collection root.
 #[must_use]
 pub fn default_db_path(collection_path: &Path) -> PathBuf {
     collection_path.join(DB_FILE_NAME)

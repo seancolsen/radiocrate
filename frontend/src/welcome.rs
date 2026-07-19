@@ -10,7 +10,7 @@ use eframe::egui;
 pub(crate) fn render_welcome_center(ui: &mut egui::Ui) {
     egui::CentralPanel::default().show_inside(ui, |ui| {
         ui.centered_and_justified(|ui| {
-            ui.heading(egui::RichText::new("Collectune").size(48.0));
+            ui.heading(egui::RichText::new("RadioCrate").size(48.0));
         });
     });
 }

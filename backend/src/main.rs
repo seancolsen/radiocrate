@@ -3,7 +3,7 @@ use clap::Parser;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "collectune-server")]
+#[command(name = "radiocrate-server")]
 #[command(about = "A tool for managing audio file collections")]
 struct Args {
     /// Path to the collection of audio files
@@ -13,7 +13,7 @@ struct Args {
     #[arg(long)]
     no_scan: bool,
 
-    /// Path to the database file (defaults to `collectune.db` in the collection root)
+    /// Path to the database file (defaults to `radiocrate.db` in the collection root)
     #[arg(long)]
     db_path: Option<PathBuf>,
 

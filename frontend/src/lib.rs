@@ -1118,7 +1118,7 @@ impl App {
         }
     }
 
-    /// The primary-key column of `base`, per Collectune's convention, or `None`
+    /// The primary-key column of `base`, per RadioCrate's convention, or `None`
     /// when the schema isn't loaded, `base` is unknown, or the table has only a
     /// composite key. See [`form::primary_key`].
     fn base_primary_key(&self, base: &str) -> Option<String> {

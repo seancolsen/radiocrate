@@ -259,7 +259,7 @@ fn build_opus_head(channels: u8, pre_skip: u16, original_sample_rate: u32) -> Ve
 }
 
 fn build_opus_tags() -> Vec<u8> {
-    let vendor = b"collectune";
+    let vendor = b"radiocrate";
     let mut tags = Vec::with_capacity(8 + 4 + vendor.len() + 4);
     tags.extend_from_slice(b"OpusTags");
     tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());

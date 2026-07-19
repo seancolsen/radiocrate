@@ -1270,18 +1270,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "collectune"
-version = "0.1.0"
-dependencies = [
- "axum",
- "backend",
- "clap",
- "mime_guess",
- "rust-embed",
- "tokio",
-]
-
-[[package]]
 name = "color"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4181,6 +4169,18 @@ name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
+name = "radiocrate"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "backend",
+ "clap",
+ "mime_guess",
+ "rust-embed",
+ "tokio",
+]
 
 [[package]]
 name = "radium"

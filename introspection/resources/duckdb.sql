@@ -1,4 +1,4 @@
--- Collectune schema introspection query for DuckDB.
+-- RadioCrate schema introspection query for DuckDB.
 --
 -- Running this against a live database yields a single row with a single column containing the
 -- schema JSON that both the Querydown compiler (front end) and the DML API (back end) consume.
@@ -18,7 +18,7 @@
 --   * `nullable` records whether each column permits NULL (`is_nullable = 'YES'`).
 --   * `unique_constraints` lists every UNIQUE / PRIMARY KEY constraint on the table as an array of
 --     the column-name arrays it covers (so multi-column constraints are represented faithfully).
---   * `links` is always emitted empty here. Collectune declares no foreign keys (DuckDB can't update
+--   * `links` is always emitted empty here. RadioCrate declares no foreign keys (DuckDB can't update
 --     rows referenced by an FK constraint), so links are inferred by convention in Rust after this
 --     query runs — see the `introspection` crate.
 --
