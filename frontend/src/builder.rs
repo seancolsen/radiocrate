@@ -1426,7 +1426,7 @@ fn draw_tab(ui: &mut egui::Ui, t: &TabInfo) -> (Option<TabClick>, Option<egui::R
         ui.painter().rect_stroke(
             rect.shrink(0.5),
             TAB_RADIUS,
-            egui::Stroke::new(1.0, PRESET_BG.get(ui.visuals())),
+            egui::Stroke::new(1.0_f32, PRESET_BG.get(ui.visuals())),
             egui::StrokeKind::Inside,
         );
     }

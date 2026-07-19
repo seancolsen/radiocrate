@@ -1787,7 +1787,7 @@ fn selected_paths(sel: &FormSelection) -> Vec<FormPath> {
     }
 }
 
-/// The column that identifies a single record in `table`, by RadioCrate's
+/// The column that identifies a single record in `table`, by `RadioCrate`'s
 /// convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
 /// preferring one named `id` when a table has several. Returns `None` for a
 /// table keyed only by a composite constraint (e.g. `credit (track, artist)`).
@@ -2198,7 +2198,7 @@ impl RecordEditor {
         ui.painter().hline(
             inner.response.rect.x_range(),
             border_y,
-            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            egui::Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
         let _ = self.body(ui, None);
         inner.inner
@@ -2302,7 +2302,7 @@ type Tick = (f32, f32, f32);
 /// it never rides up into the parent; when `None` (the root) it starts at the first
 /// row's center.
 fn draw_tree(ui: &egui::Ui, idx: egui::layers::ShapeIdx, ticks: &[Tick], spine_top: Option<f32>) {
-    let stroke = egui::Stroke::new(1.0, TREE_LINE.get(ui.visuals()));
+    let stroke = egui::Stroke::new(1.0_f32, TREE_LINE.get(ui.visuals()));
     let spine_x = ticks[0].0;
     let top = spine_top.map_or(ticks[0].2, f32::round);
     let mut shapes: Vec<egui::Shape> = Vec::with_capacity(ticks.len() + 1);
@@ -3343,7 +3343,7 @@ fn edit_input(ui: &mut egui::Ui, ty: Primitive, edit: &mut FormEdit, avail: f32)
         ui.painter().rect_stroke(
             output.response.rect,
             4.0,
-            egui::Stroke::new(1.0, crate::page::DELETE_RED.get(ui.visuals())),
+            egui::Stroke::new(1.0_f32, crate::page::DELETE_RED.get(ui.visuals())),
             egui::StrokeKind::Inside,
         );
     }
@@ -3509,7 +3509,7 @@ fn paint_embed_surface(
     ui.painter().rect_stroke(
         rect,
         radius,
-        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
+        egui::Stroke::new(1.0_f32, EMBED_BORDER.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
 }
@@ -3615,7 +3615,7 @@ fn draw_skeleton(ui: &mut egui::Ui) -> egui::Rect {
     ui.painter().rect_stroke(
         rect,
         radius,
-        egui::Stroke::new(1.0, EMBED_BORDER.get(ui.visuals())),
+        egui::Stroke::new(1.0_f32, EMBED_BORDER.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
     rect

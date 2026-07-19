@@ -105,7 +105,7 @@ impl Button {
             ui.painter().rect_stroke(
                 rect.shrink(0.5),
                 RADIUS,
-                egui::Stroke::new(1.0, stroke_color),
+                egui::Stroke::new(1.0_f32, stroke_color),
                 egui::StrokeKind::Inside,
             );
 
@@ -276,7 +276,7 @@ impl SplitButton {
             ui.painter().rect_stroke(
                 rect.shrink(0.5),
                 RADIUS,
-                egui::Stroke::new(1.0, stroke_color),
+                egui::Stroke::new(1.0_f32, stroke_color),
                 egui::StrokeKind::Inside,
             );
 

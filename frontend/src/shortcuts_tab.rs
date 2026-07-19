@@ -327,7 +327,7 @@ fn record_box(ui: &mut egui::Ui, text: &str, width: f32) {
     ui.painter().rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, crate::HOVER_BLUE.get(ui.visuals())),
+        egui::Stroke::new(1.0_f32, crate::HOVER_BLUE.get(ui.visuals())),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
@@ -372,7 +372,7 @@ fn shortcuts_header(ui: &mut egui::Ui) {
             egui::pos2(rect.left(), rect.bottom()),
             egui::pos2(rect.right(), rect.bottom()),
         ],
-        egui::Stroke::new(1.0, weak.gamma_multiply(0.4)),
+        egui::Stroke::new(1.0_f32, weak.gamma_multiply(0.4)),
     );
 }
 

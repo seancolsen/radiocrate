@@ -494,14 +494,14 @@ fn draw_one_tab(
         ui.painter().rect_stroke(
             rect,
             corner,
-            egui::Stroke::new(1.0, crate::HOVER_BLUE.get(ui.visuals())),
+            egui::Stroke::new(1.0_f32, crate::HOVER_BLUE.get(ui.visuals())),
             egui::StrokeKind::Inside,
         );
     }
     // Right-edge separator between handles.
     ui.painter().line_segment(
         [rect.right_top(), rect.right_bottom()],
-        egui::Stroke::new(1.0, shade(ui.visuals(), bar_fill, 22)),
+        egui::Stroke::new(1.0_f32, shade(ui.visuals(), bar_fill, 22)),
     );
 
     // Inactive tabs read as secondary: their icon and name dim to the weak text

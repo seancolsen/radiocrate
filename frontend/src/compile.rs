@@ -13,7 +13,7 @@ use crate::columns::ColumnMetadata;
 use crate::query_def::{CompileSource, QuerySections};
 
 /// Querydown definitions prepended to every query before compilation. These set
-/// up RadioCrate's computed columns (e.g. `#track.year`) and custom comparisons
+/// up `RadioCrate`'s computed columns (e.g. `#track.year`) and custom comparisons
 /// (e.g. the default text search and `#track.artist`) so that queries — whether
 /// hand-written or composed from sections — can refer to them. For now this is
 /// hard-coded here in the frontend.

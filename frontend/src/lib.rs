@@ -1118,7 +1118,7 @@ impl App {
         }
     }
 
-    /// The primary-key column of `base`, per RadioCrate's convention, or `None`
+    /// The primary-key column of `base`, per `RadioCrate`'s convention, or `None`
     /// when the schema isn't loaded, `base` is unknown, or the table has only a
     /// composite key. See [`form::primary_key`].
     fn base_primary_key(&self, base: &str) -> Option<String> {
@@ -1632,7 +1632,7 @@ fn render_save_error(ui: &mut egui::Ui, message: &str) {
     let red = egui::Color32::from_rgb(0xD3, 0x2F, 0x2F);
     egui::Frame::new()
         .fill(red.gamma_multiply(0.12))
-        .stroke(egui::Stroke::new(1.0, red.gamma_multiply(0.5)))
+        .stroke(egui::Stroke::new(1.0_f32, red.gamma_multiply(0.5)))
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .outer_margin(egui::Margin {
