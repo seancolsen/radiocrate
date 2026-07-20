@@ -1,3 +1,6 @@
+mod icons;
+mod service_worker;
+
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
@@ -6,7 +9,8 @@ fn usage() {
         "cargo xtask <command>\n\n\
          Commands:\n  \
            build-release   Build the WASM frontend with trunk and the production binary\n  \
-           clean-web       Remove the frontend/dist directory"
+           clean-web       Remove the frontend/dist directory\n  \
+           icons           Regenerate the PWA icon set from branding/logo.svg"
     );
 }
 
@@ -45,6 +49,9 @@ fn build_release() -> Result<(), String> {
         .args(["build", "--release"])
         .current_dir(&frontend))?;
 
+    println!("==> stamping the service worker");
+    service_worker::stamp(&frontend.join("dist"))?;
+
     println!("==> cargo build --release -p radiocrate");
     run(Command::new("cargo")
         .args(["build", "--release", "-p", "radiocrate"])
@@ -74,6 +81,7 @@ fn main() -> ExitCode {
     let result = match cmd.as_str() {
         "build-release" => build_release(),
         "clean-web" => clean_web(),
+        "icons" => icons::generate(&workspace_root()),
         "--help" | "-h" | "help" => {
             usage();
             Ok(())

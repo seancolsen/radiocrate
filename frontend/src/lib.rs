@@ -18,6 +18,7 @@ mod display_gen;
 mod field_layout;
 mod form;
 mod format;
+mod history;
 mod http;
 mod icons;
 mod lineage;
@@ -402,6 +403,13 @@ impl App {
         let panel_fill = ui.style().visuals.panel_fill;
         let persistent = ctx.viewport_rect().width() >= PERSISTENT_ORGANIZER_MIN_WIDTH;
 
+        // Installed on a phone, the system Back gesture should close whatever is
+        // on top rather than quit the app. Handled before anything renders, so
+        // the layer is gone by the time this frame paints.
+        if history::take_back() {
+            self.dismiss_top_layer(!persistent);
+        }
+
         // A tab picks up edits as its own: once an unpinned (preview) tab becomes
         // dirty it's promoted to a pinned tab, so opening another query won't
         // silently discard the in-progress work. (Ephemeral tabs open pinned.)
@@ -489,6 +497,10 @@ impl App {
         self.render_view_sql_modal(&ctx);
         self.render_record_picker_modal(&ctx);
         self.render_command_palette(&ctx);
+
+        // Now that this frame's layers are settled, tell the browser whether
+        // there's anything for Back to close.
+        history::sync(history::any_open(self, !persistent));
     }
 }
 

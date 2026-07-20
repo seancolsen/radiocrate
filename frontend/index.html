@@ -4,10 +4,219 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>RadioCrate</title>
+  <meta name="description" content="Manage and play your audio collection." />
+
+  <!--
+    Everything below is host-relative on purpose. RadioCrate is self-hosted and
+    every installation is on a different domain, so the manifest, the service
+    worker scope and the icons must never name one.
+  -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" />
+  <link rel="icon" href="/icons/favicon-16.png" sizes="16x16" />
+  <link rel="icon" href="/icons/logo.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+  <!-- Standalone display. The first is the modern spelling, the second the one
+       iOS still reads. -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="RadioCrate" />
+  <!--
+    `default` rather than `black-translucent`: it lets iOS pick a legible status
+    bar for the system appearance. Under `black-translucent` the status bar
+    follows the *system* theme while the app follows its own stored preference,
+    so overriding the theme to the opposite of the system can leave the clock
+    unreadable against our own background.
+  -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+  <!-- Tints the Android status bar / desktop title bar to match the surface the
+       app paints under it. Kept in sync with a forced theme by the bootstrap
+       script below. -->
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#f8f8f8" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#1b1b1b" media="(prefers-color-scheme: dark)" />
+
+  <!-- BEGIN generated: ios-launch-images (cargo xtask icons) -->
+  <link rel="apple-touch-startup-image" href="/icons/launch-320x568@2x-light.png"
+        media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-320x568@2x-dark.png"
+        media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-375x667@2x-light.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-375x667@2x-dark.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-390x844@3x-light.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-390x844@3x-dark.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-393x852@3x-light.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-393x852@3x-dark.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-414x896@2x-light.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-414x896@2x-dark.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-428x926@3x-light.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-428x926@3x-dark.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-430x932@3x-light.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-430x932@3x-dark.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-768x1024@2x-light.png"
+        media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-768x1024@2x-dark.png"
+        media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-810x1080@2x-light.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-810x1080@2x-dark.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-820x1180@2x-light.png"
+        media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-820x1180@2x-dark.png"
+        media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-834x1194@2x-light.png"
+        media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-834x1194@2x-dark.png"
+        media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-1024x1366@2x-light.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: light)" />
+  <link rel="apple-touch-startup-image" href="/icons/launch-1024x1366@2x-dark.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (prefers-color-scheme: dark)" />
+  <!-- END generated: ios-launch-images -->
+
   <link data-trunk rel="rust" data-target-name="frontend" data-wasm-opt="z" />
+  <link data-trunk rel="copy-dir" href="assets/icons" data-target-path="icons" />
+  <link data-trunk rel="copy-file" href="assets/manifest.webmanifest" />
+  <link data-trunk rel="copy-file" href="assets/sw.js" />
+
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; }
-    canvas { display: block; width: 100%; height: 100%; outline: none; }
+    /*
+     * The app's two surfaces, mirroring `frontend/src/theme.rs`:
+     *   --panel  egui's `panel_fill` — the menu bar and main content.
+     *   --sheet  that shaded by 8 (`theme::shade`) — the now-playing bar.
+     * The safe-area strips are painted with whichever one they abut, so the
+     * inset reads as the app running to the edge rather than as a letterbox.
+     */
+    :root {
+      --panel: #f8f8f8;
+      --sheet: #f0f0f0;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --panel: #1b1b1b; --sheet: #232323; }
+    }
+    /* An explicit choice stored by `theme::set_preference` wins over the
+       system preference, exactly as it does inside the app. */
+    :root[data-theme="light"] { --panel: #f8f8f8; --sheet: #f0f0f0; color-scheme: light; }
+    :root[data-theme="dark"]  { --panel: #1b1b1b; --sheet: #232323; color-scheme: dark; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--panel);
+      /*
+       * Native-app feel: no rubber-band scrolling or pull-to-refresh (the page
+       * itself never scrolls — egui scrolls inside the canvas), no text
+       * selection or long-press callout on chrome the user can only tap, and no
+       * grey flash on tap.
+       */
+      overscroll-behavior: none;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* The canvas is inset out of the notch / home-indicator area; the strips
+       below fill what it gives up. */
+    canvas {
+      display: block;
+      position: fixed;
+      top: env(safe-area-inset-top, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
+      left: env(safe-area-inset-left, 0px);
+      right: env(safe-area-inset-right, 0px);
+      outline: none;
+      /* egui handles all gestures itself; leaving the browser's pan and
+         double-tap-zoom on would fight it. */
+      touch-action: none;
+    }
+
+    #safe-top, #safe-bottom {
+      position: fixed;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+    }
+    #safe-top    { top: 0;    height: env(safe-area-inset-top, 0px);    background: var(--panel); }
+    #safe-bottom { bottom: 0; height: env(safe-area-inset-bottom, 0px); background: var(--sheet); }
+
+    /*
+     * The boot screen. The wasm bundle is large, so on a cold load there are
+     * several seconds between the browser having the HTML and eframe painting
+     * its first frame. This fills them with the app's icon on the app's
+     * background — the same thing the iOS launch images show — instead of a
+     * blank page. `crate::web` removes it once the runner is up.
+     */
+    #splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      background: var(--panel);
+      transition: opacity 200ms ease-out;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+    #splash img {
+      width: 96px;
+      height: 96px;
+      border-radius: 22px;
+      background: #fff;
+      /* The icon is white-on-white in light mode, so give it an edge. */
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+    }
+    #splash-bar {
+      width: 128px;
+      height: 3px;
+      border-radius: 2px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--panel) 80%, gray);
+    }
+    #splash-bar::after {
+      content: "";
+      display: block;
+      width: 40%;
+      height: 100%;
+      border-radius: 2px;
+      background: #4a90d9;
+      animation: splash-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes splash-slide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(320%); }
+    }
+    #splash-error {
+      max-width: 32ch;
+      margin: 0;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #b00020;
+      text-align: center;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #splash-bar::after { animation: none; width: 100%; }
+      #splash { transition: none; }
+    }
+
     /*
      * eframe captures mobile keyboard/IME input through a hidden <input> that it
      * focuses when a canvas-drawn text field is edited. It never sets a font-size,
@@ -15,10 +224,91 @@
      * automatic zoom-in on focus, and the page can't be pinched back out afterward.
      * Forcing >= 16px suppresses the auto-zoom (Android is unaffected either way).
      */
-    input { font-size: 16px; }
+    input {
+      font-size: 16px;
+      /* Undo the page-wide `user-select: none` for that agent specifically —
+         it's a real text field, and suppressing selection on it can break IME
+         composition and the on-screen keyboard's own editing affordances. */
+      user-select: text;
+      -webkit-user-select: text;
+    }
   </style>
+
+  <script>
+    // Runs before first paint so a forced theme never flashes the other one's
+    // background. Mirrors `theme::stored_preference`.
+    (function () {
+      try {
+        var stored = localStorage.getItem("theme");
+        if (stored === "light" || stored === "dark") {
+          document.documentElement.setAttribute("data-theme", stored);
+          var meta = document.createElement("meta");
+          meta.name = "theme-color";
+          meta.content = stored === "dark" ? "#1b1b1b" : "#f8f8f8";
+          document.head.appendChild(meta);
+        }
+      } catch (e) {
+        // Private-mode localStorage denial. Falling back to the system
+        // preference is what the app itself does too.
+      }
+    })();
+  </script>
 </head>
 <body>
+  <div id="safe-top"></div>
   <canvas id="the_canvas_id"></canvas>
+  <div id="safe-bottom"></div>
+
+  <div id="splash">
+    <img src="/icons/icon-512.png" alt="" />
+    <div id="splash-bar"></div>
+    <p id="splash-error" hidden></p>
+  </div>
+
+  <script>
+    // If the bundle fails to load there is nothing to paint and the splash
+    // would spin forever, so say what happened instead.
+    window.addEventListener("error", function (event) {
+      var splash = document.getElementById("splash");
+      if (!splash || splash.classList.contains("hidden")) return;
+      var bar = document.getElementById("splash-bar");
+      if (bar) bar.hidden = true;
+      var error = document.getElementById("splash-error");
+      if (error) {
+        error.hidden = false;
+        error.textContent = "RadioCrate failed to load. " + (event.message || "");
+      }
+    });
+
+    // The service worker is what makes the app installable and lets it launch
+    // without waiting on the network. It needs a secure context: served over
+    // HTTPS, or over http:// from localhost. Self-hosted deployments should put
+    // RadioCrate behind a tunnel or reverse proxy that terminates TLS — without
+    // one this registration is skipped and the app runs as an ordinary page.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(
+          function (registration) {
+            // A new worker installs in the background and, deliberately, waits
+            // rather than taking over — see the note in sw.js. This exposes the
+            // manual override, for when you'd rather not wait for a cold start.
+            window.radiocrate = window.radiocrate || {};
+            window.radiocrate.applyUpdate = function () {
+              var waiting = registration.waiting;
+              if (!waiting) return false;
+              navigator.serviceWorker.addEventListener("controllerchange", function () {
+                window.location.reload();
+              });
+              waiting.postMessage("SKIP_WAITING");
+              return true;
+            };
+          },
+          function (err) {
+            console.warn("RadioCrate: service worker registration failed:", err);
+          },
+        );
+      });
+    }
+  </script>
 </body>
 </html>

@@ -6,6 +6,9 @@ use crate::{App, setup_context};
 
 const CANVAS_ID: &str = "the_canvas_id";
 
+/// The boot screen `index.html` paints before the wasm bundle has loaded.
+const SPLASH_ID: &str = "splash";
+
 #[wasm_bindgen(start)]
 pub fn auto_start() {
     console_error_panic_hook::set_once();
@@ -30,10 +33,24 @@ pub fn auto_start() {
                     // Apply the persisted theme choice, if any (localStorage
                     // `theme`); otherwise stay on the system preference.
                     cc.egui_ctx.set_theme(crate::theme::stored_preference());
+                    crate::history::install(&cc.egui_ctx);
                     Ok(Box::new(App::default()))
                 }),
             )
             .await
             .expect("eframe::WebRunner failed");
+
+        // The runner has painted, so the canvas now has something on it and the
+        // boot screen can fade out. It's given a class rather than removed
+        // outright so the CSS transition has something to run on; the element
+        // stops taking pointer events immediately either way.
+        hide_splash(&document);
     });
+}
+
+fn hide_splash(document: &web_sys::Document) {
+    let Some(splash) = document.get_element_by_id(SPLASH_ID) else {
+        return;
+    };
+    let _ = splash.set_attribute("class", "hidden");
 }

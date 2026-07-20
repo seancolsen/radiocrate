@@ -182,8 +182,26 @@ mod wasm_impl {
                 if let Some(a) = artist {
                     meta.set_artist(a);
                 }
+                meta.set_artwork(&Self::artwork());
                 ms.set_metadata(Some(&meta));
             }
+        }
+
+        /// Artwork for the lock screen and notification shade. The collection
+        /// has no cover art, so this is the app icon — which still beats the
+        /// generic globe the OS falls back to for a web page.
+        fn artwork() -> js_sys::Array {
+            let art = js_sys::Array::new();
+            for (src, sizes) in [
+                ("/icons/icon-192.png", "192x192"),
+                ("/icons/icon-512.png", "512x512"),
+            ] {
+                let image = web_sys::MediaImage::new(src);
+                image.set_sizes(sizes);
+                image.set_type("image/png");
+                art.push(&image);
+            }
+            art
         }
 
         fn update_position_state(&self, position: f64, duration: Option<f64>) {
