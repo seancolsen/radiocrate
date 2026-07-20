@@ -11,7 +11,17 @@
     every installation is on a different domain, so the manifest, the service
     worker scope and the icons must never name one.
   -->
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <!--
+    `use-credentials` matters whenever RadioCrate sits behind cookie-based auth
+    (Cloudflare Access, Authelia, an oauth2-proxy). Unlike every other subresource
+    here, the manifest is fetched with credentials *omitted* by default, so the
+    session cookie doesn't go with it: the auth layer sees an unauthenticated
+    request, redirects to its login page on another origin, and the browser
+    rejects that as a CORS failure. No manifest, no install prompt. Sending
+    credentials costs nothing when there's no auth in front — the request is
+    same-origin either way.
+  -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
   <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" />
   <link rel="icon" href="/icons/favicon-16.png" sizes="16x16" />
   <link rel="icon" href="/icons/logo.svg" type="image/svg+xml" />

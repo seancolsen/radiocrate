@@ -107,6 +107,28 @@ take:
 - **VPS** — [Caddy](https://caddyserver.com/) in front of the binary, which
   provisions and renews Let's Encrypt certificates automatically.
 
+### If you put cookie-based auth in front
+
+Cloudflare Access, Authelia, oauth2-proxy and friends all work, but the manifest
+needs one thing the rest of the page doesn't. Browsers fetch
+`manifest.webmanifest` with **credentials omitted** by default, so your session
+cookie doesn't ride along; the auth layer sees an anonymous request and
+redirects to its login page on another origin, which the browser then rejects as
+a CORS error. The symptom is no install option at all, and a console error
+naming the login host. `index.html` therefore requests the manifest with
+`crossorigin="use-credentials"`, which is harmless when nothing is guarding the
+app.
+
+Two related things to expect:
+
+- If Chrome still won't offer the install, check the Network tab for the
+  **icon** requests. Some auth layers block those too, and Chrome needs at least
+  one icon of 144px or larger to install.
+- Once the app is cached, a launch with an **expired** auth session shows the UI
+  rather than the login page — the service worker serves the shell without
+  touching the network, and only the `/api` calls fail. Reload to get bounced to
+  the login page properly.
+
 ### Installing
 
 - **Android (Chrome)** — the ⋮ menu → *Install app* / *Add to Home screen*.
