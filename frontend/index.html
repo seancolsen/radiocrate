@@ -134,15 +134,34 @@
       -webkit-tap-highlight-color: transparent;
     }
 
-    /* The canvas is inset out of the notch / home-indicator area; the strips
-       below fill what it gives up. */
-    canvas {
-      display: block;
+    /*
+     * The app area is inset out of the notch / home-indicator area; the strips
+     * below fill what it gives up.
+     *
+     * The insets go on this wrapper and *not* on the canvas, which matters more
+     * than it looks. A canvas is a replaced element, and for a positioned
+     * replaced element CSS resolves `width: auto` from the intrinsic size and
+     * ignores the `right`/`bottom` offsets — it doesn't stretch. The canvas's
+     * intrinsic size is its `width`/`height` attributes, which eframe's
+     * ResizeObserver sets from the size it observes... which would then be the
+     * size it just wrote, scaled by the device pixel ratio. That feeds back on
+     * itself every frame until the surface exceeds wgpu's maximum texture
+     * dimension and rendering panics. A plain block wrapper has no intrinsic
+     * size, so it really does stretch to its offsets, and the canvas sizing off
+     * it in percentages stays put.
+     */
+    #app {
       position: fixed;
       top: env(safe-area-inset-top, 0px);
       bottom: env(safe-area-inset-bottom, 0px);
       left: env(safe-area-inset-left, 0px);
       right: env(safe-area-inset-right, 0px);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
       outline: none;
       /* egui handles all gestures itself; leaving the browser's pan and
          double-tap-zoom on would fight it. */
@@ -256,7 +275,7 @@
 </head>
 <body>
   <div id="safe-top"></div>
-  <canvas id="the_canvas_id"></canvas>
+  <div id="app"><canvas id="the_canvas_id"></canvas></div>
   <div id="safe-bottom"></div>
 
   <div id="splash">
