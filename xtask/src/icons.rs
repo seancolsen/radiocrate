@@ -1,61 +1,108 @@
 //! Rasterizes `branding/logo.svg` into the PNG icon set the PWA needs.
 //!
 //! Browsers won't take an SVG for the places that matter most — Android's
-//! adaptive launcher icon, the iOS home-screen icon, the iOS launch screen — so
-//! the logo gets baked into PNGs here and committed under `frontend/assets/`.
+//! adaptive launcher icon, the iOS home-screen icon, the iOS launch screen, the
+//! desktop shortcut Chrome writes when you install the app — so the logo gets
+//! baked into PNGs here and committed under `frontend/assets/`.
 //! Run `cargo xtask icons` after changing the logo.
+//!
+//! The master SVG draws the artwork on a black disc. The disc is there to
+//! position the artwork for the contexts that want a circular ground; every
+//! context that doesn't is rendered from a disc-less copy of the tree (see
+//! [`strip_backdrop`]) so the logo never carries a backdrop it wasn't asked for.
 
 use resvg::tiny_skia::{self, Pixmap, PixmapMut};
 use resvg::usvg;
 use std::path::Path;
 
-/// The ground every opaque icon is drawn on. The logo carries its own soft
-/// white halo, which only disappears into the artwork over white; on any other
-/// color it reads as a fuzzy-edged disc.
-const ICON_BG: [u8; 3] = [0xff, 0xff, 0xff];
+/// The ground under every opaque icon. The artwork is drawn to sit on the
+/// master SVG's black disc, so black is the color it was designed against —
+/// and a full-bleed black square is what the disc becomes once the platform is
+/// doing its own masking.
+const ICON_BG: [u8; 3] = [0x00, 0x00, 0x00];
 
-/// The dark launch screen's background — egui's dark panel fill, so the launch
-/// image hands off to the booted app without a color jump.
+/// The launch screens' backgrounds — egui's panel fill in each theme, so the
+/// launch image hands off to the booted app without a color jump.
+const LIGHT_BG: [u8; 3] = [0xf8, 0xf8, 0xf8];
 const DARK_BG: [u8; 3] = [0x1b, 0x1b, 0x1b];
 
-/// How much of a maskable icon's width the logo may occupy. Android crops
+/// How much of a maskable icon's width the artwork may occupy. Android crops
 /// maskable icons to an arbitrary shape and only guarantees the middle 80%
-/// (the "safe zone"); a circle mask over a full-width logo would clip its edges.
-const MASKABLE_SCALE: f32 = 0.62;
+/// (the "safe zone"); the worst-case mask is a circle, and a roughly square
+/// logo inscribed in that circle can't be much wider than this.
+const MASKABLE_SCALE: f32 = 0.66;
 
-/// The plain icons and the iOS home-screen icon are shown uncropped, so the
-/// logo can run nearly to the edge — just enough margin that it doesn't look
-/// jammed into the corners once the OS rounds them.
-const PADDED_SCALE: f32 = 0.86;
+/// The iOS home-screen icon is masked to a rounded square rather than an
+/// arbitrary shape, so the artwork can sit closer to the edge than a maskable
+/// icon's — but not against it, since iOS rounds the corners in.
+const PADDED_SCALE: f32 = 0.80;
+
+/// Icons drawn on transparency get no backdrop to hide behind, so the artwork
+/// runs nearly to the edge: whatever surface the OS puts behind them is all the
+/// margin they get.
+const FREESTANDING_SCALE: f32 = 0.94;
+
+/// Sizes shipped for the manifest's `purpose: "any"` icons.
+///
+/// The small end of this ladder is not decoration. When Chrome installs a PWA
+/// on Linux it writes a `.desktop` file plus a PNG into
+/// `~/.local/share/icons/hicolor/<N>x<N>/apps/` for a fixed set of `N` — 16,
+/// 32, 48, 64, 128, 256 — and that hicolor set is what the shell's task
+/// switcher and dock read. Any size Chrome can't satisfy from a declared icon
+/// it resamples from the nearest one it has, so a manifest offering only 192
+/// and 512 leaves every desktop size to a non-integer downscale: exactly the
+/// soft, low-resolution icon that shows up in the switcher. Declaring each size
+/// Chrome asks for means it installs pixels we rendered at that size.
+const ANY_SIZES: &[u32] = &[16, 32, 48, 64, 96, 128, 192, 256, 512];
+
+/// Sizes shipped for `purpose: "maskable"`. These are only ever consumed by a
+/// platform that rescales them into its own adaptive-icon pipeline anyway, so
+/// the ladder can be short.
+const MASKABLE_SIZES: &[u32] = &[192, 512];
 
 pub(crate) fn generate(root: &Path) -> Result<(), String> {
     let logo = root.join("branding/logo.svg");
     let out = root.join("frontend/assets/icons");
     std::fs::create_dir_all(&out).map_err(|e| format!("creating {}: {e}", out.display()))?;
 
-    let svg = std::fs::read(&logo).map_err(|e| format!("reading {}: {e}", logo.display()))?;
-    let tree = usvg::Tree::from_data(&svg, &usvg::Options::default())
-        .map_err(|e| format!("parsing {}: {e}", logo.display()))?;
+    let svg =
+        std::fs::read_to_string(&logo).map_err(|e| format!("reading {}: {e}", logo.display()))?;
+    // Every job below draws the artwork alone; the disc's only role in this
+    // file is to be removed. Backgrounds get painted here instead, so each
+    // context gets one shaped the way that context wants it.
+    let bare = strip_backdrop(&svg)?;
+    let tree = parse(&bare, &logo)?;
 
-    // (file name, size, logo scale, background)
-    let jobs: &[(&str, u32, f32, Option<[u8; 3]>)] = &[
-        // The manifest's "any" icons. Transparent so a browser that draws them
-        // on its own surface (a tab strip, a dark app list) doesn't get a white
-        // square — the halo is soft enough to pass as a glow at these sizes.
-        ("icon-192.png", 192, PADDED_SCALE, None),
-        ("icon-512.png", 512, PADDED_SCALE, None),
-        // Maskable icons are always composited onto something, and Android
-        // fills any transparency with a system color that fights the halo.
-        ("icon-maskable-192.png", 192, MASKABLE_SCALE, Some(ICON_BG)),
-        ("icon-maskable-512.png", 512, MASKABLE_SCALE, Some(ICON_BG)),
-        // iOS ignores transparency and flattens onto black, so bake white in.
-        ("apple-touch-icon.png", 180, PADDED_SCALE, Some(ICON_BG)),
-        ("favicon-32.png", 32, 1.0, None),
-        ("favicon-16.png", 16, 1.0, None),
-    ];
+    // (file name, size, artwork scale, background)
+    let mut jobs: Vec<(String, u32, f32, Option<[u8; 3]>)> = Vec::new();
 
-    for &(name, size, scale, bg) in jobs {
-        let pixmap = render(&tree, size, size, scale, bg)?;
+    // The manifest's "any" icons. Transparent, because a browser that draws
+    // them on its own surface — a tab strip, a dark app list, a task switcher —
+    // shouldn't get a square of our background color in the middle of it.
+    for &size in ANY_SIZES {
+        jobs.push((format!("icon-{size}.png"), size, FREESTANDING_SCALE, None));
+    }
+    // Maskable icons are always composited onto something and cropped to a
+    // shape we don't choose, so their background has to be full-bleed: any
+    // transparency is filled by a system color with no relation to the logo.
+    for &size in MASKABLE_SIZES {
+        jobs.push((
+            format!("icon-maskable-{size}.png"),
+            size,
+            MASKABLE_SCALE,
+            Some(ICON_BG),
+        ));
+    }
+    // iOS ignores transparency and flattens onto black, so bake the ground in.
+    jobs.push((
+        "apple-touch-icon.png".into(),
+        180,
+        PADDED_SCALE,
+        Some(ICON_BG),
+    ));
+
+    for (name, size, scale, bg) in &jobs {
+        let pixmap = render(&tree, *size, *size, *scale, *bg)?;
         write(&out.join(name), &pixmap)?;
     }
 
@@ -71,11 +118,82 @@ pub(crate) fn generate(root: &Path) -> Result<(), String> {
         }
     }
 
-    // A scalable icon, for browsers that would rather have one.
-    std::fs::copy(&logo, out.join("logo.svg")).map_err(|e| format!("copying logo.svg: {e}"))?;
+    // A scalable icon, for browsers that would rather have one. Same deal as
+    // the "any" PNGs: no disc, and cropped so it frames the artwork the way
+    // they do instead of floating it in the master's 500×500 page.
+    let scalable = crop_to_artwork(&bare, &tree)?;
+    std::fs::write(out.join("logo.svg"), scalable).map_err(|e| format!("writing logo.svg: {e}"))?;
     println!("Wrote icons to {}", out.display());
 
     write_launch_links(&root.join("frontend/index.html"))?;
+    Ok(())
+}
+
+fn parse(svg: &str, path: &Path) -> Result<usvg::Tree, String> {
+    usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default())
+        .map_err(|e| format!("parsing {}: {e}", path.display()))
+}
+
+/// Drops the black disc the master SVG draws the artwork on.
+///
+/// It's the document's first `<circle>`, and its only one — the artwork itself
+/// is all `<path>`. Erroring out when it isn't found is deliberate: if the logo
+/// is ever redrawn without the disc, this file's whole background story needs
+/// rethinking, and a loud failure beats silently shipping an icon set with a
+/// hole where the ground used to be.
+fn strip_backdrop(svg: &str) -> Result<String, String> {
+    let start = svg
+        .find("<circle")
+        .ok_or("branding/logo.svg has no <circle>: the backdrop disc is gone")?;
+    let end = svg[start..]
+        .find("/>")
+        .map(|i| start + i + 2)
+        .ok_or("the <circle> in branding/logo.svg is not self-closing")?;
+    if !svg[start..end].contains("fill:#000000") {
+        return Err("the first <circle> in branding/logo.svg is not the black backdrop".into());
+    }
+    Ok(format!("{}{}", &svg[..start], &svg[end..]))
+}
+
+/// Retargets the root `<svg>`'s size and viewBox onto the artwork's bounding
+/// box, padded to the framing [`render`] gives the PNGs at
+/// [`FREESTANDING_SCALE`]. Without this the SVG icon would draw noticeably
+/// smaller than its PNG siblings in the same box: the master page is sized for
+/// the disc, and the artwork only fills the part of it the disc enclosed.
+fn crop_to_artwork(svg: &str, tree: &usvg::Tree) -> Result<String, String> {
+    let bbox = tree.root().abs_bounding_box();
+    let side = bbox.width().max(bbox.height()) / FREESTANDING_SCALE;
+    let x = bbox.x() - (side - bbox.width()) / 2.0;
+    let y = bbox.y() - (side - bbox.height()) / 2.0;
+
+    let mut out = svg.to_string();
+    set_root_attr(&mut out, "viewBox", &format!("{x} {y} {side} {side}"))?;
+    set_root_attr(&mut out, "width", &side.to_string())?;
+    set_root_attr(&mut out, "height", &side.to_string())?;
+    Ok(out)
+}
+
+/// Replaces `name="..."` on the root `<svg>` element.
+fn set_root_attr(svg: &mut String, name: &str, value: &str) -> Result<(), String> {
+    let root = svg.find("<svg").ok_or("no <svg> element")?;
+    let head_end = svg[root..]
+        .find('>')
+        .map(|i| root + i)
+        .ok_or("unterminated <svg> element")?;
+
+    let needle = format!("{name}=\"");
+    let at = svg[root..head_end]
+        .match_indices(&needle)
+        // Guard against matching the tail of a longer attribute name.
+        .find(|(i, _)| svg.as_bytes()[root + i - 1].is_ascii_whitespace())
+        .map(|(i, _)| root + i + needle.len())
+        .ok_or_else(|| format!("root <svg> has no {name} attribute"))?;
+    let close = svg[at..]
+        .find('"')
+        .map(|i| at + i)
+        .ok_or_else(|| format!("unterminated {name} attribute"))?;
+
+    svg.replace_range(at..close, value);
     Ok(())
 }
 
@@ -153,14 +271,13 @@ pub(crate) const LAUNCH_SIZES: &[(u32, u32, u32)] = &[
     (1024, 1366, 2),
 ];
 
-/// Draws the logo on a white rounded tile — the app icon, essentially —
-/// centered on the theme's background color. On the light image the tile
-/// vanishes into the background and you just see the logo; on the dark one it
-/// reads as the icon floating on the app's own dark surface, which is what iOS
-/// does for native launch screens.
+/// Draws the app icon — the artwork on a black rounded tile — centered on the
+/// theme's background color. That's what iOS does for native launch screens,
+/// and what the HTML boot screen in `index.html` shows for the same moment on
+/// every other platform.
 fn render_launch(tree: &usvg::Tree, w: u32, h: u32, theme: Theme) -> Result<Pixmap, String> {
     let bg = match theme {
-        Theme::Light => ICON_BG,
+        Theme::Light => LIGHT_BG,
         Theme::Dark => DARK_BG,
     };
     let mut pixmap = Pixmap::new(w, h).ok_or_else(|| format!("invalid pixmap size {w}x{h}"))?;
@@ -209,8 +326,13 @@ fn draw_rounded_rect(target: &mut PixmapMut<'_>, x: f32, y: f32, size: f32, r: f
     );
 }
 
-/// Renders `tree` centered in a `w`×`h` canvas, scaled so its longest side is
-/// `scale` times the canvas width, over `bg` (or transparency when `None`).
+/// Renders `tree` centered in a `w`×`h` canvas, scaled so the longest side of
+/// its *artwork* is `scale` times the canvas width, over `bg` (or transparency
+/// when `None`).
+///
+/// Fitting the drawn bounding box rather than the SVG page matters here: the
+/// master page is sized for a disc the artwork no longer carries, so measuring
+/// the page would silently inset every icon by the disc's own margin.
 fn render(
     tree: &usvg::Tree,
     w: u32,
@@ -223,10 +345,10 @@ fn render(
         pixmap.fill(color(bg));
     }
 
-    let src = tree.size();
+    let src = tree.root().abs_bounding_box();
     let k = w as f32 * scale / src.width().max(src.height());
-    let tx = (w as f32 - src.width() * k) / 2.0;
-    let ty = (h as f32 - src.height() * k) / 2.0;
+    let tx = (w as f32 - src.width() * k) / 2.0 - src.x() * k;
+    let ty = (h as f32 - src.height() * k) / 2.0 - src.y() * k;
     let transform = tiny_skia::Transform::from_translate(tx, ty).pre_scale(k, k);
 
     resvg::render(tree, transform, &mut pixmap.as_mut());

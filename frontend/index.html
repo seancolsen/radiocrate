@@ -22,8 +22,8 @@
     same-origin either way.
   -->
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
-  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" />
-  <link rel="icon" href="/icons/favicon-16.png" sizes="16x16" />
+  <link rel="icon" href="/icons/icon-32.png" sizes="32x32" />
+  <link rel="icon" href="/icons/icon-16.png" sizes="16x16" />
   <link rel="icon" href="/icons/logo.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 
@@ -209,9 +209,14 @@
     #splash img {
       width: 96px;
       height: 96px;
+      /* The PNG runs to its own edges, so inset it to the same proportion the
+         iOS launch images use — otherwise the rounded corners clip artwork. */
+      box-sizing: border-box;
+      padding: 10px;
       border-radius: 22px;
-      background: #fff;
-      /* The icon is white-on-white in light mode, so give it an edge. */
+      /* The same black tile the iOS launch images bake in — the icon PNGs are
+         transparent, and the artwork is drawn to sit on black. */
+      background: #000;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
     }
     #splash-bar {

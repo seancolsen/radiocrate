@@ -171,6 +171,20 @@ That also rewrites the block of `apple-touch-startup-image` `<link>` tags in
 [frontend/index.html](frontend/index.html), which has to name every supported
 device explicitly.
 
+The master SVG draws the artwork on a black disc. That disc is positioning
+scaffolding, not part of the mark: the generator strips it and paints whatever
+ground each destination actually needs — full-bleed black where the platform
+masks the icon (Android adaptive, iOS home screen, the boot screen's tile), and
+nothing at all where the icon is drawn on someone else's surface. If the logo is
+ever redrawn without the disc, `cargo xtask icons` fails loudly rather than
+guessing.
+
+The `purpose: "any"` icons ship at every size from 16 up to 512, and the
+manifest declares all of them. That is deliberate: Chrome installs a Linux PWA
+by writing PNGs into `~/.local/share/icons/hicolor/<N>x<N>/apps/` for a fixed
+set of sizes, and anything it can't take from a declared icon it resamples —
+which is what made the old icon look soft in the GNOME task switcher.
+
 ## Code formatting
 
 Uses `rustfmt` with project-specific settings in [rustfmt.toml](rustfmt.toml).
