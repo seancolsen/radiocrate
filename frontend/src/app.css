@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Map Tailwind color tokens onto the CSS vars below (v4 CSS-first config). */
+@theme inline {
+  --color-panel: var(--panel);
+  --color-sheet: var(--sheet);
+  --color-ink: var(--ink);
+}
+
+@layer base {
+  :root {
+    --panel: #f8f8f8;
+    --sheet: #f0f0f0;
+    --ink: #1b1b1b;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --panel: #1b1b1b;
+      --sheet: #232323;
+      --ink: #f8f8f8;
+    }
+  }
+  /* An explicit stored choice (set pre-paint in index.html) wins over system. */
+  :root[data-theme="light"] {
+    --panel: #f8f8f8;
+    --sheet: #f0f0f0;
+    --ink: #1b1b1b;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --panel: #1b1b1b;
+    --sheet: #232323;
+    --ink: #f8f8f8;
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    background: var(--panel);
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input {
+    font-size: 16px;
+  } /* keep the iOS auto-zoom guard for future forms */
+}

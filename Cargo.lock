@@ -2072,7 +2072,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "frontend"
+name = "frontend-old-egui"
 version = "0.1.0"
 dependencies = [
  "arrow-array 56.2.0",

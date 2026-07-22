@@ -1,8 +1,9 @@
-# Development/testing container for Querydown.
+# Development/testing container for RadioCrate.
 #
-# Gives an isolated environment with the full toolchain (Rust workspace, wasm
-# bindings, and the SvelteKit site) plus Claude Code, so the agent can run
-# commands with full permissions without touching the host system.
+# Gives an isolated environment with the full toolchain (Rust workspace, the
+# SolidJS frontend's Bun/Vite/Playwright tooling, and the retired egui
+# frontend's wasm target) plus Claude Code, so the agent can run commands with
+# full permissions without touching the host system.
 #
 # Pinned to the same Rust version used on the host (1.91) so build behavior
 # matches. Bump this when the host toolchain changes.
@@ -15,7 +16,8 @@ ARG USERNAME=dev
 ARG USER_UID=1000
 ARG USER_GID=1000
 
-# System packages + Node.js 20 (needed for the site and for Claude Code).
+# System packages + Node.js 20 (for Claude Code and Playwright's CLI; the
+# SolidJS frontend itself runs on Bun, installed further below).
 #
 # The mesa-vulkan-drivers / libvulkan1 packages provide lavapipe, a CPU
 # (software) Vulkan implementation. egui_kittest renders widget snapshots
@@ -51,6 +53,29 @@ RUN rustup component add clippy rustfmt \
 
 # Claude Code CLI.
 RUN npm install -g @anthropic-ai/claude-code
+
+# Bun — the package manager and runtime for the SolidJS frontend (frontend/).
+# `cargo xtask build-release` shells out to `bun install` + `bun run build`, and
+# the frontend's dev/lint/typecheck/format/test scripts all run through Bun.
+# Installed to a shared prefix (rather than a user's ~/.bun) and symlinked onto
+# PATH so every user and every shell — login, interactive, non-interactive —
+# finds it.
+ENV BUN_INSTALL=/usr/local/bun
+RUN curl -fsSL https://bun.sh/install | bash \
+    && ln -s "${BUN_INSTALL}/bin/bun" /usr/local/bin/bun \
+    && ln -s "${BUN_INSTALL}/bin/bunx" /usr/local/bin/bunx
+
+# Playwright's system libraries (libnss3, libnspr4, and the X/GTK libs a headless
+# Chromium links against). The frontend's whole-app visual snapshot tests drive
+# Chromium through Playwright; without these, the browser fails to launch with a
+# "cannot open shared object file" error. `install-deps` runs apt itself, so it
+# re-populates the package lists we cleaned above; we clean them again after.
+#
+# The browser *binary* is deliberately NOT baked in: its build must match the
+# frontend's pinned @playwright/test version, so it is fetched per-checkout with
+# `bunx playwright install chromium` (see DEVELOPMENT.md).
+RUN npx --yes playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 # DuckDB CLI — version must match the DuckDB bundled in backend/Cargo.toml
 # (libduckdb-sys crate version 1.10504.0 bundles DuckDB v1.5.4).

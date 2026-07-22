@@ -1,5 +1,4 @@
 mod icons;
-mod service_worker;
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -8,7 +7,7 @@ fn usage() {
     eprintln!(
         "cargo xtask <command>\n\n\
          Commands:\n  \
-           build-release   Build the WASM frontend with trunk and the production binary\n  \
+           build-release   Build the Solid frontend with Bun/Vite and the production binary\n  \
            clean-web       Remove the frontend/dist directory\n  \
            icons           Regenerate the PWA icon set from branding/logo.svg"
     );
@@ -35,22 +34,27 @@ fn build_release() -> Result<(), String> {
     let root = workspace_root();
     let frontend = root.join("frontend");
 
-    let trunk_check = Command::new("trunk").arg("--version").output();
-    if trunk_check.is_err() || !trunk_check.unwrap().status.success() {
+    let bun_check = Command::new("bun").arg("--version").output();
+    if bun_check.is_err() || !bun_check.unwrap().status.success() {
         return Err(
-            "`trunk` is required. Install with: cargo install --locked trunk\n\
-             You also need the wasm target: rustup target add wasm32-unknown-unknown"
+            "`bun` is required. Install with: curl -fsSL https://bun.sh/install | bash\n\
+             See https://bun.sh for other install methods."
                 .into(),
         );
     }
 
-    println!("==> trunk build --release");
-    run(Command::new("trunk")
-        .args(["build", "--release"])
+    println!("==> bun install");
+    run(Command::new("bun")
+        .arg("install")
         .current_dir(&frontend))?;
 
-    println!("==> stamping the service worker");
-    service_worker::stamp(&frontend.join("dist"))?;
+    // Emits `frontend/dist` (Vite's outDir), which `radiocrate` embeds.
+    // `vite-plugin-pwa` (Workbox) generates the service worker and handles
+    // precache revisioning, so there is no separate stamping step.
+    println!("==> bun run build");
+    run(Command::new("bun")
+        .args(["run", "build"])
+        .current_dir(&frontend))?;
 
     println!("==> cargo build --release -p radiocrate");
     run(Command::new("cargo")

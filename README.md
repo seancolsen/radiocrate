@@ -7,8 +7,9 @@ A client-server app for managing and playing your personal collection of music f
 | Crate | Kind | Purpose |
 |---|---|---|
 | [`backend`](backend) | lib + bin (`radiocrate-server`) | Server logic (axum, DuckDB, scanner, audio stream). The bin is the dev API server. |
-| [`frontend`](frontend) | lib + bin (`radiocrate-ui`) | egui app. The lib is shared between the native desktop bin and the WASM build. |
-| [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the WASM frontend. |
+| [`frontend`](frontend) | SolidJS SPA (not a cargo crate) | **Production frontend** — a web-native DOM app built with SolidJS + Vite + Bun. Its `dist/` output is embedded by `radiocrate`. |
+| [`frontend-old-egui`](frontend-old-egui) | lib + bin (`radiocrate-ui`) | Retired egui app, kept as a read-only reference. Nothing in the production build depends on it; still buildable/runnable via `-p frontend-old-egui`. |
+| [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the Solid frontend's `frontend/dist/`. |
 | [`xtask`](xtask) | bin | Build orchestration (`cargo xtask build-release`). |
 
 ## Development
@@ -26,12 +27,26 @@ Options:
 - `--port <PORT>` (default `3000`)
 - `--no-scan` — skip the full collection scan on startup
 
-### Run the native desktop UI
+### Run the new SolidJS frontend (dev)
 
 In a separate terminal:
 
 ```sh
-cargo run -p frontend
+cd frontend
+bun install   # first time only
+bun run dev
+```
+
+Vite serves the app with hot-module reload; it talks to the API server on
+`http://localhost:3000`. Its checks are `bun run typecheck | lint | format:check | build`
+and the Playwright visual snapshots (`bun run test:visual`).
+
+### Run the retired egui desktop UI (reference only)
+
+The egui frontend is kept as a code reference and is still runnable:
+
+```sh
+cargo run -p frontend-old-egui
 ```
 
 Options:
@@ -42,13 +57,14 @@ The desktop UI sends queries to `http://localhost:3000` and streams Arrow IPC re
 
 ## Production build
 
-The production binary is a single executable that starts a web server, serves the API under `/api/*`, and serves the egui frontend (compiled to WASM) at `/`. All static assets (HTML, JS shim, WASM, etc.) are embedded into the binary.
+The production binary is a single executable that starts a web server, serves the API under `/api/*`, and serves the SolidJS frontend at `/`. All static assets (HTML, JS, CSS, icons, service worker, etc.) are embedded into the binary.
 
 ### One-time setup
 
+Install [Bun](https://bun.sh) (the frontend's package manager and runtime):
+
 ```sh
-rustup target add wasm32-unknown-unknown
-cargo install --locked trunk
+curl -fsSL https://bun.sh/install | bash
 ```
 
 ### Build
@@ -57,11 +73,10 @@ cargo install --locked trunk
 cargo xtask build-release
 ```
 
-This runs three steps:
+This runs:
 
-1. `trunk build --release` in [frontend/](frontend) — compiles the egui app to WASM and emits `frontend/dist/`.
-2. Stamps `dist/sw.js` with a hash of the build and the list of files to precache (see [Installing as an app](#installing-as-an-app)).
-3. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
+1. `bun install` then `bun run build` in [frontend/](frontend) — builds the Solid app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
+2. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
 
 The resulting binary is at `target/release/radiocrate`.
 
@@ -73,7 +88,7 @@ The resulting binary is at `target/release/radiocrate`.
 
 Options match the dev API server (`--port`, `--no-scan`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
 
-### Clean the WASM build
+### Clean the frontend build
 
 ```sh
 cargo xtask clean-web
@@ -139,9 +154,9 @@ Two related things to expect:
 
 ### What works offline
 
-The app shell only: the HTML, the WASM bundle and its loader, the icons and the
-manifest. That's what makes a cold launch instant, and it means opening the app
-away from the server gets you the real UI rather than a browser error page.
+The app shell only: the HTML, the JS/CSS bundle, the icons and the manifest.
+That's what makes a cold launch instant, and it means opening the app away from
+the server gets you the real UI rather than a browser error page.
 
 Your library and your audio are **not** cached — they're served from `/api`,
 which the service worker deliberately never touches (cached query results would
@@ -151,16 +166,16 @@ anything.
 
 ### Updating
 
-A new build changes the stamped build id, so the service worker re-downloads
-everything. It installs in the background and takes over on the next cold start
-rather than mid-session — a surprise reload during playback is worse than being
-one version behind for one launch. To take an update immediately, run
-`radiocrate.applyUpdate()` in the devtools console.
+A new build changes the content hashes in the service worker's Workbox precache
+manifest, so the worker re-downloads what changed. It installs in the background
+and waits rather than taking over mid-session — a surprise reload during playback
+is worse than being one version behind for one launch. To take an update
+immediately, run `radiocrate.applyUpdate()` in the devtools console.
 
 ### Regenerating the icons
 
 Every icon, favicon and iOS launch image is rasterized from
-[branding/logo.svg](branding/logo.svg) into `frontend/assets/icons/` (committed,
+[branding/logo.svg](branding/logo.svg) into `frontend/public/icons/` (committed,
 since the production build embeds them). After changing the logo:
 
 ```sh
@@ -168,8 +183,9 @@ cargo xtask icons
 ```
 
 That also rewrites the block of `apple-touch-startup-image` `<link>` tags in
-[frontend/index.html](frontend/index.html), which has to name every supported
-device explicitly.
+[frontend/index.html](frontend/index.html) (between its `<!-- BEGIN generated:
+ios-launch-images -->` / `<!-- END ... -->` markers), which has to name every
+supported device explicitly.
 
 The master SVG draws the artwork on a black disc. That disc is positioning
 scaffolding, not part of the mark: the generator strips it and paints whatever

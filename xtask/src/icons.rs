@@ -3,7 +3,7 @@
 //! Browsers won't take an SVG for the places that matter most — Android's
 //! adaptive launcher icon, the iOS home-screen icon, the iOS launch screen, the
 //! desktop shortcut Chrome writes when you install the app — so the logo gets
-//! baked into PNGs here and committed under `frontend/assets/`.
+//! baked into PNGs here and committed under `frontend/public/`.
 //! Run `cargo xtask icons` after changing the logo.
 //!
 //! The master SVG draws the artwork on a black disc. The disc is there to
@@ -62,7 +62,7 @@ const MASKABLE_SIZES: &[u32] = &[192, 512];
 
 pub(crate) fn generate(root: &Path) -> Result<(), String> {
     let logo = root.join("branding/logo.svg");
-    let out = root.join("frontend/assets/icons");
+    let out = root.join("frontend/public/icons");
     std::fs::create_dir_all(&out).map_err(|e| format!("creating {}: {e}", out.display()))?;
 
     let svg =

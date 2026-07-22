@@ -1,5 +1,5 @@
 [package]
-name = "frontend"
+name = "frontend-old-egui"
 version = "0.1.0"
 edition = "2024"
 

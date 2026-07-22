@@ -3,7 +3,7 @@ xtask = "run --package xtask --release --"
 
 # The Media Session API bindings in `web-sys` (lock-screen / Bluetooth media
 # controls and metadata) are still gated behind this cfg. Scoped to the wasm
-# target so the native backend build is unaffected. Picked up by both `trunk`
-# and plain `cargo` builds of the frontend.
+# target so the native backend build is unaffected. Picked up by builds of
+# `frontend-old-egui` (the retired egui frontend, kept as a reference).
 [target.wasm32-unknown-unknown]
 rustflags = ["--cfg=web_sys_unstable_apis"]
