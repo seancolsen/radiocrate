@@ -2,14 +2,27 @@
 // (`POST /api/rpc`); in dev Vite proxies `/api` to the backend (see vite.config).
 
 /** A saved query, as returned by `query.list` (ordered `created_at DESC`).
- * This phase only uses `id` and `name`; `definition` is an opaque JSON string. */
+ * `definition` is a JSON string decoded by `src/query/definition.ts`. */
 export interface Query {
   id: string; // UUID
   name: string;
   created_at: number; // epoch seconds
   modified_at: number; // epoch seconds
   last_play: number; // epoch seconds
-  definition: string; // opaque JSON string — DO NOT parse this phase
+  definition: string; // JSON string — see fromStored()
+}
+
+/** A saved query-section preset, as returned by `preset.list`. Only `id` and
+ * `definition` matter here — the fragment a preset reference resolves to. */
+export interface Preset {
+  id: string; // UUID
+  name: string;
+  base_table: string;
+  section: string;
+  definition: string;
+  is_default: boolean;
+  created_at: number;
+  modified_at: number;
 }
 
 interface RpcResponse<T> {
@@ -34,3 +47,4 @@ export async function rpcCall<T>(
 }
 
 export const listQueries = () => rpcCall<Query[]>("query.list");
+export const listPresets = () => rpcCall<Preset[]>("preset.list");

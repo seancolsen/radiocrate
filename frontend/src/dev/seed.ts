@@ -6,6 +6,8 @@ import type { AppStore } from "../state/store";
 // without a backend write path for session state (open tabs live only here).
 //
 //   ?sidebar=open&tabs=Lemonade,Deep%20Cuts
+//   ?results=<encoded plain-text>   ← canned results for the active tab,
+//                                     bypassing Querydown / /api/query entirely
 //
 // A no-op when the params are absent, so it never affects production.
 export function applySeed(store: AppStore): void {
@@ -28,6 +30,8 @@ export function applySeed(store: AppStore): void {
     .filter(Boolean);
   if (names.length === 0) return;
 
+  const results = params.get("results");
+
   // Open tabs once the saved-query list resolves, mapping each seeded name to
   // its query (falling back to the name as a synthetic id if unmatched).
   let seeded = false;
@@ -37,11 +41,15 @@ export function applySeed(store: AppStore): void {
     seeded = true;
     for (const name of names) {
       const match = queries.find((q) => q.name === name);
-      store.openTab(match ?? { id: name, name });
+      store.openTab(match ?? { id: name, name, definition: "" });
     }
     // Make the first seeded tab active (deterministic highlight).
     const first = names[0];
     const firstMatch = queries.find((q) => q.name === first);
-    store.selectTab(firstMatch ? firstMatch.id : first);
+    const activeId = firstMatch ? firstMatch.id : first;
+    store.selectTab(activeId);
+    // Drop canned results straight into the active tab, bypassing the compile /
+    // fetch / decode path so snapshots stay deterministic without a backend.
+    if (results !== null) store.setResults(activeId, results);
   });
 }

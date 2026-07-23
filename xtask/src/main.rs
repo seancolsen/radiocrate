@@ -30,6 +30,86 @@ fn run(cmd: &mut Command) -> Result<(), String> {
     Ok(())
 }
 
+/// The Querydown revision `RadioCrate` builds its JS compiler binding from. Pinned
+/// deliberately (not the older rev the reference `frontend-old-egui` crate uses)
+/// so the compiled SQL behavior stays consistent with the schema/PRELUDE the
+/// frontend expects. See `plans/2026-07-migrate-ui-to-dom/phase-03.md` §2.
+const QUERYDOWN_REPO: &str = "https://github.com/seancolsen/querydown";
+const QUERYDOWN_REV: &str = "aa4c06c";
+
+/// Builds the Querydown JS binding (`querydown-js`) from a pinned Querydown
+/// checkout with `wasm-pack` and vendors the generated `pkg/` into
+/// `frontend/vendor/querydown-js/`, where `frontend/package.json`'s local `file:`
+/// dependency points. This runs *before* `bun install` so the dependency
+/// resolves. The vendored dir is a build artifact (gitignored); this is the one
+/// step that (re)generates it. Not a `duckdb-sys` build — safe and fast.
+fn build_querydown_js() -> Result<(), String> {
+    let root = workspace_root();
+
+    for (tool, hint) in [
+        ("git", "install git"),
+        (
+            "wasm-pack",
+            "install with: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh",
+        ),
+    ] {
+        let ok = Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !ok {
+            return Err(format!(
+                "`{tool}` is required to build querydown-js ({hint})."
+            ));
+        }
+    }
+
+    // Clone (once) into a build cache under target/, then check out the pinned rev.
+    let src = root.join("target/querydown-src");
+    if !src.join(".git").exists() {
+        println!("==> git clone {QUERYDOWN_REPO}");
+        run(Command::new("git")
+            .args(["clone", QUERYDOWN_REPO])
+            .arg(&src))?;
+    }
+    println!("==> git checkout {QUERYDOWN_REV}");
+    run(Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(&src))?;
+    run(Command::new("git")
+        .args(["checkout", QUERYDOWN_REV])
+        .current_dir(&src))?;
+
+    // `--target web`: emits an ES-module package we init() ourselves; Vite serves
+    // the .wasm same-origin (CSP/offline-safe — no external fetch).
+    println!("==> wasm-pack build bindings/js --target web");
+    run(Command::new("wasm-pack")
+        .args(["build", "bindings/js", "--target", "web"])
+        .current_dir(&src))?;
+
+    // Vendor the generated package into frontend/vendor/querydown-js/.
+    let pkg = src.join("bindings/js/pkg");
+    let dest = root.join("frontend/vendor/querydown-js");
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    for name in [
+        "querydown_js.js",
+        "querydown_js.d.ts",
+        "querydown_js_bg.wasm",
+        "querydown_js_bg.wasm.d.ts",
+        "package.json",
+        "README.md",
+        "LICENSE",
+    ] {
+        std::fs::copy(pkg.join(name), dest.join(name))
+            .map_err(|e| format!("copying {name}: {e}"))?;
+    }
+    println!("Vendored querydown-js to {}", dest.display());
+    Ok(())
+}
+
 fn build_release() -> Result<(), String> {
     let root = workspace_root();
     let frontend = root.join("frontend");
@@ -43,10 +123,12 @@ fn build_release() -> Result<(), String> {
         );
     }
 
+    // Build + vendor the Querydown JS binding first, so the frontend's local
+    // `file:` dependency on it resolves during `bun install` below.
+    build_querydown_js()?;
+
     println!("==> bun install");
-    run(Command::new("bun")
-        .arg("install")
-        .current_dir(&frontend))?;
+    run(Command::new("bun").arg("install").current_dir(&frontend))?;
 
     // Emits `frontend/dist` (Vite's outDir), which `radiocrate` embeds.
     // `vite-plugin-pwa` (Workbox) generates the service worker and handles

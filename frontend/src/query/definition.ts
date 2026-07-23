@@ -1,0 +1,140 @@
+// The structured, four-part saved-query definition, ported from
+// `frontend-old-egui/src/query_def.rs`. A stored `query.definition` is a JSON
+// string that deserializes to `QueryDefinition`; `assemble` resolves it — with
+// preset references looked up against the loaded preset list — into either
+// per-section Querydown source (the builder default) or a single hand-written
+// query (full mode). This is pure string manipulation: no compiler, no schema.
+
+import type { Preset } from "../api/rpc";
+
+/** A sort or display section: hand-written Querydown (`custom`), a reference to
+ * a saved preset (`preset`), or a built-in parameterized preset (`builtin`).
+ * Matches the stored JSON's `SectionContent` union (serde `rename_all =
+ * "lowercase"`, externally tagged). The filter section instead uses
+ * `FilterParts`. */
+export type SectionContent =
+  | { custom: string }
+  | { preset: string } // preset id (UUID)
+  | { builtin: BuiltinPreset };
+
+/** A built-in sorting preset carrying its parameters inline in the stored query.
+ * Serde tags it with `preset` (`#[serde(tag = "preset")]`); only `shuffle`
+ * exists. */
+export type BuiltinPreset = { preset: "shuffle"; seed: string };
+
+/** The filter section: custom conditions AND-combined with any number of
+ * presets (referenced by id). */
+export interface FilterParts {
+  custom: string;
+  presets: string[];
+}
+
+/** A saved query split into its four Querydown parts. `full`, when present, is
+ * the whole hand-written query and the sectioned parts are ignored. */
+export interface QueryDefinition {
+  base: string;
+  filter: FilterParts;
+  sort: SectionContent;
+  display: SectionContent;
+  full?: string | null;
+}
+
+/** What `assemble` resolves a definition into for compilation: independently
+ * parsed sections (sectioned mode) or one whole-query string (full mode). */
+export type CompileSource =
+  | { kind: "full"; text: string }
+  | {
+      kind: "sections";
+      base: string;
+      filter: string;
+      sort: string;
+      display: string;
+    };
+
+/** Querydown definitions (RadioCrate's computed columns + custom comparisons)
+ * prepended to every query before compilation. Copied verbatim from
+ * `frontend-old-egui/src/compile.rs:22` (the `PRELUDE` constant). */
+export const PRELUDE = `#track.firstplay = #play.timestamp%min
+#track.lastplay = #play.timestamp%max
+#track.artists = #credit.artist.name%list(\\\\ord \\\\artist.name)
+#track.year = album.year
+#track.added = file.added
+#track.duration = file.duration
+#track.playcount = #play
+#track.number = track_number
+#track.__querydown_default_text_search:@x = [
+  title:@x
+  genre:@x
+  album.title:@x
+  ++#artist{name:@x}
+]
+#track.artist:@x = ++#artist{name:@x}`;
+
+/** Parses a stored `query.definition` JSON string into a `QueryDefinition`.
+ * A parse failure yields `null` — for this crude phase that simply means no
+ * results (the legacy raw-Querydown split from `query_def.rs:186` is skipped). */
+export function fromStored(raw: string): QueryDefinition | null {
+  try {
+    return JSON.parse(raw) as QueryDefinition;
+  } catch {
+    return null;
+  }
+}
+
+/** The Querydown fragment a built-in preset resolves to. Mirrors
+ * `BuiltinPreset::querydown` (`query_def.rs:99`): Shuffle orders by a salted
+ * hash of each row's id. */
+function builtinQuerydown(b: BuiltinPreset): string {
+  // `\\id|concat('<seed>')|md5` — the two leading backslashes are literal.
+  return `\\\\id|concat('${b.seed}')|md5`;
+}
+
+function presetDefinition(presets: Preset[], id: string): string {
+  const found = presets.find((p) => p.id === id);
+  if (!found) {
+    throw new Error("This query references a preset that no longer exists.");
+  }
+  return found.definition;
+}
+
+/** Resolves a sort/display `SectionContent` to its Querydown fragment. */
+function resolveSection(content: SectionContent, presets: Preset[]): string {
+  if ("custom" in content) return content.custom.trim();
+  if ("preset" in content)
+    return presetDefinition(presets, content.preset).trim();
+  return builtinQuerydown(content.builtin);
+}
+
+/** Resolves a definition into the shape the matching compiler entry wants.
+ * Ports `QueryDefinition::assemble` (`query_def.rs:233`). Full mode returns the
+ * hand-written text; sectioned mode returns the base plus the filter (custom +
+ * each referenced preset's fragment, newline-joined), sort, and display. Throws
+ * on an empty/unrunnable definition or a dangling preset reference. */
+export function assemble(
+  def: QueryDefinition,
+  presets: Preset[],
+): CompileSource {
+  if (def.full != null) {
+    const text = def.full.trim();
+    if (text === "") throw new Error("The query is empty.");
+    return { kind: "full", text };
+  }
+  const base = def.base.trim();
+  if (base === "") throw new Error("No base table selected.");
+
+  const filterParts: string[] = [];
+  const custom = def.filter.custom.trim();
+  if (custom !== "") filterParts.push(custom);
+  for (const id of def.filter.presets) {
+    const fragment = presetDefinition(presets, id).trim();
+    if (fragment !== "") filterParts.push(fragment);
+  }
+
+  return {
+    kind: "sections",
+    base,
+    filter: filterParts.join("\n"),
+    sort: resolveSection(def.sort, presets),
+    display: resolveSection(def.display, presets),
+  };
+}

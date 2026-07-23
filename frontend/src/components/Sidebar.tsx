@@ -70,7 +70,13 @@ export default function Sidebar() {
             {(query) => (
               <QueryRow
                 name={query.name}
-                onOpen={() => store.openTab({ id: query.id, name: query.name })}
+                onOpen={() =>
+                  store.openTab({
+                    id: query.id,
+                    name: query.name,
+                    definition: query.definition,
+                  })
+                }
               />
             )}
           </For>

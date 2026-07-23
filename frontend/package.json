@@ -11,10 +11,13 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test:unit": "vitest run",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "apache-arrow": "^18.0.0",
+    "querydown-js": "file:./vendor/querydown-js",
     "solid-js": "^1.9.14"
   },
   "devDependencies": {

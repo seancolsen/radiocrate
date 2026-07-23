@@ -3,6 +3,7 @@ import { useAppState } from "./state/store";
 import { useSwipeToClose } from "./gestures/useSwipeToClose";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
+import QueryPage from "./components/QueryPage";
 
 /** Viewport width at/above which the sidebar is a persistent left panel instead
  * of a modal drawer (PERSISTENT_ORGANIZER_MIN_WIDTH). */
@@ -11,10 +12,18 @@ const SIDEBAR_WIDTH = 200;
 /** ORGANIZER_ANIM_TIME. */
 const ANIM_MS = 100;
 
-/** The blank content area of the active tab. Tab content is out of scope this
- * phase — this is a plain panel. */
+/** The content area of the active tab: a query page when a tab is open,
+ * otherwise a blank panel (no tab open). */
 function TabContent() {
-  return <div class="bg-panel min-h-0 flex-1" />;
+  const store = useAppState();
+  return (
+    <Show
+      when={store.state.activeTabId}
+      fallback={<div class="bg-panel min-h-0 flex-1" />}
+    >
+      {(tabId) => <QueryPage tabId={tabId()} />}
+    </Show>
+  );
 }
 
 function Main() {
