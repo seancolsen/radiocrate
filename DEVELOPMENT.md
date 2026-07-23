@@ -1,4 +1,4 @@
-# Containerized development & testing
+# Development & testing
 
 This project ships a Docker setup so you can do development and testing inside a container. The main reason is to run **Claude Code with full permissions** (`claude --dangerously-skip-permissions`) safely.
 
@@ -172,3 +172,20 @@ Notes specific to the dev container:
     `docker compose down -v`
 
 - Bump the Rust version by editing the `FROM rust:1.91-bookworm` line in the `Dockerfile` to match a new host toolchain.
+
+## Inspecting the query API endpoint
+
+The query API streams Arrow IPC binary format to the browser. This is great for performance, but cumbersome for troubleshooting.
+
+To inspect the return value of this API, do the following:
+
+1. Find a request in your dev tools and choose "Copy as cURL".
+1. Paste into your terminal, appending "-o response.arrow" to run the API request and save the response to an arrow file.
+1. Start duckdb in the same directory and run:
+
+    ```
+    INSTALL arrow FROM community;
+    LOAD arrow
+    SELECT * FROM read_arrow('response.arrow');
+    ```
+
