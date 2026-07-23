@@ -2,11 +2,15 @@ import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import Icons from "unplugin-icons/vite";
 
 export default defineConfig({
   plugins: [
     solid(),
     tailwindcss(), // Tailwind v4 — no PostCSS/config file needed
+    // Build-time icon inlining: each `~icons/*` import becomes a Solid SVG
+    // component filled with `currentColor`. No runtime font fetch (CSP/offline safe).
+    Icons({ compiler: "solid" }),
     VitePWA({
       strategies: "generateSW",
       registerType: "prompt", // mirror old SW: wait, don't auto-activate
@@ -20,4 +24,7 @@ export default defineConfig({
     }),
   ],
   build: { outDir: "dist", target: "esnext" },
+  // In dev, Vite serves the app on its own port while the backend API runs on
+  // :3000. Proxy /api so client code stays origin-relative in every environment.
+  server: { proxy: { "/api": "http://localhost:3000" } },
 });

@@ -1,6 +1,8 @@
 import { render } from "solid-js/web";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App";
+import { AppStateProvider, useAppState } from "./state/store";
+import { applySeed } from "./dev/seed";
 import "./app.css";
 
 // Mirror the old SW update flow: prompt, don't auto-activate.
@@ -13,4 +15,17 @@ interface RadioCrateGlobal {
   applyUpdate: () => updateSW(true),
 };
 
-render(() => <App />, document.getElementById("root")!);
+function Root() {
+  // Apply any URL-param seed to the store (no-op in production without params).
+  applySeed(useAppState());
+  return <App />;
+}
+
+render(
+  () => (
+    <AppStateProvider>
+      <Root />
+    </AppStateProvider>
+  ),
+  document.getElementById("root")!,
+);

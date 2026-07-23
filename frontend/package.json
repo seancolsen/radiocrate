@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@iconify-json/material-symbols": "^1.2.86",
     "@playwright/test": "^1.61.1",
     "@solidjs/testing-library": "^0.8.10",
     "@tailwindcss/vite": "^4.3.3",
@@ -33,6 +34,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "6",
     "typescript-eslint": "^8.65.0",
+    "unplugin-icons": "^23.0.1",
     "vite": "^8.1.5",
     "vite-plugin-pwa": "^1.3.0",
     "vite-plugin-solid": "^2.11.13",

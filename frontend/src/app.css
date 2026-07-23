@@ -5,6 +5,11 @@
   --color-panel: var(--panel);
   --color-sheet: var(--sheet);
   --color-ink: var(--ink);
+  --color-bar: var(--bar);
+  --color-accent: var(--accent);
+  --color-ink-weak: var(--ink-weak);
+  --color-hover: var(--hover);
+  --color-edge: var(--edge);
 }
 
 @layer base {
@@ -12,6 +17,12 @@
     --panel: #f8f8f8;
     --sheet: #f0f0f0;
     --ink: #1b1b1b;
+    /* Chrome tokens (measured from whole_app.png; cross-checked theme.rs). */
+    --bar: #eeeeee; /* tab-bar bg: shade(panel, 10) */
+    --accent: #77a5ce; /* HOVER_BLUE — same in both themes */
+    --ink-weak: #5a5a5a; /* secondary/dim text + icon gray */
+    --hover: #eeeeee; /* row/header/handle hover: shade(panel, 10) */
+    --edge: #c8c8c8; /* hairline dividers / input borders */
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -19,6 +30,11 @@
       --panel: #1b1b1b;
       --sheet: #232323;
       --ink: #f8f8f8;
+      --bar: #252525;
+      --accent: #77a5ce;
+      --ink-weak: #aeaeae;
+      --hover: #252525;
+      --edge: #3c3c3c;
     }
   }
   /* An explicit stored choice (set pre-paint in index.html) wins over system. */
@@ -26,12 +42,22 @@
     --panel: #f8f8f8;
     --sheet: #f0f0f0;
     --ink: #1b1b1b;
+    --bar: #eeeeee;
+    --accent: #77a5ce;
+    --ink-weak: #5a5a5a;
+    --hover: #eeeeee;
+    --edge: #c8c8c8;
     color-scheme: light;
   }
   :root[data-theme="dark"] {
     --panel: #1b1b1b;
     --sheet: #232323;
     --ink: #f8f8f8;
+    --bar: #252525;
+    --accent: #77a5ce;
+    --ink-weak: #aeaeae;
+    --hover: #252525;
+    --edge: #3c3c3c;
     color-scheme: dark;
   }
 

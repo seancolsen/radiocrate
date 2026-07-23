@@ -5,7 +5,11 @@
     "moduleResolution": "bundler",
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
-    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "types": [
+      "vite/client",
+      "vite-plugin-pwa/client",
+      "unplugin-icons/types/solid"
+    ],
     "strict": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
