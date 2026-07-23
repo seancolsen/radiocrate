@@ -187,7 +187,12 @@ pub async fn serve(
     collection_path: PathBuf,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let app = router(app_state(conn, collection_path));
+    // Nest under `/api` so this standalone (frontend-less) dev server exposes the
+    // same paths the production `radiocrate` binary does (which does the same nest
+    // in its own `main.rs`). That lets the Vite dev server proxy `/api` straight
+    // here with no path rewriting, and keeps client URLs origin-relative and
+    // identical across dev and prod. See `frontend/README.md`.
+    let app = Router::new().nest("/api", router(app_state(conn, collection_path)));
     let addr = format!("0.0.0.0:{port}");
     println!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
