@@ -209,3 +209,21 @@ COMMIT;
 pub fn execute_batch(conn: &Connection) -> Result<(), duckdb::Error> {
     conn.execute_batch(BATCH_SQL)
 }
+
+/// Drops the `staging_*` temp tables created by [`create_staging_tables`]. Called once the scan has
+/// merged them into the real tables, so they don't linger on the connection for the rest of the
+/// process's life (the connection is shared and long-lived — see `server::AppState`).
+pub fn drop_staging_tables(conn: &Connection) -> Result<(), duckdb::Error> {
+    conn.execute_batch(
+        "
+        DROP TABLE staging_artist;
+        DROP TABLE staging_album;
+        DROP TABLE staging_file;
+        DROP TABLE staging_track;
+        DROP TABLE staging_credit;
+        DROP TABLE staging_moved;
+        DROP TABLE staging_modified;
+        DROP TABLE staging_deleted;
+        ",
+    )
+}

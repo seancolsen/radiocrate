@@ -14,6 +14,11 @@
 --
 --   * Only the `main` schema is introspected. Querydown's schema JSON is a flat namespace of table
 --     names, so introspecting multiple DuckDB schemas could produce colliding names.
+--   * Only the current database's own catalog is introspected (`table_catalog` / `database_name` must
+--     equal `current_database()`). DuckDB puts `TEMP` tables in a separate catalog literally named
+--     `temp`, but under the same `main` schema name as the real database, so a schema-only filter would
+--     let session-scoped temp tables (e.g. the scanner's `staging_*` tables) leak into the schema
+--     alongside the real tables of the same name.
 --   * Column types are emitted as DuckDB's type names (e.g. `INTEGER`, `TIMESTAMP`, `VARCHAR[]`).
 --   * `nullable` records whether each column permits NULL (`is_nullable = 'YES'`).
 --   * `unique_constraints` lists every UNIQUE / PRIMARY KEY constraint on the table as an array of
@@ -48,11 +53,13 @@ SELECT (json_object(
             ORDER BY array_to_string(uc.constraint_column_names, ','))
           FROM duckdb_constraints() uc
           WHERE uc.schema_name = 'main'
+            AND uc.database_name = current_database()
             AND uc.table_name = c.table_name
             AND uc.constraint_type IN ('UNIQUE', 'PRIMARY KEY')
         ), []) AS ucs
       FROM information_schema.columns c
       WHERE c.table_schema = 'main'
+        AND c.table_catalog = current_database()
       GROUP BY c.table_name
     )
   ), [])),
