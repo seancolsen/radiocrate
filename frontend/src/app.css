@@ -23,6 +23,12 @@
     --ink-weak: #5a5a5a; /* secondary/dim text + icon gray */
     --hover: #eeeeee; /* row/header/handle hover: shade(panel, 10) */
     --edge: #c8c8c8; /* hairline dividers / input borders */
+    /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
+       artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */
+    --row-bg-top: #ffffff;
+    --row-bg-bottom: #f2f2f2;
+    --pill-bg: #f8e4b2;
+    --row-sep: rgb(200 200 200 / 0.5);
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -35,6 +41,10 @@
       --ink-weak: #aeaeae;
       --hover: #252525;
       --edge: #3c3c3c;
+      --row-bg-top: #303030;
+      --row-bg-bottom: #262626;
+      --pill-bg: #5c4b1f;
+      --row-sep: rgb(60 60 60 / 0.5);
     }
   }
   /* An explicit stored choice (set pre-paint in index.html) wins over system. */
@@ -47,6 +57,10 @@
     --ink-weak: #5a5a5a;
     --hover: #eeeeee;
     --edge: #c8c8c8;
+    --row-bg-top: #ffffff;
+    --row-bg-bottom: #f2f2f2;
+    --pill-bg: #f8e4b2;
+    --row-sep: rgb(200 200 200 / 0.5);
     color-scheme: light;
   }
   :root[data-theme="dark"] {
@@ -58,6 +72,10 @@
     --ink-weak: #aeaeae;
     --hover: #252525;
     --edge: #3c3c3c;
+    --row-bg-top: #303030;
+    --row-bg-bottom: #262626;
+    --pill-bg: #5c4b1f;
+    --row-sep: rgb(60 60 60 / 0.5);
     color-scheme: dark;
   }
 
@@ -72,4 +90,71 @@
   input {
     font-size: 16px;
   } /* keep the iOS auto-zoom guard for future forms */
+}
+
+/* ── Results grid ──────────────────────────────────────────────────────────
+   The columnar results grid (phase 04). Every row lives in the DOM (no virtual
+   scroll); off-screen rows are skipped via `content-visibility`. Per-column
+   geometry (left/width/top/height) is delivered through CSS custom properties
+   `--cx-k / --cw-k / --ct-k / --ch-k` set on the grid container at runtime and
+   read by generated `.rcg-* .c{k}` rules, so a resize repositions all cells by
+   rewriting a handful of vars — no per-node JS, no DOM rebuild. Static (non-
+   geometry) rules live here; per-column rules are generated in QueryResults. */
+
+.rc-grid {
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Keep row layout/paint from escaping the scroll container. */
+  contain: layout paint;
+  background: var(--panel);
+}
+
+.rc-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--ink-weak);
+  font-size: 0.875rem;
+}
+
+.rc-row {
+  position: relative;
+  height: var(--row-h);
+  overflow: hidden;
+  /* The single biggest scroll win: skip layout/paint of off-screen rows while
+     keeping them in the DOM (not virtualization) and the scroll height correct. */
+  content-visibility: auto;
+  contain-intrinsic-size: 0 var(--row-h);
+  contain: layout style paint;
+  /* Subtle top-lit sheen + a softened hairline separator along the bottom. */
+  background: linear-gradient(var(--row-bg-top), var(--row-bg-bottom));
+  border-bottom: 1px solid var(--row-sep);
+}
+
+.rc-cell {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* List columns: inline pills laid out with flex (allowed — the no-flex/grid rule
+   is about the column layout within a row, not pill flow inside a cell). The
+   cell's `overflow: hidden` clips any that don't fit (no "+N" bubble — §4). */
+.rc-pillcell {
+  display: flex;
+  align-items: center;
+  gap: 4px; /* PILL_GAP */
+  line-height: normal;
+  text-overflow: clip;
+}
+
+.rc-pill {
+  flex: none;
+  border-radius: 4px; /* button::RADIUS */
+  padding: 2px 6px; /* PILL_PAD_Y PILL_PAD_X */
+  background: var(--pill-bg);
+  line-height: 1.2;
+  white-space: nowrap;
 }

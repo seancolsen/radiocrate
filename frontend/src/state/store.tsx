@@ -7,11 +7,12 @@ import {
 } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { listPresets, listQueries, type Preset, type Query } from "../api/rpc";
-import { runSql, runSqlScalar, tableToText } from "../api/query";
+import { runSql, runSqlScalar } from "../api/query";
 import { addInferredLinks, INTROSPECTION_SQL } from "../query/schema";
 import { compileSavedQuery } from "../query/compile";
 import { fromStored } from "../query/definition";
 import { querydownReady } from "../query/querydown";
+import { buildResultFromArrow, type QueryResult } from "../query/result";
 
 /** An open tab. Tab id == query id this phase. Carries the saved query's
  * `definition` (a JSON string) so the tab can compile and run itself. */
@@ -28,8 +29,8 @@ export interface AppState {
   queryFilter: string; // "Filter" input text in the Queries section
   openedCollapsed: boolean; // "Opened" section disclosure
   queriesCollapsed: boolean; // "Queries" section disclosure
-  /** Per-tab plain-text results, keyed by tab id. */
-  resultsByTab: Record<string, string>;
+  /** Per-tab decoded, render-ready results, keyed by tab id. */
+  resultsByTab: Record<string, QueryResult>;
   /** Whether a run is in flight, keyed by tab id (errors are console-only). */
   runningByTab: Record<string, boolean>;
 }
@@ -71,12 +72,13 @@ export interface AppStore {
   toggleQueriesCollapsed: () => void;
   /** Whether the introspection schema has loaded (compiles can proceed). */
   schemaReady: () => boolean;
-  /** Compile + run the tab's saved query, storing the plain-text result. */
+  /** Compile + run the tab's saved query, storing the structured result. */
   runQuery: (tabId: string) => void;
   /** Run the tab once, the first time it's viewed (idempotent per tab). */
   ensureRun: (tabId: string) => void;
-  /** Inject canned results text for a tab (dev/test seam — bypasses the API). */
-  setResults: (tabId: string, text: string) => void;
+  /** Inject a canned structured result for a tab (dev/test seam — bypasses the
+   * compile/fetch/decode path). */
+  setResults: (tabId: string, result: QueryResult) => void;
 }
 
 function createAppStore(): AppStore {
@@ -126,9 +128,19 @@ function createAppStore(): AppStore {
         const def = fromStored(tab.definition);
         const schemaJson = schema();
         if (def === null || schemaJson === undefined) return;
-        const sql = compileSavedQuery(def, presets() ?? [], schemaJson);
+        const { sql, columnAnnotations } = compileSavedQuery(
+          def,
+          presets() ?? [],
+          schemaJson,
+        );
         const table = await runSql(sql);
-        setState("resultsByTab", tabId, tableToText(table));
+        // Decode + precompute the render-ready result once, here — never per
+        // resize/frame (§6).
+        setState(
+          "resultsByTab",
+          tabId,
+          buildResultFromArrow(table, columnAnnotations),
+        );
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
@@ -194,7 +206,7 @@ function createAppStore(): AppStore {
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);
     },
-    setResults: (tabId, text) => setState("resultsByTab", tabId, text),
+    setResults: (tabId, result) => setState("resultsByTab", tabId, result),
   };
 }
 

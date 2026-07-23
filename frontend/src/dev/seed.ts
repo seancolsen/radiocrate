@@ -1,13 +1,15 @@
 import { createEffect } from "solid-js";
 import type { AppStore } from "../state/store";
+import { lemonadeGridResult } from "./gridFixture";
 
 // Prod-safe seeding seam. Reads URL params on startup and applies them to the
 // store, so Playwright (and manual dev) can reach a deterministic UI state
 // without a backend write path for session state (open tabs live only here).
 //
 //   ?sidebar=open&tabs=Lemonade,Deep%20Cuts
-//   ?results=<encoded plain-text>   ← canned results for the active tab,
-//                                     bypassing Querydown / /api/query entirely
+//   ?grid=lemonade   ← a small canned structured result for the active tab,
+//                      bypassing Querydown / /api/query so the grid snapshot
+//                      stays deterministic without a backend
 //
 // A no-op when the params are absent, so it never affects production.
 export function applySeed(store: AppStore): void {
@@ -30,7 +32,7 @@ export function applySeed(store: AppStore): void {
     .filter(Boolean);
   if (names.length === 0) return;
 
-  const results = params.get("results");
+  const grid = params.get("grid");
 
   // Open tabs once the saved-query list resolves, mapping each seeded name to
   // its query (falling back to the name as a synthetic id if unmatched).
@@ -48,8 +50,8 @@ export function applySeed(store: AppStore): void {
     const firstMatch = queries.find((q) => q.name === first);
     const activeId = firstMatch ? firstMatch.id : first;
     store.selectTab(activeId);
-    // Drop canned results straight into the active tab, bypassing the compile /
-    // fetch / decode path so snapshots stay deterministic without a backend.
-    if (results !== null) store.setResults(activeId, results);
+    // Drop a canned structured result straight into the active tab, bypassing
+    // the compile / fetch / decode path so snapshots stay deterministic.
+    if (grid === "lemonade") store.setResults(activeId, lemonadeGridResult());
   });
 }
