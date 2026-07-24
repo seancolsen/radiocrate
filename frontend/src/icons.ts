@@ -18,6 +18,22 @@ import Refresh from "~icons/material-symbols/refresh";
 import ExpandOpen from "~icons/material-symbols/expand-more";
 import ExpandClosed from "~icons/material-symbols/chevron-right";
 import Settings from "~icons/material-symbols/settings";
+import Save from "~icons/material-symbols/save";
+import Build from "~icons/material-symbols/build";
+import Filter from "~icons/material-symbols/filter-alt";
+import Sort from "~icons/material-symbols/swap-vert";
+import Display from "~icons/material-symbols/key-visualizer";
+import More from "~icons/material-symbols/more-vert";
+import Custom from "~icons/material-symbols/auto-fix-high";
+import Preset from "~icons/material-symbols/link";
+import Unsaved from "~icons/material-symbols/emergency";
+import Revert from "~icons/material-symbols/undo";
+import Clear from "~icons/material-symbols/backspace";
+import Shuffle from "~icons/material-symbols/shuffle";
+import Delete from "~icons/material-symbols/delete";
+import ViewSql from "~icons/material-symbols/manufacturing";
+import Base from "~icons/material-symbols/psychiatry";
+import Table from "~icons/material-symbols/table";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -25,8 +41,24 @@ export const Icons = {
   ExplorerClose, // sidebar toggle when open
   Close, // tab close ×, opened-row ×
   Add, // new-tab (+)
-  Refresh, // Queries-section reload
+  Refresh, // Queries-section reload + toolbar run
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron
   Settings, // static Settings footer
+  Save, // toolbar save (shown while unsaved)
+  Build, // wrench: query-actions menu trigger
+  Filter, // Filter section toggle
+  Sort, // Sort section toggle
+  Display, // Display section toggle
+  More, // ⋮ menu trigger (split button + custom input)
+  Custom, // "Custom …" options-menu entry
+  Preset, // preset tab / options-menu preset rows
+  Unsaved, // red ✱ dirty-preset marker
+  Revert, // undo: revert changes / revert preset edit
+  Clear, // clear custom input
+  Shuffle, // Shuffle built-in preset
+  Delete, // delete (stubbed this session)
+  ViewSql, // View SQL menu entry
+  Base, // Change-base menu entry
+  Table, // a table row in the base submenu
 };

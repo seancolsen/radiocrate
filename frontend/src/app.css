@@ -10,6 +10,10 @@
   --color-ink-weak: var(--ink-weak);
   --color-hover: var(--hover);
   --color-edge: var(--edge);
+  --color-split-active: var(--split-active);
+  --color-split-trigger: var(--split-trigger);
+  --color-preset: var(--preset);
+  --color-danger: var(--danger);
 }
 
 @layer base {
@@ -23,6 +27,11 @@
     --ink-weak: #5a5a5a; /* secondary/dim text + icon gray */
     --hover: #eeeeee; /* row/header/handle hover: shade(panel, 10) */
     --edge: #c8c8c8; /* hairline dividers / input borders */
+    /* Builder controls (button.rs / builder.rs Duos). */
+    --split-active: #bbd9fb; /* active section-toggle fill */
+    --split-trigger: #d7eafd; /* the ⋮ trigger's lighter tint */
+    --preset: #f3e3fb; /* expanded preset tab + detail panel */
+    --danger: #c0392b; /* delete / unsaved-marker red */
     /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
        artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */
     --row-bg-top: #ffffff;
@@ -41,6 +50,10 @@
       --ink-weak: #aeaeae;
       --hover: #252525;
       --edge: #3c3c3c;
+      --split-active: #2a4766;
+      --split-trigger: #38597d;
+      --preset: #483755;
+      --danger: #e06b5c;
       --row-bg-top: #303030;
       --row-bg-bottom: #262626;
       --pill-bg: #5c4b1f;
@@ -57,6 +70,10 @@
     --ink-weak: #5a5a5a;
     --hover: #eeeeee;
     --edge: #c8c8c8;
+    --split-active: #bbd9fb;
+    --split-trigger: #d7eafd;
+    --preset: #f3e3fb;
+    --danger: #c0392b;
     --row-bg-top: #ffffff;
     --row-bg-bottom: #f2f2f2;
     --pill-bg: #f8e4b2;
@@ -72,6 +89,10 @@
     --ink-weak: #aeaeae;
     --hover: #252525;
     --edge: #3c3c3c;
+    --split-active: #2a4766;
+    --split-trigger: #38597d;
+    --preset: #483755;
+    --danger: #e06b5c;
     --row-bg-top: #303030;
     --row-bg-bottom: #262626;
     --pill-bg: #5c4b1f;

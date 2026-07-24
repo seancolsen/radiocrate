@@ -22,6 +22,26 @@ export type SectionContent =
  * exists. */
 export type BuiltinPreset = { preset: "shuffle"; seed: string };
 
+/** Characters a shuffle seed is drawn from (matches `query_def.rs`). */
+const SEED_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const SEED_LEN = 20;
+
+/** A random 20-char alphanumeric shuffle seed (mirrors `generate_seed`). Uses
+ * the platform CSPRNG; the slight modulo bias is irrelevant for a seed. */
+export function generateSeed(): string {
+  const bytes = new Uint8Array(SEED_LEN);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (const b of bytes) out += SEED_ALPHABET[b % SEED_ALPHABET.length];
+  return out;
+}
+
+/** A fresh Shuffle built-in section content (a new seed reshuffles the order). */
+export function shuffleContent(): SectionContent {
+  return { builtin: { preset: "shuffle", seed: generateSeed() } };
+}
+
 /** The filter section: custom conditions AND-combined with any number of
  * presets (referenced by id). */
 export interface FilterParts {
@@ -37,6 +57,89 @@ export interface QueryDefinition {
   sort: SectionContent;
   display: SectionContent;
   full?: string | null;
+}
+
+/** The three query sections with builder UIs and saveable presets. Mirrors
+ * `Section` in `query_def.rs` (serde `rename_all = "lowercase"`). */
+export type Section = "filter" | "sort" | "display";
+
+/** The short label used on a section's toolbar toggle button. */
+export function sectionLabel(section: Section): string {
+  return section === "filter"
+    ? "Filter"
+    : section === "sort"
+      ? "Sort"
+      : "Display";
+}
+
+/** The noun used in builder headings and menus ("Filter"/"Sorting"/"Display").
+ * Mirrors `Section::noun` (`query_def.rs`). */
+export function sectionNoun(section: Section): string {
+  return section === "sort" ? "Sorting" : sectionLabel(section);
+}
+
+/** A fresh, empty sectioned definition (no base chosen). The default working
+ * state, and the fallback when a stored definition can't be parsed. */
+export function emptyDefinition(): QueryDefinition {
+  return {
+    base: "",
+    filter: { custom: "", presets: [] },
+    sort: { custom: "" },
+    display: { custom: "" },
+  };
+}
+
+/** A deep, independent copy of a definition — so a tab's working (`live`) copy
+ * can be mutated without touching its `saved` baseline. */
+export function cloneDefinition(def: QueryDefinition): QueryDefinition {
+  return structuredClone(def);
+}
+
+/** A section's content rewritten into a canonical, fixed-key-order object, so
+ * two structurally-equal sections serialize identically regardless of how they
+ * were built (parsed JSON vs. mutated in place). */
+function canonicalSection(c: SectionContent): unknown {
+  if ("custom" in c) return { custom: c.custom };
+  if ("preset" in c) return { preset: c.preset };
+  return { builtin: { preset: c.builtin.preset, seed: c.builtin.seed } };
+}
+
+/** A definition rewritten into a canonical shape for structural comparison. */
+function canonicalDef(def: QueryDefinition): unknown {
+  return {
+    base: def.base,
+    filter: { custom: def.filter.custom, presets: [...def.filter.presets] },
+    sort: canonicalSection(def.sort),
+    display: canonicalSection(def.display),
+    full: def.full ?? null,
+  };
+}
+
+/** Whether two definitions are structurally equal — the "does the working copy
+ * differ from the saved one?" test that drives the unsaved-changes indicator. */
+export function defsEqual(a: QueryDefinition, b: QueryDefinition): boolean {
+  return JSON.stringify(canonicalDef(a)) === JSON.stringify(canonicalDef(b));
+}
+
+/** Parses a stored definition into a complete working copy, filling any missing
+ * fields from the empty default (so a sparse `{}` or partial JSON still yields a
+ * full `filter`/`sort`/`display`). Falls back to the empty definition when the
+ * string is blank or unparseable (this phase skips the legacy raw-Querydown split
+ * from `query_def.rs:from_legacy`). */
+export function definitionFromStored(raw: string): QueryDefinition {
+  const parsed = fromStored(raw);
+  if (!parsed) return emptyDefinition();
+  const base = emptyDefinition();
+  return {
+    base: typeof parsed.base === "string" ? parsed.base : base.base,
+    filter: {
+      custom: parsed.filter?.custom ?? base.filter.custom,
+      presets: parsed.filter?.presets ?? base.filter.presets,
+    },
+    sort: parsed.sort ?? base.sort,
+    display: parsed.display ?? base.display,
+    full: parsed.full ?? undefined,
+  };
 }
 
 /** What `assemble` resolves a definition into for compilation: independently
@@ -102,6 +205,20 @@ function resolveSection(content: SectionContent, presets: Preset[]): string {
   if ("custom" in content) return content.custom.trim();
   if ("preset" in content)
     return presetDefinition(presets, content.preset).trim();
+  return builtinQuerydown(content.builtin);
+}
+
+/** The Querydown text a sort/display section resolves to, used to seed the
+ * custom editor when switching a preset/built-in back to "Custom …" so nothing
+ * is lost (mirrors the seeding in `builder.rs:single_builder_ui`). A dangling
+ * preset reference resolves to empty rather than throwing. */
+export function sectionSeedText(
+  content: SectionContent,
+  presets: Preset[],
+): string {
+  if ("custom" in content) return content.custom;
+  if ("preset" in content)
+    return presets.find((p) => p.id === content.preset)?.definition ?? "";
   return builtinQuerydown(content.builtin);
 }
 
