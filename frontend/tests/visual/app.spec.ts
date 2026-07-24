@@ -78,15 +78,17 @@ for (const colorScheme of ["light", "dark"] as const) {
   // The query page: the refresh-only toolbar over the columnar results grid. A
   // small canned structured result is seeded via `?grid=lemonade` (the five
   // Lemonade rows) so the grid's columns, artist pills, per-column fonts/colors/
-  // alignment, formatters, and separators are captured without a backend.
+  // alignment, formatters, and separators are captured without a backend. The
+  // grid is painted to a <canvas>, so the rows aren't queryable DOM — wait on the
+  // engine's readiness marker (`data-rows`) instead of the row text.
   test(`query grid - ${colorScheme}`, async ({ page }) => {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/?sidebar=open&tabs=Lemonade&grid=lemonade");
     await page.evaluate(() => document.fonts.ready);
-    // Wait for the seeded rows to render before snapshotting.
-    await expect(page.getByText("Pray You Catch Me")).toBeVisible();
+    // Wait for the canvas grid to have painted the seeded rows before snapshotting.
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
     await expect(page).toHaveScreenshot(`query-grid-${colorScheme}.png`, {
       fullPage: true,
     });

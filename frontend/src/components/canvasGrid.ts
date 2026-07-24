@@ -1,0 +1,662 @@
+// The columnar results grid rendered to a <canvas> (DOM-UI experiment, canvas
+// variant). This is the canvas analog of the retained-DOM grid that previously
+// lived in QueryResults.tsx: same result model, same field-layout algorithm,
+// same geometry constants and visual treatment (row gradient, hairline
+// separator, warm pills, per-column fonts/colors/alignment) — but every row is
+// painted imperatively into one canvas rather than materialized as DOM nodes.
+//
+// Only the *visible* window of rows is drawn each frame (windowed by the scroll
+// offset), so paint cost is bounded by the viewport, not the row count.
+//
+// The canvas owns ALL scrolling — nothing scrolls natively:
+//   • mouse wheel        → `wheel` handler adjusts the scroll offset
+//   • scrollbar          → a custom thumb drawn on the right edge, draggable
+//   • touch              → drag-to-pan with hand-rolled inertia (velocity
+//                          tracking + an exponential-decay rAF loop)
+// No other interactions are wired (no selection, hover, click) — this is a
+// rendering/scroll performance experiment, not the final interaction model.
+
+import { colSizesOf, type QueryResult } from "../query/result";
+import { createLayoutMemo, type Placement } from "../query/fieldLayout";
+
+// ── Geometry (logical px == CSS px) — copied verbatim from the DOM grid so the
+// two variants lay out identically and can be compared pixel-for-pixel. ──
+const ROW_PAD_Y = 6;
+const TEXT_PAD_X = 8;
+const COL_GAP = 16;
+/** Extra height a line gains when it holds a pill column (`PILL_LINE_EXTRA`). */
+const PILL_LINE_EXTRA = 6;
+
+// Per-line content heights and the matching font sizes (hardcoded, not measured
+// per frame, so the layout stays deterministic and the memo effective).
+const BODY_LINE_H = 18;
+const SMALL_LINE_H = 15;
+const BODY_FONT = 14;
+const SMALL_FONT = 11;
+
+// Pill geometry (mirrors `.rc-pill`: padding 2px 6px, 4px gap, radius 4).
+const PILL_PAD_X = 6;
+const PILL_PAD_Y = 2;
+const PILL_GAP = 4;
+const PILL_RADIUS = 4;
+const PILL_LINE_HEIGHT = 1.2;
+
+// Scrollbar (custom overlay, macOS-style).
+const SB_WIDTH = 8;
+const SB_MARGIN = 2;
+const SB_MIN_THUMB = 24;
+/** Extra horizontal slop around the thumb for an easier grab (logical px). */
+const SB_GRAB_SLOP = 8;
+
+// Touch inertia.
+/** Velocity below which the fling stops (logical px per ms). */
+const MIN_FLING_VELOCITY = 0.015;
+/** Exponential decay time constant of the fling (ms). Larger = longer glide. */
+const FLING_TAU = 325;
+/** A pause longer than this before release cancels the fling (finger held). */
+const FLING_RELEASE_TIMEOUT = 80;
+
+/** Theme colors read from CSS custom properties, so canvas paint tracks the
+ * live light/dark theme just like the DOM did. Re-read on theme change. */
+interface Theme {
+  panel: string;
+  rowTop: string;
+  rowBottom: string;
+  rowSep: string;
+  pillBg: string;
+  ink: string;
+  inkWeak: string;
+  scrollThumb: string;
+}
+
+/** The width-dependent layout, recomputed only on resize or a new result (not
+ * per frame): each column's placement, the shared row height, and per-line
+ * tops/heights. Mirrors `applyLayout` in the old DOM renderer. */
+interface GridLayout {
+  placements: Placement[];
+  rowH: number;
+  lineTops: number[];
+  lineHeights: number[];
+}
+
+function fontSizeOf(size: "small" | "normal"): number {
+  return size === "small" ? SMALL_FONT : BODY_FONT;
+}
+
+/** Traces a rounded-rect path (uses the native `roundRect` when present). */
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+export class CanvasGrid {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly memo = createLayoutMemo();
+
+  private result: QueryResult | undefined;
+  private layout: GridLayout | undefined;
+  private theme: Theme;
+  private fontFamily = "sans-serif";
+
+  // Viewport size in logical (CSS) px; backing store is this × dpr.
+  private vw = 0;
+  private vh = 0;
+  private dpr = 1;
+
+  private scrollTop = 0;
+
+  // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
+  private raf = 0;
+  private dirty = false;
+  private flinging = false;
+  private velocity = 0; // logical px per ms
+  private lastFrameT = 0;
+
+  // Active pointer gesture (touch pan or scrollbar drag).
+  private gesture:
+    | { kind: "pan"; id: number; lastY: number; lastT: number }
+    | { kind: "scrollbar"; id: number; grabOffset: number }
+    | undefined;
+  private rect: DOMRect | undefined;
+
+  // Last-drawn thumb geometry, for pointer hit-testing.
+  private thumb: { y: number; h: number } | undefined;
+
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("2D canvas context unavailable");
+    this.ctx = ctx;
+    this.theme = this.readTheme();
+
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerUp);
+
+    // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
+    // truncation and pill widths) are measured against the real font.
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      void document.fonts.ready.then(() => this.requestDraw());
+    }
+
+    this.resize();
+  }
+
+  destroy(): void {
+    const c = this.canvas;
+    c.removeEventListener("wheel", this.onWheel);
+    c.removeEventListener("pointerdown", this.onPointerDown);
+    c.removeEventListener("pointermove", this.onPointerMove);
+    c.removeEventListener("pointerup", this.onPointerUp);
+    c.removeEventListener("pointercancel", this.onPointerUp);
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  /** Swaps in a new result (or clears): resets the scroll position, recomputes
+   * the layout, and repaints. Called when the tab's result changes. */
+  setResult(result: QueryResult | undefined): void {
+    this.result = result;
+    this.scrollTop = 0;
+    this.flinging = false;
+    this.velocity = 0;
+    this.relayout();
+    this.requestDraw();
+  }
+
+  /** Re-reads the backing-store size for the current viewport + devicePixelRatio,
+   * re-derives the layout for the new width, clamps scroll, and repaints. */
+  resize(): void {
+    const cssW = this.canvas.clientWidth;
+    const cssH = this.canvas.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const nextW = Math.round(cssW * dpr);
+    const nextH = Math.round(cssH * dpr);
+    if (this.canvas.width !== nextW) this.canvas.width = nextW;
+    if (this.canvas.height !== nextH) this.canvas.height = nextH;
+    this.vw = cssW;
+    this.vh = cssH;
+    this.dpr = dpr;
+    this.rect = undefined; // invalidate cached bounding rect
+    this.relayout();
+    this.clampScroll();
+    this.requestDraw();
+  }
+
+  /** Re-reads theme colors + font family from CSS and repaints (theme toggle). */
+  refreshTheme(): void {
+    this.theme = this.readTheme();
+    this.requestDraw();
+  }
+
+  private get totalHeight(): number {
+    if (!this.result || !this.layout) return 0;
+    return this.result.rowCount * this.layout.rowH;
+  }
+
+  private get maxScroll(): number {
+    return Math.max(0, this.totalHeight - this.vh);
+  }
+
+  // ── Layout ────────────────────────────────────────────────────────────────
+
+  private relayout(): void {
+    const result = this.result;
+    if (!result || result.rowCount === 0) {
+      this.layout = undefined;
+      return;
+    }
+    const cols = colSizesOf(result);
+    const avail = Math.max(0, this.vw - TEXT_PAD_X * 2);
+    const fl = this.memo(cols, avail, COL_GAP);
+
+    const lineHeights = new Array<number>(fl.lineCount).fill(0);
+    result.columns.forEach((col, k) => {
+      const p = fl.placements[k];
+      let h =
+        fontSizeOf(col.meta.font_size) === SMALL_FONT
+          ? SMALL_LINE_H
+          : BODY_LINE_H;
+      if (col.isList) h += PILL_LINE_EXTRA;
+      lineHeights[p.line] = Math.max(lineHeights[p.line], h);
+    });
+    const lineTops = new Array<number>(fl.lineCount).fill(0);
+    let acc = 0;
+    for (let i = 0; i < fl.lineCount; i++) {
+      lineTops[i] = acc;
+      acc += lineHeights[i];
+    }
+    const contentH = fl.lineCount === 0 ? BODY_LINE_H : acc;
+    const rowH = contentH + ROW_PAD_Y * 2;
+    this.layout = { placements: fl.placements, rowH, lineTops, lineHeights };
+  }
+
+  // ── Scrolling ───────────────────────────────────────────────────────────────
+
+  private clampScroll(): void {
+    const max = this.maxScroll;
+    if (this.scrollTop < 0) this.scrollTop = 0;
+    else if (this.scrollTop > max) this.scrollTop = max;
+  }
+
+  /** Applies a scroll delta, clamping to bounds. Returns whether it hit a bound
+   * (used to end a fling that runs off the top/bottom). */
+  private scrollBy(dy: number): boolean {
+    const before = this.scrollTop;
+    this.scrollTop = before + dy;
+    this.clampScroll();
+    this.dirty = true;
+    return this.scrollTop === 0 || this.scrollTop === this.maxScroll;
+  }
+
+  private onWheel = (e: WheelEvent): void => {
+    if (this.maxScroll <= 0) return;
+    this.stopFling();
+    // Normalize line/page deltas to pixels so trackpads and mice agree.
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= BODY_LINE_H;
+    else if (e.deltaMode === 2) dy *= this.vh;
+    this.scrollBy(dy);
+    this.requestDraw();
+    e.preventDefault();
+  };
+
+  // ── Pointer gestures: touch pan (+ fling) and scrollbar-thumb drag ──────────
+
+  private localPoint(e: PointerEvent): { x: number; y: number } {
+    if (!this.rect) this.rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - this.rect.left, y: e.clientY - this.rect.top };
+  }
+
+  private onPointerDown = (e: PointerEvent): void => {
+    if (this.gesture || this.maxScroll <= 0) return;
+    const { x, y } = this.localPoint(e);
+
+    // A press on the scrollbar thumb starts a thumb drag (any pointer type).
+    if (this.thumb && this.hitThumb(x, y)) {
+      this.stopFling();
+      this.gesture = {
+        kind: "scrollbar",
+        id: e.pointerId,
+        grabOffset: y - this.thumb.y,
+      };
+      this.canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+
+    // Touch anywhere else pans the content (mouse drag on content does nothing —
+    // mouse scrolls via wheel or the scrollbar, per the interaction spec).
+    if (e.pointerType === "touch") {
+      this.stopFling();
+      this.gesture = {
+        kind: "pan",
+        id: e.pointerId,
+        lastY: y,
+        lastT: e.timeStamp,
+      };
+      this.velocity = 0;
+      this.canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    const g = this.gesture;
+    if (!g || e.pointerId !== g.id) return;
+    const { y } = this.localPoint(e);
+
+    if (g.kind === "scrollbar") {
+      const range = this.vh - (this.thumb?.h ?? 0);
+      const thumbY = Math.max(0, Math.min(range, y - g.grabOffset));
+      this.scrollTop = range > 0 ? (thumbY / range) * this.maxScroll : 0;
+      this.dirty = true;
+      this.requestDraw();
+      e.preventDefault();
+      return;
+    }
+
+    // Pan: finger up (y decreasing) scrolls content down.
+    const dy = g.lastY - y;
+    const dt = e.timeStamp - g.lastT;
+    this.scrollBy(dy);
+    if (dt > 0) {
+      const inst = dy / dt;
+      // Smooth so a jittery last sample doesn't dominate the fling velocity.
+      this.velocity = this.velocity * 0.6 + inst * 0.4;
+    }
+    g.lastY = y;
+    g.lastT = e.timeStamp;
+    this.requestDraw();
+    e.preventDefault();
+  };
+
+  private onPointerUp = (e: PointerEvent): void => {
+    const g = this.gesture;
+    if (!g || e.pointerId !== g.id) return;
+    if (this.canvas.hasPointerCapture(e.pointerId)) {
+      this.canvas.releasePointerCapture(e.pointerId);
+    }
+    this.gesture = undefined;
+    if (g.kind !== "pan") return;
+
+    // Fling only on a quick release with real velocity (a held finger stops).
+    const idle = e.timeStamp - g.lastT;
+    if (
+      idle < FLING_RELEASE_TIMEOUT &&
+      Math.abs(this.velocity) > MIN_FLING_VELOCITY
+    ) {
+      this.flinging = true;
+      this.lastFrameT = 0;
+      this.requestDraw();
+    } else {
+      this.velocity = 0;
+    }
+  };
+
+  private hitThumb(x: number, y: number): boolean {
+    if (!this.thumb) return false;
+    const left = this.vw - SB_MARGIN - SB_WIDTH - SB_GRAB_SLOP;
+    return (
+      x >= left &&
+      x <= this.vw &&
+      y >= this.thumb.y - SB_GRAB_SLOP &&
+      y <= this.thumb.y + this.thumb.h + SB_GRAB_SLOP
+    );
+  }
+
+  private stopFling(): void {
+    this.flinging = false;
+    this.velocity = 0;
+  }
+
+  private stepFling(dt: number): void {
+    const hitBound = this.scrollBy(this.velocity * dt);
+    // Exponential decay, frame-rate independent.
+    this.velocity *= Math.exp(-dt / FLING_TAU);
+    if (hitBound || Math.abs(this.velocity) < MIN_FLING_VELOCITY) {
+      this.flinging = false;
+      this.velocity = 0;
+    }
+  }
+
+  // ── Frame loop ──────────────────────────────────────────────────────────────
+
+  private requestDraw(): void {
+    this.dirty = true;
+    if (!this.raf) this.raf = requestAnimationFrame(this.frame);
+  }
+
+  private frame = (t: number): void => {
+    this.raf = 0;
+    if (this.flinging) {
+      const dt = this.lastFrameT ? Math.min(64, t - this.lastFrameT) : 16;
+      this.lastFrameT = t;
+      this.stepFling(dt);
+    }
+    if (this.dirty) {
+      this.draw();
+      this.dirty = false;
+    }
+    if (this.flinging) this.raf = requestAnimationFrame(this.frame);
+  };
+
+  // ── Painting ────────────────────────────────────────────────────────────────
+
+  private draw(): void {
+    const ctx = this.ctx;
+    const { vw, vh } = this;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.textBaseline = "middle";
+
+    ctx.fillStyle = this.theme.panel;
+    ctx.fillRect(0, 0, vw, vh);
+
+    const result = this.result;
+    const layout = this.layout;
+    if (!result || !layout || result.rowCount === 0) {
+      this.drawEmpty();
+      return;
+    }
+
+    const { rowH } = layout;
+    const first = Math.max(0, Math.floor(this.scrollTop / rowH));
+    const last = Math.min(
+      result.rowCount - 1,
+      Math.floor((this.scrollTop + vh) / rowH),
+    );
+
+    for (let r = first; r <= last; r++) {
+      const screenY = r * rowH - this.scrollTop;
+      this.drawRowBackground(screenY, rowH);
+      for (let k = 0; k < result.columns.length; k++) {
+        this.drawCell(r, k, screenY);
+      }
+    }
+
+    this.drawScrollbar();
+    // Readiness signal for tests: the grid has painted a non-empty result. (Row
+    // text lives in canvas pixels, not the DOM, so there's nothing to query.)
+    this.canvas.dataset.rows = String(result.rowCount);
+  }
+
+  private drawEmpty(): void {
+    if (!this.result) {
+      this.thumb = undefined;
+      return;
+    }
+    const ctx = this.ctx;
+    ctx.fillStyle = this.theme.inkWeak;
+    ctx.font = `14px ${this.fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.fillText("No results", this.vw / 2, this.vh / 2);
+    this.thumb = undefined;
+  }
+
+  private drawRowBackground(screenY: number, rowH: number): void {
+    const ctx = this.ctx;
+    const g = ctx.createLinearGradient(0, screenY, 0, screenY + rowH);
+    g.addColorStop(0, this.theme.rowTop);
+    g.addColorStop(1, this.theme.rowBottom);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, screenY, this.vw, rowH);
+    // Softened hairline separator along the bottom edge.
+    ctx.fillStyle = this.theme.rowSep;
+    ctx.fillRect(0, screenY + rowH - 1, this.vw, 1);
+  }
+
+  private drawCell(r: number, k: number, screenY: number): void {
+    const col = this.result!.columns[k];
+    const layout = this.layout!;
+    const p = layout.placements[k];
+    const cellX = TEXT_PAD_X + p.x;
+    const cellW = p.width;
+    if (cellW <= 0) return;
+    const lineH = layout.lineHeights[p.line];
+    const cellY = screenY + ROW_PAD_Y + layout.lineTops[p.line];
+
+    const fontSize = fontSizeOf(col.meta.font_size);
+    const color =
+      col.meta.font_color === "light" ? this.theme.inkWeak : this.theme.ink;
+    const ctx = this.ctx;
+    ctx.font = `${fontSize}px ${this.fontFamily}`;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cellX, cellY, cellW, lineH);
+    ctx.clip();
+
+    if (col.isList) {
+      this.drawPills(
+        col.cells[r] as readonly string[],
+        cellX,
+        cellY,
+        cellW,
+        lineH,
+        fontSize,
+        color,
+        col.meta.text_align,
+      );
+    } else {
+      this.drawText(
+        col.cells[r] as string,
+        cellX,
+        cellY,
+        cellW,
+        lineH,
+        color,
+        col.meta.text_align,
+      );
+    }
+
+    ctx.restore();
+  }
+
+  private drawText(
+    text: string,
+    cellX: number,
+    cellY: number,
+    cellW: number,
+    lineH: number,
+    color: string,
+    align: "left" | "right" | "center",
+  ): void {
+    if (!text) return;
+    const ctx = this.ctx;
+    ctx.fillStyle = color;
+    const cy = cellY + lineH / 2;
+    const fitted = this.fitText(text, cellW);
+    if (align === "right") {
+      ctx.textAlign = "right";
+      ctx.fillText(fitted, cellX + cellW, cy);
+    } else if (align === "center") {
+      ctx.textAlign = "center";
+      ctx.fillText(fitted, cellX + cellW / 2, cy);
+    } else {
+      ctx.textAlign = "left";
+      ctx.fillText(fitted, cellX, cy);
+    }
+  }
+
+  private drawPills(
+    items: readonly string[],
+    cellX: number,
+    cellY: number,
+    cellW: number,
+    lineH: number,
+    fontSize: number,
+    color: string,
+    align: "left" | "right" | "center",
+  ): void {
+    if (items.length === 0) return;
+    const ctx = this.ctx;
+    const pillH = fontSize * PILL_LINE_HEIGHT + PILL_PAD_Y * 2;
+    const pillY = cellY + (lineH - pillH) / 2;
+
+    const widths = items.map(
+      (it) => ctx.measureText(it).width + PILL_PAD_X * 2,
+    );
+    const total =
+      widths.reduce((a, b) => a + b, 0) +
+      PILL_GAP * Math.max(0, items.length - 1);
+    let x =
+      align === "right"
+        ? cellX + cellW - total
+        : align === "center"
+          ? cellX + (cellW - total) / 2
+          : cellX;
+
+    ctx.textAlign = "left";
+    for (let i = 0; i < items.length; i++) {
+      const w = widths[i];
+      ctx.fillStyle = this.theme.pillBg;
+      roundRectPath(ctx, x, pillY, w, pillH, PILL_RADIUS);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.fillText(items[i], x + PILL_PAD_X, pillY + pillH / 2);
+      x += w + PILL_GAP;
+      if (x > cellX + cellW) break; // rest is clipped anyway
+    }
+  }
+
+  private drawScrollbar(): void {
+    if (this.maxScroll <= 0) {
+      this.thumb = undefined;
+      return;
+    }
+    const { vw, vh } = this;
+    const thumbH = Math.max(SB_MIN_THUMB, (vh * vh) / this.totalHeight);
+    const thumbY = (this.scrollTop / this.maxScroll) * (vh - thumbH);
+    this.thumb = { y: thumbY, h: thumbH };
+
+    const ctx = this.ctx;
+    ctx.fillStyle = this.theme.scrollThumb;
+    roundRectPath(
+      ctx,
+      vw - SB_MARGIN - SB_WIDTH,
+      thumbY,
+      SB_WIDTH,
+      thumbH,
+      SB_WIDTH / 2,
+    );
+    ctx.fill();
+  }
+
+  /** Truncates `text` with an ellipsis so it fits within `maxWidth`. Assumes the
+   * caller has already set `ctx.font`. */
+  private fitText(text: string, maxWidth: number): string {
+    const ctx = this.ctx;
+    if (maxWidth <= 0) return "";
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    const ell = "…";
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (ctx.measureText(text.slice(0, mid) + ell).width <= maxWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo === 0 ? ell : text.slice(0, lo) + ell;
+  }
+
+  private readTheme(): Theme {
+    const cs = getComputedStyle(this.canvas);
+    const v = (name: string, fallback: string): string => {
+      const raw = cs.getPropertyValue(name).trim();
+      return raw || fallback;
+    };
+    const family = cs.fontFamily.trim();
+    if (family) this.fontFamily = family;
+    return {
+      panel: v("--panel", "#f8f8f8"),
+      rowTop: v("--row-bg-top", "#ffffff"),
+      rowBottom: v("--row-bg-bottom", "#f2f2f2"),
+      rowSep: v("--row-sep", "rgb(200 200 200 / 0.5)"),
+      pillBg: v("--pill-bg", "#f8e4b2"),
+      ink: v("--ink", "#1b1b1b"),
+      inkWeak: v("--ink-weak", "#5a5a5a"),
+      // No CSS token for the thumb; a mid-gray reads on both themes.
+      scrollThumb: "rgba(130, 130, 130, 0.55)",
+    };
+  }
+}
