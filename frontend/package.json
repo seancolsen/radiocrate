@@ -16,10 +16,10 @@
     "test:visual:update": "playwright test --update-snapshots"
   },
   "dependencies": {
-    "@polyglot-sql/sdk": "^0.6.2",
     "apache-arrow": "^18.0.0",
     "querydown-js": "file:./vendor/querydown-js",
-    "solid-js": "^1.9.14"
+    "solid-js": "^1.9.14",
+    "track-lineage": "file:./vendor/track-lineage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

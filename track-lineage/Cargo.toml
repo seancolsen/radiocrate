@@ -1,0 +1,42 @@
+[package]
+name = "track-lineage"
+version = "0.0.1"
+edition = "2021"
+description = "Minimal WASM binding over polyglot-sql for result-column lineage"
+license = "MIT"
+publish = false
+
+# Standalone workspace: this crate is deliberately NOT a member of the app's
+# root cargo workspace. Compiling it pulls in polyglot-sql (not duckdb-sys), and
+# it only ever builds for wasm via `build.sh`, so keeping it isolated means a
+# stray `cargo` at the repo root never touches it (and it never touches the
+# root's DuckDB build). See build.sh / README.md.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+# Match the egui frontend's feature selection (lineage.rs) instead of the npm
+# SDK's kitchen-sink build: only the semantic analysis + DuckDB dialect we use,
+# which shrinks the wasm from ~22 MB to ~2 MB. `stacker` gives the recursive AST
+# walk headroom, as it did natively.
+polyglot-sql = { version = "0.4", default-features = false, features = [
+  "semantic",
+  "dialect-duckdb",
+  "stacker",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# wasm-pack's bundled wasm-opt is older than the bulk-memory ops rustc emits, so
+# tell it to enable those features (and optimize for size) rather than failing
+# validation. Bumping the toolchain would work too; this keeps the build
+# self-contained.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-mutable-globals"]
