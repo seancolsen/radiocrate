@@ -36,6 +36,10 @@
        artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */
     --row-bg-top: #ffffff;
     --row-bg-bottom: #f2f2f2;
+    --row-bg-top-hover: #f5f5f5; /* shade(--row-bg-top, 10) */
+    --row-bg-bottom-hover: #e8e8e8; /* shade(--row-bg-bottom, 10) */
+    --row-selected: #c8e4ff; /* SELECTED_ROW_BG */
+    --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #f8e4b2;
     --row-sep: rgb(200 200 200 / 0.5);
     color-scheme: light dark;
@@ -56,6 +60,10 @@
       --danger: #e06b5c;
       --row-bg-top: #303030;
       --row-bg-bottom: #262626;
+      --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */
+      --row-bg-bottom-hover: #303030; /* shade(--row-bg-bottom, 10) */
+      --row-selected: #284563; /* SELECTED_ROW_BG */
+      --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
       --pill-bg: #5c4b1f;
       --row-sep: rgb(60 60 60 / 0.5);
     }
@@ -76,6 +84,10 @@
     --danger: #c0392b;
     --row-bg-top: #ffffff;
     --row-bg-bottom: #f2f2f2;
+    --row-bg-top-hover: #f5f5f5; /* shade(--row-bg-top, 10) */
+    --row-bg-bottom-hover: #e8e8e8; /* shade(--row-bg-bottom, 10) */
+    --row-selected: #c8e4ff; /* SELECTED_ROW_BG */
+    --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #f8e4b2;
     --row-sep: rgb(200 200 200 / 0.5);
     color-scheme: light;
@@ -95,6 +107,10 @@
     --danger: #e06b5c;
     --row-bg-top: #303030;
     --row-bg-bottom: #262626;
+    --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */
+    --row-bg-bottom-hover: #303030; /* shade(--row-bg-bottom, 10) */
+    --row-selected: #284563; /* SELECTED_ROW_BG */
+    --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
     --pill-bg: #5c4b1f;
     --row-sep: rgb(60 60 60 / 0.5);
     color-scheme: dark;
@@ -116,5 +132,6 @@
 /* The results grid is painted to a <canvas> (DOM-UI experiment, canvas variant):
    its rows, cells, pills, gradient/separator, and custom scrollbar are all drawn
    imperatively in canvasGrid.ts, which reads the row-surface color tokens above
-   (--row-bg-top / --row-bg-bottom / --row-sep / --pill-bg / --ink / --ink-weak).
+   (--row-bg-top / --row-bg-bottom, their -hover variants, --row-selected /
+   --row-selected-hover, --row-sep / --pill-bg / --ink / --ink-weak).
    No grid-specific CSS rules are needed here anymore. */

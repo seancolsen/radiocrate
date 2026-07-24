@@ -25,7 +25,23 @@ export default defineConfig({
         navigateFallback: "/index.html",
         // Never let the SW answer API calls — mirror the egui SW's /api passthrough.
         navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [{ urlPattern: /^\/api\//, handler: "NetworkOnly" }],
+        // The polyglot-sql WASM is ~22 MB and only needed for double-click track
+        // detection, so keep it out of the install-time precache (which would make
+        // every user download it up front). It's cached on first use by the
+        // runtime rule below instead — the small querydown WASM stays precached.
+        globIgnores: ["**/polyglot_sql-*.wasm"],
+        runtimeCaching: [
+          { urlPattern: /^\/api\//, handler: "NetworkOnly" },
+          {
+            urlPattern: /\/assets\/polyglot_sql-.*\.wasm$/,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "polyglot-wasm",
+              expiration: { maxEntries: 2 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
   ],
@@ -38,6 +54,12 @@ export default defineConfig({
       ),
     },
   },
+  // The polyglot-sql SDK is a WASM module that loads its own `.wasm` via
+  // `new URL("…", import.meta.url)` and top-level await. Excluding it from
+  // esbuild's dep pre-bundle keeps that self-locating asset URL intact (a
+  // pre-bundled copy would relocate the module and break the wasm fetch); Vite's
+  // own asset pipeline then emits and serves the `.wasm` correctly.
+  optimizeDeps: { exclude: ["@polyglot-sql/sdk"] },
   build: { outDir: "dist", target: "esnext" },
   // In dev, Vite serves the app on its own port while the backend API runs on
   // :3000. Proxy /api so client code stays origin-relative in every environment.

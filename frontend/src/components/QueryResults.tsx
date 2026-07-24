@@ -31,11 +31,25 @@ export default function QueryResults(props: { tabId: string }) {
     grid?.setResult(result);
   });
 
+  // Push the tab's selection into the engine for painting. Reads the selection
+  // reactively (new set reference per change), so this re-runs on every
+  // selection change and on tab switch. `setResult` above resets the engine's
+  // scroll/hover; the selection push repaints with the right highlighted rows.
+  createEffect(() => {
+    const selection = store.rowSelection(props.tabId);
+    grid?.setSelection(selection);
+  });
+
   onMount(() => {
     const el = canvas;
     if (!el) return;
     grid = new CanvasGrid(el);
+    grid.setInteraction({
+      onRowClick: (index, mods) => store.clickRow(props.tabId, index, mods),
+      onRowDoubleClick: (index) => store.doubleClickRow(props.tabId, index),
+    });
     grid.setResult(currentResult());
+    grid.setSelection(store.rowSelection(props.tabId));
 
     // Observe the *container*, not the canvas, for backing-store resizes. The
     // grid gives the canvas an explicit pixel size (for a 1:1 device-pixel

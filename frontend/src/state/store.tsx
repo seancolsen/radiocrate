@@ -33,7 +33,10 @@ import {
   type SectionContent,
 } from "../query/definition";
 import { querydownReady } from "../query/querydown";
+import { detectTrackIdColumn } from "../query/lineage";
 import { buildResultFromArrow, type QueryResult } from "../query/result";
+import { stringifyArrowValue } from "../api/query";
+import type { Table } from "apache-arrow";
 
 /** An in-progress, uncommitted edit of a saved preset's fields. Keyed by preset
  * id in `presetEdits`; persists across collapse / tab navigation (mirrors
@@ -77,6 +80,14 @@ export interface AppState {
   queriesCollapsed: boolean; // "Queries" section disclosure
   /** Per-tab decoded, render-ready results, keyed by tab id. */
   resultsByTab: Record<string, QueryResult>;
+  /** Per-tab result-row selection: a set of row indexes (mirrors the egui page's
+   * `selection`). Replaced wholesale on every change so subscribers observe a new
+   * reference; cleared when the tab's result changes. */
+  selectionByTab: Record<string, ReadonlySet<number>>;
+  /** Per-tab per-row track ids, present only when the query's rows represent
+   * tracks (a column traces to `track.id`). Indexed by row; drives
+   * double-click-to-play. Absent/empty when the query isn't track-based. */
+  trackIdsByTab: Record<string, readonly (string | null)[]>;
   /** Whether a run is in flight, keyed by tab id (errors are console-only). */
   runningByTab: Record<string, boolean>;
   /** The open builder section per tab (null = builder closed). */
@@ -143,6 +154,10 @@ function nowName(): string {
  * (the egui builder only ran on Ctrl+Enter; the DOM builder debounces instead). */
 const RUN_DEBOUNCE_MS = 300;
 
+/** A shared frozen empty set for tabs with no selection, so `rowSelection` returns
+ * a stable reference (no per-call allocation, no spurious effect re-runs). */
+const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
+
 export interface AppStore {
   state: AppState;
   /** The saved-query list resource (loads via `query.list`). */
@@ -186,6 +201,21 @@ export interface AppStore {
   canRevert: (tabId: string) => boolean;
   /** The result row count for a tab, if it has run. */
   resultCount: (tabId: string) => number | undefined;
+
+  // Result-row selection + interaction.
+  /** The tab's selected row indexes (empty set when nothing is selected). */
+  rowSelection: (tabId: string) => ReadonlySet<number>;
+  /** Apply a click on result row `index`, updating the selection: Shift extends a
+   * range from the anchor, Ctrl/Cmd toggles the row, a plain click selects it
+   * alone (mirrors egui's `handle_row_click`). */
+  clickRow: (
+    tabId: string,
+    index: number,
+    mods: { shift: boolean; ctrl: boolean },
+  ) => void;
+  /** Handle a double-click on result row `index`: if the query's rows are tracks,
+   * runs the row's track action (this phase, logs the track id). */
+  doubleClickRow: (tabId: string, index: number) => void;
 
   // Query-level backend actions.
   /** Persist the tab's working definition (`query.update_definition`), then mark
@@ -267,6 +297,8 @@ function createAppStore(): AppStore {
     openedCollapsed: false,
     queriesCollapsed: false,
     resultsByTab: {},
+    selectionByTab: {},
+    trackIdsByTab: {},
     runningByTab: {},
     builderSectionByTab: {},
     expandedPresetByTab: {},
@@ -324,6 +356,16 @@ function createAppStore(): AppStore {
   // Tabs that have been auto-run once (the "have I run this tab yet" guard).
   const autoRun = new Set<string>();
 
+  // Per-tab selection anchor: the fixed end a Shift-click range grows from (and
+  // that a plain/Ctrl click re-plants). Non-reactive — only the resulting
+  // `selectionByTab` set drives the paint.
+  const rowClickAnchor = new Map<string, number>();
+
+  // Monotonic per-tab run token, so a slow lineage analysis (WASM load) from a
+  // superseded run can't clobber a newer run's track-id mapping.
+  const runTokens = new Map<string, number>();
+  let runTokenSeq = 0;
+
   // Trailing-debounced re-runs, keyed by tab id, so a burst of keystrokes in a
   // builder text input collapses into one query run once the user pauses.
   const runTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -365,7 +407,44 @@ function createAppStore(): AppStore {
         }),
       );
       setState("resultsByTab", tabId, result);
+      // New rows invalidate the old selection and any prior track-id mapping (the
+      // latter is repopulated asynchronously by `detectTrackIds`).
+      setState(
+        "selectionByTab",
+        produce((m) => {
+          delete m[tabId];
+        }),
+      );
+      setState(
+        "trackIdsByTab",
+        produce((m) => {
+          delete m[tabId];
+        }),
+      );
     });
+    rowClickAnchor.delete(tabId);
+  };
+
+  /** Off the critical path: analyzes the compiled SQL to find the output column
+   * carrying `track.id`, and if there is one caches that column's per-row ids so a
+   * double-click can play the row's track. A no-op (clears any mapping) when the
+   * rows aren't tracks. Guarded by `token` so a superseded run can't win a race. */
+  const detectTrackIds = async (
+    tabId: string,
+    sql: string,
+    table: Table,
+    token: number,
+  ) => {
+    const col = await detectTrackIdColumn(sql);
+    if (runTokens.get(tabId) !== token) return; // a newer run superseded this one
+    if (col === undefined) return; // not track-based (mapping already cleared)
+    const vector = table.getChildAt(col);
+    const ids: (string | null)[] = new Array<string | null>(table.numRows);
+    for (let r = 0; r < table.numRows; r++) {
+      const v = vector?.get(r);
+      ids[r] = v == null ? null : stringifyArrowValue(v);
+    }
+    setState("trackIdsByTab", tabId, ids);
   };
 
   const runQuery = (tabId: string) => {
@@ -374,6 +453,8 @@ function createAppStore(): AppStore {
     // An immediate run supersedes any run this tab had pending on the debounce.
     cancelScheduledRun(tabId);
     autoRun.add(tabId);
+    const token = ++runTokenSeq;
+    runTokens.set(tabId, token);
     setState("runningByTab", tabId, true);
     void (async () => {
       try {
@@ -390,6 +471,10 @@ function createAppStore(): AppStore {
         // Decode + precompute the render-ready result once, here — never per
         // resize/frame (§6).
         setTabResult(tabId, buildResultFromArrow(table, columnAnnotations));
+        // Then, off the critical path, figure out whether these rows are tracks
+        // (so double-click can play them). Deliberately not awaited: the results
+        // are already shown, and the WASM lineage analysis is heavy.
+        void detectTrackIds(tabId, sql, table, token);
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
@@ -455,6 +540,8 @@ function createAppStore(): AppStore {
         if (idx === -1) return;
         s.tabs.splice(idx, 1);
         delete s.resultsByTab[id];
+        delete s.selectionByTab[id];
+        delete s.trackIdsByTab[id];
         delete s.runningByTab[id];
         delete s.builderSectionByTab[id];
         delete s.expandedPresetByTab[id];
@@ -467,6 +554,8 @@ function createAppStore(): AppStore {
     );
     autoRun.delete(id);
     cancelScheduledRun(id);
+    rowClickAnchor.delete(id);
+    runTokens.delete(id);
   };
 
   return {
@@ -530,6 +619,39 @@ function createAppStore(): AppStore {
       return t ? t.persisted && !defsEqual(t.saved, t.live) : false;
     },
     resultCount: (tabId) => state.resultsByTab[tabId]?.rowCount,
+
+    rowSelection: (tabId) => state.selectionByTab[tabId] ?? EMPTY_SELECTION,
+    clickRow: (tabId, index, mods) => {
+      const prev = state.selectionByTab[tabId] ?? EMPTY_SELECTION;
+      let next: Set<number>;
+      if (mods.shift) {
+        // Grow a range from the anchor (or this row, with nothing anchored yet).
+        const anchor = rowClickAnchor.get(tabId) ?? index;
+        const lo = Math.min(anchor, index);
+        const hi = Math.max(anchor, index);
+        next = new Set<number>();
+        for (let i = lo; i <= hi; i++) next.add(i);
+        rowClickAnchor.set(tabId, anchor);
+      } else if (mods.ctrl) {
+        // Toggle this row in/out of the existing selection.
+        next = new Set(prev);
+        if (next.has(index)) next.delete(index);
+        else next.add(index);
+        rowClickAnchor.set(tabId, index);
+      } else {
+        // Plain click: this row alone.
+        next = new Set<number>([index]);
+        rowClickAnchor.set(tabId, index);
+      }
+      setState("selectionByTab", tabId, next);
+    },
+    doubleClickRow: (tabId, index) => {
+      const id = state.trackIdsByTab[tabId]?.[index];
+      // Only track-based rows carry an id; otherwise a double-click does nothing.
+      if (id == null || id === "") return;
+      // TODO: wire up actual playback. For now, just announce the track.
+      console.log(`Play track ${id}`);
+    },
 
     saveQuery: (tabId) => {
       const t = tab(tabId);

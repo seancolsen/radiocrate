@@ -13,8 +13,13 @@
 //   • scrollbar          → a custom thumb drawn on the right edge, draggable
 //   • touch              → drag-to-pan with hand-rolled inertia (velocity
 //                          tracking + an exponential-decay rAF loop)
-// No other interactions are wired (no selection, hover, click) — this is a
-// rendering/scroll performance experiment, not the final interaction model.
+//
+// Row interaction is hit-tested against the same windowed geometry: pointer moves
+// track a hovered row (repainted with a subtly shifted background), clicks report
+// a `(row, modifiers)` selection intent to the owner, and double-clicks report a
+// row activation. The selection itself lives outside the engine (the query page's
+// per-tab state) and is pushed back in via `setSelection` for painting — the grid
+// renders selection, it doesn't own it.
 
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
@@ -41,6 +46,11 @@ const PILL_GAP = 4;
 const PILL_RADIUS = 4;
 const PILL_LINE_HEIGHT = 1.2;
 
+/** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,
+ * so the sheen reads without hiding the selection color (SELECTED_ROW_GRADIENT_
+ * ALPHA = 90/255 in results.rs). */
+const SELECTED_SHEEN_ALPHA = 90 / 255;
+
 // Scrollbar (custom overlay, macOS-style).
 const SB_WIDTH = 8;
 const SB_MARGIN = 2;
@@ -62,11 +72,26 @@ interface Theme {
   panel: string;
   rowTop: string;
   rowBottom: string;
+  /** Row gradient endpoints shifted toward the foreground for the hover state
+   * (darker in light mode, lighter in dark mode). */
+  rowTopHover: string;
+  rowBottomHover: string;
   rowSep: string;
   pillBg: string;
+  /** Flat fill of a selected row, and its (darker) hovered variant. */
+  selectedBg: string;
+  selectedBgHover: string;
   ink: string;
   inkWeak: string;
   scrollThumb: string;
+}
+
+/** Callbacks the owner wires up to react to row interaction. */
+export interface GridInteraction {
+  /** A row was clicked, with the click's range/toggle modifiers. */
+  onRowClick: (index: number, mods: { shift: boolean; ctrl: boolean }) => void;
+  /** A row was double-clicked (row activation, e.g. play the track). */
+  onRowDoubleClick: (index: number) => void;
 }
 
 /** The width-dependent layout, recomputed only on resize or a new result (not
@@ -131,6 +156,14 @@ export class CanvasGrid {
 
   private scrollTop = 0;
 
+  // Row interaction: the selection (owned outside, pushed in for painting), the
+  // currently-hovered row, the last mouse Y (to re-derive hover after a scroll),
+  // and the owner's interaction callbacks.
+  private selection: ReadonlySet<number> = new Set();
+  private hoverRow: number | undefined;
+  private lastMouseY: number | undefined;
+  private interaction: GridInteraction | undefined;
+
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
   private dirty = false;
@@ -160,6 +193,9 @@ export class CanvasGrid {
     canvas.addEventListener("pointermove", this.onPointerMove);
     canvas.addEventListener("pointerup", this.onPointerUp);
     canvas.addEventListener("pointercancel", this.onPointerUp);
+    canvas.addEventListener("pointerleave", this.onPointerLeave);
+    canvas.addEventListener("click", this.onClick);
+    canvas.addEventListener("dblclick", this.onDblClick);
 
     // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
     // truncation and pill widths) are measured against the real font.
@@ -180,6 +216,9 @@ export class CanvasGrid {
     c.removeEventListener("pointermove", this.onPointerMove);
     c.removeEventListener("pointerup", this.onPointerUp);
     c.removeEventListener("pointercancel", this.onPointerUp);
+    c.removeEventListener("pointerleave", this.onPointerLeave);
+    c.removeEventListener("click", this.onClick);
+    c.removeEventListener("dblclick", this.onDblClick);
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
   }
@@ -191,7 +230,21 @@ export class CanvasGrid {
     this.scrollTop = 0;
     this.flinging = false;
     this.velocity = 0;
+    this.hoverRow = undefined;
     this.relayout();
+    this.requestDraw();
+  }
+
+  /** Registers the owner's row-interaction callbacks (click / double-click). */
+  setInteraction(interaction: GridInteraction): void {
+    this.interaction = interaction;
+  }
+
+  /** Pushes in the owner's current row selection for painting. Cheap to call on
+   * every selection change — repaints only when the set actually differs. */
+  setSelection(selection: ReadonlySet<number>): void {
+    if (selection === this.selection) return;
+    this.selection = selection;
     this.requestDraw();
   }
 
@@ -355,6 +408,8 @@ export class CanvasGrid {
     if (e.deltaMode === 1) dy *= BODY_LINE_H;
     else if (e.deltaMode === 2) dy *= this.vh;
     this.scrollBy(dy);
+    // The stationary cursor now sits over a different row — keep hover in step.
+    if (this.lastMouseY !== undefined) this.updateHover(this.lastMouseY);
     this.requestDraw();
     e.preventDefault();
   };
@@ -401,7 +456,17 @@ export class CanvasGrid {
 
   private onPointerMove = (e: PointerEvent): void => {
     const g = this.gesture;
-    if (!g || e.pointerId !== g.id) return;
+    // Not mid-gesture: a mouse move only updates the hovered row. (Touch has no
+    // hover; a pan is handled below once its gesture is active.)
+    if (!g) {
+      if (e.pointerType === "mouse") {
+        const { y } = this.localPoint(e);
+        this.lastMouseY = y;
+        this.updateHover(y);
+      }
+      return;
+    }
+    if (e.pointerId !== g.id) return;
     const { y } = this.localPoint(e);
 
     if (g.kind === "scrollbar") {
@@ -461,6 +526,67 @@ export class CanvasGrid {
       y >= this.thumb.y - SB_GRAB_SLOP &&
       y <= this.thumb.y + this.thumb.h + SB_GRAB_SLOP
     );
+  }
+
+  private onPointerLeave = (): void => {
+    this.lastMouseY = undefined;
+    if (this.hoverRow !== undefined) {
+      this.hoverRow = undefined;
+      this.requestDraw();
+    }
+  };
+
+  // Clicks come through the native `click`/`dblclick` events (not the pointer
+  // gesture handlers) so the browser handles click timing and double-click
+  // detection for us; a drag on the scrollbar moves the pointer enough that no
+  // click fires. We still guard the scrollbar column so a press there never
+  // selects a row.
+  private onClick = (e: MouseEvent): void => {
+    const p = this.mousePoint(e);
+    if (this.overScrollbar(p.x)) return;
+    const row = this.rowAt(p.y);
+    if (row === undefined) return;
+    this.interaction?.onRowClick(row, {
+      shift: e.shiftKey,
+      ctrl: e.ctrlKey || e.metaKey,
+    });
+  };
+
+  private onDblClick = (e: MouseEvent): void => {
+    const p = this.mousePoint(e);
+    if (this.overScrollbar(p.x)) return;
+    const row = this.rowAt(p.y);
+    if (row === undefined) return;
+    this.interaction?.onRowDoubleClick(row);
+  };
+
+  private mousePoint(e: MouseEvent): { x: number; y: number } {
+    if (!this.rect) this.rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - this.rect.left, y: e.clientY - this.rect.top };
+  }
+
+  /** Whether local x falls in the custom scrollbar's grab column (only when a
+   * scrollbar is actually shown). */
+  private overScrollbar(x: number): boolean {
+    if (this.maxScroll <= 0) return false;
+    return x >= this.vw - SB_MARGIN - SB_WIDTH - SB_GRAB_SLOP;
+  }
+
+  /** The result row under local y (accounting for scroll), or undefined when past
+   * the last row or before the first. */
+  private rowAt(y: number): number | undefined {
+    const layout = this.layout;
+    if (!this.result || !layout || this.result.rowCount === 0) return undefined;
+    const idx = Math.floor((y + this.scrollTop) / layout.rowH);
+    return idx >= 0 && idx < this.result.rowCount ? idx : undefined;
+  }
+
+  /** Sets the hovered row from local y, repainting only when it changes. */
+  private updateHover(y: number): void {
+    const row = this.rowAt(y);
+    if (row === this.hoverRow) return;
+    this.hoverRow = row;
+    this.requestDraw();
   }
 
   private stopFling(): void {
@@ -530,7 +656,12 @@ export class CanvasGrid {
 
     for (let r = first; r <= last; r++) {
       const screenY = r * rowH - this.scrollTop;
-      this.drawRowBackground(screenY, rowH);
+      this.drawRowBackground(
+        screenY,
+        rowH,
+        this.selection.has(r),
+        this.hoverRow === r,
+      );
       for (let k = 0; k < result.columns.length; k++) {
         this.drawCell(r, k, screenY);
       }
@@ -559,17 +690,49 @@ export class CanvasGrid {
     this.thumb = undefined;
   }
 
-  private drawRowBackground(screenY: number, rowH: number): void {
+  private drawRowBackground(
+    screenY: number,
+    rowH: number,
+    selected: boolean,
+    hovered: boolean,
+  ): void {
     const ctx = this.ctx;
-    const g = ctx.createLinearGradient(0, screenY, 0, screenY + rowH);
-    g.addColorStop(0, this.theme.rowTop);
-    g.addColorStop(1, this.theme.rowBottom);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, screenY, this.vw, rowH);
+    const t = this.theme;
+    // Hover shifts the gradient endpoints toward the foreground (and, on a
+    // selected row, deepens the flat fill) — see results.rs `draw_row`.
+    const top = hovered ? t.rowTopHover : t.rowTop;
+    const bottom = hovered ? t.rowBottomHover : t.rowBottom;
+    if (selected) {
+      // A flat blue fill marks the selection; the same top-lit sheen every row
+      // gets is then layered over it at reduced opacity so the blue reads through.
+      ctx.fillStyle = hovered ? t.selectedBgHover : t.selectedBg;
+      ctx.fillRect(0, screenY, this.vw, rowH);
+      ctx.save();
+      ctx.globalAlpha = SELECTED_SHEEN_ALPHA;
+      ctx.fillStyle = this.rowGradient(screenY, rowH, top, bottom);
+      ctx.fillRect(0, screenY, this.vw, rowH);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = this.rowGradient(screenY, rowH, top, bottom);
+      ctx.fillRect(0, screenY, this.vw, rowH);
+    }
     // Softened hairline separator along the bottom edge. Snap to the device grid
     // so the 1px line stays a crisp single pixel instead of a blurred 2px smear.
-    ctx.fillStyle = this.theme.rowSep;
+    ctx.fillStyle = t.rowSep;
     ctx.fillRect(0, this.snap(screenY + rowH - 1), this.vw, this.snap(1));
+  }
+
+  /** A vertical `top`→`bottom` gradient spanning one row. */
+  private rowGradient(
+    screenY: number,
+    rowH: number,
+    top: string,
+    bottom: string,
+  ): CanvasGradient {
+    const g = this.ctx.createLinearGradient(0, screenY, 0, screenY + rowH);
+    g.addColorStop(0, top);
+    g.addColorStop(1, bottom);
+    return g;
   }
 
   private drawCell(r: number, k: number, screenY: number): void {
@@ -746,8 +909,12 @@ export class CanvasGrid {
       panel: v("--panel", "#f8f8f8"),
       rowTop: v("--row-bg-top", "#ffffff"),
       rowBottom: v("--row-bg-bottom", "#f2f2f2"),
+      rowTopHover: v("--row-bg-top-hover", "#f5f5f5"),
+      rowBottomHover: v("--row-bg-bottom-hover", "#e8e8e8"),
       rowSep: v("--row-sep", "rgb(200 200 200 / 0.5)"),
       pillBg: v("--pill-bg", "#f8e4b2"),
+      selectedBg: v("--row-selected", "#c8e4ff"),
+      selectedBgHover: v("--row-selected-hover", "#b4d0eb"),
       ink: v("--ink", "#1b1b1b"),
       inkWeak: v("--ink-weak", "#5a5a5a"),
       // No CSS token for the thumb; a mid-gray reads on both themes.
