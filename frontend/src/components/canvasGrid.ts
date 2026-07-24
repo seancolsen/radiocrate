@@ -228,7 +228,14 @@ export class CanvasGrid {
     this.rect = undefined; // invalidate cached bounding rect
     this.relayout();
     this.clampScroll();
-    this.requestDraw();
+    // Repaint synchronously, not via rAF. Assigning `canvas.width/height` above
+    // cleared the backing store to transparent, and ResizeObserver (our caller)
+    // fires *after* rAF callbacks within a frame — so a deferred draw wouldn't
+    // run until the next frame, compositing a blank canvas in between. During a
+    // live resize that blank frame recurs every event and reads as a flicker.
+    // Drawing here fills the freshly-cleared buffer before the browser paints.
+    this.dirty = false;
+    this.draw();
   }
 
   /** Re-reads theme colors + font family from CSS and repaints (theme toggle). */
