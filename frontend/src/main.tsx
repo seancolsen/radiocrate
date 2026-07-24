@@ -1,3 +1,6 @@
+// Solid DevTools runtime. Import first so the debugger attaches before the app
+// mounts. Tree-shaken out of production builds (the module is a no-op there).
+import "solid-devtools";
 import { render } from "solid-js/web";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App";

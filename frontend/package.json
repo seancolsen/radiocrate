@@ -34,6 +34,7 @@
     "jsdom": "^29.1.1",
     "prettier": "^3.9.6",
     "prettier-plugin-tailwindcss": "^0.8.1",
+    "solid-devtools": "^0.34.5",
     "tailwindcss": "^4.3.3",
     "typescript": "6",
     "typescript-eslint": "^8.65.0",
