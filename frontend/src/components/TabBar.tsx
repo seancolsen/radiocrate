@@ -40,11 +40,18 @@ export default function TabBar() {
             id={tab.id}
             name={tab.name}
             active={tab.id === store.state.activeTabId}
+            unsaved={store.isUnsaved(tab.id)}
             dragging={drag.draggingId() === tab.id}
             translate={drag.translate()}
+            renaming={store.state.renaming?.id === tab.id}
+            renameBuffer={store.state.renaming?.buffer ?? ""}
             onSelect={() => store.selectTab(tab.id)}
             onClose={() => store.closeTab(tab.id)}
             onPointerDown={(e) => drag.onPointerDown(e, tab.id)}
+            onRenameStart={() => store.beginRename(tab.id)}
+            onRenameInput={(text) => store.setRenameBuffer(text)}
+            onRenameCommit={() => store.commitRename()}
+            onRenameCancel={() => store.cancelRename()}
           />
         )}
       </For>

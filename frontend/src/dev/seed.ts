@@ -36,6 +36,13 @@ export function applySeed(store: AppStore): void {
     return;
   }
 
+  // Expose the store to the page (test-only, gated on a param) so a Playwright
+  // test can drive a second `setResults` and assert the canvas repaints on a
+  // result *replace* — the reload path — without a resize forcing the draw.
+  if (params.get("expose") === "1") {
+    (window as unknown as { __appStore: AppStore }).__appStore = store;
+  }
+
   const sidebar = params.get("sidebar");
   if (sidebar === "open") store.setSidebarOpen(true);
   else if (sidebar === "closed") store.setSidebarOpen(false);

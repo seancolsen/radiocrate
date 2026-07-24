@@ -173,6 +173,22 @@ export const PRELUDE = `#track.firstplay = #play.timestamp%min
 ]
 #track.artist:@x = ++#artist{name:@x}`;
 
+/** Serializes a working definition into the JSON string persisted in the
+ * backend's `query.definition` column — the inverse of {@link fromStored} and the
+ * DOM analog of `query_def.rs:to_stored`. `full` is omitted when absent (matching
+ * serde's `skip_serializing_if = "Option::is_none"`) so a sectioned query never
+ * carries a stray `"full": null`. */
+export function definitionToStored(def: QueryDefinition): string {
+  const out: Record<string, unknown> = {
+    base: def.base,
+    filter: { custom: def.filter.custom, presets: [...def.filter.presets] },
+    sort: def.sort,
+    display: def.display,
+  };
+  if (def.full != null) out.full = def.full;
+  return JSON.stringify(out);
+}
+
 /** Parses a stored `query.definition` JSON string into a `QueryDefinition`.
  * A parse failure yields `null` — for this crude phase that simply means no
  * results (the legacy raw-Querydown split from `query_def.rs:186` is skipped). */

@@ -17,6 +17,7 @@ import SectionOptionsMenu from "./builder/SectionOptionsMenu";
 import QueryBuilder from "./builder/QueryBuilder";
 import PresetSaveModal from "./PresetSaveModal";
 import ViewSqlModal from "./ViewSqlModal";
+import DeleteConfirmModal from "./DeleteConfirmModal";
 
 /** Width at/below which the bar drops the section buttons' text labels and the
  * run/filter separator (COMPACT_MENU_BAR_WIDTH in `menu_bar.rs`). */
@@ -62,9 +63,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <IconButton
             icon={Icons.Save}
             label="Save"
-            onClick={() => {
-              /* Persistence deferred — the button only signals unsaved state. */
-            }}
+            onClick={() => store.saveQuery(props.tabId)}
           />
         </Show>
         <IconButton
@@ -122,6 +121,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
 
       <PresetSaveModal tabId={props.tabId} />
       <ViewSqlModal />
+      <DeleteConfirmModal />
     </div>
   );
 }

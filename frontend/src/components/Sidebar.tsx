@@ -41,6 +41,7 @@ export default function Sidebar() {
                 <OpenedRow
                   name={tab.name}
                   active={tab.id === store.state.activeTabId}
+                  unsaved={store.isUnsaved(tab.id)}
                   onSelect={() => store.selectTab(tab.id)}
                   onClose={() => store.closeTab(tab.id)}
                 />

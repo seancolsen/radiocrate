@@ -1,19 +1,30 @@
+import { Show } from "solid-js";
 import { Icons } from "../icons";
 
-/** One tab handle: query icon, name (ellipsis when crowded), and a close ×.
- * Only the top corners are rounded so it sits flush with the content below.
+/** One tab handle: query icon, name (ellipsis when crowded), an unsaved-changes
+ * ✱ marker, and a close ×. Only the top corners are rounded so it sits flush
+ * with the content below.
  *  - Active: filled with the content-panel color + a 4px accent-blue top edge,
  *    name at full-strength text.
- *  - Inactive: bar-colored (darker on hover), icon + name dimmed. */
+ *  - Inactive: bar-colored (darker on hover), icon + name dimmed.
+ * Double-clicking the body starts an inline rename, replacing the name with a
+ * text field (mirrors `tabs.rs` double-click-to-rename). */
 export default function TabHandle(props: {
   id: string;
   name: string;
   active: boolean;
+  unsaved: boolean;
   dragging: boolean;
   translate: number;
+  renaming: boolean;
+  renameBuffer: string;
   onSelect: () => void;
   onClose: () => void;
   onPointerDown: (e: PointerEvent) => void;
+  onRenameStart: () => void;
+  onRenameInput: (text: string) => void;
+  onRenameCommit: () => void;
+  onRenameCancel: () => void;
 }) {
   return (
     <div
@@ -32,6 +43,7 @@ export default function TabHandle(props: {
       }}
       onPointerDown={(e) => props.onPointerDown(e)}
       onClick={() => props.onSelect()}
+      onDblClick={() => props.onRenameStart()}
     >
       {/* 4px accent top edge on the active handle. */}
       <div
@@ -44,7 +56,46 @@ export default function TabHandle(props: {
           props.active ? "text-ink-weak size-4 shrink-0" : "size-4 shrink-0"
         }
       />
-      <span class="min-w-0 flex-1 truncate text-sm">{props.name}</span>
+      <Show
+        when={props.renaming}
+        fallback={
+          <>
+            <span class="min-w-0 flex-1 truncate text-sm">{props.name}</span>
+            <Show when={props.unsaved}>
+              <Icons.Unsaved
+                class="text-danger size-3 shrink-0"
+                aria-label="Unsaved changes"
+              />
+            </Show>
+          </>
+        }
+      >
+        <input
+          type="text"
+          ref={(el) =>
+            queueMicrotask(() => {
+              el.focus();
+              el.select();
+            })
+          }
+          class="border-edge bg-panel text-ink focus:border-accent min-w-0 flex-1 rounded border px-1 py-0.5 text-sm outline-none"
+          value={props.renameBuffer}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDblClick={(e) => e.stopPropagation()}
+          onInput={(e) => props.onRenameInput(e.currentTarget.value)}
+          onBlur={() => props.onRenameCommit()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              props.onRenameCommit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              props.onRenameCancel();
+            }
+          }}
+        />
+      </Show>
       <button
         type="button"
         aria-label={`Close ${props.name}`}

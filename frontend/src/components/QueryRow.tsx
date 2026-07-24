@@ -1,5 +1,8 @@
 import { Icons } from "../icons";
 
+/** A row in the "Queries" section: a saved query. Clicking opens it. Unlike the
+ * Opened rows, saved-query rows never show the unsaved (✱) marker — that state
+ * belongs to open tabs, not the saved catalog. */
 export default function QueryRow(props: { name: string; onOpen: () => void }) {
   return (
     <button

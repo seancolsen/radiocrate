@@ -1,11 +1,14 @@
+import { Show } from "solid-js";
 import { Icons } from "../icons";
 
 /** A row in the "Opened" section: an open tab. Clicking the body selects it; a
  * close (×) sits at the right. The active row is marked with a left accent bar
- * (matching the tab bar's blue top edge), not a fill. */
+ * (matching the tab bar's blue top edge), not a fill. A red ✱ marks an open tab
+ * with unsaved edits. */
 export default function OpenedRow(props: {
   name: string;
   active: boolean;
+  unsaved: boolean;
   onSelect: () => void;
   onClose: () => void;
 }) {
@@ -25,7 +28,13 @@ export default function OpenedRow(props: {
         onClick={() => props.onSelect()}
       >
         <Icons.Query class="text-ink-weak size-[14px] shrink-0" />
-        <span class="text-ink ml-2 truncate text-sm">{props.name}</span>
+        <span class="text-ink ml-2 min-w-0 truncate text-sm">{props.name}</span>
+        <Show when={props.unsaved}>
+          <Icons.Unsaved
+            class="text-danger ml-1 size-3 shrink-0"
+            aria-label="Unsaved changes"
+          />
+        </Show>
       </button>
       <button
         type="button"

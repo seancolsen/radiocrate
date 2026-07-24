@@ -34,6 +34,8 @@ import Delete from "~icons/material-symbols/delete";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
+import Rename from "~icons/material-symbols/edit";
+import Duplicate from "~icons/material-symbols/content-copy";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -61,4 +63,6 @@ export const Icons = {
   ViewSql, // View SQL menu entry
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
+  Rename, // rename query (wrench menu + double-click)
+  Duplicate, // duplicate query (wrench menu)
 };

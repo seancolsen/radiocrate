@@ -3,16 +3,25 @@ import { Icons } from "../icons";
 import { useAppState } from "../state/store";
 import { MenuItem, MenuSeparator } from "./ui/Menu";
 
-/** The wrench "query actions" menu body. This session wires the items that act
- * on frontend-owned state without un-ported subsystems: "Revert changes" (only
- * while the working query differs from its saved form) and "View SQL". "Delete"
- * is rendered (a backend write) but stubbed non-functional. Change base, Rename,
- * Duplicate, Pin, and Convert-to-full are deferred (see the plan's non-goals). */
+/** The wrench "query actions" menu body. Rename, Duplicate, Revert (only while
+ * the working query differs from its saved form), View SQL, and Delete. Shared in
+ * spirit with `menu_bar.rs:page_options_menu` (Change base, Pin, and
+ * Convert-to-full remain deferred). */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
   const store = useAppState();
   return (
     <>
-      <Show when={store.isUnsaved(props.tabId)}>
+      <MenuItem
+        icon={Icons.Rename}
+        label="Rename"
+        onClick={() => store.beginRename(props.tabId)}
+      />
+      <MenuItem
+        icon={Icons.Duplicate}
+        label="Duplicate"
+        onClick={() => store.duplicateQuery(props.tabId)}
+      />
+      <Show when={store.canRevert(props.tabId)}>
         <MenuItem
           icon={Icons.Revert}
           label="Revert changes"
@@ -29,9 +38,7 @@ export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
         icon={Icons.Delete}
         label="Delete"
         danger
-        onClick={() => {
-          /* Stubbed this session — deletion is a backend write (deferred). */
-        }}
+        onClick={() => store.requestDelete(props.tabId)}
       />
     </>
   );
