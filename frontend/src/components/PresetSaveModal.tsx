@@ -35,9 +35,9 @@ export default function PresetSaveModal(props: { tabId: string }): JSX.Element {
           />
           <Checkbox
             label="Apply by default"
-            checked={s().is_default}
+            checked={s().isDefault}
             onChange={(checked) =>
-              store.patchPresetSave({ is_default: checked })
+              store.patchPresetSave({ isDefault: checked })
             }
           />
           <div class="mt-4 flex justify-end gap-2">

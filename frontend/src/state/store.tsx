@@ -6,7 +6,7 @@ import {
   type Resource,
 } from "solid-js";
 import { createStore, produce, unwrap } from "solid-js/store";
-import { listPresets, listQueries, type Preset, type Query } from "../api/rpc";
+import { presetList, queryList, type Preset, type Query } from "api-client";
 import { runSql, runSqlScalar } from "../api/query";
 import { addInferredLinks, INTROSPECTION_SQL } from "../query/schema";
 import { compileSavedQuery } from "../query/compile";
@@ -28,7 +28,7 @@ import { buildResultFromArrow, type QueryResult } from "../query/result";
 export interface PresetEdit {
   name: string;
   definition: string;
-  is_default: boolean;
+  isDefault: boolean;
 }
 
 /** The "Save as preset" naming-dialog state (mirrors `builder.rs:PresetSave`). */
@@ -36,7 +36,7 @@ export interface PresetSave {
   section: Section;
   definition: string;
   name: string;
-  is_default: boolean;
+  isDefault: boolean;
 }
 
 /** An open tab. Tab id == query id this phase. Carries both the saved query
@@ -206,13 +206,13 @@ function createAppStore(): AppStore {
   });
 
   const [queries, { refetch }] = createResource<Query[]>(async () => {
-    return await listQueries();
+    return await queryList();
   });
 
   // Presets load once, then live in the mutable store (above) so local edits and
   // "Save as preset" can add/update them without a refetch.
   createResource<Preset[]>(async () => {
-    const loaded = await listPresets();
+    const loaded = await presetList();
     setState("presets", loaded);
     return loaded;
   });
@@ -243,7 +243,7 @@ function createAppStore(): AppStore {
             ...p,
             name: edit.name,
             definition: edit.definition,
-            is_default: edit.is_default,
+            isDefault: edit.isDefault,
           }
         : p;
     });
@@ -303,7 +303,7 @@ function createAppStore(): AppStore {
     return (
       saved.name !== edit.name ||
       saved.definition !== edit.definition ||
-      saved.is_default !== edit.is_default
+      saved.isDefault !== edit.isDefault
     );
   };
 
@@ -313,7 +313,7 @@ function createAppStore(): AppStore {
     setState("presetEdits", id, {
       name: preset.name,
       definition: preset.definition,
-      is_default: preset.is_default,
+      isDefault: preset.isDefault,
     });
   };
 
@@ -460,7 +460,7 @@ function createAppStore(): AppStore {
     presetName,
     presetsFor: (baseTable, section) =>
       state.presets.filter(
-        (p) => p.section === section && p.base_table === baseTable,
+        (p) => p.section === section && p.baseTable === baseTable,
       ),
     presetDirty,
     presetEdit: (id) => state.presetEdits[id],
@@ -480,8 +480,8 @@ function createAppStore(): AppStore {
         setState("presets", idx, {
           name,
           definition: edit.definition,
-          is_default: edit.is_default,
-          modified_at: nowEpoch(),
+          isDefault: edit.isDefault,
+          modifiedAt: nowEpoch(),
         });
       }
       // The edit now matches the saved preset; drop the buffer.
@@ -497,7 +497,7 @@ function createAppStore(): AppStore {
         section,
         definition,
         name: "",
-        is_default: false,
+        isDefault: false,
       }),
     cancelPresetSave: () => setState("presetSave", null),
     patchPresetSave: (patch) =>
@@ -513,12 +513,12 @@ function createAppStore(): AppStore {
       const preset: Preset = {
         id: newUuid(),
         name,
-        base_table: base,
+        baseTable: base,
         section: save.section,
         definition: save.definition,
-        is_default: save.is_default,
-        created_at: now,
-        modified_at: now,
+        isDefault: save.isDefault,
+        createdAt: now,
+        modifiedAt: now,
       };
       setState("presets", state.presets.length, preset);
       // Point the working definition at the new preset (mirrors `create_preset`).

@@ -1,3 +1,4 @@
+mod gen_api;
 mod icons;
 
 use std::path::PathBuf;
@@ -9,7 +10,8 @@ fn usage() {
          Commands:\n  \
            build-release   Build the Solid frontend with Bun/Vite and the production binary\n  \
            clean-web       Remove the frontend/dist directory\n  \
-           icons           Regenerate the PWA icon set from branding/logo.svg"
+           icons           Regenerate the PWA icon set from branding/logo.svg\n  \
+           gen-api         Regenerate the TypeScript API client under api-client/"
     );
 }
 
@@ -168,6 +170,7 @@ fn main() -> ExitCode {
         "build-release" => build_release(),
         "clean-web" => clean_web(),
         "icons" => icons::generate(&workspace_root()),
+        "gen-api" => gen_api::generate(&workspace_root()),
         "--help" | "-h" | "help" => {
             usage();
             Ok(())

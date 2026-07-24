@@ -3,6 +3,9 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "paths": {
+      "api-client": ["../api-client/src/index.ts"]
+    },
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "types": [
@@ -16,5 +19,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src", "vite.config.ts", "tests"]
+  "include": ["src", "vite.config.ts", "tests", "../api-client/src"]
 }

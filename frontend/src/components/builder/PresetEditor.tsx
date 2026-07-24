@@ -45,9 +45,9 @@ export default function PresetEditor(props: {
   const applyByDefault = () => (
     <Checkbox
       label="Apply by default"
-      checked={edit()?.is_default ?? false}
+      checked={edit()?.isDefault ?? false}
       onChange={(checked) =>
-        store.patchPresetEdit(props.presetId, { is_default: checked })
+        store.patchPresetEdit(props.presetId, { isDefault: checked })
       }
     />
   );

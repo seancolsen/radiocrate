@@ -14,6 +14,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+api-schema = { path = "../api-schema" }
 introspection = { path = "../introspection" }
 arrow-ipc = "58"
 axum = "0.8"

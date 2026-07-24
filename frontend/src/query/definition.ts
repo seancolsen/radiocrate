@@ -5,7 +5,7 @@
 // per-section Querydown source (the builder default) or a single hand-written
 // query (full mode). This is pure string manipulation: no compiler, no schema.
 
-import type { Preset } from "../api/rpc";
+import type { Preset } from "api-client";
 
 /** A sort or display section: hand-written Querydown (`custom`), a reference to
  * a saved preset (`preset`), or a built-in parameterized preset (`builtin`).

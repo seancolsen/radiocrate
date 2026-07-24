@@ -8,7 +8,7 @@
 // propagate (no error UI this phase — see plan non-goals).
 
 import { compile, compile_sections, type CompileResult } from "querydown-js";
-import type { Preset } from "../api/rpc";
+import type { Preset } from "api-client";
 import { assemble, PRELUDE, type QueryDefinition } from "./definition";
 
 /** Compiles a saved query definition to DuckDB SQL plus the per-column

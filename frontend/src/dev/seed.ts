@@ -95,7 +95,7 @@ export function applySeed(store: AppStore): void {
       const editName = params.get("editName");
       if (editName) store.patchPresetEdit(expand, { name: editName });
       if (params.get("editDefault") === "1")
-        store.patchPresetEdit(expand, { is_default: true });
+        store.patchPresetEdit(expand, { isDefault: true });
     }
   });
 }

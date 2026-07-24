@@ -9,18 +9,14 @@ import {
   tableFromIPC,
   type DataType as ArrowType,
 } from "apache-arrow";
+import { postQuery } from "api-client";
 
 /** Runs a SQL string against the query API and returns the decoded Arrow table.
- * Throws on a non-2xx response (a bad SQL string returns 400 + a plain-text
- * DuckDB error). */
+ * The transport lives in the generated client (`postQuery`); Arrow decoding
+ * stays here. Throws on a non-2xx response (a bad SQL string returns 400 + a
+ * plain-text DuckDB error). */
 export async function runSql(sql: string) {
-  const res = await fetch("/api/query", {
-    method: "POST",
-    headers: { "content-type": "text/plain" },
-    body: sql,
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  return tableFromIPC(new Uint8Array(await res.arrayBuffer()));
+  return tableFromIPC(new Uint8Array(await postQuery(sql)));
 }
 
 /** Reads the single JSON text cell from a one-row/one-column result — how the

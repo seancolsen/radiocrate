@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import devtools from "solid-devtools/vite";
 import solid from "vite-plugin-solid";
@@ -28,6 +29,15 @@ export default defineConfig({
       },
     }),
   ],
+  // The generated API client is a sibling directory (raw TS, no build step),
+  // consumed through this alias. Regenerate it with `cargo xtask gen-api`.
+  resolve: {
+    alias: {
+      "api-client": fileURLToPath(
+        new URL("../api-client/src/index.ts", import.meta.url),
+      ),
+    },
+  },
   build: { outDir: "dist", target: "esnext" },
   // In dev, Vite serves the app on its own port while the backend API runs on
   // :3000. Proxy /api so client code stays origin-relative in every environment.

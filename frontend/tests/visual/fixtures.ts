@@ -1,4 +1,8 @@
-import type { Preset, Query } from "../../src/api/rpc";
+import type { Preset, Query } from "api-client";
+
+// The wire is camelCase (the server renames via serde), so these mock fixtures —
+// fulfilled verbatim by the Playwright routes below — are the generated client
+// types directly.
 
 /** Saved-query fixture for the RPC mock. Names reuse the egui snapshot fixtures
  * ("Lemonade", "Deep Cuts", "Workout Mix"; organizer.rs:1058) so the new frame
@@ -7,25 +11,25 @@ export const QUERIES_FIXTURE: Query[] = [
   {
     id: "00000000-0000-0000-0000-000000000001",
     name: "Lemonade",
-    created_at: 1_700_000_300,
-    modified_at: 1_700_000_300,
-    last_play: 0,
+    createdAt: 1_700_000_300,
+    modifiedAt: 1_700_000_300,
+    lastPlay: 0,
     definition: "{}",
   },
   {
     id: "00000000-0000-0000-0000-000000000002",
     name: "Deep Cuts",
-    created_at: 1_700_000_200,
-    modified_at: 1_700_000_200,
-    last_play: 0,
+    createdAt: 1_700_000_200,
+    modifiedAt: 1_700_000_200,
+    lastPlay: 0,
     definition: "{}",
   },
   {
     id: "00000000-0000-0000-0000-000000000003",
     name: "Workout Mix",
-    created_at: 1_700_000_100,
-    modified_at: 1_700_000_100,
-    last_play: 0,
+    createdAt: 1_700_000_100,
+    modifiedAt: 1_700_000_100,
+    lastPlay: 0,
     definition: "{}",
   },
 ];
@@ -39,12 +43,12 @@ export const PRESETS_FIXTURE: Preset[] = [
   {
     id: VETTED_PRESET_ID,
     name: "vetted",
-    base_table: "track",
+    baseTable: "track",
     section: "filter",
     definition: "rating:>=4 !genre:duplicate file.deletion:@null",
-    is_default: false,
-    created_at: 1_700_000_000,
-    modified_at: 1_700_000_000,
+    isDefault: false,
+    createdAt: 1_700_000_000,
+    modifiedAt: 1_700_000_000,
   },
 ];
 

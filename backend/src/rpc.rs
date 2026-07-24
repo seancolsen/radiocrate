@@ -7,6 +7,10 @@
 
 use std::sync::Arc;
 
+use api_schema::{
+    Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query,
+    QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams,
+};
 use axum::Json;
 use axum::extract::State;
 use duckdb::Connection;
@@ -15,40 +19,9 @@ use serde_json::Value;
 
 use crate::server::AppState;
 
-/// A saved query as exchanged over the wire. Timestamps are i64 epoch seconds
-/// and are authored by the frontend.
-#[derive(Serialize, Deserialize)]
-struct Query {
-    id: String,
-    name: String,
-    created_at: i64,
-    modified_at: i64,
-    last_play: i64,
-    definition: String,
-}
-
-/// A saved query-section preset as exchanged over the wire. The `section` is
-/// one of `filter`/`sort`/`display` and the `definition` is a raw Querydown
-/// fragment; both are opaque to the backend.
-#[derive(Serialize, Deserialize)]
-struct Preset {
-    id: String,
-    name: String,
-    base_table: String,
-    section: String,
-    definition: String,
-    is_default: bool,
-    created_at: i64,
-    modified_at: i64,
-}
-
-/// A user override for a command's keyboard shortcut. `chord` is `None` when the
-/// command is explicitly unbound. See `settings.keybinding` in migration 0002.
-#[derive(Serialize, Deserialize)]
-struct Keybinding {
-    command_id: String,
-    chord: Option<String>,
-}
+// The wire types (`Query`, `Preset`, `Keybinding`) and every method's params
+// struct live in the shared `api-schema` crate, so the generated TypeScript
+// client is derived from these exact definitions and can't drift. See that crate.
 
 #[derive(Deserialize)]
 pub(crate) struct RpcRequest {
@@ -165,48 +138,28 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             })
         }
         "query.delete" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-            }
-            let p: P = from_params(params)?;
+            let p: QueryDeleteParams = from_params(params)?;
             state.write(|conn| {
                 delete_query(conn, &p.id)?;
                 Ok(Value::Null)
             })
         }
         "query.record_play" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-                last_play: i64,
-            }
-            let p: P = from_params(params)?;
+            let p: QueryRecordPlayParams = from_params(params)?;
             state.write(|conn| {
                 record_play(conn, &p.id, p.last_play)?;
                 Ok(Value::Null)
             })
         }
         "query.rename" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-                name: String,
-            }
-            let p: P = from_params(params)?;
+            let p: QueryRenameParams = from_params(params)?;
             state.write(|conn| {
                 rename_query(conn, &p.id, &p.name)?;
                 Ok(Value::Null)
             })
         }
         "query.update_definition" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-                definition: String,
-                modified_at: i64,
-            }
-            let p: P = from_params(params)?;
+            let p: QueryUpdateDefinitionParams = from_params(params)?;
             state.write(|conn| {
                 update_definition(conn, &p.id, &p.definition, p.modified_at)?;
                 Ok(Value::Null)
@@ -224,15 +177,7 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             })
         }
         "preset.update" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-                name: String,
-                definition: String,
-                is_default: bool,
-                modified_at: i64,
-            }
-            let p: P = from_params(params)?;
+            let p: PresetUpdateParams = from_params(params)?;
             state.write(|conn| {
                 update_preset(
                     conn,
@@ -246,11 +191,7 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             })
         }
         "preset.delete" => {
-            #[derive(Deserialize)]
-            struct P {
-                id: String,
-            }
-            let p: P = from_params(params)?;
+            let p: PresetDeleteParams = from_params(params)?;
             state.write(|conn| {
                 delete_preset(conn, &p.id)?;
                 Ok(Value::Null)
@@ -268,11 +209,7 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             })
         }
         "keybinding.delete" => {
-            #[derive(Deserialize)]
-            struct P {
-                command_id: String,
-            }
-            let p: P = from_params(params)?;
+            let p: KeybindingDeleteParams = from_params(params)?;
             state.write(|conn| {
                 delete_keybinding(conn, &p.command_id)?;
                 Ok(Value::Null)
