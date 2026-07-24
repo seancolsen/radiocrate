@@ -116,6 +116,14 @@ export class CanvasGrid {
   private theme: Theme;
   private fontFamily = "sans-serif";
 
+  // Cache of vertical font metrics keyed by the exact `ctx.font` string. The
+  // font's ascent/descent are constant per size+family, so measure once and
+  // reuse; cleared when the font family changes or a web font finishes loading.
+  private readonly metrics = new Map<
+    string,
+    { ascent: number; descent: number }
+  >();
+
   // Viewport size in logical (CSS) px; backing store is this × dpr.
   private vw = 0;
   private vh = 0;
@@ -156,7 +164,10 @@ export class CanvasGrid {
     // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
     // truncation and pill widths) are measured against the real font.
     if (typeof document !== "undefined" && document.fonts?.ready) {
-      void document.fonts.ready.then(() => this.requestDraw());
+      void document.fonts.ready.then(() => {
+        this.metrics.clear(); // real font may differ from the fallback metrics
+        this.requestDraw();
+      });
     }
 
     this.resize();
@@ -185,15 +196,32 @@ export class CanvasGrid {
   }
 
   /** Re-reads the backing-store size for the current viewport + devicePixelRatio,
-   * re-derives the layout for the new width, clamps scroll, and repaints. */
+   * re-derives the layout for the new width, clamps scroll, and repaints.
+   *
+   * Sizes the canvas so its backing store maps **1:1 onto the physical pixel
+   * grid**, which is the crux of keeping text crisp at a fractional dpr. The
+   * container's box is measured at sub-pixel precision (`getBoundingClientRect`),
+   * the backing store is the largest whole number of device pixels that fits
+   * (`floor(css * dpr)`), and the canvas's CSS box is then pinned to exactly
+   * `backing / dpr`. Without that last step the browser paints `backing` device
+   * px into a `css * dpr` box — a non-integer rescale that re-blurs every glyph
+   * (undoing our per-glyph snapping) and shifts with each pixel of resize, which
+   * is why text looked crisp only at the widths where `css * dpr` happened to be
+   * whole. Because the canvas now has an explicit size, the ResizeObserver must
+   * watch the *container* (see QueryResults), not the canvas itself. */
   resize(): void {
-    const cssW = this.canvas.clientWidth;
-    const cssH = this.canvas.clientHeight;
+    const host = this.canvas.parentElement ?? this.canvas;
+    const rect = host.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    const nextW = Math.round(cssW * dpr);
-    const nextH = Math.round(cssH * dpr);
-    if (this.canvas.width !== nextW) this.canvas.width = nextW;
-    if (this.canvas.height !== nextH) this.canvas.height = nextH;
+    const bw = Math.max(0, Math.floor(rect.width * dpr));
+    const bh = Math.max(0, Math.floor(rect.height * dpr));
+    if (this.canvas.width !== bw) this.canvas.width = bw;
+    if (this.canvas.height !== bh) this.canvas.height = bh;
+    // Pin the CSS box to an exact multiple of device pixels (1:1 mapping).
+    const cssW = bw / dpr;
+    const cssH = bh / dpr;
+    this.canvas.style.width = `${cssW}px`;
+    this.canvas.style.height = `${cssH}px`;
     this.vw = cssW;
     this.vh = cssH;
     this.dpr = dpr;
@@ -206,6 +234,7 @@ export class CanvasGrid {
   /** Re-reads theme colors + font family from CSS and repaints (theme toggle). */
   refreshTheme(): void {
     this.theme = this.readTheme();
+    this.metrics.clear(); // font family is re-read in readTheme and may change
     this.requestDraw();
   }
 
@@ -216,6 +245,48 @@ export class CanvasGrid {
 
   private get maxScroll(): number {
     return Math.max(0, this.totalHeight - this.vh);
+  }
+
+  /** Snaps a logical coordinate to the device-pixel grid. The context is scaled
+   * by `dpr`, so a logical `v` paints at device `v * dpr`; rounding that to a
+   * whole device pixel (then back to logical) keeps glyph baselines, text
+   * anchors, and hairlines from landing on fractional pixels — the cause of the
+   * soft text (and the crisp/blurry shimmer while resizing, since fractional
+   * column widths otherwise slide text across sub-pixel offsets). Works for
+   * fractional `dpr` (e.g. 1.5 fractional-scaled displays), where snapping to
+   * logical pixels alone wouldn't align to the physical grid. */
+  private snap(v: number): number {
+    return Math.round(v * this.dpr) / this.dpr;
+  }
+
+  /** Vertical metrics of the currently-set `ctx.font`, cached per font string.
+   * Uses the font-wide bounding box (constant for a given size+family, unlike
+   * the glyph-dependent `actualBoundingBox*`) so vertical centering doesn't jump
+   * between rows with different text. */
+  private fontMetrics(): { ascent: number; descent: number } {
+    const key = this.ctx.font;
+    let m = this.metrics.get(key);
+    if (!m) {
+      const tm = this.ctx.measureText("Mg");
+      const ascent =
+        tm.fontBoundingBoxAscent ?? tm.actualBoundingBoxAscent ?? 0;
+      const descent =
+        tm.fontBoundingBoxDescent ?? tm.actualBoundingBoxDescent ?? 0;
+      m = { ascent, descent };
+      this.metrics.set(key, m);
+    }
+    return m;
+  }
+
+  /** The device-snapped alphabetic baseline that visually centers text on the
+   * line `centerY`. The font box spans `[B - ascent, B + descent]`, so its center
+   * sits at `B + (descent - ascent) / 2`; solving for the baseline that lands
+   * that center on `centerY` gives `B = centerY + (ascent - descent) / 2`.
+   * Snapping the *baseline itself* (not the em-box center as `textBaseline:
+   * "middle"` would) is what keeps horizontal stems on whole device pixels. */
+  private centeredBaseline(centerY: number): number {
+    const { ascent, descent } = this.fontMetrics();
+    return this.snap(centerY + (ascent - descent) / 2);
   }
 
   // ── Layout ────────────────────────────────────────────────────────────────
@@ -427,7 +498,11 @@ export class CanvasGrid {
     const ctx = this.ctx;
     const { vw, vh } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.textBaseline = "middle";
+    // Alphabetic baseline (the default) so we can snap the true baseline to the
+    // device grid for crisp glyphs; vertical centering is done via font metrics
+    // in `centeredBaseline`. (`"middle"` would offset the baseline by a constant
+    // fraction of a pixel, leaving text soft even when the center is snapped.)
+    ctx.textBaseline = "alphabetic";
 
     ctx.fillStyle = this.theme.panel;
     ctx.fillRect(0, 0, vw, vh);
@@ -469,7 +544,11 @@ export class CanvasGrid {
     ctx.fillStyle = this.theme.inkWeak;
     ctx.font = `14px ${this.fontFamily}`;
     ctx.textAlign = "center";
-    ctx.fillText("No results", this.vw / 2, this.vh / 2);
+    ctx.fillText(
+      "No results",
+      this.snap(this.vw / 2),
+      this.centeredBaseline(this.vh / 2),
+    );
     this.thumb = undefined;
   }
 
@@ -480,9 +559,10 @@ export class CanvasGrid {
     g.addColorStop(1, this.theme.rowBottom);
     ctx.fillStyle = g;
     ctx.fillRect(0, screenY, this.vw, rowH);
-    // Softened hairline separator along the bottom edge.
+    // Softened hairline separator along the bottom edge. Snap to the device grid
+    // so the 1px line stays a crisp single pixel instead of a blurred 2px smear.
     ctx.fillStyle = this.theme.rowSep;
-    ctx.fillRect(0, screenY + rowH - 1, this.vw, 1);
+    ctx.fillRect(0, this.snap(screenY + rowH - 1), this.vw, this.snap(1));
   }
 
   private drawCell(r: number, k: number, screenY: number): void {
@@ -544,17 +624,20 @@ export class CanvasGrid {
     if (!text) return;
     const ctx = this.ctx;
     ctx.fillStyle = color;
-    const cy = cellY + lineH / 2;
+    // Snap the baseline and the horizontal anchor to whole device pixels so the
+    // glyphs render crisply (see `snap`). The anchor is snapped *after* the align
+    // math so the rounded edge is the one text actually grows from.
+    const cy = this.centeredBaseline(cellY + lineH / 2);
     const fitted = this.fitText(text, cellW);
     if (align === "right") {
       ctx.textAlign = "right";
-      ctx.fillText(fitted, cellX + cellW, cy);
+      ctx.fillText(fitted, this.snap(cellX + cellW), cy);
     } else if (align === "center") {
       ctx.textAlign = "center";
-      ctx.fillText(fitted, cellX + cellW / 2, cy);
+      ctx.fillText(fitted, this.snap(cellX + cellW / 2), cy);
     } else {
       ctx.textAlign = "left";
-      ctx.fillText(fitted, cellX, cy);
+      ctx.fillText(fitted, this.snap(cellX), cy);
     }
   }
 
@@ -587,13 +670,18 @@ export class CanvasGrid {
           : cellX;
 
     ctx.textAlign = "left";
+    const snappedPillY = this.snap(pillY);
+    const textCy = this.centeredBaseline(pillY + pillH / 2);
     for (let i = 0; i < items.length; i++) {
       const w = widths[i];
+      // Snap the pill's left edge and its label anchor to the device grid so both
+      // the rounded rect and the text inside stay crisp (see `snap`).
+      const px = this.snap(x);
       ctx.fillStyle = this.theme.pillBg;
-      roundRectPath(ctx, x, pillY, w, pillH, PILL_RADIUS);
+      roundRectPath(ctx, px, snappedPillY, w, pillH, PILL_RADIUS);
       ctx.fill();
       ctx.fillStyle = color;
-      ctx.fillText(items[i], x + PILL_PAD_X, pillY + pillH / 2);
+      ctx.fillText(items[i], this.snap(px + PILL_PAD_X), textCy);
       x += w + PILL_GAP;
       if (x > cellX + cellW) break; // rest is clipped anyway
     }

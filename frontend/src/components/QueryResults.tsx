@@ -37,9 +37,13 @@ export default function QueryResults(props: { tabId: string }) {
     grid = new CanvasGrid(el);
     grid.setResult(currentResult());
 
-    // Track the canvas's own box for backing-store resizes.
+    // Observe the *container*, not the canvas, for backing-store resizes. The
+    // grid gives the canvas an explicit pixel size (for a 1:1 device-pixel
+    // mapping), so the canvas no longer tracks its parent on its own — and
+    // observing the canvas would never fire when the container grows.
+    const host = el.parentElement ?? el;
     const ro = new ResizeObserver(() => grid?.resize());
-    ro.observe(el);
+    ro.observe(host);
 
     // Repaint with the live theme's colors when it changes (system or explicit).
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
