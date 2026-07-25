@@ -183,6 +183,7 @@ export interface RecordRef {
 
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
+  theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
   tabs: Tab[]; // open tabs, in tab-bar order
   activeTabId: string | null;
   queryFilter: string; // "Filter" input text in the Queries section
@@ -253,6 +254,56 @@ function persistSidebar(open: boolean): void {
   }
 }
 
+/** "system" follows `prefers-color-scheme` (no stored key); "light"/"dark" is an
+ * explicit override, persisted and mirrored onto `<html data-theme>`. */
+export type ThemePref = "light" | "dark" | "system";
+
+const THEME_KEY = "theme";
+
+function storedTheme(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === "light" || v === "dark") return v;
+  } catch {
+    // Private-mode localStorage denial — fall back to system.
+  }
+  return "system";
+}
+
+function persistTheme(pref: ThemePref): void {
+  try {
+    if (pref === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, pref);
+  } catch {
+    // ignore
+  }
+}
+
+/** Mirrors index.html's pre-paint bootstrap script: an explicit theme sets
+ * `data-theme` (which app.css's attribute selectors read) and the dynamic
+ * `theme-color` meta; "system" reverts to the static, media-queried metas. The
+ * bootstrap script's own meta (unmarked by `media`) is reused here rather than
+ * duplicated. */
+function applyThemeToDocument(pref: ThemePref): void {
+  if (pref === "system") {
+    document.documentElement.removeAttribute("data-theme");
+    document.head
+      .querySelector('meta[name="theme-color"]:not([media])')
+      ?.remove();
+    return;
+  }
+  document.documentElement.setAttribute("data-theme", pref);
+  let meta = document.head.querySelector<HTMLMetaElement>(
+    'meta[name="theme-color"]:not([media])',
+  );
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.appendChild(meta);
+  }
+  meta.content = pref === "dark" ? "#1b1b1b" : "#f8f8f8";
+}
+
 /** Width bounds for the record-editor sidebar, in CSS px. The maximum is also
  * capped against the live viewport while dragging (see `RecordEditorPanel`), so
  * these are just the absolute limits a persisted value is trusted within. */
@@ -321,6 +372,8 @@ export interface AppStore {
   refetchQueries: () => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  /** Sets the theme override ("system" clears it) — the Settings menu's action. */
+  setTheme: (pref: ThemePref) => void;
   /** Open (or focus) a query in a tab. */
   openTab: (query: { id: string; name: string; definition: string }) => void;
   /** Open (or focus) the singleton Keyboard Shortcuts tab — the
@@ -516,6 +569,7 @@ export interface AppStore {
 function createAppStore(): AppStore {
   const [state, setState] = createStore<AppState>({
     sidebarOpen: storedSidebarOpen(),
+    theme: storedTheme(),
     tabs: [],
     activeTabId: null,
     queryFilter: "",
@@ -561,6 +615,12 @@ function createAppStore(): AppStore {
   const setSidebarOpen = (open: boolean) => {
     setState("sidebarOpen", open);
     persistSidebar(open);
+  };
+
+  const setTheme = (pref: ThemePref) => {
+    setState("theme", pref);
+    persistTheme(pref);
+    applyThemeToDocument(pref);
   };
 
   // The record-editor sidebar's width: a plain signal (no per-tab state — every
@@ -1047,6 +1107,7 @@ function createAppStore(): AppStore {
     refetchQueries: () => void refetch(),
     toggleSidebar: () => setSidebarOpen(!state.sidebarOpen),
     setSidebarOpen,
+    setTheme,
     openTab: (query) => {
       if (!state.tabs.some((t) => t.id === query.id)) {
         const saved = definitionFromStored(query.definition);

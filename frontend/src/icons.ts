@@ -43,6 +43,9 @@ import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
+import LightMode from "~icons/material-symbols/light-mode";
+import DarkMode from "~icons/material-symbols/dark-mode";
+import SystemTheme from "~icons/material-symbols/settings-brightness";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -78,4 +81,7 @@ export const Icons = {
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
   Keyboard, // shortcuts editor: "Record keys" search toggle
+  LightMode, // Settings footer: Light theme option
+  DarkMode, // Settings footer: Dark theme option
+  SystemTheme, // Settings footer: System theme option
 };

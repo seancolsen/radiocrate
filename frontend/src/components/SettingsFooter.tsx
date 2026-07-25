@@ -1,12 +1,27 @@
-import type { JSX } from "solid-js";
+import { For, type JSX } from "solid-js";
 import { Icons } from "../icons";
-import { useAppState } from "../state/store";
-import { Menu, MenuItem } from "./ui/Menu";
+import { useAppState, type ThemePref } from "../state/store";
+import {
+  Menu,
+  MenuHeading,
+  MenuItem,
+  MenuSeparator,
+  MenuToggleItem,
+} from "./ui/Menu";
+
+const THEME_OPTIONS: {
+  pref: ThemePref;
+  label: string;
+  icon: typeof Icons.LightMode;
+}[] = [
+  { pref: "light", label: "Light", icon: Icons.LightMode },
+  { pref: "dark", label: "Dark", icon: Icons.DarkMode },
+  { pref: "system", label: "System", icon: Icons.SystemTheme },
+];
 
 /** The Settings dropdown pinned to the sidebar bottom: gear icon + muted
- * "Settings" label, opening a menu upward (it sits on the bottom edge) with the
- * Keyboard shortcuts entry. No theme entries yet — the theme follows the
- * system for now. */
+ * "Settings" label, opening a menu upward (it sits on the bottom edge) with a
+ * Light/Dark/System theme picker and the Keyboard shortcuts entry. */
 export default function SettingsFooter(): JSX.Element {
   const store = useAppState();
   return (
@@ -29,6 +44,19 @@ export default function SettingsFooter(): JSX.Element {
         </button>
       )}
     >
+      <MenuHeading text="Theme" />
+      <For each={THEME_OPTIONS}>
+        {(option) => (
+          <MenuToggleItem
+            kind="radio"
+            icon={option.icon}
+            label={option.label}
+            checked={store.state.theme === option.pref}
+            onClick={() => store.setTheme(option.pref)}
+          />
+        )}
+      </For>
+      <MenuSeparator />
       <MenuItem
         icon={Icons.Keyboard}
         label="Keyboard shortcuts"
