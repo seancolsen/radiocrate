@@ -15,6 +15,7 @@ export default function TabBar() {
   return (
     <div
       ref={(el) => (container = el)}
+      data-testid="tab-bar"
       class="bg-bar flex h-[34px] shrink-0 items-stretch"
     >
       {/* Explorer toggle: always present. */}

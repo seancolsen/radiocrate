@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { addInferredLinks } from "./schema";
+import {
+  addInferredLinks,
+  identifyingColumns,
+  parseSchemaTables,
+  primaryKey,
+  type SchemaTable,
+} from "./schema";
 
 // Mirrors the Rust tests for `add_inferred_links` (`introspection/src/lib.rs`),
 // guarding this TS port against drift from the shared crate. `SAMPLE` is the
@@ -85,5 +91,72 @@ describe("addInferredLinks", () => {
 
   it("throws on JSON without tables", () => {
     expect(() => addInferredLinks(`{ "nope": 1 }`)).toThrow();
+  });
+});
+
+describe("parseSchemaTables", () => {
+  it("reads columns and unique constraints", () => {
+    const tables = parseSchemaTables(SAMPLE);
+    expect(tables.map((t) => t.name)).toEqual(["track", "album", "credit"]);
+    const track = tables[0];
+    expect(track.uniqueConstraints).toEqual([["id"]]);
+    expect(track.columns[0]).toEqual({
+      name: "id",
+      type: "UUID",
+      nullable: false,
+    });
+  });
+
+  it("degrades to no tables on a malformed document", () => {
+    expect(parseSchemaTables(`{ "nope": 1 }`)).toEqual([]);
+    expect(parseSchemaTables("not json")).toEqual([]);
+  });
+});
+
+// Mirrors `form.rs:primary_key_prefers_id_and_skips_composite_keys`.
+describe("primaryKey / identifyingColumns", () => {
+  const table = (name: string): SchemaTable =>
+    parseSchemaTables(SAMPLE).find((t) => t.name === name)!;
+
+  it("takes a single-column key", () => {
+    expect(primaryKey(table("track"))).toBe("id");
+    expect(identifyingColumns(table("track"))).toEqual(["id"]);
+  });
+
+  it("has no single key for a composite-keyed table", () => {
+    expect(primaryKey(table("credit"))).toBeUndefined();
+    // …but the composite still identifies a record.
+    expect(identifyingColumns(table("credit"))).toEqual(["track", "artist"]);
+  });
+
+  it("prefers `id` over another single-column unique constraint", () => {
+    const t: SchemaTable = {
+      name: "track",
+      columns: [
+        { name: "slug", type: "VARCHAR", nullable: false },
+        { name: "id", type: "UUID", nullable: false },
+      ],
+      uniqueConstraints: [["slug"], ["id"]],
+    };
+    expect(primaryKey(t)).toBe("id");
+  });
+
+  it("ignores a nullable unique column", () => {
+    const t: SchemaTable = {
+      name: "track",
+      columns: [{ name: "isrc", type: "VARCHAR", nullable: true }],
+      uniqueConstraints: [["isrc"]],
+    };
+    expect(primaryKey(t)).toBeUndefined();
+    expect(identifyingColumns(t)).toEqual(["isrc"]);
+  });
+
+  it("identifies nothing in a table with no unique constraint", () => {
+    const t: SchemaTable = {
+      name: "log",
+      columns: [{ name: "message", type: "VARCHAR", nullable: true }],
+      uniqueConstraints: [],
+    };
+    expect(identifyingColumns(t)).toEqual([]);
   });
 });

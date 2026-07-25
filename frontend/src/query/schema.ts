@@ -6,6 +6,11 @@
 // recovers links by convention — a `UUID` column named after a table links to
 // that table's `id`. The enriched JSON is what the Querydown compiler consumes.
 //
+// It also carries the record-identity convention (`primaryKey` /
+// `identifyingColumns`, ported from the egui `form.rs`), which decides what
+// counts as "the primary key" of a table — the question the record editor and
+// the results context menu both hang off.
+//
 // NOTE (drift): this mirrors Rust logic that also backs the backend's DML
 // validator. The FK-by-convention rule is stable and tiny; a unit test
 // (schema.test.ts) guards this port against the Rust `SAMPLE` fixture.
@@ -52,10 +57,76 @@ export const INTROSPECTION_SQL = `SELECT (json_object(
 interface RawColumn {
   name: string;
   type?: string;
+  nullable?: boolean;
 }
 interface RawTable {
   name: string;
   columns: RawColumn[];
+  unique_constraints?: string[][];
+}
+
+/** One introspected column. */
+export interface SchemaColumn {
+  name: string;
+  type: string | undefined;
+  nullable: boolean;
+}
+
+/** One introspected table: its columns and its UNIQUE / PRIMARY KEY constraints
+ * (each a list of column names). Ports `introspection::Table`. */
+export interface SchemaTable {
+  name: string;
+  columns: SchemaColumn[];
+  uniqueConstraints: string[][];
+}
+
+/** Parses an introspection JSON document into its tables. Returns `[]` for a
+ * document without a `tables` array (the enriched JSON always has one; this just
+ * keeps a malformed payload from throwing on the results path). */
+export function parseSchemaTables(json: string): SchemaTable[] {
+  let root: Record<string, unknown>;
+  try {
+    root = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const tables = root["tables"];
+  if (!Array.isArray(tables)) return [];
+  return (tables as RawTable[]).map((t) => ({
+    name: t.name,
+    columns: (t.columns ?? []).map((c) => ({
+      name: c.name,
+      type: c.type,
+      nullable: c.nullable ?? true,
+    })),
+    uniqueConstraints: t.unique_constraints ?? [],
+  }));
+}
+
+/** The column that identifies a single record in `table`, by RadioCrate's
+ * convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
+ * preferring one named `id` when a table has several. `undefined` for a table
+ * keyed only by a composite constraint (e.g. `credit (track, artist)`). Ports
+ * `form.rs:primary_key`. */
+export function primaryKey(table: SchemaTable): string | undefined {
+  const singles = table.uniqueConstraints
+    .filter((cols) => cols.length === 1)
+    .map((cols) => cols[0])
+    .filter((name) =>
+      table.columns.some((c) => c.name === name && !c.nullable),
+    );
+  return singles.find((name) => name === "id") ?? singles[0];
+}
+
+/** The columns that identify one record in `table`: the single primary key when
+ * there is one, otherwise the first unique constraint (e.g. the composite
+ * `(track, artist)` of `credit`). Empty when the table has no unique constraint
+ * at all — such a table has no editable record identity. Ports
+ * `form.rs:identifying_columns`. */
+export function identifyingColumns(table: SchemaTable): string[] {
+  const pk = primaryKey(table);
+  if (pk !== undefined) return [pk];
+  return table.uniqueConstraints[0] ?? [];
 }
 
 /** Rewrites the `links` array of a raw introspection JSON document with

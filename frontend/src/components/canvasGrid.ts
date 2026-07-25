@@ -16,10 +16,17 @@
 //
 // Row interaction is hit-tested against the same windowed geometry: pointer moves
 // track a hovered row (repainted with a subtly shifted background), clicks report
-// a `(row, modifiers)` selection intent to the owner, and double-clicks report a
-// row activation. The selection itself lives outside the engine (the query page's
-// per-tab state) and is pushed back in via `setSelection` for painting — the grid
-// renders selection, it doesn't own it.
+// a `(row, modifiers)` selection intent to the owner, right-clicks report a
+// context-menu request, and double-clicks report a row activation. The selection
+// itself lives outside the engine (the query page's per-tab state) and is pushed
+// back in via `setSelection` for painting — the grid renders selection, it
+// doesn't own it.
+//
+// The owner can also freeze the grid (`setFrozen`) while a menu it opened is up:
+// scrolling, hovering and clicking all stop, so the rows under an open context
+// menu hold still. The DOM overlay above the canvas already swallows the events
+// that reach it; freezing covers what it can't (a wheel over the menu itself, a
+// pointer that was mid-gesture when the menu opened).
 
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
@@ -100,6 +107,9 @@ export interface GridInteraction {
   onRowClick: (index: number, mods: { shift: boolean; ctrl: boolean }) => void;
   /** A row was double-clicked (row activation, e.g. play the track). */
   onRowDoubleClick: (index: number) => void;
+  /** A row was right-clicked (or long-pressed into a `contextmenu`), at the
+   * given viewport coordinates — where the owner anchors its DOM menu. */
+  onRowContextMenu: (index: number, x: number, y: number) => void;
 }
 
 /** The width-dependent layout, recomputed only on resize or a new result (not
@@ -173,6 +183,8 @@ export class CanvasGrid {
   private hoverRow: number | undefined;
   private lastMouseY: number | undefined;
   private interaction: GridInteraction | undefined;
+  /** While true the grid ignores every input (see `setFrozen`). */
+  private frozen = false;
 
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
@@ -206,6 +218,7 @@ export class CanvasGrid {
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("click", this.onClick);
     canvas.addEventListener("dblclick", this.onDblClick);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
 
     // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
     // truncation and pill widths) are measured against the real font.
@@ -229,6 +242,7 @@ export class CanvasGrid {
     c.removeEventListener("pointerleave", this.onPointerLeave);
     c.removeEventListener("click", this.onClick);
     c.removeEventListener("dblclick", this.onDblClick);
+    c.removeEventListener("contextmenu", this.onContextMenu);
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
   }
@@ -245,9 +259,27 @@ export class CanvasGrid {
     this.requestDraw();
   }
 
-  /** Registers the owner's row-interaction callbacks (click / double-click). */
+  /** Registers the owner's row-interaction callbacks (click / double-click /
+   * context menu). */
   setInteraction(interaction: GridInteraction): void {
     this.interaction = interaction;
+  }
+
+  /** Freezes or thaws input. While frozen the grid neither scrolls, hovers, nor
+   * reports clicks — the state the results pane sits in while a context menu it
+   * raised is open. Freezing also drops the hover highlight and cancels any
+   * in-flight gesture or fling, so nothing keeps moving underneath the menu. */
+  setFrozen(frozen: boolean): void {
+    if (frozen === this.frozen) return;
+    this.frozen = frozen;
+    if (!frozen) return;
+    this.stopFling();
+    this.gesture = undefined;
+    this.lastMouseY = undefined;
+    if (this.hoverRow !== undefined) {
+      this.hoverRow = undefined;
+      this.requestDraw();
+    }
   }
 
   /** Pushes in the owner's current row selection for painting. Cheap to call on
@@ -439,7 +471,7 @@ export class CanvasGrid {
   }
 
   private onWheel = (e: WheelEvent): void => {
-    if (this.maxScroll <= 0) return;
+    if (this.frozen || this.maxScroll <= 0) return;
     this.stopFling();
     // Normalize line/page deltas to pixels so trackpads and mice agree.
     let dy = e.deltaY;
@@ -460,7 +492,7 @@ export class CanvasGrid {
   }
 
   private onPointerDown = (e: PointerEvent): void => {
-    if (this.gesture || this.maxScroll <= 0) return;
+    if (this.frozen || this.gesture || this.maxScroll <= 0) return;
     const { x, y } = this.localPoint(e);
 
     // A press on the scrollbar thumb starts a thumb drag (any pointer type).
@@ -493,6 +525,7 @@ export class CanvasGrid {
   };
 
   private onPointerMove = (e: PointerEvent): void => {
+    if (this.frozen) return;
     const g = this.gesture;
     // Not mid-gesture: a mouse move only updates the hovered row. (Touch has no
     // hover; a pan is handled below once its gesture is active.)
@@ -580,6 +613,7 @@ export class CanvasGrid {
   // click fires. We still guard the scrollbar column so a press there never
   // selects a row.
   private onClick = (e: MouseEvent): void => {
+    if (this.frozen) return;
     const p = this.mousePoint(e);
     if (this.overScrollbar(p.x)) return;
     const row = this.rowAt(p.y);
@@ -591,11 +625,30 @@ export class CanvasGrid {
   };
 
   private onDblClick = (e: MouseEvent): void => {
+    if (this.frozen) return;
     const p = this.mousePoint(e);
     if (this.overScrollbar(p.x)) return;
     const row = this.rowAt(p.y);
     if (row === undefined) return;
     this.interaction?.onRowDoubleClick(row);
+  };
+
+  // A right-click (or the touch long-press the platform turns into one) asks the
+  // owner for a menu at the pointer, in viewport coordinates. The browser's own
+  // menu is always suppressed over the rows — the grid paints no selectable
+  // text, so there's nothing it could usefully offer — but only *there*: a
+  // right-click past the last row or over the scrollbar falls through untouched.
+  private onContextMenu = (e: MouseEvent): void => {
+    if (this.frozen) {
+      e.preventDefault();
+      return;
+    }
+    const p = this.mousePoint(e);
+    if (this.overScrollbar(p.x)) return;
+    const row = this.rowAt(p.y);
+    if (row === undefined) return;
+    e.preventDefault();
+    this.interaction?.onRowContextMenu(row, e.clientX, e.clientY);
   };
 
   private mousePoint(e: MouseEvent): { x: number; y: number } {

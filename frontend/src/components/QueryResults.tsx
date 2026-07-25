@@ -1,7 +1,18 @@
-import { createEffect, onCleanup, onMount } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { unwrap } from "solid-js/store";
 import { useAppState } from "../state/store";
 import type { QueryResult } from "../query/result";
+import { Icons } from "../icons";
+import { ContextMenu } from "./ui/ContextMenu";
+import { MenuItem } from "./ui/Menu";
 import { CanvasGrid } from "./canvasGrid";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).
@@ -12,12 +23,33 @@ import { CanvasGrid } from "./canvasGrid";
 // The result set is an immutable snapshot, so `unwrap` hands the engine the raw
 // object rather than a Solid store proxy — reading tens of thousands of cells
 // during paint never wraps them reactively.
+//
+// The one thing this shell owns beyond the canvas is the row context menu, which
+// is real DOM (rows are painted pixels; a menu needs to be hit-testable, styled
+// and accessible). While it's open the grid is frozen, so the rows underneath
+// hold still.
+
+/** An open row context menu: which row it targets, and where it was raised. */
+interface RowMenu {
+  row: number;
+  x: number;
+  y: number;
+}
 
 /** The results pane: the current tab's result set painted to a canvas grid. */
 export default function QueryResults(props: { tabId: string }) {
   const store = useAppState();
   let canvas: HTMLCanvasElement | undefined;
   let grid: CanvasGrid | undefined;
+  const [rowMenu, setRowMenu] = createSignal<RowMenu | undefined>();
+  const closeMenu = () => setRowMenu(undefined);
+
+  // The records the open menu offers to edit — one entry per table whose primary
+  // key the row carries (a track row joined to its album offers both).
+  const menuRecords = () => {
+    const menu = rowMenu();
+    return menu ? store.rowRecords(props.tabId, menu.row) : [];
+  };
 
   const currentResult = (): QueryResult | undefined => {
     const tracked = store.state.resultsByTab[props.tabId];
@@ -29,6 +61,19 @@ export default function QueryResults(props: { tabId: string }) {
   createEffect(() => {
     const result = currentResult();
     grid?.setResult(result);
+  });
+
+  // This component outlives a tab switch (the query page is reused, with a new
+  // `tabId`), so a menu raised on the old tab's rows would otherwise linger over
+  // rows it no longer refers to.
+  createEffect(on(() => props.tabId, closeMenu));
+
+  // The rows stop responding while their menu is up: no hover, no scroll, no
+  // click. The blocking layer over the canvas already stops most of it; this
+  // covers the rest (see `CanvasGrid.setFrozen`).
+  createEffect(() => {
+    const frozen = rowMenu() !== undefined;
+    grid?.setFrozen(frozen);
   });
 
   // Push the tab's selection into the engine for painting. Reads the selection
@@ -76,6 +121,19 @@ export default function QueryResults(props: { tabId: string }) {
     grid.setInteraction({
       onRowClick: (index, mods) => store.clickRow(props.tabId, index, mods),
       onRowDoubleClick: (index) => store.doubleClickRow(props.tabId, index),
+      onRowContextMenu: (index, x, y) => {
+        // The menu acts on one row. A right-click inside a multi-row selection
+        // is left alone rather than silently narrowing it (there's no bulk edit)
+        // — mirroring the egui results pane.
+        const selection = store.rowSelection(props.tabId);
+        if (selection.size > 1 && selection.has(index)) return;
+        // Any other right-click selects its row alone first, so the menu's
+        // target is visible.
+        store.clickRow(props.tabId, index, { shift: false, ctrl: false });
+        // With nothing editable in this row, there's nothing to show.
+        if (store.rowRecords(props.tabId, index).length === 0) return;
+        setRowMenu({ row: index, x, y });
+      },
     });
     grid.setResult(currentResult());
     grid.setSelection(store.rowSelection(props.tabId));
@@ -115,6 +173,21 @@ export default function QueryResults(props: { tabId: string }) {
         ref={(el) => (canvas = el)}
         class="block h-full w-full touch-none"
       />
+      <Show when={rowMenu()}>
+        {(menu) => (
+          <ContextMenu x={menu().x} y={menu().y} onClose={closeMenu}>
+            <For each={menuRecords()}>
+              {(record) => (
+                <MenuItem
+                  icon={Icons.Edit}
+                  label={`Edit ${record.table}`}
+                  onClick={() => store.openRecordEditor(props.tabId, record)}
+                />
+              )}
+            </For>
+          </ContextMenu>
+        )}
+      </Show>
     </div>
   );
 }

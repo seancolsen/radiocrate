@@ -34,7 +34,10 @@ import Delete from "~icons/material-symbols/delete";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
+// One glyph, two concepts — as in `icons.rs`, where `RENAME` and `EDIT` are both
+// `ICON_EDIT`.
 import Rename from "~icons/material-symbols/edit";
+import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
 import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
@@ -68,6 +71,7 @@ export const Icons = {
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
   Rename, // rename query (wrench menu + double-click)
+  Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)
   Play, // now-playing bar: resume
   Pause, // now-playing bar: pause

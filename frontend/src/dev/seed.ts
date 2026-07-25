@@ -1,5 +1,5 @@
 import { createEffect } from "solid-js";
-import type { AppStore } from "../state/store";
+import type { AppStore, RecordTarget } from "../state/store";
 import {
   emptyDefinition,
   type QueryDefinition,
@@ -28,6 +28,10 @@ import { lemonadeGridResult } from "./gridFixture";
 //   ?editDefault=1   ← toggle the expanded preset's "Apply by default" (dirty)
 //   ?tracks=id1,id2  ← per-row track ids for the seeded grid, so double-click
 //                      plays without the lineage analysis having run
+//   ?records=track,album
+//                    ← tables whose (single-column `id`) primary key the seeded
+//                      rows carry, standing in for the lineage analysis so a
+//                      right-click offers "Edit track" / "Edit album"
 //   ?playing=Title|Artist%20A,Artist%20B
 //                    ← fill the now-playing bar with a frozen transport (no
 //                      audio element, no stream request)
@@ -91,8 +95,15 @@ export function applySeed(store: AppStore): void {
     // `tracks=` stands in for the WASM lineage analysis, so the seeded rows are
     // playable (double-click) without compiling a real query.
     const trackIds = params.get("tracks")?.split(",");
-    if (grid === "lemonade")
-      store.setResults(activeId, lemonadeGridResult(), trackIds);
+    if (grid === "lemonade") {
+      const result = lemonadeGridResult();
+      store.setResults(
+        activeId,
+        result,
+        trackIds,
+        recordTargets(params.get("records"), result.rowCount),
+      );
+    }
 
     // Override the active tab's working definition (unsaved unless `clean=1`).
     if (defParam) {
@@ -138,4 +149,25 @@ export function applySeed(store: AppStore): void {
         store.patchPresetEdit(expand, { isDefault: true });
     }
   });
+}
+
+/** Builds the record targets `?records=` asks for: one per named table, keyed by
+ * a single `id` column whose per-row values are `<table>-<row>`. Stands in for
+ * the lineage analysis, which needs a real compile and the introspected schema. */
+function recordTargets(
+  param: string | null,
+  rowCount: number,
+): RecordTarget[] | undefined {
+  const tables = param
+    ?.split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (!tables || tables.length === 0) return undefined;
+  return tables.map((table) => ({
+    table,
+    keyColumns: ["id"],
+    keyValues: Array.from({ length: rowCount }, (_, r) => [
+      `${table}-${r + 1}`,
+    ]),
+  }));
 }

@@ -1,11 +1,17 @@
 # track-lineage
 
 A tiny WASM binding over [`polyglot-sql`](https://crates.io/crates/polyglot-sql)
-that answers one question the query-results grid needs: **which output column of
-a compiled query traces back to `track.id`?** (If one does, each result row is a
-track and can be double-clicked to play.)
+that answers one question the query-results grid needs: **which base-table
+columns does each output column of a compiled query trace back to?**
 
-It's a direct port of the egui frontend's `frontend-old-egui/src/lineage.rs`.
+The frontend interprets that mapping against the introspected schema to decide
+what a result row *is* — a row carrying `track.id` is a track (double-click to
+play), and a row carrying some table's whole primary key is a record of that
+table (right-click to edit). See `frontend/src/query/lineage.ts`.
+
+The analysis is the one the egui frontend ran in
+`frontend-old-egui/src/lineage.rs`; only the question asked of it moved out here
+(the name predates the generalization).
 
 ## Why this crate exists
 
@@ -25,8 +31,9 @@ rustup target add wasm32-unknown-unknown   # once
 
 `build.sh` runs `wasm-pack build --target web` and copies the output into
 `frontend/vendor/track-lineage/`, which the frontend imports as the
-`track-lineage` package (see `frontend/src/query/lineage.ts`). Commit the
-regenerated `vendor/` files alongside any source change.
+`track-lineage` package (see `frontend/src/query/lineage.ts`). That output is a
+build artifact, not source — it's gitignored, so re-run `build.sh` after any
+change here (and on a fresh checkout, before building the frontend).
 
 This crate is a **standalone cargo workspace** (note the empty `[workspace]`
 table in `Cargo.toml`): it is intentionally not a member of the app's root

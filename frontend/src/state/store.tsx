@@ -25,7 +25,11 @@ import {
 import { runSql, runSqlScalar } from "../api/query";
 import { fetchTrackMetadata, logPlay } from "../api/track";
 import { AudioEngine } from "../audio/engine";
-import { addInferredLinks, INTROSPECTION_SQL } from "../query/schema";
+import {
+  addInferredLinks,
+  INTROSPECTION_SQL,
+  parseSchemaTables,
+} from "../query/schema";
 import { compileSavedQuery } from "../query/compile";
 import {
   cloneDefinition,
@@ -38,9 +42,13 @@ import {
   type SectionContent,
 } from "../query/definition";
 import { querydownReady } from "../query/querydown";
-import { detectTrackIdColumn } from "../query/lineage";
+import {
+  analyzeColumnSources,
+  recordKeyColumns,
+  trackIdColumn,
+} from "../query/lineage";
 import { buildResultFromArrow, type QueryResult } from "../query/result";
-import { stringifyArrowValue } from "../api/query";
+import { isListLikeValue, isListType, stringifyArrowValue } from "../api/query";
 import type { Table } from "apache-arrow";
 
 /** An in-progress, uncommitted edit of a saved preset's fields. Keyed by preset
@@ -111,6 +119,30 @@ export interface RowReveal {
   seq: number;
 }
 
+/** A table whose records this tab's result rows identify, with the key values
+ * carried by each row — the lineage analysis's output, cached per tab.
+ *
+ * Values are snapshotted from the Arrow table at analysis time (as the track ids
+ * are) rather than read back from `QueryResult`, which holds only *visible*
+ * columns and only their formatted text: a query's id columns are usually hidden
+ * and would be gone by then. */
+export interface RecordTarget {
+  /** The table a row of these results stands for. */
+  table: string;
+  /** The columns identifying one of its records, in constraint order. */
+  keyColumns: readonly string[];
+  /** Per row, the key values parallel to `keyColumns` (`null` for a NULL cell). */
+  keyValues: readonly (readonly (string | null)[])[];
+}
+
+/** One record identified by a result row: the table plus a fully-resolved key.
+ * What the context menu offers and the record editor opens. */
+export interface RecordRef {
+  table: string;
+  /** The identifying column/value pairs, in constraint order. */
+  key: readonly { column: string; value: string }[];
+}
+
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
   tabs: Tab[]; // open tabs, in tab-bar order
@@ -128,6 +160,15 @@ export interface AppState {
    * tracks (a column traces to `track.id`). Indexed by row; drives
    * double-click-to-play. Absent/empty when the query isn't track-based. */
   trackIdsByTab: Record<string, readonly (string | null)[]>;
+  /** Per-tab record targets from the lineage analysis: the tables whose primary
+   * keys this tab's rows carry, and each row's key values. Drives the results
+   * context menu's "Edit {table}" entries. Empty when the rows identify nothing
+   * editable. */
+  recordTargetsByTab: Record<string, readonly RecordTarget[]>;
+  /** The record open in each tab's record-editor sidebar (`null`/absent when the
+   * sidebar is closed). Per-tab, like the egui `QueryPage::record_editor` — the
+   * sidebar belongs to the query page, so switching tabs switches editors. */
+  recordEditorByTab: Record<string, RecordRef | null>;
   /** Whether a run is in flight, keyed by tab id (errors are console-only). */
   runningByTab: Record<string, boolean>;
   /** The open builder section per tab (null = builder closed). */
@@ -169,6 +210,39 @@ function storedSidebarOpen(): boolean {
 function persistSidebar(open: boolean): void {
   try {
     localStorage.setItem(SIDEBAR_KEY, open ? "true" : "false");
+  } catch {
+    // ignore
+  }
+}
+
+/** Width bounds for the record-editor sidebar, in CSS px. The maximum is also
+ * capped against the live viewport while dragging (see `RecordEditorPanel`), so
+ * these are just the absolute limits a persisted value is trusted within. */
+export const RECORD_SIDEBAR_MIN_WIDTH = 240;
+export const RECORD_SIDEBAR_MAX_WIDTH = 800;
+const RECORD_SIDEBAR_DEFAULT_WIDTH = 340;
+const RECORD_SIDEBAR_KEY = "recordSidebarWidth";
+
+export function clampRecordSidebarWidth(px: number): number {
+  return Math.max(
+    RECORD_SIDEBAR_MIN_WIDTH,
+    Math.min(RECORD_SIDEBAR_MAX_WIDTH, Math.round(px)),
+  );
+}
+
+function storedRecordSidebarWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(RECORD_SIDEBAR_KEY));
+    if (Number.isFinite(v) && v > 0) return clampRecordSidebarWidth(v);
+  } catch {
+    // Private-mode localStorage denial — fall back to the default.
+  }
+  return RECORD_SIDEBAR_DEFAULT_WIDTH;
+}
+
+function persistRecordSidebarWidth(px: number): void {
+  try {
+    localStorage.setItem(RECORD_SIDEBAR_KEY, String(px));
   } catch {
     // ignore
   }
@@ -223,12 +297,14 @@ export interface AppStore {
   /** Run the tab once, the first time it's viewed (idempotent per tab). */
   ensureRun: (tabId: string) => void;
   /** Inject a canned structured result for a tab (dev/test seam — bypasses the
-   * compile/fetch/decode path). `trackIds` stands in for the lineage analysis,
-   * making the rows playable without a real compile. */
+   * compile/fetch/decode path). `trackIds` and `recordTargets` stand in for the
+   * lineage analysis, making the rows playable / editable without a real
+   * compile. */
   setResults: (
     tabId: string,
     result: QueryResult,
     trackIds?: readonly (string | null)[],
+    recordTargets?: readonly RecordTarget[],
   ) => void;
   /** Overwrite a tab's saved/working definitions directly (dev/test seam —
    * lets the harness reach a specific builder state without a backend). */
@@ -265,6 +341,27 @@ export interface AppStore {
   /** Handle a double-click on result row `index`: if the query's rows are tracks,
    * plays that row's track (queuing the rows after it). */
   doubleClickRow: (tabId: string, index: number) => void;
+  /** The records result row `index` identifies — one per table whose primary key
+   * the row carries in full, in result-column order. Empty when the lineage
+   * analysis found none (or hasn't finished), which is what leaves the row's
+   * context menu with nothing to offer. */
+  rowRecords: (tabId: string, index: number) => RecordRef[];
+
+  // The record editor (a sidebar within the query page).
+  /** The record open in `tabId`'s record-editor sidebar, or `null` when closed. */
+  recordEditor: (tabId: string) => RecordRef | null;
+  /** Open (or re-point) `tabId`'s record-editor sidebar on `record`. */
+  openRecordEditor: (tabId: string, record: RecordRef) => void;
+  /** Close `tabId`'s record-editor sidebar. */
+  closeRecordEditor: (tabId: string) => void;
+  /** The record-editor sidebar's width in CSS px — app-level (shared by every
+   * query page) and persisted, like the explorer's open state. */
+  recordSidebarWidth: Accessor<number>;
+  /** Set that width while dragging the resize handle; clamped, not persisted. */
+  setRecordSidebarWidth: (px: number) => void;
+  /** Persist the current width — called once when a drag ends, so a drag writes
+   * to localStorage once rather than on every pointer move. */
+  commitRecordSidebarWidth: () => void;
 
   // Playback (the now-playing bar).
   /** Play the track at result row `index` of `tabId`, with the rows before and
@@ -368,6 +465,8 @@ function createAppStore(): AppStore {
     resultsByTab: {},
     selectionByTab: {},
     trackIdsByTab: {},
+    recordTargetsByTab: {},
+    recordEditorByTab: {},
     runningByTab: {},
     builderSectionByTab: {},
     expandedPresetByTab: {},
@@ -404,6 +503,12 @@ function createAppStore(): AppStore {
     setState("sidebarOpen", open);
     persistSidebar(open);
   };
+
+  // The record-editor sidebar's width: a plain signal (no per-tab state — every
+  // query page's sidebar shares one width), persisted on drag end.
+  const [recordSidebarWidth, setRecordSidebarWidthSignal] = createSignal(
+    storedRecordSidebarWidth(),
+  );
 
   const tab = (tabId: string): Tab | undefined =>
     state.tabs.find((t) => t.id === tabId);
@@ -478,8 +583,8 @@ function createAppStore(): AppStore {
         }),
       );
       setState("resultsByTab", tabId, result);
-      // New rows invalidate the old selection and any prior track-id mapping (the
-      // latter is repopulated asynchronously by `detectTrackIds`).
+      // New rows invalidate the old selection and any prior lineage mappings (the
+      // latter are repopulated asynchronously by `analyzeLineage`).
       setState(
         "selectionByTab",
         produce((m) => {
@@ -492,8 +597,14 @@ function createAppStore(): AppStore {
           delete m[tabId];
         }),
       );
+      setState(
+        "recordTargetsByTab",
+        produce((m) => {
+          delete m[tabId];
+        }),
+      );
       // The playing track's row belonged to the rows just replaced; it's
-      // re-located once the new mapping lands (see `detectTrackIds`).
+      // re-located once the new mapping lands (see `analyzeLineage`).
       if (state.currentTrack?.sourceTabId === tabId) {
         setState("currentTrack", "rowIndex", null);
       }
@@ -501,26 +612,83 @@ function createAppStore(): AppStore {
     rowClickAnchor.delete(tabId);
   };
 
-  /** Off the critical path: analyzes the compiled SQL to find the output column
-   * carrying `track.id`, and if there is one caches that column's per-row ids so a
-   * double-click can play the row's track. A no-op (clears any mapping) when the
-   * rows aren't tracks. Guarded by `token` so a superseded run can't win a race. */
-  const detectTrackIds = async (
+  /** Reads one Arrow column out as per-row strings (`null` for a NULL cell). */
+  const columnValues = (table: Table, col: number): (string | null)[] => {
+    const vector = table.getChildAt(col);
+    const values: (string | null)[] = new Array<string | null>(table.numRows);
+    for (let r = 0; r < table.numRows; r++) {
+      const v = vector?.get(r);
+      values[r] = v == null ? null : stringifyArrowValue(v);
+    }
+    return values;
+  };
+
+  /** Whether an Arrow column holds lists rather than scalars. A list column can
+   * still trace back to an id (an aggregated `[artist.id, …]`), but a list of ids
+   * identifies no single record — so it can't serve as a key. The egui code drew
+   * the same line by taking record ids from `as_single` cells only. Detected as
+   * in `buildResultFromArrow`: by type, falling back to the first non-null value
+   * for the DuckDB list types apache-arrow 18 can't classify. */
+  const isListColumn = (table: Table, col: number): boolean => {
+    const field = table.schema.fields[col];
+    if (field && isListType(field.type)) return true;
+    const vector = table.getChildAt(col);
+    if (!vector) return false;
+    for (let r = 0; r < table.numRows; r++) {
+      const v = vector.get(r);
+      if (v != null) return isListLikeValue(v);
+    }
+    return false;
+  };
+
+  /** Off the critical path: traces the compiled SQL's output columns back to
+   * their source table columns, then caches the two things the rows' affordances
+   * need — the per-row `track.id` values (double-click plays) and, per table
+   * whose primary key the rows carry, that key's per-row values (right-click
+   * edits the record). Both are read out of the Arrow table here, once, rather
+   * than from the decoded `QueryResult`, whose hidden columns are gone.
+   *
+   * Guarded by `token` so a superseded run can't win a race; a query with no
+   * traceable ids simply leaves both mappings cleared (`setTabResult` already
+   * dropped the previous run's). */
+  const analyzeLineage = async (
     tabId: string,
     sql: string,
     table: Table,
     token: number,
   ) => {
-    const col = await detectTrackIdColumn(sql);
+    const sources = await analyzeColumnSources(sql);
     if (runTokens.get(tabId) !== token) return; // a newer run superseded this one
-    if (col === undefined) return; // not track-based (mapping already cleared)
-    const vector = table.getChildAt(col);
-    const ids: (string | null)[] = new Array<string | null>(table.numRows);
-    for (let r = 0; r < table.numRows; r++) {
-      const v = vector?.get(r);
-      ids[r] = v == null ? null : stringifyArrowValue(v);
-    }
-    setState("trackIdsByTab", tabId, ids);
+    if (!sources) return; // unparseable — no affordances
+    const schemaJson = schema();
+
+    // Likewise a list of track ids isn't a playable row (`as_single` in egui).
+    const trackCol = trackIdColumn(sources);
+    const playable = trackCol !== undefined && !isListColumn(table, trackCol);
+    const targets: RecordTarget[] = schemaJson
+      ? recordKeyColumns(sources, parseSchemaTables(schemaJson))
+          // A key whose value arrives as a list identifies no one record.
+          .filter((k) => !k.keyIndices.some((i) => isListColumn(table, i)))
+          .map((k) => {
+            const columns = k.keyIndices.map((i) => columnValues(table, i));
+            return {
+              table: k.table,
+              keyColumns: k.keyColumns,
+              // Transpose column-major reads into one key tuple per row.
+              keyValues: Array.from({ length: table.numRows }, (_, r) =>
+                columns.map((values) => values[r]),
+              ),
+            };
+          })
+      : [];
+
+    batch(() => {
+      if (playable) {
+        setState("trackIdsByTab", tabId, columnValues(table, trackCol));
+      }
+      if (targets.length > 0) setState("recordTargetsByTab", tabId, targets);
+    });
+    if (!playable) return;
     // Re-locate the playing track's row in the rows that just landed, so
     // "Locate" keeps working after the tab is re-run (mirrors
     // `maybe_revalidate_current_track_index`).
@@ -554,10 +722,10 @@ function createAppStore(): AppStore {
         // Decode + precompute the render-ready result once, here — never per
         // resize/frame (§6).
         setTabResult(tabId, buildResultFromArrow(table, columnAnnotations));
-        // Then, off the critical path, figure out whether these rows are tracks
-        // (so double-click can play them). Deliberately not awaited: the results
-        // are already shown, and the WASM lineage analysis is heavy.
-        void detectTrackIds(tabId, sql, table, token);
+        // Then, off the critical path, figure out what these rows *are* — tracks
+        // to play, records to edit. Deliberately not awaited: the results are
+        // already shown, and the WASM lineage analysis is heavy.
+        void analyzeLineage(tabId, sql, table, token);
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
@@ -625,6 +793,8 @@ function createAppStore(): AppStore {
         delete s.resultsByTab[id];
         delete s.selectionByTab[id];
         delete s.trackIdsByTab[id];
+        delete s.recordTargetsByTab[id];
+        delete s.recordEditorByTab[id];
         delete s.runningByTab[id];
         delete s.builderSectionByTab[id];
         delete s.expandedPresetByTab[id];
@@ -824,9 +994,10 @@ function createAppStore(): AppStore {
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);
     },
-    setResults: (tabId, result, trackIds) => {
+    setResults: (tabId, result, trackIds, recordTargets) => {
       setTabResult(tabId, result);
       if (trackIds) setState("trackIdsByTab", tabId, trackIds);
+      if (recordTargets) setState("recordTargetsByTab", tabId, recordTargets);
     },
     setTabDefinitions: (tabId, saved, live) => {
       const idx = state.tabs.findIndex((t) => t.id === tabId);
@@ -873,6 +1044,45 @@ function createAppStore(): AppStore {
     },
     // Only track-based rows carry an id; on any other row this does nothing.
     doubleClickRow: (tabId, index) => playRow(tabId, index),
+    rowRecords: (tabId, index) => {
+      const targets = state.recordTargetsByTab[tabId] ?? [];
+      const records: RecordRef[] = [];
+      for (const target of targets) {
+        const values = target.keyValues[index];
+        // A row that's NULL in any key column doesn't identify a record there —
+        // an outer join with nothing on the far side, say.
+        if (!values || values.some((v) => v === null || v === "")) continue;
+        records.push({
+          table: target.table,
+          key: target.keyColumns.map((column, i) => ({
+            column,
+            value: values[i] as string,
+          })),
+        });
+      }
+      return records;
+    },
+
+    recordEditor: (tabId) => state.recordEditorByTab[tabId] ?? null,
+    // Delete-then-set so the tab's entry holds a *new* object rather than the
+    // previous record merged in place — same hazard `setTabResult` documents.
+    // Re-pointing the editor at another record must read as a swap.
+    openRecordEditor: (tabId, record) =>
+      batch(() => {
+        setState(
+          "recordEditorByTab",
+          produce((m) => {
+            delete m[tabId];
+          }),
+        );
+        setState("recordEditorByTab", tabId, record);
+      }),
+    closeRecordEditor: (tabId) => setState("recordEditorByTab", tabId, null),
+    recordSidebarWidth,
+    setRecordSidebarWidth: (px) =>
+      setRecordSidebarWidthSignal(clampRecordSidebarWidth(px)),
+    commitRecordSidebarWidth: () =>
+      persistRecordSidebarWidth(recordSidebarWidth()),
 
     playRow,
     togglePlayPause: () => {
