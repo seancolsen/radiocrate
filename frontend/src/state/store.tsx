@@ -2,7 +2,9 @@ import {
   batch,
   createContext,
   createResource,
+  createSignal,
   useContext,
+  type Accessor,
   type ParentProps,
   type Resource,
 } from "solid-js";
@@ -14,12 +16,15 @@ import {
   queryAdd,
   queryDelete,
   queryList,
+  queryRecordPlay,
   queryRename,
   queryUpdateDefinition,
   type Preset,
   type Query,
 } from "api-client";
 import { runSql, runSqlScalar } from "../api/query";
+import { fetchTrackMetadata, logPlay } from "../api/track";
+import { AudioEngine } from "../audio/engine";
 import { addInferredLinks, INTROSPECTION_SQL } from "../query/schema";
 import { compileSavedQuery } from "../query/compile";
 import {
@@ -71,6 +76,41 @@ export interface Tab {
   persisted: boolean;
 }
 
+/** The track shown in the now-playing bar, and where it came from. Mirrors
+ * `now_playing.rs:CurrentTrack`. */
+export interface CurrentTrack {
+  /** The tab whose results this track was played from (results are per-tab).
+   * "Locate" jumps back here; `null` once that tab has been closed. */
+  sourceTabId: string | null;
+  id: string;
+  /** The track's row within that tab's results, when it can be found — re-derived
+   * after an auto-advance or a re-run. `null` disables "Locate". */
+  rowIndex: number | null;
+  /** Filled in asynchronously by the metadata fetch (null until it lands). */
+  title: string | null;
+  artists: string[];
+}
+
+/** Live transport state, mirrored out of the audio engine on its events so the
+ * bar can render it. The engine remains the source of truth. */
+export interface PlaybackState {
+  playing: boolean;
+  position: number;
+  /** Seconds, or `null` before the stream's metadata has loaded. */
+  duration: number | null;
+  /** Whether anything is queued after the current track ("Next" enabled). */
+  hasNext: boolean;
+}
+
+/** A request to bring a result row into view (the "Locate" action). Carried as a
+ * signal rather than store state: it's a one-shot event, and `seq` makes two
+ * locates of the *same* row still register as two events. */
+export interface RowReveal {
+  tabId: string;
+  row: number;
+  seq: number;
+}
+
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
   tabs: Tab[]; // open tabs, in tab-bar order
@@ -107,6 +147,10 @@ export interface AppState {
   renaming: { id: string; buffer: string } | null;
   /** The query pending delete confirmation (modal), when open. */
   pendingDelete: { id: string; name: string; unsaved: boolean } | null;
+  /** The track in the now-playing bar (null when nothing is loaded). */
+  currentTrack: CurrentTrack | null;
+  /** Transport state for that track. */
+  playback: PlaybackState;
 }
 
 const SIDEBAR_KEY = "sidebarOpen";
@@ -179,8 +223,13 @@ export interface AppStore {
   /** Run the tab once, the first time it's viewed (idempotent per tab). */
   ensureRun: (tabId: string) => void;
   /** Inject a canned structured result for a tab (dev/test seam — bypasses the
-   * compile/fetch/decode path). */
-  setResults: (tabId: string, result: QueryResult) => void;
+   * compile/fetch/decode path). `trackIds` stands in for the lineage analysis,
+   * making the rows playable without a real compile. */
+  setResults: (
+    tabId: string,
+    result: QueryResult,
+    trackIds?: readonly (string | null)[],
+  ) => void;
   /** Overwrite a tab's saved/working definitions directly (dev/test seam —
    * lets the harness reach a specific builder state without a backend). */
   setTabDefinitions: (
@@ -214,8 +263,28 @@ export interface AppStore {
     mods: { shift: boolean; ctrl: boolean },
   ) => void;
   /** Handle a double-click on result row `index`: if the query's rows are tracks,
-   * runs the row's track action (this phase, logs the track id). */
+   * plays that row's track (queuing the rows after it). */
   doubleClickRow: (tabId: string, index: number) => void;
+
+  // Playback (the now-playing bar).
+  /** Play the track at result row `index` of `tabId`, with the rows before and
+   * after it as the previous/next context. A no-op for non-track rows. */
+  playRow: (tabId: string, index: number) => void;
+  /** Pause if playing, resume if paused. */
+  togglePlayPause: () => void;
+  /** Skip to the next queued track (the bar's "Next"). */
+  skipNext: () => void;
+  /** Dismiss the bar: stop playback and tear down the queue (the bar's "Close"). */
+  stopPlayback: () => void;
+  /** Jump to the playing track's row: activate its source tab, select the row and
+   * scroll it into view (the bar's "Locate"). */
+  locateCurrentTrack: () => void;
+  /** The pending "scroll this row into view" request, consumed by the results
+   * grid. `undefined` when there is none. */
+  rowReveal: Accessor<RowReveal | undefined>;
+  /** Seed the now-playing bar without touching the audio engine (dev/test seam —
+   * lets the harness snapshot the bar with no backend or audio). */
+  seedNowPlaying: (track: CurrentTrack, playback: PlaybackState) => void;
 
   // Query-level backend actions.
   /** Persist the tab's working definition (`query.update_definition`), then mark
@@ -308,6 +377,8 @@ function createAppStore(): AppStore {
     viewSql: null,
     renaming: null,
     pendingDelete: null,
+    currentTrack: null,
+    playback: { playing: false, position: 0, duration: null, hasNext: false },
   });
 
   const [queries, { refetch }] = createResource<Query[]>(async () => {
@@ -421,6 +492,11 @@ function createAppStore(): AppStore {
           delete m[tabId];
         }),
       );
+      // The playing track's row belonged to the rows just replaced; it's
+      // re-located once the new mapping lands (see `detectTrackIds`).
+      if (state.currentTrack?.sourceTabId === tabId) {
+        setState("currentTrack", "rowIndex", null);
+      }
     });
     rowClickAnchor.delete(tabId);
   };
@@ -445,6 +521,13 @@ function createAppStore(): AppStore {
       ids[r] = v == null ? null : stringifyArrowValue(v);
     }
     setState("trackIdsByTab", tabId, ids);
+    // Re-locate the playing track's row in the rows that just landed, so
+    // "Locate" keeps working after the tab is re-run (mirrors
+    // `maybe_revalidate_current_track_index`).
+    const ct = state.currentTrack;
+    if (ct?.sourceTabId === tabId) {
+      setState("currentTrack", "rowIndex", locateRow(tabId, ct.id));
+    }
   };
 
   const runQuery = (tabId: string) => {
@@ -550,12 +633,152 @@ function createAppStore(): AppStore {
           const next = s.tabs[idx] ?? s.tabs[idx - 1];
           s.activeTabId = next ? next.id : null;
         }
+        // Playback outlives its source tab (the engine owns the queue), but
+        // there's no longer anywhere for "Locate" to go.
+        if (s.currentTrack?.sourceTabId === id) {
+          s.currentTrack.sourceTabId = null;
+          s.currentTrack.rowIndex = null;
+        }
       }),
     );
     autoRun.delete(id);
     cancelScheduledRun(id);
     rowClickAnchor.delete(id);
     runTokens.delete(id);
+  };
+
+  // ── Playback ────────────────────────────────────────────────────────────────
+
+  // The audio engine, built on the first play so a session that never plays
+  // anything creates no <audio> element and claims no OS media session.
+  let audio: AudioEngine | undefined;
+  const engine = (): AudioEngine =>
+    (audio ??= new AudioEngine({
+      onTrackChange: (id) => reconcileTrackChange(id),
+      onPlayCompleted: (id) => logPlay(id),
+      onQueueDry: () => clearNowPlaying(),
+      onTransport: () => syncTransport(),
+    }));
+
+  /** Mirrors the engine's transport state into the store for the bar to render.
+   * The engine stays the source of truth; this is a projection of it. */
+  const syncTransport = () => {
+    if (!audio) return;
+    setState("playback", {
+      playing: audio.isPlaying,
+      position: audio.position,
+      duration: audio.duration,
+      hasNext: audio.hasNext,
+    });
+  };
+
+  // "Locate" hands the results grid a scroll request through this signal (see
+  // `RowReveal`); `seq` distinguishes repeat locates of the same row.
+  const [rowReveal, setRowReveal] = createSignal<RowReveal | undefined>();
+  let revealSeq = 0;
+
+  /** The playable track id at `index` of `tabId`'s results, if the rows are
+   * tracks and that one carries an id. */
+  const trackIdAt = (tabId: string, index: number): string | undefined => {
+    const id = state.trackIdsByTab[tabId]?.[index];
+    return id == null || id === "" ? undefined : id;
+  };
+
+  /** Snapshots `tabId`'s results around row `index` into the play context the
+   * engine navigates. `preceding` is every playable id before `index` (nearest
+   * last, for "previous"); `upcoming` is the contiguous run of ids after it,
+   * stopping at the first row without one (mirrors `playlist_around`). */
+  const playlistAround = (
+    tabId: string,
+    index: number,
+  ): { preceding: string[]; upcoming: string[] } => {
+    const ids = state.trackIdsByTab[tabId] ?? [];
+    const preceding: string[] = [];
+    for (let i = 0; i < Math.min(index, ids.length); i++) {
+      const id = ids[i];
+      if (id != null && id !== "") preceding.push(id);
+    }
+    const upcoming: string[] = [];
+    for (let i = index + 1; i < ids.length; i++) {
+      const id = ids[i];
+      if (id == null || id === "") break;
+      upcoming.push(id);
+    }
+    return { preceding, upcoming };
+  };
+
+  /** Finds the row index of `id` within `tabId`'s current results, if present.
+   * Capped like the egui scan so a huge result set can't stall a transition. */
+  const locateRow = (tabId: string, id: string): number | null => {
+    const ids = state.trackIdsByTab[tabId];
+    if (!ids) return null;
+    const limit = Math.min(ids.length, 1000);
+    for (let i = 0; i < limit; i++) if (ids[i] === id) return i;
+    return null;
+  };
+
+  /** Fetches the track's title/artists, then fills them into the bar and pushes
+   * them to the OS media session — but only while that track is still the
+   * current one, so a fetch overtaken by an auto-advance is discarded. */
+  const loadMetadata = async (id: string) => {
+    const meta = await fetchTrackMetadata(id);
+    if (!meta || state.currentTrack?.id !== id) return;
+    setState("currentTrack", { title: meta.title, artists: meta.artists });
+    audio?.setMetadata(
+      meta.title,
+      meta.artists.length > 0 ? meta.artists.join(", ") : null,
+    );
+  };
+
+  /** Records a play against `tabId`'s saved query (bumps `last_play`). Skipped
+   * for an ephemeral tab, which has no backend row yet. */
+  const recordQueryPlay = (tabId: string) => {
+    if (!tab(tabId)?.persisted) return;
+    void queryRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
+      console.error("record play failed", err),
+    );
+  };
+
+  /** Folds a track change that originated in the engine (an auto-advance when a
+   * track ended, or a lock-screen / headset skip) into the bar: swaps the track,
+   * re-locates its row, refetches metadata, and records the play. The engine owns
+   * the queue across these transitions, so there's nothing to re-sync there. */
+  const reconcileTrackChange = (newId: string) => {
+    const source = state.currentTrack?.sourceTabId ?? null;
+    if (!state.currentTrack) return;
+    setState("currentTrack", {
+      id: newId,
+      rowIndex: source === null ? null : locateRow(source, newId),
+      title: null,
+      artists: [],
+    });
+    void loadMetadata(newId);
+    if (source !== null) recordQueryPlay(source);
+    syncTransport();
+  };
+
+  /** Tears down playback and empties the bar. */
+  const clearNowPlaying = () => {
+    audio?.stop();
+    setState("currentTrack", null);
+    syncTransport();
+  };
+
+  const playRow = (tabId: string, index: number) => {
+    const id = trackIdAt(tabId, index);
+    if (id === undefined) return;
+    const { preceding, upcoming } = playlistAround(tabId, index);
+    setState("currentTrack", {
+      sourceTabId: tabId,
+      id,
+      rowIndex: index,
+      title: null,
+      artists: [],
+    });
+    engine().setPlaylist(preceding, id, upcoming);
+    syncTransport();
+    void loadMetadata(id);
+    recordQueryPlay(tabId);
   };
 
   return {
@@ -601,7 +824,10 @@ function createAppStore(): AppStore {
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);
     },
-    setResults: (tabId, result) => setTabResult(tabId, result),
+    setResults: (tabId, result, trackIds) => {
+      setTabResult(tabId, result);
+      if (trackIds) setState("trackIdsByTab", tabId, trackIds);
+    },
     setTabDefinitions: (tabId, saved, live) => {
       const idx = state.tabs.findIndex((t) => t.id === tabId);
       if (idx === -1) return;
@@ -645,12 +871,39 @@ function createAppStore(): AppStore {
       }
       setState("selectionByTab", tabId, next);
     },
-    doubleClickRow: (tabId, index) => {
-      const id = state.trackIdsByTab[tabId]?.[index];
-      // Only track-based rows carry an id; otherwise a double-click does nothing.
-      if (id == null || id === "") return;
-      // TODO: wire up actual playback. For now, just announce the track.
-      console.log(`Play track ${id}`);
+    // Only track-based rows carry an id; on any other row this does nothing.
+    doubleClickRow: (tabId, index) => playRow(tabId, index),
+
+    playRow,
+    togglePlayPause: () => {
+      if (!audio || !state.currentTrack) return;
+      if (audio.isPlaying) audio.pause();
+      else audio.play();
+      syncTransport();
+    },
+    skipNext: () => {
+      audio?.skipNext();
+      syncTransport();
+    },
+    stopPlayback: () => {
+      // Dismissing a track counts as finishing it only if it played at least
+      // halfway; log that before the teardown resets the position it's read from.
+      const ct = state.currentTrack;
+      if (ct && audio?.pastHalfway) logPlay(ct.id);
+      clearNowPlaying();
+    },
+    locateCurrentTrack: () => {
+      const ct = state.currentTrack;
+      const source = ct?.sourceTabId;
+      if (!ct || source == null || ct.rowIndex === null || !tab(source)) return;
+      setState("activeTabId", source);
+      setState("selectionByTab", source, new Set([ct.rowIndex]));
+      setRowReveal({ tabId: source, row: ct.rowIndex, seq: ++revealSeq });
+    },
+    rowReveal,
+    seedNowPlaying: (track, playback) => {
+      setState("currentTrack", track);
+      setState("playback", playback);
     },
 
     saveQuery: (tabId) => {

@@ -40,6 +40,35 @@ export default function QueryResults(props: { tabId: string }) {
     grid?.setSelection(selection);
   });
 
+  // The playing track's row, when it lives in *this* tab's results — the grid
+  // paints it with an accent edge marker. Re-runs when the track, its row, or the
+  // tab changes.
+  const currentRow = (): number | undefined => {
+    const ct = store.state.currentTrack;
+    if (!ct || ct.sourceTabId !== props.tabId || ct.rowIndex === null) {
+      return undefined;
+    }
+    return ct.rowIndex;
+  };
+  // Read the row *before* the optional call: `grid?.setCurrentRow(currentRow())`
+  // would skip evaluating the argument entirely while the grid is still being
+  // created (effects run before this component's `onMount`), so the effect would
+  // subscribe to nothing on its first run and never fire again.
+  createEffect(() => {
+    const row = currentRow();
+    grid?.setCurrentRow(row);
+  });
+
+  // The now-playing bar's "Locate" asks the grid to scroll a row into view. The
+  // request is a signal, so this re-runs per request; it's applied again from
+  // `onMount` because a Locate into a *different* tab lands here before the tab's
+  // grid exists (effects run before this component's `onMount`).
+  const applyReveal = () => {
+    const reveal = store.rowReveal();
+    if (reveal && reveal.tabId === props.tabId) grid?.revealRow(reveal.row);
+  };
+  createEffect(applyReveal);
+
   onMount(() => {
     const el = canvas;
     if (!el) return;
@@ -50,6 +79,8 @@ export default function QueryResults(props: { tabId: string }) {
     });
     grid.setResult(currentResult());
     grid.setSelection(store.rowSelection(props.tabId));
+    grid.setCurrentRow(currentRow());
+    applyReveal();
 
     // Observe the *container*, not the canvas, for backing-store resizes. The
     // grid gives the canvas an explicit pixel size (for a 1:1 device-pixel

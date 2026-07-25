@@ -36,6 +36,10 @@ import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
 import Rename from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
+import Play from "~icons/material-symbols/play-arrow";
+import Pause from "~icons/material-symbols/pause";
+import Next from "~icons/material-symbols/skip-next";
+import Locate from "~icons/material-symbols/my-location";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -65,4 +69,8 @@ export const Icons = {
   Table, // a table row in the base submenu
   Rename, // rename query (wrench menu + double-click)
   Duplicate, // duplicate query (wrench menu)
+  Play, // now-playing bar: resume
+  Pause, // now-playing bar: pause
+  Next, // now-playing menu: skip to the next queued track
+  Locate, // now-playing menu: jump to the playing track's row
 };

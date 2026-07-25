@@ -46,6 +46,10 @@ const PILL_GAP = 4;
 const PILL_RADIUS = 4;
 const PILL_LINE_HEIGHT = 1.2;
 
+/** Width of the accent bar down the left edge of the playing row. Wider than the
+ * egui original's 3px so the marker reads at a glance on a dense grid. */
+const CURRENT_MARKER_W = 5;
+
 /** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,
  * so the sheen reads without hiding the selection color (SELECTED_ROW_GRADIENT_
  * ALPHA = 90/255 in results.rs). */
@@ -84,6 +88,10 @@ interface Theme {
   ink: string;
   inkWeak: string;
   scrollThumb: string;
+  /** The playing row's left edge marker, and the translucent wash over the rest
+   * of that row. */
+  currentMarker: string;
+  currentWash: string;
 }
 
 /** Callbacks the owner wires up to react to row interaction. */
@@ -160,6 +168,8 @@ export class CanvasGrid {
   // currently-hovered row, the last mouse Y (to re-derive hover after a scroll),
   // and the owner's interaction callbacks.
   private selection: ReadonlySet<number> = new Set();
+  /** The row holding the now-playing track, when it's in this result set. */
+  private currentRow: number | undefined;
   private hoverRow: number | undefined;
   private lastMouseY: number | undefined;
   private interaction: GridInteraction | undefined;
@@ -248,6 +258,14 @@ export class CanvasGrid {
     this.requestDraw();
   }
 
+  /** Marks the row playing right now (`undefined` when the now-playing track
+   * isn't in this result set), painted with an accent edge and a faint wash. */
+  setCurrentRow(row: number | undefined): void {
+    if (row === this.currentRow) return;
+    this.currentRow = row;
+    this.requestDraw();
+  }
+
   /** Re-reads the backing-store size for the current viewport + devicePixelRatio,
    * re-derives the layout for the new width, clamps scroll, and repaints.
    *
@@ -289,6 +307,26 @@ export class CanvasGrid {
     // Drawing here fills the freshly-cleared buffer before the browser paints.
     this.dirty = false;
     this.draw();
+  }
+
+  /** Scrolls row `index` into view, doing nothing when it already is. Drives the
+   * now-playing bar's "Locate": the row is nudged just inside the nearer edge
+   * (rather than centered), which keeps its surrounding rows in place when it was
+   * only a little off-screen. Any fling in progress is cancelled so the scroll
+   * isn't immediately carried past the target. */
+  revealRow(index: number): void {
+    const layout = this.layout;
+    if (!layout || index < 0) return;
+    const top = index * layout.rowH;
+    const bottom = top + layout.rowH;
+    if (top < this.scrollTop) this.scrollTop = top;
+    else if (bottom > this.scrollTop + this.vh)
+      this.scrollTop = bottom - this.vh;
+    else return;
+    this.stopFling();
+    this.clampScroll();
+    if (this.lastMouseY !== undefined) this.updateHover(this.lastMouseY);
+    this.requestDraw();
   }
 
   /** Re-reads theme colors + font family from CSS and repaints (theme toggle). */
@@ -661,6 +699,7 @@ export class CanvasGrid {
         rowH,
         this.selection.has(r),
         this.hoverRow === r,
+        this.currentRow === r,
       );
       for (let k = 0; k < result.columns.length; k++) {
         this.drawCell(r, k, screenY);
@@ -695,6 +734,7 @@ export class CanvasGrid {
     rowH: number,
     selected: boolean,
     hovered: boolean,
+    current: boolean,
   ): void {
     const ctx = this.ctx;
     const t = this.theme;
@@ -715,6 +755,16 @@ export class CanvasGrid {
     } else {
       ctx.fillStyle = this.rowGradient(screenY, rowH, top, bottom);
       ctx.fillRect(0, screenY, this.vw, rowH);
+    }
+    if (current) {
+      // The playing row: a faint blue wash (skipped on a selected row, whose own
+      // fill already carries the color) plus an accent bar down the left edge.
+      if (!selected) {
+        ctx.fillStyle = t.currentWash;
+        ctx.fillRect(0, screenY, this.vw, rowH);
+      }
+      ctx.fillStyle = t.currentMarker;
+      ctx.fillRect(0, screenY, CURRENT_MARKER_W, rowH);
     }
     // Softened hairline separator along the bottom edge. Snap to the device grid
     // so the 1px line stays a crisp single pixel instead of a blurred 2px smear.
@@ -917,6 +967,8 @@ export class CanvasGrid {
       selectedBgHover: v("--row-selected-hover", "#b4d0eb"),
       ink: v("--ink", "#1b1b1b"),
       inkWeak: v("--ink-weak", "#5a5a5a"),
+      currentMarker: v("--accent-soft", "#bcd0ea"),
+      currentWash: v("--row-current", "rgb(46 124 246 / 0.063)"),
       // No CSS token for the thumb; a mid-gray reads on both themes.
       scrollThumb: "rgba(130, 130, 130, 0.55)",
     };

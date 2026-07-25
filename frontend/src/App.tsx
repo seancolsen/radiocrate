@@ -4,6 +4,7 @@ import { useSwipeToClose } from "./gestures/useSwipeToClose";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
+import NowPlaying from "./components/NowPlaying";
 
 /** Viewport width at/above which the sidebar is a persistent left panel instead
  * of a modal drawer (PERSISTENT_ORGANIZER_MIN_WIDTH). */
@@ -26,11 +27,15 @@ function TabContent() {
   );
 }
 
+/** The main column, right of the sidebar: tab bar, the active tab's content, and
+ * the now-playing bar pinned to the bottom (which spans this column only — the
+ * sidebar keeps its own full height, as in the egui layout). */
 function Main() {
   return (
     <div class="flex min-w-0 flex-1 flex-col">
       <TabBar />
       <TabContent />
+      <NowPlaying />
     </div>
   );
 }

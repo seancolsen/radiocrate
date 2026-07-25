@@ -14,6 +14,8 @@
   --color-split-trigger: var(--split-trigger);
   --color-preset: var(--preset);
   --color-danger: var(--danger);
+  --color-accent-soft: var(--accent-soft);
+  --color-timeline-rest: var(--timeline-rest);
 }
 
 @layer base {
@@ -32,6 +34,12 @@
     --split-trigger: #d7eafd; /* the ⋮ trigger's lighter tint */
     --preset: #f3e3fb; /* expanded preset tab + detail panel */
     --danger: #c0392b; /* delete / unsaved-marker red */
+    /* ACCENT_BLUE (lib.rs): the played part of the now-playing timeline and the
+       playing row's edge marker. Its companions are a translucent strong blue —
+       the timeline's remaining part, and the wash over the playing row. */
+    --accent-soft: #bcd0ea;
+    --timeline-rest: rgb(46 124 246 / 0.275);
+    --row-current: rgb(46 124 246 / 0.063);
     /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
        artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */
     --row-bg-top: #ffffff;
@@ -58,6 +66,9 @@
       --split-trigger: #38597d;
       --preset: #483755;
       --danger: #e06b5c;
+      --accent-soft: #6e8fb5;
+      --timeline-rest: rgb(46 124 246 / 0.275);
+      --row-current: rgb(46 124 246 / 0.063);
       --row-bg-top: #303030;
       --row-bg-bottom: #262626;
       --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */
@@ -82,6 +93,9 @@
     --split-trigger: #d7eafd;
     --preset: #f3e3fb;
     --danger: #c0392b;
+    --accent-soft: #bcd0ea;
+    --timeline-rest: rgb(46 124 246 / 0.275);
+    --row-current: rgb(46 124 246 / 0.063);
     --row-bg-top: #ffffff;
     --row-bg-bottom: #f2f2f2;
     --row-bg-top-hover: #f5f5f5; /* shade(--row-bg-top, 10) */
@@ -105,6 +119,9 @@
     --split-trigger: #38597d;
     --preset: #483755;
     --danger: #e06b5c;
+    --accent-soft: #6e8fb5;
+    --timeline-rest: rgb(46 124 246 / 0.275);
+    --row-current: rgb(46 124 246 / 0.063);
     --row-bg-top: #303030;
     --row-bg-bottom: #262626;
     --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */

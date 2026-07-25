@@ -26,6 +26,11 @@ import { lemonadeGridResult } from "./gridFixture";
 //   ?expand=<id>     ← expand a preset's inline editor
 //   ?editName=base   ← rename the expanded preset (makes it dirty)
 //   ?editDefault=1   ← toggle the expanded preset's "Apply by default" (dirty)
+//   ?tracks=id1,id2  ← per-row track ids for the seeded grid, so double-click
+//                      plays without the lineage analysis having run
+//   ?playing=Title|Artist%20A,Artist%20B
+//                    ← fill the now-playing bar with a frozen transport (no
+//                      audio element, no stream request)
 //
 // A no-op when the params are absent, so it never affects production.
 export function applySeed(store: AppStore): void {
@@ -83,7 +88,11 @@ export function applySeed(store: AppStore): void {
     store.selectTab(activeId);
     // Drop a canned structured result straight into the active tab, bypassing
     // the compile / fetch / decode path so snapshots stay deterministic.
-    if (grid === "lemonade") store.setResults(activeId, lemonadeGridResult());
+    // `tracks=` stands in for the WASM lineage analysis, so the seeded rows are
+    // playable (double-click) without compiling a real query.
+    const trackIds = params.get("tracks")?.split(",");
+    if (grid === "lemonade")
+      store.setResults(activeId, lemonadeGridResult(), trackIds);
 
     // Override the active tab's working definition (unsaved unless `clean=1`).
     if (defParam) {
@@ -97,6 +106,30 @@ export function applySeed(store: AppStore): void {
     // Open a builder section before expanding a preset (toggling a section
     // clears the expansion).
     if (section) store.toggleBuilderSection(activeId, section);
+    // Fill the now-playing bar without an audio element or a backend: the
+    // title/artists come straight from the param, the transport is frozen.
+    //
+    // The track is deliberately left unlocated in the seeded rows (`rowIndex:
+    // null`, so the bar's "Locate" reads disabled): the playing row's marker is
+    // canvas paint, and Playwright's screenshot capture reproduces it in dark
+    // mode but not light — even though the canvas itself carries it in both (a
+    // `page.screenshot` of the same page shows it). Rather than bake that
+    // asymmetry into a pair of baselines, these snapshots stay about the bar and
+    // the marker is asserted against canvas pixels in playback.spec.ts.
+    const playing = params.get("playing");
+    if (playing) {
+      const [title, artistList] = playing.split("|");
+      store.seedNowPlaying(
+        {
+          sourceTabId: activeId,
+          id: "seeded-track",
+          rowIndex: null,
+          title,
+          artists: artistList ? artistList.split(",") : [],
+        },
+        { playing: true, position: 74, duration: 255, hasNext: true },
+      );
+    }
     if (expand) {
       store.toggleExpandPreset(activeId, expand);
       const editName = params.get("editName");

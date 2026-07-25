@@ -93,4 +93,44 @@ for (const colorScheme of ["light", "dark"] as const) {
       fullPage: true,
     });
   });
+
+  // The now-playing bar under the results grid: title + artists on the left,
+  // play/pause and the overflow menu on the right, progress timeline across the
+  // bottom. Seeded (`?playing=`) so no audio element or stream request is
+  // involved and the progress is frozen at a fixed fraction.
+  test(`now playing - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(
+      "/?sidebar=open&tabs=Lemonade&grid=lemonade" +
+        "&playing=Uncatena|Sylvan%20Esso,Nick%20Sanborn",
+    );
+    await page.evaluate(() => document.fonts.ready);
+    await expect(page.getByTestId("now-playing")).toBeVisible();
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(page).toHaveScreenshot(`now-playing-${colorScheme}.png`, {
+      fullPage: true,
+    });
+  });
+
+  // The same bar with its overflow menu open — it must open *upward* (the bar is
+  // the bottom edge of the app) and carry Next / Close / Locate.
+  test(`now playing menu - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(
+      "/?sidebar=open&tabs=Lemonade&grid=lemonade&playing=Uncatena|Sylvan%20Esso",
+    );
+    await page.evaluate(() => document.fonts.ready);
+    await page
+      .getByTestId("now-playing")
+      .getByRole("button", { name: "Playback actions" })
+      .click();
+    await expect(page.getByRole("menuitem", { name: "Locate" })).toBeVisible();
+    await expect(page).toHaveScreenshot(`now-playing-menu-${colorScheme}.png`, {
+      fullPage: true,
+    });
+  });
 }

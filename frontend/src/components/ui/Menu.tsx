@@ -21,11 +21,14 @@ export interface MenuApi {
  * whose menus always drop downward.
  *
  * `trigger` renders the clickable anchor (given the {@link MenuApi}); `align`
- * pins the content to the trigger's left (`start`) or right (`end`) edge. */
+ * pins the content to the trigger's left (`start`) or right (`end`) edge, and
+ * `side` drops it below the trigger (the default) or opens it upward — which is
+ * what a control in the bottom bar needs. */
 export function Menu(props: {
   trigger: (api: MenuApi) => JSX.Element;
   children: JSX.Element;
   align?: "start" | "end";
+  side?: "below" | "above";
   width?: string;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
@@ -59,10 +62,12 @@ export function Menu(props: {
       <Show when={open()}>
         <div
           role="menu"
-          class="bg-panel border-edge absolute top-full z-50 mt-1 flex flex-col gap-0.5 rounded-md border p-1 shadow-lg"
+          class="bg-panel border-edge absolute z-50 flex flex-col gap-0.5 rounded-md border p-1 shadow-lg"
           classList={{
             "left-0": (props.align ?? "start") === "start",
             "right-0": props.align === "end",
+            "top-full mt-1": (props.side ?? "below") === "below",
+            "bottom-full mb-1": props.side === "above",
           }}
           style={{ "min-width": props.width ?? "190px" }}
           onClick={() => close()}
