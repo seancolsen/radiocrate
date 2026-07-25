@@ -26,6 +26,10 @@ export function ContextMenu(props: {
   onClose: () => void;
   children: JSX.Element;
   width?: string;
+  /** Stacking layer, for a menu raised from inside another overlay. The app's
+   * layers: page content menus 90 (the default), modal dialogs 100, the command
+   * palette 110 — so a menu opened *within* a dialog needs 120. */
+  z?: number;
 }): JSX.Element {
   let menu: HTMLDivElement | undefined;
   // Placed by the effect below, which runs after the menu is in the DOM (it has
@@ -68,7 +72,8 @@ export function ContextMenu(props: {
   return (
     <Portal>
       <div
-        class="fixed inset-0 z-[90]"
+        class="fixed inset-0"
+        style={{ "z-index": props.z ?? 90 }}
         onPointerDown={() => props.onClose()}
         // A right-click outside dismisses too, without handing the browser's own
         // menu to the blocking layer.

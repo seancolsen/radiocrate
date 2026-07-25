@@ -5,6 +5,8 @@ import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
 import NowPlaying from "./components/NowPlaying";
+import CommandPalette from "./components/CommandPalette";
+import ShortcutsModal from "./components/ShortcutsModal";
 
 /** Viewport width at/above which the sidebar is a persistent left panel instead
  * of a modal drawer (PERSISTENT_ORGANIZER_MIN_WIDTH). */
@@ -84,6 +86,10 @@ export default function App() {
         </Show>
         <Main />
       </Show>
+
+      {/* App-wide overlays, above every panel and both layouts. */}
+      <CommandPalette />
+      <ShortcutsModal />
     </div>
   );
 

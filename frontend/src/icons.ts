@@ -43,6 +43,7 @@ import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
+import Keyboard from "~icons/material-symbols/keyboard-alt";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -77,4 +78,5 @@ export const Icons = {
   Pause, // now-playing bar: pause
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
+  Keyboard, // shortcuts editor: "Record keys" search toggle
 };

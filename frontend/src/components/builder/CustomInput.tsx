@@ -14,6 +14,9 @@ export default function CustomInput(props: {
   onClear: () => void;
   onSaveAsPreset: () => void;
   canSave: boolean;
+  /** Hands the textarea to the section builder, which focuses it when a
+   * `query.focus_*` command asks for the caret. */
+  ref?: (el: HTMLTextAreaElement) => void;
 }): JSX.Element {
   const hasText = () => props.value.trim() !== "";
   const rows = () => Math.max(1, props.value.split("\n").length);
@@ -21,6 +24,7 @@ export default function CustomInput(props: {
   return (
     <div class="relative w-full">
       <textarea
+        ref={(el) => props.ref?.(el)}
         class="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent block w-full resize-none rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none"
         classList={{ "pr-9": hasText() }}
         rows={rows()}

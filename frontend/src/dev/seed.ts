@@ -1,4 +1,5 @@
 import { createEffect } from "solid-js";
+import type { CommandStore } from "../state/commands";
 import type { AppStore, RecordTarget } from "../state/store";
 import {
   emptyDefinition,
@@ -149,6 +150,30 @@ export function applySeed(store: AppStore): void {
         store.patchPresetEdit(expand, { isDefault: true });
     }
   });
+}
+
+// The command-system half of the seed seam (the params the app store knows
+// nothing about), applied on startup like `applySeed`:
+//
+//   ?palette=1        ← open the command palette
+//   ?palette=<text>   ← …with `<text>` already typed into its search field
+//   ?shortcuts=1      ← open the keyboard-shortcuts editor
+//
+// A no-op when the params are absent, so it never affects production.
+export function applyCommandSeed(commands: CommandStore): void {
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    return;
+  }
+
+  const palette = params.get("palette");
+  if (palette) {
+    commands.togglePalette();
+    if (palette !== "1") commands.setPaletteQuery(palette);
+  }
+  if (params.get("shortcuts") === "1") commands.openShortcuts();
 }
 
 /** Builds the record targets `?records=` asks for: one per named table, keyed by

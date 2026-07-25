@@ -1,4 +1,4 @@
-import { Match, Show, Switch, type JSX } from "solid-js";
+import { createEffect, Match, Show, Switch, type JSX } from "solid-js";
 import { useAppState } from "../../state/store";
 import { sectionLabel } from "../../query/definition";
 import CustomInput from "./CustomInput";
@@ -17,11 +17,24 @@ export default function SingleBuilder(props: {
   const asCustom = () => content() as { custom: string };
   const asPreset = () => content() as { preset: string };
 
+  // `query.focus_sort` / `query.focus_display` open this section and ask for the
+  // caret; see the twin effect in `FilterBuilder`. A section holding a preset
+  // (or Shuffle) has no text input, so the request is still consumed — the
+  // section is open, which is all there is to focus.
+  let input: HTMLTextAreaElement | undefined;
+  createEffect(() => {
+    const req = store.builderFocus();
+    if (req?.tabId !== props.tabId || req.section !== props.section) return;
+    input?.focus();
+    store.clearBuilderFocus();
+  });
+
   return (
     <div class="flex flex-col gap-2">
       <Switch>
         <Match when={content() && "custom" in content()!}>
           <CustomInput
+            ref={(el) => (input = el)}
             value={asCustom().custom}
             hint={sectionLabel(props.section)}
             canSave={(store.tab(props.tabId)?.live.base.trim() ?? "") !== ""}

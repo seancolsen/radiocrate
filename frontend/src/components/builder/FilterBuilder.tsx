@@ -1,4 +1,4 @@
-import { For, Show, type JSX } from "solid-js";
+import { createEffect, For, Show, type JSX } from "solid-js";
 import { useAppState } from "../../state/store";
 import CustomInput from "./CustomInput";
 import PresetTab from "./PresetTab";
@@ -20,11 +20,23 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
     return e && presets().includes(e) ? e : null;
   };
 
+  // `query.focus_filter` opens this section and asks for the caret. The request
+  // is consumed once: the effect also fires on mount (when the command is what
+  // opened the section), so a later manual open doesn't re-steal focus.
+  let input: HTMLTextAreaElement | undefined;
+  createEffect(() => {
+    const req = store.builderFocus();
+    if (req?.tabId !== props.tabId || req.section !== "filter") return;
+    input?.focus();
+    store.clearBuilderFocus();
+  });
+
   return (
     <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-start gap-2">
         <div class="min-w-0 flex-1 basis-[400px]">
           <CustomInput
+            ref={(el) => (input = el)}
             value={live()?.filter.custom ?? ""}
             hint="Filter"
             canSave={canSave()}

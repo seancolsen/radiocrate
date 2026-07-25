@@ -119,6 +119,17 @@ export interface RowReveal {
   seq: number;
 }
 
+/** A one-shot request to open a builder section *and* put the caret in its
+ * custom input — what the `query.focus_*` commands do (mirroring egui's
+ * `focus_builder_section`, which set `builder_focus` for the next frame).
+ * Carried as a signal rather than store state for the same reason as
+ * {@link RowReveal}: it's an event, and the builder consumes it. */
+export interface BuilderFocus {
+  tabId: string;
+  section: Section;
+  seq: number;
+}
+
 /** A table whose records this tab's result rows identify, with the key values
  * carried by each row — the lineage analysis's output, cached per tab.
  *
@@ -341,6 +352,12 @@ export interface AppStore {
   /** Handle a double-click on result row `index`: if the query's rows are tracks,
    * plays that row's track (queuing the rows after it). */
   doubleClickRow: (tabId: string, index: number) => void;
+  /** Move the result-row selection one row down (`forward`) or up. With
+   * `extend`, grow the selection from the anchor to the new row (Shift+Arrow);
+   * otherwise select just the new row. Clamps at the ends and scrolls the row
+   * into view. Backs the `results.select_*` / `results.extend_*` commands
+   * (mirrors `results.rs:select_row_delta`). */
+  moveRowSelection: (tabId: string, forward: boolean, extend: boolean) => void;
   /** The records result row `index` identifies — one per table whose primary key
    * the row carries in full, in result-column order. Empty when the lineage
    * analysis found none (or hasn't finished), which is what leaves the row's
@@ -413,6 +430,14 @@ export interface AppStore {
   builderSection: (tabId: string) => Section | null;
   /** Toggle a builder section open/closed (opening switches sections). */
   toggleBuilderSection: (tabId: string, section: Section) => void;
+  /** Open a builder section (never closing it, unlike the toggle) and ask it to
+   * take the caret — the `query.focus_*` commands' action. */
+  focusBuilderSection: (tabId: string, section: Section) => void;
+  /** The pending focus request, consumed by the builder that owns it.
+   * `undefined` when there is none. */
+  builderFocus: Accessor<BuilderFocus | undefined>;
+  /** Clear the pending focus request once it has been applied. */
+  clearBuilderFocus: () => void;
   /** The expanded preset id for a tab (null when none). */
   expandedPreset: (tabId: string) => string | null;
   /** Toggle a preset's inline editor open/closed. */
@@ -510,6 +535,13 @@ function createAppStore(): AppStore {
     storedRecordSidebarWidth(),
   );
 
+  // The `query.focus_*` commands hand the open builder a "take the caret"
+  // request through this signal; the builder clears it once applied.
+  const [builderFocus, setBuilderFocus] = createSignal<
+    BuilderFocus | undefined
+  >();
+  let builderFocusSeq = 0;
+
   const tab = (tabId: string): Tab | undefined =>
     state.tabs.find((t) => t.id === tabId);
 
@@ -536,6 +568,11 @@ function createAppStore(): AppStore {
   // that a plain/Ctrl click re-plants). Non-reactive — only the resulting
   // `selectionByTab` set drives the paint.
   const rowClickAnchor = new Map<string, number>();
+
+  // Per-tab selection lead: the moving end — the row an arrow-key step counts
+  // from. Split from the anchor exactly as in egui (`selection_lead`), so
+  // Shift+Arrow after a Shift+click keeps growing the same range.
+  const rowSelectionLead = new Map<string, number>();
 
   // Monotonic per-tab run token, so a slow lineage analysis (WASM load) from a
   // superseded run can't clobber a newer run's track-id mapping.
@@ -610,6 +647,7 @@ function createAppStore(): AppStore {
       }
     });
     rowClickAnchor.delete(tabId);
+    rowSelectionLead.delete(tabId);
   };
 
   /** Reads one Arrow column out as per-row strings (`null` for a NULL cell). */
@@ -814,6 +852,7 @@ function createAppStore(): AppStore {
     autoRun.delete(id);
     cancelScheduledRun(id);
     rowClickAnchor.delete(id);
+    rowSelectionLead.delete(id);
     runTokens.delete(id);
   };
 
@@ -1040,10 +1079,45 @@ function createAppStore(): AppStore {
         next = new Set<number>([index]);
         rowClickAnchor.set(tabId, index);
       }
+      // Whichever branch ran, the clicked row is where a following arrow-key
+      // step counts from.
+      rowSelectionLead.set(tabId, index);
       setState("selectionByTab", tabId, next);
     },
     // Only track-based rows carry an id; on any other row this does nothing.
     doubleClickRow: (tabId, index) => playRow(tabId, index),
+    moveRowSelection: (tabId, forward, extend) => {
+      const len = state.resultsByTab[tabId]?.rowCount ?? 0;
+      if (len === 0) return;
+      const last = len - 1;
+      // Step from the current lead (or the anchor); with nothing selected yet,
+      // an initial Down selects the first row and Up the last.
+      const cur = rowSelectionLead.get(tabId) ?? rowClickAnchor.get(tabId);
+      const target =
+        cur === undefined
+          ? forward
+            ? 0
+            : last
+          : forward
+            ? Math.min(cur + 1, last)
+            : Math.max(cur - 1, 0);
+
+      let next: Set<number>;
+      if (extend) {
+        const anchor = rowClickAnchor.get(tabId) ?? target;
+        rowClickAnchor.set(tabId, anchor);
+        const lo = Math.min(anchor, target);
+        const hi = Math.max(anchor, target);
+        next = new Set<number>();
+        for (let i = lo; i <= hi; i++) next.add(i);
+      } else {
+        next = new Set<number>([target]);
+        rowClickAnchor.set(tabId, target);
+      }
+      rowSelectionLead.set(tabId, target);
+      setState("selectionByTab", tabId, next);
+      setRowReveal({ tabId, row: target, seq: ++revealSeq });
+    },
     rowRecords: (tabId, index) => {
       const targets = state.recordTargetsByTab[tabId] ?? [];
       const records: RecordRef[] = [];
@@ -1217,6 +1291,13 @@ function createAppStore(): AppStore {
       setState("expandedPresetByTab", tabId, null);
       setState("builderSectionByTab", tabId, open === section ? null : section);
     },
+    focusBuilderSection: (tabId, section) => {
+      setState("expandedPresetByTab", tabId, null);
+      setState("builderSectionByTab", tabId, section);
+      setBuilderFocus({ tabId, section, seq: ++builderFocusSeq });
+    },
+    builderFocus,
+    clearBuilderFocus: () => setBuilderFocus(undefined),
     expandedPreset: (tabId) => state.expandedPresetByTab[tabId] ?? null,
     toggleExpandPreset: (tabId, presetId) => {
       const cur = state.expandedPresetByTab[tabId] ?? null;

@@ -108,6 +108,8 @@ absent:
 ```
 http://localhost:5173/?sidebar=open&tabs=Lemonade,Deep%20Cuts
 http://localhost:5173/?results=<url-encoded%20plain%20text>   # canned results, bypasses /api/query
+http://localhost:5173/?tabs=Lemonade&palette=1                # command palette open (or ?palette=<text>)
+http://localhost:5173/?tabs=Lemonade&shortcuts=1              # keyboard-shortcuts editor open
 ```
 
 ## Other commands
