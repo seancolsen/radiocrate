@@ -1,7 +1,7 @@
 // Ties the definition flatten (§3.1) to the Querydown compiler (§2). Branches on
 // the `assemble` result: full-mode queries go through `compile` with the PRELUDE
 // prepended; sectioned queries through `compile_sections` (section-isolated
-// parsing), the faithful analog of what the egui app did for builder queries.
+// parsing) for builder queries.
 //
 // `compile`/`compile_sections` return a typed `CompileResult` object and THROW
 // on failure — we read `.sql` directly (no JSON.parse) and let failures

@@ -9,12 +9,12 @@ import IconButton from "./ui/IconButton";
 
 // The record editor: a sidebar within the query page, opened from a result row's
 // "Edit {table}" context-menu entry. It lives *inside* the page (not the app
-// frame) so opening it narrows the toolbar and the results and leaves the tab bar
-// and the now-playing bar alone — the layout the egui `record_editor` panel had.
+// frame) so opening it narrows the toolbar and the results and leaves the tab
+// bar and the now-playing bar alone.
 //
 // This session it only shows which record it's pointing at (the primary-key
-// column/value pairs) and offers a way out; the form itself — `form.rs`, by some
-// margin the largest thing left to port — lands next.
+// column/value pairs) and offers a way out; the form itself — by some margin
+// the largest thing left to build — lands next.
 
 /** Least width left to the results while dragging the divider, so the pane the
  * editor was opened *from* can't be squeezed away entirely. */

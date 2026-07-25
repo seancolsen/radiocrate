@@ -1,13 +1,13 @@
 // Semantic icon vocabulary.
 //
-// Mirrors `frontend-old-egui/src/icons.rs`: call sites name a UI *concept*
-// (`Query`, `Close`, `Refresh`, …) and never a raw glyph, so an icon choice is
-// made once here and reused everywhere. Each import is a build-time-inlined
-// Solid SVG component (via unplugin-icons) that fills with `currentColor`, so
-// the theme tokens style it and size comes from a `size-*` utility / font size.
+// Call sites name a UI *concept* (`Query`, `Close`, `Refresh`, …) and never a
+// raw glyph, so an icon choice is made once here and reused everywhere. Each
+// import is a build-time-inlined Solid SVG component (via unplugin-icons) that
+// fills with `currentColor`, so the theme tokens style it and size comes from a
+// `size-*` utility / font size.
 //
-// In Iconify's `material-symbols` set the base name is the *filled* variant
-// (matching egui's filled Material Symbols); `-outline` would be the unfilled one.
+// In Iconify's `material-symbols` set the base name is the *filled* variant;
+// `-outline` would be the unfilled one.
 
 import Query from "~icons/material-symbols/manage-search";
 import ExplorerOpen from "~icons/material-symbols/left-panel-open";
@@ -34,8 +34,7 @@ import Delete from "~icons/material-symbols/delete";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
-// One glyph, two concepts — as in `icons.rs`, where `RENAME` and `EDIT` are both
-// `ICON_EDIT`.
+// One glyph, two concepts: `Rename` and `Edit` share the same icon.
 import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";

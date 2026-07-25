@@ -1,19 +1,18 @@
 //! Minimal WASM binding over `polyglot-sql` that reports, per output column of a
 //! compiled query, which base-table columns that output column traces back to.
 //!
-//! This grew out of the egui frontend's `lineage.rs` (which used the
-//! `polyglot-sql` Rust crate directly), rebuilt for the DOM frontend with
-//! `default-features = false` so only the `semantic` analysis and the DuckDB
-//! dialect are compiled in — a ~22 MB → ~2 MB win over the full
+//! This grew out of an earlier version that used the `polyglot-sql` Rust crate
+//! directly and asked two fixed questions (which column is `track.id`, which is
+//! the base table's primary key). This binding answers neither: it returns the
+//! raw column→sources mapping and leaves the interpretation to the frontend,
+//! which knows the introspected schema and can therefore decide — for *any*
+//! table, not just the query's base table — whether the result rows carry that
+//! table's primary key. See `frontend/src/query/lineage.ts`.
+//!
+//! Built with `default-features = false` so only the `semantic` analysis and
+//! the DuckDB dialect are compiled in — a ~22 MB → ~2 MB win over the full
 //! `@polyglot-sql/sdk` npm build, which bundles all 30+ dialects and every
 //! feature.
-//!
-//! The egui code asked two fixed questions here (which column is `track.id`,
-//! which is the base table's primary key). This binding answers neither: it
-//! returns the raw column→sources mapping and leaves the interpretation to the
-//! frontend, which knows the introspected schema and can therefore decide — for
-//! *any* table, not just the query's base table — whether the result rows carry
-//! that table's primary key. See `frontend/src/query/lineage.ts`.
 
 use polyglot_sql::ast_transforms::get_output_column_names;
 use polyglot_sql::expressions::Expression;
@@ -46,9 +45,7 @@ pub fn column_sources(sql: &str) -> Option<String> {
 }
 
 /// Appends `root`'s leaf sources to `out` as a JSON array of `[table, column]`
-/// pairs. A "leaf" is a lineage node with no further downstream — the same nodes
-/// the egui `traces_to` scanned, so the answers agree; this just reports all of
-/// them instead of testing one target.
+/// pairs. A "leaf" is a lineage node with no further downstream.
 fn write_sources(out: &mut String, root: &LineageNode) {
     out.push('[');
     let mut first = true;

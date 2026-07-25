@@ -31,8 +31,7 @@ function Timeline(props: { progress: number }): JSX.Element {
 
 /** The now-playing bar: the playing track's title and artists on the left, a
  * play/pause toggle and an overflow menu on the right, and the progress timeline
- * across the bottom. Renders nothing when no track is loaded. Ported from
- * `frontend-old-egui/src/now_playing.rs`. */
+ * across the bottom. Renders nothing when no track is loaded. */
 export default function NowPlaying(): JSX.Element {
   const store = useAppState();
 

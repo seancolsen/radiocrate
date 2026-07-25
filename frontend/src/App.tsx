@@ -50,7 +50,7 @@ function TabContent() {
 
 /** The main column, right of the sidebar: tab bar, the active tab's content, and
  * the now-playing bar pinned to the bottom (which spans this column only — the
- * sidebar keeps its own full height, as in the egui layout). */
+ * sidebar keeps its own full height). */
 function Main() {
   return (
     <div class="flex min-w-0 flex-1 flex-col">

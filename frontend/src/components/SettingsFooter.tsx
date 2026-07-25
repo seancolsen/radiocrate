@@ -5,8 +5,8 @@ import { Menu, MenuItem } from "./ui/Menu";
 
 /** The Settings dropdown pinned to the sidebar bottom: gear icon + muted
  * "Settings" label, opening a menu upward (it sits on the bottom edge) with the
- * Keyboard shortcuts entry. Mirrors `organizer.rs:settings_footer`, whose theme
- * entries have no DOM counterpart yet — the theme follows the system there. */
+ * Keyboard shortcuts entry. No theme entries yet — the theme follows the
+ * system for now. */
 export default function SettingsFooter(): JSX.Element {
   const store = useAppState();
   return (

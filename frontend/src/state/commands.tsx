@@ -37,9 +37,7 @@ import { useAppState, type AppStore } from "./store";
 
 // The command system: the keymap (persisted user overrides over the built-in
 // defaults), the global keyboard-shortcut pass, and the single dispatch point
-// every command runs through. Ported from `frontend-old-egui/src/commands.rs`
-// (`Keymap`, `handle_global_shortcuts`, `execute_command`) plus the palette's
-// MRU bookkeeping from `lib.rs:record_command_use`.
+// every command runs through.
 //
 // It sits in its own context, layered over the app store: commands are defined
 // in terms of store actions, and keeping them out of the store keeps that file
@@ -49,7 +47,7 @@ import { useAppState, type AppStore } from "./store";
 const MRU_LIMIT = 10;
 
 /** The rebind-capture dialog's state: which command is being edited and the
- * chord pressed so far (`shortcuts_tab.rs:CaptureState`). */
+ * chord pressed so far. */
 export interface CaptureState {
   cmd: CommandId;
   pending: Chord | null;
@@ -94,14 +92,13 @@ export interface CommandStore {
 
   // ── The keyboard-shortcuts editor ──
   // Its transient UI state lives here rather than in the page component: the
-  // editor is a tab, so the component unmounts whenever another tab is showing,
-  // and egui likewise kept this on `App` (`shortcuts_tab.rs:ShortcutsUi`).
+  // editor is a tab, so the component unmounts whenever another tab is showing.
   /** The editor's command-name search text (unused in record mode). */
   shortcutsSearch: Accessor<string>;
   setShortcutsSearch: (text: string) => void;
   /** Release the editor's hold on the keyboard — cancel the capture dialog and
    * leave record mode. Called when the editor's page unmounts; while either is
-   * live the global shortcut pass stands down (`ShortcutsUi::is_capturing`). */
+   * live the global shortcut pass stands down. */
   stopCapturingKeys: () => void;
   /** The open rebind-capture dialog, if any. */
   capture: Accessor<CaptureState | null>;
@@ -119,8 +116,7 @@ export interface CommandStore {
 const CommandContextObj = createContext<CommandStore>();
 
 /** Whether the event landed in a text field, which owns its own keys. Plain and
- * shift-only chords stand down for it; ⌘/Ctrl and Alt chords still fire (the
- * DOM analog of egui's `egui_wants_keyboard_input` check). */
+ * shift-only chords stand down for it; ⌘/Ctrl and Alt chords still fire. */
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -157,7 +153,7 @@ function createCommandStore(store: AppStore): CommandStore {
 
   /** Applies one binding and persists it: an override that matches the default
    * is stored as a deletion (the row disappears), otherwise as a set — a `null`
-   * chord recording an explicit unbind (`shortcuts_tab.rs:apply_binding`). */
+   * chord recording an explicit unbind. */
   const applyBinding = (cmd: CommandId, chord: Chord | null) => {
     const next = withOverride(overrides(), cmd, chord);
     setOverrides(next);
@@ -243,8 +239,7 @@ function createCommandStore(store: AppStore): CommandStore {
     return id !== null && store.queryTab(id) !== undefined ? id : null;
   };
 
-  /** Selects the next (`forward`) or previous tab, wrapping around
-   * (`commands.rs:cycle_tab`). */
+  /** Selects the next (`forward`) or previous tab, wrapping around. */
   const cycleTab = (forward: boolean) => {
     const tabs = store.state.tabs;
     const cur = activeTab();
@@ -257,8 +252,8 @@ function createCommandStore(store: AppStore): CommandStore {
     store.selectTab(tabs[next].id);
   };
 
-  /** Moves the active tab one slot right (`forward`) or left, clamped in range
-   * (`commands.rs:move_current_tab`). */
+  /** Moves the active tab one slot right (`forward`) or left, clamped in
+   * range. */
   const moveActiveTab = (forward: boolean) => {
     const tabs = store.state.tabs;
     const cur = activeTab();
@@ -310,9 +305,9 @@ function createCommandStore(store: AppStore): CommandStore {
         if (tabId) store.moveRowSelection(tabId, false, true);
         break;
       case "tabs.save_active":
-        // Guarded on `isUnsaved`, where egui's `save_current` saved
-        // unconditionally: a save is a backend write that bumps `modified_at`,
-        // and the toolbar's Save button is likewise only there while unsaved.
+        // Guarded on `isUnsaved`: a save is a backend write that bumps
+        // `modified_at`, and the toolbar's Save button is likewise only there
+        // while unsaved.
         if (queryId && store.isUnsaved(queryId)) store.saveQuery(queryId);
         break;
       case "tabs.save_all":
@@ -339,12 +334,12 @@ function createCommandStore(store: AppStore): CommandStore {
     }
   };
 
-  /** Records a command as used (`lib.rs:record_command_use`) and runs it.
+  /** Records a command as used and runs it.
    *
-   * `palette.open` is left out of the MRU, where egui recorded it like any
-   * other: it's the command that *opened* the list, so listing it back as the
-   * most recent thing you did would permanently occupy the top slot with the
-   * one command nobody needs to find there. */
+   * `palette.open` is left out of the MRU: it's the command that *opened* the
+   * list, so listing it back as the most recent thing you did would
+   * permanently occupy the top slot with the one command nobody needs to find
+   * there. */
   const run = (cmd: CommandId) => {
     if (cmd !== "palette.open") {
       setMru((prev) =>
@@ -357,9 +352,9 @@ function createCommandStore(store: AppStore): CommandStore {
   // ── The global shortcut pass ───────────────────────────────────────────────
 
   /** Whether something that owns the keyboard is up, so the global pass stands
-   * down (`commands.rs:shortcuts_suppressed`). The shortcuts editor's *tab* does
-   * not count — the app keeps running behind it, as in egui — but its chord
-   * capture does, so a chord typed at it rebinds instead of firing. */
+   * down. The shortcuts editor's *tab* does not count — the app keeps running
+   * behind it — but its chord capture does, so a chord typed at it rebinds
+   * instead of firing. */
   const suppressed = () =>
     paletteOpen() ||
     capturingKeys() ||
@@ -387,8 +382,7 @@ function createCommandStore(store: AppStore): CommandStore {
         return;
       }
     };
-    // Capture phase, so a chord is claimed before a focused widget acts on it —
-    // the DOM analog of egui's pass running before any panel sees the event.
+    // Capture phase, so a chord is claimed before a focused widget acts on it.
     document.addEventListener("keydown", onKeyDown, true);
     onCleanup(() => document.removeEventListener("keydown", onKeyDown, true));
   });

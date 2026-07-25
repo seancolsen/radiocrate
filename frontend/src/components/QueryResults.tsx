@@ -123,8 +123,7 @@ export default function QueryResults(props: { tabId: string }) {
       onRowDoubleClick: (index) => store.doubleClickRow(props.tabId, index),
       onRowContextMenu: (index, x, y) => {
         // The menu acts on one row. A right-click inside a multi-row selection
-        // is left alone rather than silently narrowing it (there's no bulk edit)
-        // — mirroring the egui results pane.
+        // is left alone rather than silently narrowing it (there's no bulk edit).
         const selection = store.rowSelection(props.tabId);
         if (selection.size > 1 && selection.has(index)) return;
         // Any other right-click selects its row alone first, so the menu's

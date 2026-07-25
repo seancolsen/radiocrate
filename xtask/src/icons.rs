@@ -21,8 +21,8 @@ use std::path::Path;
 /// doing its own masking.
 const ICON_BG: [u8; 3] = [0x00, 0x00, 0x00];
 
-/// The launch screens' backgrounds — egui's panel fill in each theme, so the
-/// launch image hands off to the booted app without a color jump.
+/// The launch screens' backgrounds — the app's panel fill in each theme, so
+/// the launch image hands off to the booted app without a color jump.
 const LIGHT_BG: [u8; 3] = [0xf8, 0xf8, 0xf8];
 const DARK_BG: [u8; 3] = [0x1b, 0x1b, 0x1b];
 

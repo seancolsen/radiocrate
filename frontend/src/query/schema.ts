@@ -7,9 +7,9 @@
 // that table's `id`. The enriched JSON is what the Querydown compiler consumes.
 //
 // It also carries the record-identity convention (`primaryKey` /
-// `identifyingColumns`, ported from the egui `form.rs`), which decides what
-// counts as "the primary key" of a table — the question the record editor and
-// the results context menu both hang off.
+// `identifyingColumns`), which decides what counts as "the primary key" of a
+// table — the question the record editor and the results context menu both
+// hang off.
 //
 // NOTE (drift): this mirrors Rust logic that also backs the backend's DML
 // validator. The FK-by-convention rule is stable and tiny; a unit test
@@ -106,8 +106,7 @@ export function parseSchemaTables(json: string): SchemaTable[] {
 /** The column that identifies a single record in `table`, by RadioCrate's
  * convention: a non-null, single-column UNIQUE / PRIMARY KEY constraint,
  * preferring one named `id` when a table has several. `undefined` for a table
- * keyed only by a composite constraint (e.g. `credit (track, artist)`). Ports
- * `form.rs:primary_key`. */
+ * keyed only by a composite constraint (e.g. `credit (track, artist)`). */
 export function primaryKey(table: SchemaTable): string | undefined {
   const singles = table.uniqueConstraints
     .filter((cols) => cols.length === 1)
@@ -121,8 +120,7 @@ export function primaryKey(table: SchemaTable): string | undefined {
 /** The columns that identify one record in `table`: the single primary key when
  * there is one, otherwise the first unique constraint (e.g. the composite
  * `(track, artist)` of `credit`). Empty when the table has no unique constraint
- * at all — such a table has no editable record identity. Ports
- * `form.rs:identifying_columns`. */
+ * at all — such a table has no editable record identity. */
 export function identifyingColumns(table: SchemaTable): string[] {
   const pk = primaryKey(table);
   if (pk !== undefined) return [pk];

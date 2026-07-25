@@ -10,9 +10,9 @@ import { Icons } from "../icons";
  *  - Inactive: bar-colored (darker on hover), icon + name dimmed.
  *
  * `renameable` is what a non-query page turns off: a settings tab's handle text
- * is fixed, so double-clicking it does nothing (mirroring `tabs.rs`, where the
- * query-only affordances stand down for a non-query `TabKind`). A query tab
- * double-click starts an inline rename, replacing the name with a text field. */
+ * is fixed, so double-clicking it does nothing (the query-only affordances
+ * stand down for a non-query `TabKind`). A query tab double-click starts an
+ * inline rename, replacing the name with a text field. */
 export default function TabHandle(props: {
   id: string;
   name: string;

@@ -52,15 +52,15 @@ import { isListLikeValue, isListType, stringifyArrowValue } from "../api/query";
 import type { Table } from "apache-arrow";
 
 /** An in-progress, uncommitted edit of a saved preset's fields. Keyed by preset
- * id in `presetEdits`; persists across collapse / tab navigation (mirrors
- * `builder.rs:PresetEdit`). This session it commits only to local state. */
+ * id in `presetEdits`; persists across collapse / tab navigation. This session
+ * it commits only to local state. */
 export interface PresetEdit {
   name: string;
   definition: string;
   isDefault: boolean;
 }
 
-/** The "Save as preset" naming-dialog state (mirrors `builder.rs:PresetSave`). */
+/** The "Save as preset" naming-dialog state. */
 export interface PresetSave {
   section: Section;
   definition: string;
@@ -69,9 +69,8 @@ export interface PresetSave {
 }
 
 /** A fixed sentinel id for the singleton Keyboard Shortcuts tab, so it flows
- * through the same id-keyed tab machinery (select / close / reorder) as queries.
- * Namespaced so it can't collide with a query id (mirrors
- * `page.rs:SHORTCUTS_PAGE_ID`). */
+ * through the same id-keyed tab machinery (select / close / reorder) as
+ * queries. Namespaced so it can't collide with a query id. */
 export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
 
 /** The Keyboard Shortcuts tab's handle text — its "name", so every generic tab
@@ -84,8 +83,7 @@ const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
  *
  * `persisted` is false for an ephemeral query — a never-saved tab (e.g. a
  * Duplicate) that exists only in this session until Save writes it to the
- * backend. An ephemeral tab always reads as unsaved (mirrors egui's
- * `QueryPage::ephemeral`, whose `saved` snapshot is `None`). */
+ * backend. An ephemeral tab always reads as unsaved. */
 export interface QueryTab {
   kind: "query";
   id: string;
@@ -97,8 +95,7 @@ export interface QueryTab {
 
 /** The keyboard-shortcuts editor tab. There is at most one, and its transient UI
  * state (search text, record mode, the capture dialog) lives in the command
- * store — so the tab itself carries no data beyond its identity (mirrors
- * `page.rs:Page::KeyboardShortcuts`). */
+ * store — so the tab itself carries no data beyond its identity. */
 export interface ShortcutsTab {
   kind: "shortcuts";
   id: typeof SHORTCUTS_TAB_ID;
@@ -113,11 +110,10 @@ export interface ShortcutsTab {
 export type Tab = QueryTab | ShortcutsTab;
 
 /** Which kind of page a tab holds — the discriminant every kind-aware surface
- * switches on (`tabs.rs:TabKind`). */
+ * switches on. */
 export type TabKind = Tab["kind"];
 
-/** The track shown in the now-playing bar, and where it came from. Mirrors
- * `now_playing.rs:CurrentTrack`. */
+/** The track shown in the now-playing bar, and where it came from. */
 export interface CurrentTrack {
   /** The tab whose results this track was played from (results are per-tab).
    * "Locate" jumps back here; `null` once that tab has been closed. */
@@ -152,10 +148,9 @@ export interface RowReveal {
 }
 
 /** A one-shot request to open a builder section *and* put the caret in its
- * custom input — what the `query.focus_*` commands do (mirroring egui's
- * `focus_builder_section`, which set `builder_focus` for the next frame).
- * Carried as a signal rather than store state for the same reason as
- * {@link RowReveal}: it's an event, and the builder consumes it. */
+ * custom input — what the `query.focus_*` commands do. Carried as a signal
+ * rather than store state for the same reason as {@link RowReveal}: it's an
+ * event, and the builder consumes it. */
 export interface BuilderFocus {
   tabId: string;
   section: Section;
@@ -195,9 +190,9 @@ export interface AppState {
   queriesCollapsed: boolean; // "Queries" section disclosure
   /** Per-tab decoded, render-ready results, keyed by tab id. */
   resultsByTab: Record<string, QueryResult>;
-  /** Per-tab result-row selection: a set of row indexes (mirrors the egui page's
-   * `selection`). Replaced wholesale on every change so subscribers observe a new
-   * reference; cleared when the tab's result changes. */
+  /** Per-tab result-row selection: a set of row indexes. Replaced wholesale on
+   * every change so subscribers observe a new reference; cleared when the
+   * tab's result changes. */
   selectionByTab: Record<string, ReadonlySet<number>>;
   /** Per-tab per-row track ids, present only when the query's rows represent
    * tracks (a column traces to `track.id`). Indexed by row; drives
@@ -209,8 +204,8 @@ export interface AppState {
    * editable. */
   recordTargetsByTab: Record<string, readonly RecordTarget[]>;
   /** The record open in each tab's record-editor sidebar (`null`/absent when the
-   * sidebar is closed). Per-tab, like the egui `QueryPage::record_editor` — the
-   * sidebar belongs to the query page, so switching tabs switches editors. */
+   * sidebar is closed). Per-tab — the sidebar belongs to the query page, so
+   * switching tabs switches editors. */
   recordEditorByTab: Record<string, RecordRef | null>;
   /** Whether a run is in flight, keyed by tab id (errors are console-only). */
   runningByTab: Record<string, boolean>;
@@ -300,7 +295,7 @@ function nowEpoch(): number {
 }
 
 /** Local wall-clock formatted `YYYY-MM-DD HH:MM` — the default name for a newly
- * created query (mirrors `rpc.rs:now_name`). */
+ * created query. */
 function nowName(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -310,9 +305,9 @@ function nowName(): string {
   );
 }
 
-/** Trailing debounce applied to the query re-run that follows a text edit in the
- * builder, so a run fires once the user pauses rather than on every keystroke
- * (the egui builder only ran on Ctrl+Enter; the DOM builder debounces instead). */
+/** Trailing debounce applied to the query re-run that follows a text edit in
+ * the builder, so a run fires once the user pauses rather than on every
+ * keystroke. */
 const RUN_DEBOUNCE_MS = 300;
 
 /** A shared frozen empty set for tabs with no selection, so `rowSelection` returns
@@ -329,8 +324,7 @@ export interface AppStore {
   /** Open (or focus) a query in a tab. */
   openTab: (query: { id: string; name: string; definition: string }) => void;
   /** Open (or focus) the singleton Keyboard Shortcuts tab — the
-   * `shortcuts.configure` command's and the Settings menu's action (mirrors
-   * `lib.rs:open_keyboard_shortcuts`). */
+   * `shortcuts.configure` command's and the Settings menu's action. */
   openShortcutsTab: () => void;
   closeTab: (id: string) => void;
   selectTab: (id: string) => void;
@@ -366,7 +360,7 @@ export interface AppStore {
   tab: (tabId: string) => Tab | undefined;
   /** The tab with `id` when it's a *query* tab — the narrowing every consumer of
    * a query's definitions goes through, so a non-query tab reads as absent
-   * rather than as an empty query (mirrors `page.rs:Page::as_query`). */
+   * rather than as an empty query. */
   queryTab: (tabId: string) => QueryTab | undefined;
   /** Whether a tab has unsaved changes: an ephemeral (never-saved) query tab
    * always, else a persisted one whose working def differs from its saved def.
@@ -374,8 +368,7 @@ export interface AppStore {
    * the shortcuts editor writes its bindings through immediately. */
   isUnsaved: (tabId: string) => boolean;
   /** Whether "Revert changes" applies: a persisted tab with edits to discard (an
-   * ephemeral tab has no saved baseline to revert to — mirrors egui's
-   * `show_revert = unsaved && is_persisted`). */
+   * ephemeral tab has no saved baseline to revert to). */
   canRevert: (tabId: string) => boolean;
   /** The result row count for a tab, if it has run. */
   resultCount: (tabId: string) => number | undefined;
@@ -385,7 +378,7 @@ export interface AppStore {
   rowSelection: (tabId: string) => ReadonlySet<number>;
   /** Apply a click on result row `index`, updating the selection: Shift extends a
    * range from the anchor, Ctrl/Cmd toggles the row, a plain click selects it
-   * alone (mirrors egui's `handle_row_click`). */
+   * alone. */
   clickRow: (
     tabId: string,
     index: number,
@@ -397,8 +390,7 @@ export interface AppStore {
   /** Move the result-row selection one row down (`forward`) or up. With
    * `extend`, grow the selection from the anchor to the new row (Shift+Arrow);
    * otherwise select just the new row. Clamps at the ends and scrolls the row
-   * into view. Backs the `results.select_*` / `results.extend_*` commands
-   * (mirrors `results.rs:select_row_delta`). */
+   * into view. Backs the `results.select_*` / `results.extend_*` commands. */
   moveRowSelection: (tabId: string, forward: boolean, extend: boolean) => void;
   /** The records result row `index` identifies — one per table whose primary key
    * the row carries in full, in result-column order. Empty when the lineage
@@ -485,7 +477,7 @@ export interface AppStore {
   /** Toggle a preset's inline editor open/closed. */
   toggleExpandPreset: (tabId: string, presetId: string) => void;
 
-  // Working-definition mutators (all re-run the query where egui does).
+  // Working-definition mutators (all re-run the query).
   setFilterCustom: (tabId: string, text: string) => void;
   clearFilterCustom: (tabId: string) => void;
   toggleFilterPreset: (tabId: string, presetId: string) => void;
@@ -608,7 +600,7 @@ function createAppStore(): AppStore {
 
   /** The preset list to run/preview against: each saved preset overlaid with any
    * in-progress edit, so results reflect pending preset changes before they're
-   * committed (mirrors `builder.rs:effective_presets`). */
+   * committed. */
   const effectivePresets = (): Preset[] =>
     state.presets.map((p) => {
       const edit = state.presetEdits[p.id];
@@ -631,8 +623,8 @@ function createAppStore(): AppStore {
   const rowClickAnchor = new Map<string, number>();
 
   // Per-tab selection lead: the moving end — the row an arrow-key step counts
-  // from. Split from the anchor exactly as in egui (`selection_lead`), so
-  // Shift+Arrow after a Shift+click keeps growing the same range.
+  // from. Split from the anchor so Shift+Arrow after a Shift+click keeps
+  // growing the same range.
   const rowSelectionLead = new Map<string, number>();
 
   // Monotonic per-tab run token, so a slow lineage analysis (WASM load) from a
@@ -723,11 +715,10 @@ function createAppStore(): AppStore {
   };
 
   /** Whether an Arrow column holds lists rather than scalars. A list column can
-   * still trace back to an id (an aggregated `[artist.id, …]`), but a list of ids
-   * identifies no single record — so it can't serve as a key. The egui code drew
-   * the same line by taking record ids from `as_single` cells only. Detected as
-   * in `buildResultFromArrow`: by type, falling back to the first non-null value
-   * for the DuckDB list types apache-arrow 18 can't classify. */
+   * still trace back to an id (an aggregated `[artist.id, …]`), but a list of
+   * ids identifies no single record — so it can't serve as a key. Detected as
+   * in `buildResultFromArrow`: by type, falling back to the first non-null
+   * value for the DuckDB list types apache-arrow 18 can't classify. */
   const isListColumn = (table: Table, col: number): boolean => {
     const field = table.schema.fields[col];
     if (field && isListType(field.type)) return true;
@@ -761,7 +752,7 @@ function createAppStore(): AppStore {
     if (!sources) return; // unparseable — no affordances
     const schemaJson = schema();
 
-    // Likewise a list of track ids isn't a playable row (`as_single` in egui).
+    // Likewise a list of track ids isn't a playable row.
     const trackCol = trackIdColumn(sources);
     const playable = trackCol !== undefined && !isListColumn(table, trackCol);
     const targets: RecordTarget[] = schemaJson
@@ -977,7 +968,7 @@ function createAppStore(): AppStore {
   };
 
   /** Finds the row index of `id` within `tabId`'s current results, if present.
-   * Capped like the egui scan so a huge result set can't stall a transition. */
+   * Capped so a huge result set can't stall a transition. */
   const locateRow = (tabId: string, id: string): number | null => {
     const ids = state.trackIdsByTab[tabId];
     if (!ids) return null;
@@ -1299,8 +1290,8 @@ function createAppStore(): AppStore {
       const source = queryTab(id);
       if (!source) return;
       // Open a new *ephemeral* (unsaved) tab copied from the source's working
-      // copy — carrying any unsaved edits — mirroring `lib.rs:duplicate_query`.
-      // Nothing is written to the backend until the user saves it; the tab reads
+      // copy — carrying any unsaved edits. Nothing is written to the backend
+      // until the user saves it; the tab reads
       // as unsaved (its ✱ shows) meanwhile, and it stays out of the Queries list.
       const live = cloneDefinition(unwrap(source.live));
       const newId = newUuid();

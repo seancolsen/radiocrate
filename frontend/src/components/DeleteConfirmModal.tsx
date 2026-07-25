@@ -2,10 +2,9 @@ import { Show, type JSX } from "solid-js";
 import { useAppState } from "../state/store";
 import { Modal } from "./ui/Modal";
 
-/** The delete-query confirmation dialog — the DOM analog of
- * `lib.rs:render_delete_confirm`. Confirming deletes the query (backend + tab);
- * cancelling (button, scrim, or Esc) dismisses. A note flags a query with unsaved
- * edits so they aren't discarded unknowingly. */
+/** The delete-query confirmation dialog. Confirming deletes the query (backend
+ * + tab); cancelling (button, scrim, or Esc) dismisses. A note flags a query
+ * with unsaved edits so they aren't discarded unknowingly. */
 export default function DeleteConfirmModal(): JSX.Element {
   const store = useAppState();
   const pending = () => store.state.pendingDelete;

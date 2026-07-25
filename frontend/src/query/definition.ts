@@ -1,6 +1,6 @@
-// The structured, four-part saved-query definition, ported from
-// `frontend-old-egui/src/query_def.rs`. A stored `query.definition` is a JSON
-// string that deserializes to `QueryDefinition`; `assemble` resolves it — with
+// The structured, four-part saved-query definition. A stored `query.definition`
+// is a JSON string that deserializes to `QueryDefinition`; `assemble` resolves
+// it — with
 // preset references looked up against the loaded preset list — into either
 // per-section Querydown source (the builder default) or a single hand-written
 // query (full mode). This is pure string manipulation: no compiler, no schema.
@@ -22,13 +22,13 @@ export type SectionContent =
  * exists. */
 export type BuiltinPreset = { preset: "shuffle"; seed: string };
 
-/** Characters a shuffle seed is drawn from (matches `query_def.rs`). */
+/** Characters a shuffle seed is drawn from. */
 const SEED_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const SEED_LEN = 20;
 
-/** A random 20-char alphanumeric shuffle seed (mirrors `generate_seed`). Uses
- * the platform CSPRNG; the slight modulo bias is irrelevant for a seed. */
+/** A random 20-char alphanumeric shuffle seed. Uses the platform CSPRNG; the
+ * slight modulo bias is irrelevant for a seed. */
 export function generateSeed(): string {
   const bytes = new Uint8Array(SEED_LEN);
   crypto.getRandomValues(bytes);
@@ -59,8 +59,7 @@ export interface QueryDefinition {
   full?: string | null;
 }
 
-/** The three query sections with builder UIs and saveable presets. Mirrors
- * `Section` in `query_def.rs` (serde `rename_all = "lowercase"`). */
+/** The three query sections with builder UIs and saveable presets. */
 export type Section = "filter" | "sort" | "display";
 
 /** The short label used on a section's toolbar toggle button. */
@@ -72,8 +71,7 @@ export function sectionLabel(section: Section): string {
       : "Display";
 }
 
-/** The noun used in builder headings and menus ("Filter"/"Sorting"/"Display").
- * Mirrors `Section::noun` (`query_def.rs`). */
+/** The noun used in builder headings and menus ("Filter"/"Sorting"/"Display"). */
 export function sectionNoun(section: Section): string {
   return section === "sort" ? "Sorting" : sectionLabel(section);
 }
@@ -124,8 +122,8 @@ export function defsEqual(a: QueryDefinition, b: QueryDefinition): boolean {
 /** Parses a stored definition into a complete working copy, filling any missing
  * fields from the empty default (so a sparse `{}` or partial JSON still yields a
  * full `filter`/`sort`/`display`). Falls back to the empty definition when the
- * string is blank or unparseable (this phase skips the legacy raw-Querydown split
- * from `query_def.rs:from_legacy`). */
+ * string is blank or unparseable (this phase skips the legacy raw-Querydown
+ * split). */
 export function definitionFromStored(raw: string): QueryDefinition {
   const parsed = fromStored(raw);
   if (!parsed) return emptyDefinition();
@@ -155,8 +153,7 @@ export type CompileSource =
     };
 
 /** Querydown definitions (RadioCrate's computed columns + custom comparisons)
- * prepended to every query before compilation. Copied verbatim from
- * `frontend-old-egui/src/compile.rs:22` (the `PRELUDE` constant). */
+ * prepended to every query before compilation. */
 export const PRELUDE = `#track.firstplay = #play.timestamp%min
 #track.lastplay = #play.timestamp%max
 #track.artists = #credit.artist.name%list(\\\\ord \\\\artist.name)
@@ -174,10 +171,9 @@ export const PRELUDE = `#track.firstplay = #play.timestamp%min
 #track.artist:@x = ++#artist{name:@x}`;
 
 /** Serializes a working definition into the JSON string persisted in the
- * backend's `query.definition` column — the inverse of {@link fromStored} and the
- * DOM analog of `query_def.rs:to_stored`. `full` is omitted when absent (matching
- * serde's `skip_serializing_if = "Option::is_none"`) so a sectioned query never
- * carries a stray `"full": null`. */
+ * backend's `query.definition` column — the inverse of {@link fromStored}.
+ * `full` is omitted when absent so a sectioned query never carries a stray
+ * `"full": null`. */
 export function definitionToStored(def: QueryDefinition): string {
   const out: Record<string, unknown> = {
     base: def.base,
@@ -191,7 +187,7 @@ export function definitionToStored(def: QueryDefinition): string {
 
 /** Parses a stored `query.definition` JSON string into a `QueryDefinition`.
  * A parse failure yields `null` — for this crude phase that simply means no
- * results (the legacy raw-Querydown split from `query_def.rs:186` is skipped). */
+ * results (the legacy raw-Querydown split is skipped). */
 export function fromStored(raw: string): QueryDefinition | null {
   try {
     return JSON.parse(raw) as QueryDefinition;
@@ -200,9 +196,8 @@ export function fromStored(raw: string): QueryDefinition | null {
   }
 }
 
-/** The Querydown fragment a built-in preset resolves to. Mirrors
- * `BuiltinPreset::querydown` (`query_def.rs:99`): Shuffle orders by a salted
- * hash of each row's id. */
+/** The Querydown fragment a built-in preset resolves to: Shuffle orders by a
+ * salted hash of each row's id. */
 function builtinQuerydown(b: BuiltinPreset): string {
   // `\\id|concat('<seed>')|md5` — the two leading backslashes are literal.
   return `\\\\id|concat('${b.seed}')|md5`;
@@ -226,8 +221,8 @@ function resolveSection(content: SectionContent, presets: Preset[]): string {
 
 /** The Querydown text a sort/display section resolves to, used to seed the
  * custom editor when switching a preset/built-in back to "Custom …" so nothing
- * is lost (mirrors the seeding in `builder.rs:single_builder_ui`). A dangling
- * preset reference resolves to empty rather than throwing. */
+ * is lost. A dangling preset reference resolves to empty rather than
+ * throwing. */
 export function sectionSeedText(
   content: SectionContent,
   presets: Preset[],
@@ -239,10 +234,10 @@ export function sectionSeedText(
 }
 
 /** Resolves a definition into the shape the matching compiler entry wants.
- * Ports `QueryDefinition::assemble` (`query_def.rs:233`). Full mode returns the
- * hand-written text; sectioned mode returns the base plus the filter (custom +
- * each referenced preset's fragment, newline-joined), sort, and display. Throws
- * on an empty/unrunnable definition or a dangling preset reference. */
+ * Full mode returns the hand-written text; sectioned mode returns the base
+ * plus the filter (custom + each referenced preset's fragment,
+ * newline-joined), sort, and display. Throws on an empty/unrunnable
+ * definition or a dangling preset reference. */
 export function assemble(
   def: QueryDefinition,
   presets: Preset[],

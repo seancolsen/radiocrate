@@ -2,9 +2,8 @@ import { Show, type Component, type JSX } from "solid-js";
 import { Icons } from "../../icons";
 import { Menu } from "./Menu";
 
-/** A labelled toggle button — the DOM analog of
- * `frontend-old-egui/src/button.rs:SplitButton`. Its main (icon + label) area
- * toggles a builder section via `onMainClick`. While `active` it takes the blue
+/** A labelled toggle button. Its main (icon + label) area toggles a builder
+ * section via `onMainClick`. While `active` it takes the blue
  * fill and, unless `showMenu` is false, grows an embedded ⋮ trigger (set off by a
  * lighter tint) that opens the section's options `menu`. `showLabel` drops the
  * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮). */

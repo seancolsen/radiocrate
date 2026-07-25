@@ -4,9 +4,7 @@ import type { Preset, Query } from "api-client";
 // fulfilled verbatim by the Playwright routes below — are the generated client
 // types directly.
 
-/** Saved-query fixture for the RPC mock. Names reuse the egui snapshot fixtures
- * ("Lemonade", "Deep Cuts", "Workout Mix"; organizer.rs:1058) so the new frame
- * images stay visually comparable to the old ones. */
+/** Saved-query fixture for the RPC mock. */
 export const QUERIES_FIXTURE: Query[] = [
   {
     id: "00000000-0000-0000-0000-000000000001",
@@ -37,8 +35,7 @@ export const QUERIES_FIXTURE: Query[] = [
 /** A stable id for the "vetted" filter preset used by the builder snapshots. */
 export const VETTED_PRESET_ID = "00000000-0000-0000-0000-0000000000a1";
 
-/** Preset fixture for the RPC mock — mirrors the "vetted" filter preset shown in
- * the egui `filter_builder/*.png` snapshots (same name and definition). */
+/** Preset fixture for the RPC mock: a "vetted" filter preset. */
 export const PRESETS_FIXTURE: Preset[] = [
   {
     id: VETTED_PRESET_ID,
@@ -53,8 +50,7 @@ export const PRESETS_FIXTURE: Preset[] = [
 ];
 
 /** The working definition behind the filter-builder snapshots: the custom
- * fragment `jazz playcount:<100` AND the "vetted" preset (matching the egui
- * `filter_builder` images). */
+ * fragment `jazz playcount:<100` AND the "vetted" preset. */
 export const FILTER_DEF = {
   base: "track",
   filter: { custom: "jazz playcount:<100", presets: [VETTED_PRESET_ID] },

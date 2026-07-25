@@ -4,9 +4,8 @@ import { useAppState } from "../state/store";
 import { MenuItem, MenuSeparator } from "./ui/Menu";
 
 /** The wrench "query actions" menu body. Rename, Duplicate, Revert (only while
- * the working query differs from its saved form), View SQL, and Delete. Shared in
- * spirit with `menu_bar.rs:page_options_menu` (Change base, Pin, and
- * Convert-to-full remain deferred). */
+ * the working query differs from its saved form), View SQL, and Delete
+ * (Change base, Pin, and Convert-to-full remain deferred). */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
   const store = useAppState();
   return (

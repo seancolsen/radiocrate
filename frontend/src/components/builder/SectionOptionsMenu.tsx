@@ -8,10 +8,10 @@ import {
 } from "../../query/definition";
 import { MenuHeading, MenuSeparator, MenuToggleItem } from "../ui/Menu";
 
-/** The body of a section's ⋮ options menu — the shared flat list from
- * `builder.rs:section_options_menu`. The filter section combines presets, so its
- * rows are checkboxes (toggle membership); sort/display pick exactly one thing,
- * so theirs are radios (exclusive). Rendered inside the `SplitButton`'s `Menu`.
+/** The body of a section's ⋮ options menu — the shared flat list. The filter
+ * section combines presets, so its rows are checkboxes (toggle membership);
+ * sort/display pick exactly one thing, so theirs are radios (exclusive).
+ * Rendered inside the `SplitButton`'s `Menu`.
  *
  * Layout: the always-present "Custom …" entry, then (sort-of-track only) the
  * built-in Shuffle preset under a BUILT-IN heading, then the user presets. */

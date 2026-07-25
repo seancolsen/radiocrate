@@ -53,8 +53,8 @@ const PILL_GAP = 4;
 const PILL_RADIUS = 4;
 const PILL_LINE_HEIGHT = 1.2;
 
-/** Width of the accent bar down the left edge of the playing row. Wider than the
- * egui original's 3px so the marker reads at a glance on a dense grid. */
+/** Width of the accent bar down the left edge of the playing row, wide enough
+ * that the marker reads at a glance on a dense grid. */
 const CURRENT_MARKER_W = 5;
 
 /** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,

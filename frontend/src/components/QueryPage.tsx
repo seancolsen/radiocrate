@@ -10,9 +10,9 @@ import RecordEditorPanel from "./RecordEditorPanel";
  * refresh click); the refresh button re-runs it.
  *
  * The record editor is scoped to the page in both senses: its state is per-tab
- * (switching tabs switches editors, as in egui's `QueryPage::record_editor`) and
- * so is its layout — it narrows this page's toolbar and results, while the tab
- * bar and the now-playing bar above and below keep their full width. */
+ * (switching tabs switches editors) and so is its layout — it narrows this
+ * page's toolbar and results, while the tab bar and the now-playing bar above
+ * and below keep their full width. */
 export default function QueryPage(props: { tabId: string }) {
   const store = useAppState();
   // Auto-run the tab once, but only once the schema has loaded so the compile

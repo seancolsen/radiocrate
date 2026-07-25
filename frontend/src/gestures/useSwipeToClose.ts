@@ -9,7 +9,7 @@ const FRICTION = 16;
 const FLICK_VELOCITY = 400;
 
 /** `dx - friction * tanh(dx / friction)` — near-zero for small |dx|, then tracks
- * 1:1 (offset by a constant). Ported from `organizer.rs`'s `static_friction`. */
+ * 1:1 (offset by a constant). */
 function staticFriction(dx: number): number {
   return dx - FRICTION * Math.tanh(dx / FRICTION);
 }

@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { columnMetadataFromAnnotation, defaultColumnMetadata } from "./columns";
 import type { AnnotationValue } from "querydown-js";
 
-// Mirrors the Rust unit tests in `frontend-old-egui/src/columns.rs`.
-
 const DEFAULT_MAX_WIDTH = 500;
 const DEFAULT_MIN_WIDTH = 0;
 

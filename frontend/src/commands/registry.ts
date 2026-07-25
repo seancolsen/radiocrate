@@ -1,5 +1,4 @@
-// The command registry, ported from `frontend-old-egui/src/commands.rs`
-// (`CommandId`, `ALL_COMMANDS`, `When`).
+// The command registry.
 //
 // Every user-triggerable action the command palette or a keyboard shortcut can
 // invoke is one entry here: a stable `snake_case`-ish id (the string persisted
@@ -8,29 +7,22 @@
 // its shortcut may fire, and a built-in default chord. User overrides layer on
 // top (see `keymap.ts`); everything else uses its default.
 //
-// ## What the egui registry had that this one doesn't
+// ## Commands intentionally not in this registry
 //
-// Commands whose target feature hasn't been ported to the DOM frontend are
-// omitted rather than left dead:
+// Commands whose target feature hasn't been built yet are omitted rather than
+// left dead:
 //
 // - `query.new` — the tab bar's "+" is still an inert placeholder; there is no
 //   create-a-query path in the store yet.
 // - `tabs.pin_active` / `tabs.unpin_active` — tabs carry no pinned state.
 // - `selection.expand_nested` / `selection.collapse_nested` /
 //   `selection.delete` — these act on the record editor's *form* selection, and
-//   the form (`form.rs`) is not ported; the editor panel only names the record
-//   it points at.
+//   the form is not built yet; the editor panel only names the record it
+//   points at.
 //
-// Their ids stay reserved: an override persisted for one by the egui build is
-// skipped on load (`overridesFromEntries`) and left in the database untouched,
-// so it comes back if the command does.
-//
-// The `When` set is likewise smaller. egui separated `ActiveTab` (a tab of any
-// kind) from `AnyTabOpen` (at least one open); here a tab is active exactly when
-// one is open, so those two collapse into `activeTab` — but `queryTab` stays
-// distinct from both, because a tab is not necessarily a query (the keyboard-
-// shortcuts editor is one too). Its `SelectionAvailable` (results *or* form
-// selection) collapses into `results` for the same reason as the omissions above.
+// Their ids stay reserved: a stored override for one of them is skipped on
+// load (`overridesFromEntries`) and left in the database untouched, so it
+// comes back if the command does.
 
 import { chordOf, type Chord } from "./chord";
 
@@ -92,8 +84,8 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     defaultChord: chordOf("mod+shift+P"),
   },
   {
-    // Ships unbound, as in egui — it's reachable from the palette, and an
-    // editor that can rebind everything doesn't need to claim a chord itself.
+    // Ships unbound — it's reachable from the palette, and an editor that can
+    // rebind everything doesn't need to claim a chord itself.
     id: "shortcuts.configure",
     title: "Commands: Configure keyboard shortcuts",
     when: "always",

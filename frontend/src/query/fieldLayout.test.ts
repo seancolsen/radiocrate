@@ -6,9 +6,6 @@ import {
   type FieldLayout,
 } from "./fieldLayout";
 
-// Mirrors the Rust unit tests in `frontend-old-egui/src/field_layout.rs`, which
-// pin the wrapping/balancing math.
-
 const col = (min: number, max: number): ColSize => ({ min, max });
 
 /** Sum of widths on a given line, plus the gaps between them. */

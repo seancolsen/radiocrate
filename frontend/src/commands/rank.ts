@@ -1,5 +1,4 @@
-// The command palette's ranking, ported from
-// `frontend-old-egui/src/palette.rs` (`rank_commands` / `is_subsequence`).
+// The command palette's ranking.
 
 import type { CommandDef, CommandId } from "./registry";
 

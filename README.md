@@ -8,7 +8,6 @@ A client-server app for managing and playing your personal collection of music f
 |---|---|---|
 | [`backend`](backend) | lib + bin (`radiocrate-server`) | Server logic (axum, DuckDB, scanner, audio stream). The bin is the dev API server. |
 | [`frontend`](frontend) | SolidJS SPA (not a cargo crate) | **Production frontend** — a web-native DOM app built with SolidJS + Vite + Bun. Its `dist/` output is embedded by `radiocrate`. |
-| [`frontend-old-egui`](frontend-old-egui) | lib + bin (`radiocrate-ui`) | Retired egui app, kept as a read-only reference. Nothing in the production build depends on it; still buildable/runnable via `-p frontend-old-egui`. |
 | [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the Solid frontend's `frontend/dist/`. |
 | [`xtask`](xtask) | bin | Build orchestration (`cargo xtask build-release`). |
 
@@ -40,20 +39,6 @@ bun run dev
 Vite serves the app with hot-module reload; it talks to the API server on
 `http://localhost:3000`. Its checks are `bun run typecheck | lint | format:check | build`
 and the Playwright visual snapshots (`bun run test:visual`).
-
-### Run the retired egui desktop UI (reference only)
-
-The egui frontend is kept as a code reference and is still runnable:
-
-```sh
-cargo run -p frontend-old-egui
-```
-
-Options:
-
-- `--scale <FLOAT>` — UI scale factor (e.g. `--scale 1.5`)
-
-The desktop UI sends queries to `http://localhost:3000` and streams Arrow IPC responses back.
 
 ## Production build
 

@@ -29,24 +29,22 @@ import { MenuItem } from "./ui/Menu";
 // The Keyboard Shortcuts editor: a VS Code-style table of every command, its
 // bound shortcut and the context it fires in, with a search bar (by command
 // name or, in "record" mode, by pressing the chord) and a capture dialog for
-// rebinding. Ported from `frontend-old-egui/src/shortcuts_tab.rs`.
+// rebinding.
 //
-// It fills a tab, like the egui original — `shortcuts.configure` and the
-// explorer's Settings menu open that tab (the command ships unbound, as in
-// egui). The editor's transient state (search text, record mode, the open
-// capture dialog) lives in the command store rather than here, so it survives
-// switching away to another tab and back.
+// It fills a tab — `shortcuts.configure` and the explorer's Settings menu open
+// that tab (the command ships unbound). The editor's transient state (search
+// text, record mode, the open capture dialog) lives in the command store
+// rather than here, so it survives switching away to another tab and back.
 //
-// One deliberate departure from the egui original: a row opens the capture
-// dialog on a single click rather than a double-click. egui reserved the single
-// click because its rows were also hit-targets for the popup; here a row does
-// exactly one thing.
+// A row opens the capture dialog on a single click rather than a
+// double-click, since here a row does exactly one thing (no other click
+// target competes for it).
 //
 // The app keeps running behind the editor, so global shortcuts keep firing while
 // it's open — except while it is itself grabbing keys (record mode or the capture
 // dialog), when the global pass stands down (see `commands.tsx:suppressed`).
 
-/** An action chosen from a row's context menu (`shortcuts_tab.rs:RowAction`). */
+/** An action chosen from a row's context menu. */
 type RowAction = "change" | "remove" | "reset";
 
 /** An open row context menu: which command it targets, and where it was
@@ -58,8 +56,7 @@ interface RowMenu {
 }
 
 /** A bordered, read-only box showing a chord (or a prompt), matching the app's
- * text-input chrome so the record/capture affordance reads as a field
- * (`shortcuts_tab.rs:record_box`). */
+ * text-input chrome so the record/capture affordance reads as a field. */
 function RecordBox(props: { text: string; class?: string }): JSX.Element {
   return (
     <div
@@ -193,9 +190,8 @@ export default function ShortcutsPage(): JSX.Element {
   // the record-mode search bar. Runs in the capture phase and swallows what it
   // reads, so pressing ⌘S here rebinds rather than reaching the browser.
   //
-  // Enter/Escape/Tab stay reserved for the dialog (egui's `read_chord(…,
-  // skip_control = true)`): Escape dismisses the capture dialog, and in record
-  // mode it's left alone (no chord binds it).
+  // Enter/Escape/Tab stay reserved for the dialog: Escape dismisses the
+  // capture dialog, and in record mode it's left alone (no chord binds it).
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       const capturing = commands.capture() !== null;
@@ -238,8 +234,8 @@ export default function ShortcutsPage(): JSX.Element {
       >
         <h1 class="text-ink mb-3 text-lg font-semibold">Keyboard Shortcuts</h1>
 
-        {/* Search / record bar. The field stops widening at 420px, as in egui —
-            a command name never needs the whole page. */}
+        {/* Search / record bar. The field stops widening at 420px — a command
+            name never needs the whole page. */}
         <div class="mb-3 flex items-center gap-2">
           <Show
             when={commands.recordMode()}

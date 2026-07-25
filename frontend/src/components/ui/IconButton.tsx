@@ -1,10 +1,9 @@
 import type { Component, JSX } from "solid-js";
 
-/** A frameless, fixed 26px-square icon button — the DOM analog of
- * `frontend-old-egui/src/button.rs:Button`. The hover affordance is a 1px accent
- * ring painted *inside* the square (`ring-inset`) so hovering never shifts
- * layout. Content is the icon gray by default; `danger` tints it red and a
- * disabled button dims and stops responding.
+/** A frameless, fixed 26px-square icon button. The hover affordance is a 1px
+ * accent ring painted *inside* the square (`ring-inset`) so hovering never
+ * shifts layout. Content is the icon gray by default; `danger` tints it red
+ * and a disabled button dims and stops responding.
  *
  * `ref` is forwarded so callers (e.g. a menu trigger) can anchor to the button. */
 export default function IconButton(props: {

@@ -1,5 +1,4 @@
-// The result-row field layout algorithm, ported verbatim from
-// `frontend-old-egui/src/field_layout.rs`.
+// The result-row field layout algorithm.
 //
 // Given the min/max width of each visible column and the available row width,
 // this decides how wide each column is and which line it sits on. There is no

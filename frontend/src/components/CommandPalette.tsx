@@ -6,14 +6,13 @@ import type { CommandDef } from "../commands/registry";
 
 // The command palette — a VS Code-style overlay for finding and running
 // commands by name, showing each command's keyboard shortcut and listing
-// recently-used commands first. Ported from `frontend-old-egui/src/palette.rs`.
+// recently-used commands first.
 //
 // While it's open the global shortcut pass stands down (see
 // `commands.tsx:suppressed`), so the palette handles its own arrow/enter/escape
 // navigation and consumes the open shortcut to toggle itself closed.
 
-/** Distance from the top of the viewport to the palette (egui anchored its
- * modal `CENTER_TOP` with a 72px offset). */
+/** Distance from the top of the viewport to the palette. */
 const TOP_OFFSET = 72;
 
 /** One palette row: the command title on the left, its bound shortcut (if any)
@@ -37,8 +36,8 @@ function PaletteRow(props: {
         "bg-hover": props.selected,
         "hover:bg-hover/50": !props.selected,
       }}
-      // Pointer *movement* re-homes the highlight, as in egui — so a mouse
-      // resting over a row can't fight the arrow keys.
+      // Pointer *movement* re-homes the highlight, so a mouse resting over a
+      // row can't fight the arrow keys.
       onMouseMove={() => props.onHover()}
       onClick={() => props.onSelect()}
     >

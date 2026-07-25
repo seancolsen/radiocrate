@@ -4,11 +4,10 @@ import CustomInput from "./CustomInput";
 import PresetTab from "./PresetTab";
 import PresetEditor from "./PresetEditor";
 
-/** The filter builder — the DOM analog of `builder.rs:filter_builder_ui`. A
- * custom Querydown input combined (via AND at run time) with any number of
- * presets, the latter shown as right-aligned tabs beside the input. When the
- * input would grow too narrow the tabs wrap to their own right-aligned row below
- * it (flex-wrap, mirroring the egui width check). Expanding a preset reveals its
+/** The filter builder. A custom Querydown input combined (via AND at run time)
+ * with any number of presets, the latter shown as right-aligned tabs beside
+ * the input. When the input would grow too narrow the tabs wrap to their own
+ * right-aligned row below it (flex-wrap). Expanding a preset reveals its
  * inline editor full-width below the row. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const store = useAppState();

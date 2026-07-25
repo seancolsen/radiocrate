@@ -1,25 +1,21 @@
-// The keybinding chord model, ported from `frontend-old-egui/src/commands.rs`
-// (`Chord`). A chord is a set of modifiers plus one key, stored
-// platform-neutrally and rendered with per-OS glyphs.
+// The keybinding chord model. A chord is a set of modifiers plus one key,
+// stored platform-neutrally and rendered with per-OS glyphs.
 //
 // ## Storage compatibility
 //
-// The serialized form (`mod+shift+P`, `shift+Down`) is the *same string* the
-// egui build wrote to the `settings.keybinding` table, and both frontends read
-// the same database — so the key vocabulary here mirrors egui's `Key::name`
-// exactly: letters are uppercase (`P`), digits bare (`1`), and the arrows are
-// `Down`/`Up`/`Left`/`Right` (not the DOM's `ArrowDown`). Parsing additionally
-// accepts egui's `from_name` aliases, so a hand-written or future-egui value
-// still resolves.
+// The serialized form (`mod+shift+P`, `shift+Down`) is the *same string*
+// written to the `settings.keybinding` table by earlier versions of this app,
+// so existing stored bindings still resolve: letters are uppercase (`P`),
+// digits bare (`1`), and the arrows are `Down`/`Up`/`Left`/`Right` (not the
+// DOM's `ArrowDown`). Parsing additionally accepts a set of legacy aliases, so
+// a hand-written or older stored value still resolves.
 //
 // ## Cross-platform modifiers
 //
-// `mod` is the platform command key — ⌘ on macOS, Ctrl everywhere else — the
-// analog of egui's `Modifiers::command`. `ctrl` is *physical* Control as
-// distinct from `mod`, which only exists as a separate thing on macOS: on
-// Windows/Linux a Control press is the mod key, so a chord's `ctrl` and `mod`
-// both match `ctrlKey` there (mirroring egui, whose `Modifiers` sets `ctrl` and
-// `command` together off-mac).
+// `mod` is the platform command key — ⌘ on macOS, Ctrl everywhere else. `ctrl`
+// is *physical* Control as distinct from `mod`, which only exists as a separate
+// thing on macOS: on Windows/Linux a Control press is the mod key, so a
+// chord's `ctrl` and `mod` both match `ctrlKey` there.
 
 /** A modifier+key chord, e.g. ⌘⇧P. */
 export interface Chord {
@@ -29,7 +25,7 @@ export interface Chord {
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
-  /** An egui-style key name — see the module comment. */
+  /** A canonical key name — see the module comment. */
   key: string;
 }
 
@@ -52,7 +48,7 @@ export function isMac(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 }
 
-/** `KeyboardEvent.code` → egui key name, for the codes worth binding. */
+/** `KeyboardEvent.code` → canonical key name, for the codes worth binding. */
 const CODE_NAMES: Readonly<Record<string, string>> = {
   Space: "Space",
   Enter: "Enter",
@@ -84,7 +80,7 @@ const CODE_NAMES: Readonly<Record<string, string>> = {
 };
 
 /** Names accepted on parse but stored/emitted under a different spelling —
- * egui's `Key::from_name` aliases, plus the DOM arrow spellings. */
+ * legacy stored-format aliases, plus the DOM arrow spellings. */
 const NAME_ALIASES: Readonly<Record<string, string>> = {
   ArrowDown: "Down",
   ArrowUp: "Up",
@@ -98,7 +94,7 @@ const NAME_ALIASES: Readonly<Record<string, string>> = {
 /** The canonical spellings of the non-alphanumeric keys. */
 const NAMED_KEYS: ReadonlySet<string> = new Set(Object.values(CODE_NAMES));
 
-/** The egui key name for a `KeyboardEvent.code`, or `null` for a code that
+/** The canonical key name for a `KeyboardEvent.code`, or `null` for a code that
  * can't be bound (a bare modifier, an IME key, an unmapped code). */
 export function keyNameFromCode(code: string): string | null {
   const named = CODE_NAMES[code];
@@ -125,7 +121,7 @@ function normalizeKeyName(token: string): string | null {
 
 /** Serializes to the form persisted in `settings.keybinding.chord`, e.g.
  * `"mod+shift+P"`. Modifier tokens are lowercase and canonically ordered (mod,
- * ctrl, shift, alt) — byte-identical to egui's `Chord::to_storage`. */
+ * ctrl, shift, alt). */
 export function chordToStorage(chord: Chord): string {
   let s = "";
   if (chord.mod) s += "mod+";
@@ -192,7 +188,7 @@ export function chordsEqual(a: Chord, b: Chord): boolean {
 }
 
 /** A human-readable rendering for the current OS: `⇧⌘P` on macOS (⌃⌥⇧⌘ order,
- * no separators), `Ctrl+Shift+P` elsewhere. Mirrors `Chord::format`. */
+ * no separators), `Ctrl+Shift+P` elsewhere. */
 export function formatChord(chord: Chord, mac: boolean = isMac()): string {
   let s = "";
   if (mac) {
@@ -209,8 +205,8 @@ export function formatChord(chord: Chord, mac: boolean = isMac()): string {
 }
 
 /** The chord a key-press event stands for, or `null` when its key can't be
- * bound. Off-mac a Control press reads as `mod` (never as the separate `ctrl`),
- * matching how egui normalizes `Modifiers::command`. */
+ * bound. Off-mac a Control press reads as `mod` (never as the separate
+ * `ctrl`). */
 export function chordFromEvent(
   e: KeyEventLike,
   mac: boolean = isMac(),
@@ -226,9 +222,9 @@ export function chordFromEvent(
   };
 }
 
-/** Whether an event is exactly this chord — every modifier compared, as egui's
- * `Modifiers::matches_exact` does, so a plain `Down` binding does not also
- * swallow `Shift+Down` (they're distinct commands: select vs. extend).
+/** Whether an event is exactly this chord — every modifier compared, so a
+ * plain `Down` binding does not also swallow `Shift+Down` (they're distinct
+ * commands: select vs. extend).
  *
  * Off-mac a chord's `ctrl` is the same physical key as its `mod`, so either
  * matches `ctrlKey`; a Meta press (the Windows/Super key) never matches. */

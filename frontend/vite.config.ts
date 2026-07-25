@@ -23,7 +23,7 @@ export default defineConfig({
       manifest: false, // keep the hand-tuned static manifest (public/)
       workbox: {
         navigateFallback: "/index.html",
-        // Never let the SW answer API calls — mirror the egui SW's /api passthrough.
+        // Never let the SW answer API calls.
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [{ urlPattern: /^\/api\//, handler: "NetworkOnly" }],
       },

@@ -1,6 +1,5 @@
 // The playback engine: one long-lived `<audio>` element plus the play context
-// (history / current / queue) it navigates, ported from the egui frontend's
-// `audio.rs` (`Engine` + `WebAudioPlayer`).
+// (history / current / queue) it navigates.
 //
 // Everything that advances playback lives *here*, off the UI: the queue of
 // upcoming track ids is snapshotted when playback starts, and the element's

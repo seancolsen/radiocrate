@@ -5,9 +5,9 @@ import CustomInput from "./CustomInput";
 import PresetTab from "./PresetTab";
 import PresetEditor from "./PresetEditor";
 
-/** The sort/display builder — the DOM analog of `builder.rs:single_builder_ui`.
- * The section holds exactly one thing: a custom Querydown block, a single
- * (expandable) preset, or the built-in Shuffle preset. */
+/** The sort/display builder. The section holds exactly one thing: a custom
+ * Querydown block, a single (expandable) preset, or the built-in Shuffle
+ * preset. */
 export default function SingleBuilder(props: {
   tabId: string;
   section: "sort" | "display";

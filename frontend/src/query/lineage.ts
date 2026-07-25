@@ -1,7 +1,6 @@
-// Column-lineage analysis of a compiled query, ported from the egui frontend's
-// `lineage.rs`. That code used the `polyglot-sql` Rust crate to trace each output
-// column back through the SQL to its source table column; here we use the same
-// analysis compiled to a tiny WASM binding (`track-lineage`, vendored — see the
+// Column-lineage analysis of a compiled query, using the `polyglot-sql` Rust
+// crate to trace each output column back through the SQL to its source table
+// column, compiled to a tiny WASM binding (`track-lineage`, vendored — see the
 // repo-root `track-lineage/` crate). We build it ourselves with only the
 // `semantic` + DuckDB features rather than pulling the full `@polyglot-sql/sdk`
 // npm package, whose all-dialects build is ~22 MB vs. our ~2 MB.
@@ -11,12 +10,10 @@
 // needs:
 //
 //   • which output column carries `track.id` (rows are tracks → double-click
-//     plays), mirroring `IdColumns.track` in the Rust code; and
+//     plays); and
 //   • which output columns carry some table's whole primary key (rows identify a
-//     record of that table → right-click offers "Edit {table}"). The egui code
-//     only ever asked this of the query's *base* table (`IdColumns.record`); we
-//     ask it of every table in the schema, so a row joining track → album offers
-//     both.
+//     record of that table → right-click offers "Edit {table}"). We ask this of
+//     every table in the schema, so a row joining track → album offers both.
 //
 // Like `querydown-js`, the `.wasm` is imported as a same-origin asset URL
 // (CSP/offline-safe) and instantiated once, lazily, on first use — off the
@@ -82,8 +79,8 @@ function tracesTo(
 }
 
 /** The single output column tracing to `table`.`column`, or `undefined` when
- * none does or more than one does. Mirrors `lineage.rs`'s `Unique` handling: an
- * unambiguous match is trusted, an ambiguous mapping is not. */
+ * none does or more than one does: an unambiguous match is trusted, an
+ * ambiguous mapping is not. */
 export function uniqueColumnFor(
   sources: ColumnSources,
   table: string,
@@ -123,7 +120,7 @@ export interface RecordKeyColumns {
  * or every column of a composite one — see {@link identifyingColumns}) traces to
  * exactly one output column. A key column matched by two or more output columns
  * is ambiguous: the row could stand for either record, so the table is dropped
- * rather than guessed at (the same call `lineage.rs`'s `Unique` made).
+ * rather than guessed at.
  *
  * Ordered by the leftmost output column each key occupies, so the menu lists the
  * table the results lead with first. */

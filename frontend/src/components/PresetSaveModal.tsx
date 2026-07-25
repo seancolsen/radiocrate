@@ -4,8 +4,7 @@ import { sectionNoun } from "../query/definition";
 import { Modal } from "./ui/Modal";
 import { Checkbox } from "./ui/Checkbox";
 
-/** The "Save as preset" naming dialog — the DOM analog of
- * `builder.rs:render_preset_save_modal`. Confirming creates a preset (locally
+/** The "Save as preset" naming dialog. Confirming creates a preset (locally
  * this session) and points the working definition at it. */
 export default function PresetSaveModal(props: { tabId: string }): JSX.Element {
   const store = useAppState();

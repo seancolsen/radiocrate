@@ -1,4 +1,4 @@
-// Per-column display metadata, ported from `frontend-old-egui/src/columns.rs`.
+// Per-column display metadata.
 //
 // Querydown lets the user attach arbitrary metadata to each result column. The
 // compiler surfaces this as one `AnnotationValue` (or `null`) per output column

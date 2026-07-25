@@ -1,6 +1,5 @@
-// Track-level API calls behind the now-playing bar: the metadata a playing track
-// shows, and the play log it writes. Ported from the egui frontend's
-// `http.rs:fetch_track_metadata` and `rpc.rs:log_play`.
+// Track-level API calls behind the now-playing bar: the metadata a playing
+// track shows, and the play log it writes.
 
 import { dml } from "api-client";
 import { isListLikeValue, runSql, stringifyArrowValue } from "./query";
@@ -19,7 +18,7 @@ function sqlLiteral(value: string): string {
 
 /** Fetches a track's title and credited artists. Returns `undefined` when the id
  * matches no row (or the query fails) — the bar just shows nothing rather than
- * an error, matching the egui behavior. */
+ * an error. */
 export async function fetchTrackMetadata(
   trackId: string,
 ): Promise<TrackMetadata | undefined> {

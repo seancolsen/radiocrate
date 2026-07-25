@@ -1,7 +1,5 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(UPDATE_SNAPSHOTS=1 cargo test -p frontend-old-egui)"
-    ]
+    "allow": []
   }
 }

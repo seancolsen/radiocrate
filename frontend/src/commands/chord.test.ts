@@ -59,7 +59,7 @@ describe("parseChord / chordToStorage", () => {
     expect(parseChord("")).toBeNull();
   });
 
-  it("accepts egui's key-name aliases, canonicalizing them", () => {
+  it("accepts legacy key-name aliases, canonicalizing them", () => {
     expect(parseChord("shift+ArrowDown")).toEqual(
       chord({ shift: true, key: "Down" }),
     );
@@ -69,7 +69,7 @@ describe("parseChord / chordToStorage", () => {
 
   it("keeps a bare ctrl chord distinct from a mod chord", () => {
     expect(chordToStorage(chord({ ctrl: true, key: "K" }))).toBe("ctrl+K");
-    // `mod` wins: egui writes no separate `ctrl+` token alongside it.
+    // `mod` wins: no separate `ctrl+` token is written alongside it.
     expect(chordToStorage(chord({ mod: true, ctrl: true, key: "K" }))).toBe(
       "mod+K",
     );
@@ -77,7 +77,7 @@ describe("parseChord / chordToStorage", () => {
 });
 
 describe("keyNameFromCode", () => {
-  it("maps DOM codes to egui key names", () => {
+  it("maps DOM codes to canonical key names", () => {
     expect(keyNameFromCode("KeyP")).toBe("P");
     expect(keyNameFromCode("Digit4")).toBe("4");
     expect(keyNameFromCode("Numpad4")).toBe("4");

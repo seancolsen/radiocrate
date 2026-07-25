@@ -33,9 +33,9 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 }
 
 /// The Querydown revision `RadioCrate` builds its JS compiler binding from. Pinned
-/// deliberately (not the older rev the reference `frontend-old-egui` crate uses)
-/// so the compiled SQL behavior stays consistent with the schema/PRELUDE the
-/// frontend expects. See `plans/2026-07-migrate-ui-to-dom/phase-03.md` §2.
+/// deliberately so the compiled SQL behavior stays consistent with the
+/// schema/PRELUDE the frontend expects. See
+/// `plans/2026-07-migrate-ui-to-dom/phase-03.md` §2.
 const QUERYDOWN_REPO: &str = "https://github.com/seancolsen/querydown";
 const QUERYDOWN_REV: &str = "aa4c06c";
 

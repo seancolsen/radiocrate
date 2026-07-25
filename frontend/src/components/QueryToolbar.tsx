@@ -20,7 +20,7 @@ import ViewSqlModal from "./ViewSqlModal";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 
 /** Width at/below which the bar drops the section buttons' text labels and the
- * run/filter separator (COMPACT_MENU_BAR_WIDTH in `menu_bar.rs`). */
+ * run/filter separator. */
 const COMPACT_WIDTH = 500;
 
 const SECTIONS: { section: Section; icon: Component<{ class?: string }> }[] = [
@@ -37,7 +37,7 @@ function resultCountLabel(n: number): string {
 /** The query-page toolbar: a top control line (Save while unsaved · Refresh ·
  * the wrench query-actions menu · a separator · the Filter/Sort/Display section
  * toggles · the result count) over a conditionally-shown builder line for the
- * open section. Ported from `frontend-old-egui/src/menu_bar.rs`. */
+ * open section. */
 export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const store = useAppState();
 

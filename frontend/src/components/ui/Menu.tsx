@@ -16,9 +16,9 @@ export interface MenuApi {
 
 /** A lightweight dropdown menu anchored under its trigger. Owns open/close
  * state, closes on outside pointerdown, on Escape, and on any click inside the
- * content (matching egui, where clicking any row dismisses the popup). Positions
- * with plain absolute layout relative to the trigger — adequate for the toolbar,
- * whose menus always drop downward.
+ * content (any row dismisses the popup). Positions with plain absolute layout
+ * relative to the trigger — adequate for the toolbar, whose menus always drop
+ * downward.
  *
  * `trigger` renders the clickable anchor (given the {@link MenuApi}); `align`
  * pins the content to the trigger's left (`start`) or right (`end`) edge, and
@@ -120,7 +120,7 @@ export function MenuItem(props: {
 
 /** A menu row carrying a checkbox (independent toggle) or radio (exclusive)
  * indicator, then the section icon and label — the shared shape of a section's
- * options-menu rows (`builder.rs:toggle_menu_item`). */
+ * options-menu rows. */
 export function MenuToggleItem(props: {
   kind: "checkbox" | "radio";
   icon: Component<{ class?: string }>;

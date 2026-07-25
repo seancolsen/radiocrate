@@ -8,10 +8,8 @@ import {
 } from "./format";
 import { defaultColumnMetadata } from "./columns";
 
-// Mirrors the Rust unit tests in `frontend-old-egui/src/format.rs`. The
-// `Number`/`Duration` cases are ported exactly; the relative-time cases use the
-// exported `relativeBetween` with explicit instants (the public `formatValue`
-// uses `Date.now()`).
+// The relative-time cases use the exported `relativeBetween` with explicit
+// instants (the public `formatValue` uses `Date.now()`).
 
 const numberFmt = (dp: number | number[]): Formatter => ({
   type: "number",

@@ -3,10 +3,9 @@ import { Icons } from "../../icons";
 import { Menu, MenuItem } from "../ui/Menu";
 
 /** An auto-growing monospace Querydown editor with an optional trailing ⋮ menu
- * (Clear / Save as preset), shown only while the input is non-empty — the DOM
- * analog of `builder.rs:filter_custom_input` / `code_editor`. The textarea grows
- * to its line count (at least one line). "Save as preset" is disabled until a
- * base table is chosen (`canSave`). */
+ * (Clear / Save as preset), shown only while the input is non-empty. The
+ * textarea grows to its line count (at least one line). "Save as preset" is
+ * disabled until a base table is chosen (`canSave`). */
 export default function CustomInput(props: {
   value: string;
   hint: string;

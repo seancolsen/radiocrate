@@ -72,8 +72,8 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 
   // The keyboard-shortcuts editor filling its own tab, beside a query tab: the
-  // whole command table with its bindings, and the tab handle with its keyboard
-  // icon (the DOM analog of egui's `app/keyboard_shortcuts.png`).
+  // whole command table with its bindings, and the tab handle with its
+  // keyboard icon.
   test(`shortcuts editor - ${colorScheme}`, async ({ page }) => {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });

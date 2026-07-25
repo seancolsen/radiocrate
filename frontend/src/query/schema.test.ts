@@ -8,8 +8,8 @@ import {
 } from "./schema";
 
 // Mirrors the Rust tests for `add_inferred_links` (`introspection/src/lib.rs`),
-// guarding this TS port against drift from the shared crate. `SAMPLE` is the
-// same fixture.
+// guarding this TS port against drift from the shared crate that also backs
+// the backend's DML validator. `SAMPLE` is the same fixture.
 const SAMPLE = `{
   "tables": [
     { "name": "track", "unique_constraints": [["id"]], "columns": [
@@ -113,7 +113,6 @@ describe("parseSchemaTables", () => {
   });
 });
 
-// Mirrors `form.rs:primary_key_prefers_id_and_skips_composite_keys`.
 describe("primaryKey / identifyingColumns", () => {
   const table = (name: string): SchemaTable =>
     parseSchemaTables(SAMPLE).find((t) => t.name === name)!;

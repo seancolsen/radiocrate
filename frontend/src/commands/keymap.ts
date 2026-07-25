@@ -1,8 +1,6 @@
-// The resolved keymap: user overrides layered over the built-in defaults.
-// Ported from `frontend-old-egui/src/commands.rs` (`Keymap`), but as pure
-// functions over an immutable overrides map rather than a mutating struct — the
-// provider holds it in a signal and replaces it wholesale, so every read is
-// reactive.
+// The resolved keymap: user overrides layered over the built-in defaults, as
+// pure functions over an immutable overrides map — the provider holds it in a
+// signal and replaces it wholesale, so every read is reactive.
 
 import { chordsEqual, parseChord, type Chord } from "./chord";
 import {

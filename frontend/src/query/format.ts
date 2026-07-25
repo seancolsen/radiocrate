@@ -1,4 +1,4 @@
-// Per-column value formatters, ported from `frontend-old-egui/src/format.rs`.
+// Per-column value formatters.
 //
 // A column's metadata may carry a `formatter` blob selecting a typed transform
 // that reshapes each cell's display text. Cell values arrive as plain strings
@@ -103,8 +103,7 @@ export function formatValue(f: Formatter, value: string): string | null {
   }
 }
 
-/** Applies the column's formatter and prefix/suffix to one raw cell value.
- * Ports `display_text` (`results.rs:644`). */
+/** Applies the column's formatter and prefix/suffix to one raw cell value. */
 export function displayText(meta: ColumnMetadata, value: string): string {
   const formatted = meta.formatter
     ? (formatValue(meta.formatter, value) ?? value)

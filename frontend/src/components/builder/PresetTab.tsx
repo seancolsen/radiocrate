@@ -1,8 +1,8 @@
 import { Show, type JSX } from "solid-js";
 import { Icons } from "../../icons";
 
-/** A collapsed preset "tab" — the DOM analog of `builder.rs:draw_tab`. For a
- * user preset it's a single clickable row (chevron + preset icon + name) padded
+/** A collapsed preset "tab". For a user preset it's a single clickable row
+ * (chevron + preset icon + name) padded
  * to a one-line input's height; it gains a faint outline on hover and the pink
  * background when `expanded` (its bottom corners squared so it reads as joined to
  * the detail editor below). The built-in variant shows the preset name beside a

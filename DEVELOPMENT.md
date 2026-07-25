@@ -74,80 +74,9 @@ bun run test:visual:update # regenerate + commit the baselines
 ```
 
 Playwright's browser needs a one-time install (`bunx playwright install chromium`,
-plus its OS libraries via `bunx playwright install-deps chromium`). As with the
-egui baselines, screenshots are only reproducible in the same (container)
-environment CI uses — font/GPU drift on another machine produces spurious diffs.
-
-## Visual regression tests (retired egui frontend — reference)
-
-The retired egui frontend, kept as a reference in
-[`frontend-old-egui/`](../frontend-old-egui), has snapshot tests (built on
-[`egui_kittest`](https://crates.io/crates/egui_kittest)) that render individual widgets headlessly to PNGs under `frontend-old-egui/tests/snapshots/`. Every scene is captured twice through the shared rig in `frontend-old-egui/src/snapshot_harness.rs` — once per theme — and the two frames are stacked into a single baseline: **light mode on top, dark mode on bottom**, split by a 2-device-px gray (`#808080`) rule. Each stacked image is compared against a committed baseline, so unintended UI changes in either theme show up as a test failure with a `*.diff.png` to inspect. Only the `*.png` baselines are committed; the `*.new.png` / `*.diff.png` / `*.old.png` side files are transient and gitignored.
-
-**Run these in the container only.** They render through the container's software Vulkan driver (lavapipe, installed in the `Dockerfile`). Rendering on a host with a different GPU, driver, or font stack produces slightly different pixels and spurious diffs, so the committed baselines are only valid when generated in the container.
-
-From inside the container:
-
-```sh
-# Run the visual regression tests against the committed baselines.
-cargo test -p frontend-old-egui snapshot_tests
-
-# Approve changes: overwrite the baselines with the freshly rendered images.
-UPDATE_SNAPSHOTS=1 cargo test -p frontend-old-egui snapshot_tests
-```
-
-From the host (no shell needed — Docker runs the test, writes baselines to the bind-mounted source):
-
-```sh
-# Run the tests.
-docker compose run --rm dev cargo test -p frontend-old-egui snapshot_tests
-
-# Approve / regenerate the baselines.
-docker compose run --rm -e UPDATE_SNAPSHOTS=1 dev cargo test -p frontend-old-egui snapshot_tests
-```
-
-### Inspecting & measuring a failure
-
-When a snapshot test fails, egui_kittest writes three sibling artifacts next to
-the committed baseline `<name>.png`, in the same `frontend-old-egui/tests/snapshots/…`
-directory. They're all gitignored (throwaway, rewritten every run):
-
-| File               | What it is                                                        |
-| ------------------ | ----------------------------------------------------------------- |
-| `<name>.diff.png`  | A visual diff highlighting the changed pixels.                    |
-| `<name>.new.png`   | The freshly rendered image.                                       |
-| `<name>.old.png`   | The previous baseline — only after `UPDATE_SNAPSHOTS` rewrote it.  |
-
-**`<name>.diff.png` is the fastest way to see _what_ changed** — open it first.
-To see all three at once, stitch them into one `old | diff | new` strip:
-
-```sh
-scripts/snapshot_composite.sh frontend-old-egui/tests/snapshots/<group>/<name>.png
-# -> writes <name>.composite.png (also gitignored)
-```
-
-To **measure** an image to the pixel — e.g. confirm a margin is symmetric rather
-than eyeball it — use the measurement helper. It bakes in the rendering
-conventions (2× device scale / **PPP = 2**, the **8 logical-px harness margin**
-the test crop leaves around the content, and the resting border gray
-**`#C8C8C8`**) and classifies pixels as background / border / fill / content.
-Its pixel classification assumes the light palette, so aim it at the **top
-(light) half** of a stacked baseline; on the dark half, only its raw scan
-coordinates are trustworthy:
-
-```sh
-# Whole-image summary: size, content bbox, per-side margins, symmetry checks.
-scripts/measure_snapshot.py frontend-old-egui/tests/snapshots/<group>/<name>.new.png
-
-# Horizontal scan at a device-pixel row (default: vertical middle); --col for a
-# vertical scan. Coordinates are device px; pass --logical to give them in
-# logical px. --json for machine-readable output.
-scripts/measure_snapshot.py <png> --row 41
-```
-
-It runs on plain `python3` (Pillow + NumPy are baked into the image), so a
-`from PIL import Image` script works out of the box if you'd rather poke at
-pixels directly.
+plus its OS libraries via `bunx playwright install-deps chromium`). Screenshots
+are only reproducible in the same (container) environment CI uses — font/GPU
+drift on another machine produces spurious diffs.
 
 ## Optional: VS Code / Codespaces dev container
 

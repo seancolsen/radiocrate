@@ -9,18 +9,16 @@ what a result row *is* — a row carrying `track.id` is a track (double-click to
 play), and a row carrying some table's whole primary key is a record of that
 table (right-click to edit). See `frontend/src/query/lineage.ts`.
 
-The analysis is the one the egui frontend ran in
-`frontend-old-egui/src/lineage.rs`; only the question asked of it moved out here
-(the name predates the generalization).
+The analysis was originally run inline in the frontend; only the question asked
+of it moved out here (the name predates the generalization).
 
 ## Why this crate exists
 
 The published npm bindings, `@polyglot-sql/sdk`, ship **one full WASM build with
 all 30+ SQL dialects and every feature** (~22 MB). We use a sliver of that: the
 `semantic` lineage analysis for a single dialect. Building the crate ourselves
-with `default-features = false` — matching the egui build's feature set — drops
-the wasm to **~1.9 MB (≈560 KB gzipped)**, in the same ballpark as the vendored
-`querydown-js`.
+with `default-features = false` drops the wasm to **~1.9 MB (≈560 KB gzipped)**,
+in the same ballpark as the vendored `querydown-js`.
 
 ## Building
 

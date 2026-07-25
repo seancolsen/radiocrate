@@ -10,7 +10,7 @@ import {
 import { ALL_COMMANDS, commandDef, commandDefById } from "./registry";
 import { rankCommands } from "./rank";
 
-// The registry invariants, mirroring the `commands.rs` test module.
+// The registry invariants.
 describe("the command registry", () => {
   it("gives every command a unique id", () => {
     const ids = new Set(ALL_COMMANDS.map((c) => c.id));
@@ -25,7 +25,7 @@ describe("the command registry", () => {
   });
 
   it("does not resolve an id this build doesn't know", () => {
-    // An egui-only command whose feature isn't ported (see registry.ts).
+    // A command whose feature isn't built yet (see registry.ts).
     expect(commandDefById("tabs.pin_active")).toBeUndefined();
   });
 

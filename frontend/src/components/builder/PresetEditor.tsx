@@ -4,13 +4,12 @@ import { useAppState } from "../../state/store";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
 
-/** Inline detail editor for an expanded preset — the DOM analog of
- * `builder.rs:preset_editor`. A pink-tinted panel with an editable name and
- * definition and the "Apply by default" checkbox; while the preset has unsaved
- * edits it also shows the red ✱ marker plus revert and save controls (save
- * enabled once the name is non-empty). The checkbox wraps onto its own line when
- * the panel is too narrow to hold the name, controls, and checkbox side by side
- * (mirroring the egui width check). Saving commits locally and re-runs. */
+/** Inline detail editor for an expanded preset. A pink-tinted panel with an
+ * editable name and definition and the "Apply by default" checkbox; while the
+ * preset has unsaved edits it also shows the red ✱ marker plus revert and save
+ * controls (save enabled once the name is non-empty). The checkbox wraps onto
+ * its own line when the panel is too narrow to hold the name, controls, and
+ * checkbox side by side. Saving commits locally and re-runs. */
 export default function PresetEditor(props: {
   tabId: string;
   presetId: string;
@@ -27,7 +26,7 @@ export default function PresetEditor(props: {
   const dirty = () => store.presetDirty(props.presetId);
 
   // Wrap the checkbox onto its own line when the row can't hold the name field,
-  // the dirty controls, and the checkbox side by side (mirrors the egui check).
+  // the dirty controls, and the checkbox side by side.
   const [width, setWidth] = createSignal(9999);
   const wrapDefault = () => width() < (dirty() ? 428 : 342);
   let frame!: HTMLDivElement;

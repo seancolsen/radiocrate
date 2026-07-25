@@ -3,7 +3,7 @@ import { Portal } from "solid-js/web";
 
 /** A centered modal dialog over a dimming scrim. Closes on scrim click and on
  * Escape. Rendered through a Portal so it escapes the toolbar's stacking/overflow
- * context. The DOM analog of the app's `egui::Modal` dialogs. */
+ * context. */
 export function Modal(props: {
   onClose: () => void;
   children: JSX.Element;
