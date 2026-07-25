@@ -25,11 +25,12 @@
 // skipped on load (`overridesFromEntries`) and left in the database untouched,
 // so it comes back if the command does.
 //
-// The `When` set is likewise smaller. egui separated `ActiveTab`, `AnyTabOpen`
-// and `QueryTabActive`; here every tab is a query tab and a tab is active
-// exactly when one is open, so those three collapse into `activeTab`. Its
-// `SelectionAvailable` (results *or* form selection) collapses into `results`
-// for the same reason as the omissions above.
+// The `When` set is likewise smaller. egui separated `ActiveTab` (a tab of any
+// kind) from `AnyTabOpen` (at least one open); here a tab is active exactly when
+// one is open, so those two collapse into `activeTab` — but `queryTab` stays
+// distinct from both, because a tab is not necessarily a query (the keyboard-
+// shortcuts editor is one too). Its `SelectionAvailable` (results *or* form
+// selection) collapses into `results` for the same reason as the omissions above.
 
 import { chordOf, type Chord } from "./chord";
 
@@ -57,13 +58,16 @@ export type CommandId =
 
 /** The context gating a command. Deliberately a fixed set of boolean predicates
  * over {@link CommandContext}, not an expression language. */
-export type When = "always" | "activeTab" | "results" | "trackLoaded";
+export type When =
+  "always" | "activeTab" | "queryTab" | "results" | "trackLoaded";
 
 /** A snapshot of the app state the {@link When} predicates read, computed per
  * input pass / palette render. */
 export interface CommandContext {
-  /** A tab is open (and therefore active). */
+  /** A tab is open (and therefore active), whatever page it holds. */
   activeTab: boolean;
+  /** The active tab is a query page — what the query-only commands need. */
+  queryTabActive: boolean;
   /** The active tab has result rows. */
   resultsAvailable: boolean;
   /** A track is loaded in the now-playing bar. */
@@ -116,19 +120,19 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   {
     id: "query.focus_filter",
     title: "Query: Focus filter builder",
-    when: "activeTab",
+    when: "queryTab",
     defaultChord: chordOf("mod+shift+F"),
   },
   {
     id: "query.focus_sort",
     title: "Query: Focus sort builder",
-    when: "activeTab",
+    when: "queryTab",
     defaultChord: chordOf("mod+shift+S"),
   },
   {
     id: "query.focus_display",
     title: "Query: Focus display builder",
-    when: "activeTab",
+    when: "queryTab",
     defaultChord: chordOf("mod+shift+D"),
   },
   {
@@ -158,7 +162,7 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   {
     id: "tabs.save_active",
     title: "Tabs: Save active tab",
-    when: "activeTab",
+    when: "queryTab",
     defaultChord: chordOf("mod+S"),
   },
   {
@@ -224,6 +228,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return true;
     case "activeTab":
       return ctx.activeTab;
+    case "queryTab":
+      return ctx.queryTabActive;
     case "results":
       return ctx.resultsAvailable;
     case "trackLoaded":
@@ -238,6 +244,8 @@ export function whenLabel(when: When): string {
       return "";
     case "activeTab":
       return "tab open";
+    case "queryTab":
+      return "query tab active";
     case "results":
       return "results";
     case "trackLoaded":

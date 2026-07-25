@@ -93,9 +93,16 @@ export interface CommandStore {
   movePaletteIndex: (delta: number) => void;
 
   // ── The keyboard-shortcuts editor ──
-  shortcutsOpen: Accessor<boolean>;
-  openShortcuts: () => void;
-  closeShortcuts: () => void;
+  // Its transient UI state lives here rather than in the page component: the
+  // editor is a tab, so the component unmounts whenever another tab is showing,
+  // and egui likewise kept this on `App` (`shortcuts_tab.rs:ShortcutsUi`).
+  /** The editor's command-name search text (unused in record mode). */
+  shortcutsSearch: Accessor<string>;
+  setShortcutsSearch: (text: string) => void;
+  /** Release the editor's hold on the keyboard — cancel the capture dialog and
+   * leave record mode. Called when the editor's page unmounts; while either is
+   * live the global shortcut pass stands down (`ShortcutsUi::is_capturing`). */
+  stopCapturingKeys: () => void;
   /** The open rebind-capture dialog, if any. */
   capture: Accessor<CaptureState | null>;
   openCapture: (cmd: CommandId) => void;
@@ -133,7 +140,7 @@ function createCommandStore(store: AppStore): CommandStore {
   const [paletteQuery, setPaletteQuery] = createSignal("");
   const [paletteIndex, setPaletteIndex] = createSignal(0);
 
-  const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
+  const [shortcutsSearch, setShortcutsSearch] = createSignal("");
   const [capture, setCapture] = createSignal<CaptureState | null>(null);
   const [recordMode, setRecordModeSignal] = createSignal(false);
   const [recorded, setRecorded] = createSignal<Chord | null>(null);
@@ -179,6 +186,7 @@ function createCommandStore(store: AppStore): CommandStore {
     const active = store.state.activeTabId;
     return {
       activeTab: active !== null,
+      queryTabActive: active !== null && store.queryTab(active) !== undefined,
       resultsAvailable: active !== null && (store.resultCount(active) ?? 0) > 0,
       trackLoaded: store.state.currentTrack !== null,
     };
@@ -212,8 +220,9 @@ function createCommandStore(store: AppStore): CommandStore {
     setPaletteOpen(true);
   };
 
-  const closeShortcuts = () => {
-    setShortcutsOpen(false);
+  const capturingKeys = () => capture() !== null || recordMode();
+
+  const stopCapturingKeys = () => {
     setCapture(null);
     setRecordModeSignal(false);
     setRecorded(null);
@@ -225,6 +234,14 @@ function createCommandStore(store: AppStore): CommandStore {
    * with (its `When` already gates the shortcut, but the palette can be racing a
    * tab close). */
   const activeTab = () => store.state.activeTabId;
+
+  /** The active tab's id when it holds a *query*, else `null` — the same guard
+   * for the commands that act on a query page, so one aimed at the settings tab
+   * does nothing rather than writing query state under its id. */
+  const activeQueryTab = () => {
+    const id = activeTab();
+    return id !== null && store.queryTab(id) !== undefined ? id : null;
+  };
 
   /** Selects the next (`forward`) or previous tab, wrapping around
    * (`commands.rs:cycle_tab`). */
@@ -253,12 +270,14 @@ function createCommandStore(store: AppStore): CommandStore {
 
   const execute = (cmd: CommandId) => {
     const tabId = activeTab();
+    // Query-page commands read this instead, so they stand down on a settings tab.
+    const queryId = activeQueryTab();
     switch (cmd) {
       case "palette.open":
         togglePalette();
         break;
       case "shortcuts.configure":
-        setShortcutsOpen(true);
+        store.openShortcutsTab();
         break;
       case "explorer.toggle":
         store.toggleSidebar();
@@ -270,13 +289,13 @@ function createCommandStore(store: AppStore): CommandStore {
         store.skipNext();
         break;
       case "query.focus_filter":
-        if (tabId) store.focusBuilderSection(tabId, "filter");
+        if (queryId) store.focusBuilderSection(queryId, "filter");
         break;
       case "query.focus_sort":
-        if (tabId) store.focusBuilderSection(tabId, "sort");
+        if (queryId) store.focusBuilderSection(queryId, "sort");
         break;
       case "query.focus_display":
-        if (tabId) store.focusBuilderSection(tabId, "display");
+        if (queryId) store.focusBuilderSection(queryId, "display");
         break;
       case "results.select_next":
         if (tabId) store.moveRowSelection(tabId, true, false);
@@ -294,7 +313,7 @@ function createCommandStore(store: AppStore): CommandStore {
         // Guarded on `isUnsaved`, where egui's `save_current` saved
         // unconditionally: a save is a backend write that bumps `modified_at`,
         // and the toolbar's Save button is likewise only there while unsaved.
-        if (tabId && store.isUnsaved(tabId)) store.saveQuery(tabId);
+        if (queryId && store.isUnsaved(queryId)) store.saveQuery(queryId);
         break;
       case "tabs.save_all":
         // Snapshot the ids first: saving mutates the tabs array.
@@ -337,13 +356,13 @@ function createCommandStore(store: AppStore): CommandStore {
 
   // ── The global shortcut pass ───────────────────────────────────────────────
 
-  /** Whether an overlay that owns the keyboard is up, so the global pass stands
-   * down (`commands.rs:shortcuts_suppressed`). The shortcuts editor counts:
-   * unlike egui's editor — a tab the app kept running behind — this one is a
-   * modal, and firing commands underneath it would act on hidden state. */
+  /** Whether something that owns the keyboard is up, so the global pass stands
+   * down (`commands.rs:shortcuts_suppressed`). The shortcuts editor's *tab* does
+   * not count — the app keeps running behind it, as in egui — but its chord
+   * capture does, so a chord typed at it rebinds instead of firing. */
   const suppressed = () =>
     paletteOpen() ||
-    shortcutsOpen() ||
+    capturingKeys() ||
     store.state.pendingDelete !== null ||
     store.state.viewSql !== null ||
     store.state.presetSave !== null ||
@@ -403,9 +422,9 @@ function createCommandStore(store: AppStore): CommandStore {
       setPaletteIndex((clampedIndex() + delta + n) % n);
     },
 
-    shortcutsOpen,
-    openShortcuts: () => setShortcutsOpen(true),
-    closeShortcuts,
+    shortcutsSearch,
+    setShortcutsSearch,
+    stopCapturingKeys,
     capture,
     openCapture: (cmd) => setCapture({ cmd, pending: binding(cmd) }),
     closeCapture: () => setCapture(null),

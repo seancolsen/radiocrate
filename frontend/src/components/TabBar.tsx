@@ -3,10 +3,14 @@ import { useAppState } from "../state/store";
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
 import { Icons } from "../icons";
 import TabHandle from "./TabHandle";
+import { tabIcon } from "./tabKind";
 
 /** The tab bar across the top: the explorer toggle, one handle per open tab
  * (drag-to-reorder), then a "+" new-tab button. Height is TAB_BAR_HEIGHT (34px);
- * the bar background is a step darker than the content panel. */
+ * the bar background is a step darker than the content panel.
+ *
+ * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
+ * every page the same (select, close, drag to reorder). */
 export default function TabBar() {
   const store = useAppState();
   let container: HTMLDivElement | undefined;
@@ -40,8 +44,10 @@ export default function TabBar() {
           <TabHandle
             id={tab.id}
             name={tab.name}
+            icon={tabIcon(tab.kind)}
             active={tab.id === store.state.activeTabId}
             unsaved={store.isUnsaved(tab.id)}
+            renameable={tab.kind === "query"}
             dragging={drag.draggingId() === tab.id}
             translate={drag.translate()}
             renaming={store.state.renaming?.id === tab.id}

@@ -68,7 +68,17 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
-/** An open tab. Tab id == query id this phase. Carries both the saved query
+/** A fixed sentinel id for the singleton Keyboard Shortcuts tab, so it flows
+ * through the same id-keyed tab machinery (select / close / reorder) as queries.
+ * Namespaced so it can't collide with a query id (mirrors
+ * `page.rs:SHORTCUTS_PAGE_ID`). */
+export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
+
+/** The Keyboard Shortcuts tab's handle text — its "name", so every generic tab
+ * surface (the tab bar, the explorer's "Opened" list) reads one field. */
+const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
+
+/** An open query tab. Tab id == query id. Carries both the saved query
  * definition and an independent working (`live`) copy the builder mutates; the
  * two diverging is what shows the unsaved-changes indicator.
  *
@@ -76,13 +86,35 @@ export interface PresetSave {
  * Duplicate) that exists only in this session until Save writes it to the
  * backend. An ephemeral tab always reads as unsaved (mirrors egui's
  * `QueryPage::ephemeral`, whose `saved` snapshot is `None`). */
-export interface Tab {
+export interface QueryTab {
+  kind: "query";
   id: string;
   name: string;
   saved: QueryDefinition;
   live: QueryDefinition;
   persisted: boolean;
 }
+
+/** The keyboard-shortcuts editor tab. There is at most one, and its transient UI
+ * state (search text, record mode, the capture dialog) lives in the command
+ * store — so the tab itself carries no data beyond its identity (mirrors
+ * `page.rs:Page::KeyboardShortcuts`). */
+export interface ShortcutsTab {
+  kind: "shortcuts";
+  id: typeof SHORTCUTS_TAB_ID;
+  name: string;
+}
+
+/** An open tab: a query page or the singleton keyboard-shortcuts editor. More
+ * page kinds (playlists, artists, …) slot in here as further variants — the tab
+ * bar, the explorer's "Opened" list and the tab commands all work off the shared
+ * `kind` / `id` / `name` fields, and only {@link AppStore.queryTab} narrows to
+ * the query-only state. */
+export type Tab = QueryTab | ShortcutsTab;
+
+/** Which kind of page a tab holds — the discriminant every kind-aware surface
+ * switches on (`tabs.rs:TabKind`). */
+export type TabKind = Tab["kind"];
 
 /** The track shown in the now-playing bar, and where it came from. Mirrors
  * `now_playing.rs:CurrentTrack`. */
@@ -294,7 +326,12 @@ export interface AppStore {
   refetchQueries: () => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  /** Open (or focus) a query in a tab. */
   openTab: (query: { id: string; name: string; definition: string }) => void;
+  /** Open (or focus) the singleton Keyboard Shortcuts tab — the
+   * `shortcuts.configure` command's and the Settings menu's action (mirrors
+   * `lib.rs:open_keyboard_shortcuts`). */
+  openShortcutsTab: () => void;
   closeTab: (id: string) => void;
   selectTab: (id: string) => void;
   reorderTab: (id: string, toIndex: number) => void;
@@ -325,11 +362,16 @@ export interface AppStore {
     live: QueryDefinition,
   ) => void;
 
-  /** The tab with `id`, if open. */
+  /** The tab with `id`, whatever kind of page it holds, if open. */
   tab: (tabId: string) => Tab | undefined;
-  /** Whether a tab has unsaved changes: an ephemeral (never-saved) tab always,
-   * else a persisted tab whose working def differs from its saved def. Drives the
-   * Save button and the ✱ markers. */
+  /** The tab with `id` when it's a *query* tab — the narrowing every consumer of
+   * a query's definitions goes through, so a non-query tab reads as absent
+   * rather than as an empty query (mirrors `page.rs:Page::as_query`). */
+  queryTab: (tabId: string) => QueryTab | undefined;
+  /** Whether a tab has unsaved changes: an ephemeral (never-saved) query tab
+   * always, else a persisted one whose working def differs from its saved def.
+   * Drives the Save button and the ✱ markers. Never true for a non-query tab —
+   * the shortcuts editor writes its bindings through immediately. */
   isUnsaved: (tabId: string) => boolean;
   /** Whether "Revert changes" applies: a persisted tab with edits to discard (an
    * ephemeral tab has no saved baseline to revert to — mirrors egui's
@@ -545,6 +587,25 @@ function createAppStore(): AppStore {
   const tab = (tabId: string): Tab | undefined =>
     state.tabs.find((t) => t.id === tabId);
 
+  const queryTab = (tabId: string): QueryTab | undefined => {
+    const t = tab(tabId);
+    return t?.kind === "query" ? t : undefined;
+  };
+
+  /** Mutates a query tab in place through a mutator, a no-op when `tabId` isn't
+   * an open query tab. Every write to a query tab's fields goes through here:
+   * `tabs` holds a union of page kinds, so the narrowing has to happen inside the
+   * update rather than in a store path. */
+  const editQueryTab = (tabId: string, mutate: (t: QueryTab) => void) => {
+    setState(
+      "tabs",
+      produce((tabs) => {
+        const t = tabs.find((x) => x.id === tabId);
+        if (t?.kind === "query") mutate(t);
+      }),
+    );
+  };
+
   /** The preset list to run/preview against: each saved preset overlaid with any
    * in-progress edit, so results reflect pending preset changes before they're
    * committed (mirrors `builder.rs:effective_presets`). */
@@ -737,7 +798,7 @@ function createAppStore(): AppStore {
   };
 
   const runQuery = (tabId: string) => {
-    const t = tab(tabId);
+    const t = queryTab(tabId);
     if (!t) return;
     // An immediate run supersedes any run this tab had pending on the debounce.
     cancelScheduledRun(tabId);
@@ -775,9 +836,8 @@ function createAppStore(): AppStore {
 
   /** Mutate a tab's working definition through a mutator, then re-run. */
   const editLive = (tabId: string, mutate: (def: QueryDefinition) => void) => {
-    const idx = state.tabs.findIndex((t) => t.id === tabId);
-    if (idx === -1) return;
-    setState("tabs", idx, "live", produce(mutate));
+    if (!queryTab(tabId)) return;
+    editQueryTab(tabId, (t) => mutate(t.live));
     runQuery(tabId);
   };
 
@@ -788,9 +848,8 @@ function createAppStore(): AppStore {
     tabId: string,
     mutate: (def: QueryDefinition) => void,
   ) => {
-    const idx = state.tabs.findIndex((t) => t.id === tabId);
-    if (idx === -1) return;
-    setState("tabs", idx, "live", produce(mutate));
+    if (!queryTab(tabId)) return;
+    editQueryTab(tabId, (t) => mutate(t.live));
     scheduleRun(tabId);
   };
 
@@ -821,7 +880,8 @@ function createAppStore(): AppStore {
 
   /** Closes the tab `id`, dropping its cached state and selecting a neighbor.
    * Standalone (not just an object method) so backend actions like delete can
-   * reuse it. */
+   * reuse it. Kind-agnostic: the per-tab maps it clears are query-only, and
+   * dropping keys a settings tab never had is a no-op. */
   const closeTab = (id: string) => {
     setState(
       produce((s) => {
@@ -942,7 +1002,7 @@ function createAppStore(): AppStore {
   /** Records a play against `tabId`'s saved query (bumps `last_play`). Skipped
    * for an ephemeral tab, which has no backend row yet. */
   const recordQueryPlay = (tabId: string) => {
-    if (!tab(tabId)?.persisted) return;
+    if (!queryTab(tabId)?.persisted) return;
     void queryRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
       console.error("record play failed", err),
     );
@@ -1000,6 +1060,7 @@ function createAppStore(): AppStore {
       if (!state.tabs.some((t) => t.id === query.id)) {
         const saved = definitionFromStored(query.definition);
         setState("tabs", state.tabs.length, {
+          kind: "query",
           id: query.id,
           name: query.name,
           saved,
@@ -1008,6 +1069,17 @@ function createAppStore(): AppStore {
         });
       }
       setState("activeTabId", query.id);
+    },
+    openShortcutsTab: () => {
+      // A singleton: a second request focuses the tab that's already open.
+      if (!state.tabs.some((t) => t.kind === "shortcuts")) {
+        setState("tabs", state.tabs.length, {
+          kind: "shortcuts",
+          id: SHORTCUTS_TAB_ID,
+          name: SHORTCUTS_TAB_NAME,
+        });
+      }
+      setState("activeTabId", SHORTCUTS_TAB_ID);
     },
     closeTab,
     selectTab: (id) => setState("activeTabId", id),
@@ -1039,19 +1111,20 @@ function createAppStore(): AppStore {
       if (recordTargets) setState("recordTargetsByTab", tabId, recordTargets);
     },
     setTabDefinitions: (tabId, saved, live) => {
-      const idx = state.tabs.findIndex((t) => t.id === tabId);
-      if (idx === -1) return;
-      setState("tabs", idx, "saved", saved);
-      setState("tabs", idx, "live", cloneDefinition(live));
+      editQueryTab(tabId, (t) => {
+        t.saved = saved;
+        t.live = cloneDefinition(live);
+      });
     },
 
     tab,
+    queryTab,
     isUnsaved: (tabId) => {
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       return t ? !t.persisted || !defsEqual(t.saved, t.live) : false;
     },
     canRevert: (tabId) => {
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       return t ? t.persisted && !defsEqual(t.saved, t.live) : false;
     },
     resultCount: (tabId) => state.resultsByTab[tabId]?.rowCount,
@@ -1191,9 +1264,8 @@ function createAppStore(): AppStore {
     },
 
     saveQuery: (tabId) => {
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       if (!t) return;
-      const idx = state.tabs.findIndex((x) => x.id === tabId);
       const live = unwrap(t.live);
       const definition = definitionToStored(live);
       const now = nowEpoch();
@@ -1217,12 +1289,14 @@ function createAppStore(): AppStore {
           definition,
         }).catch((err) => console.error("query save failed", err));
       }
-      setState("tabs", idx, "saved", cloneDefinition(live));
-      setState("tabs", idx, "persisted", true);
+      editQueryTab(tabId, (x) => {
+        x.saved = cloneDefinition(live);
+        x.persisted = true;
+      });
       void refetch();
     },
     duplicateQuery: (id) => {
-      const source = tab(id);
+      const source = queryTab(id);
       if (!source) return;
       // Open a new *ephemeral* (unsaved) tab copied from the source's working
       // copy — carrying any unsaved edits — mirroring `lib.rs:duplicate_query`.
@@ -1231,6 +1305,7 @@ function createAppStore(): AppStore {
       const live = cloneDefinition(unwrap(source.live));
       const newId = newUuid();
       setState("tabs", state.tabs.length, {
+        kind: "query",
         id: newId,
         name: nowName(),
         saved: cloneDefinition(live),
@@ -1240,19 +1315,24 @@ function createAppStore(): AppStore {
       setState("activeTabId", newId);
     },
 
-    beginRename: (id) =>
-      setState("renaming", { id, buffer: tab(id)?.name ?? "" }),
+    // Only a query has a name of its own to rename; a settings tab's handle text
+    // is fixed, so the rename affordances stand down for it.
+    beginRename: (id) => {
+      const t = queryTab(id);
+      if (t) setState("renaming", { id, buffer: t.name });
+    },
     setRenameBuffer: (text) =>
       setState("renaming", (r) => (r ? { ...r, buffer: text } : r)),
     commitRename: () => {
       const r = state.renaming;
       if (!r) return;
       const name = r.buffer.trim();
-      const t = tab(r.id);
+      const t = queryTab(r.id);
       setState("renaming", null);
       if (name === "" || !t || t.name === name) return;
-      const idx = state.tabs.findIndex((x) => x.id === r.id);
-      setState("tabs", idx, "name", name);
+      editQueryTab(r.id, (x) => {
+        x.name = name;
+      });
       void queryRename({ id: r.id, name })
         .then(() => refetch())
         .catch((err) => console.error("query rename failed", err));
@@ -1260,17 +1340,18 @@ function createAppStore(): AppStore {
     cancelRename: () => setState("renaming", null),
 
     requestDelete: (id) => {
-      const t = tab(id);
+      const t = queryTab(id);
+      if (!t) return;
       setState("pendingDelete", {
         id,
-        name: t?.name ?? "",
-        unsaved: t ? !t.persisted || !defsEqual(t.saved, t.live) : false,
+        name: t.name,
+        unsaved: !t.persisted || !defsEqual(t.saved, t.live),
       });
     },
     confirmDelete: () => {
       const pending = state.pendingDelete;
       if (!pending) return;
-      const persisted = tab(pending.id)?.persisted ?? false;
+      const persisted = queryTab(pending.id)?.persisted ?? false;
       setState("pendingDelete", null);
       // An ephemeral (never-saved) query has no backend record to delete — just
       // drop its tab.
@@ -1326,7 +1407,7 @@ function createAppStore(): AppStore {
       });
       // Collapse the expansion if the now-removed preset was expanded.
       if (
-        !tab(tabId)?.live.filter.presets.includes(presetId) &&
+        !queryTab(tabId)?.live.filter.presets.includes(presetId) &&
         state.expandedPresetByTab[tabId] === presetId
       ) {
         setState("expandedPresetByTab", tabId, null);
@@ -1347,10 +1428,12 @@ function createAppStore(): AppStore {
         def[section] = shuffleContent();
       }),
     revertLive: (tabId) => {
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       if (!t) return;
-      const idx = state.tabs.findIndex((x) => x.id === tabId);
-      setState("tabs", idx, "live", cloneDefinition(unwrap(t.saved)));
+      const saved = cloneDefinition(unwrap(t.saved));
+      editQueryTab(tabId, (x) => {
+        x.live = saved;
+      });
       setState("expandedPresetByTab", tabId, null);
       runQuery(tabId);
     },
@@ -1410,7 +1493,7 @@ function createAppStore(): AppStore {
       setState("presetSave", (s) => (s ? { ...s, ...patch } : s)),
     confirmPresetSave: (tabId) => {
       const save = state.presetSave;
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       if (!save || !t) return;
       const name = save.name.trim();
       const base = t.live.base.trim();
@@ -1442,7 +1525,7 @@ function createAppStore(): AppStore {
       setState("presetSave", null);
     },
     openViewSql: (tabId) => {
-      const t = tab(tabId);
+      const t = queryTab(tabId);
       const schemaJson = schema();
       if (!t || schemaJson === undefined) return;
       try {

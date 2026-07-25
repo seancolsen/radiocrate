@@ -13,7 +13,7 @@ export default function SingleBuilder(props: {
   section: "sort" | "display";
 }): JSX.Element {
   const store = useAppState();
-  const content = () => store.tab(props.tabId)?.live[props.section];
+  const content = () => store.queryTab(props.tabId)?.live[props.section];
   const asCustom = () => content() as { custom: string };
   const asPreset = () => content() as { preset: string };
 
@@ -37,7 +37,9 @@ export default function SingleBuilder(props: {
             ref={(el) => (input = el)}
             value={asCustom().custom}
             hint={sectionLabel(props.section)}
-            canSave={(store.tab(props.tabId)?.live.base.trim() ?? "") !== ""}
+            canSave={
+              (store.queryTab(props.tabId)?.live.base.trim() ?? "") !== ""
+            }
             onInput={(t) =>
               store.setSectionCustomText(props.tabId, props.section, t)
             }

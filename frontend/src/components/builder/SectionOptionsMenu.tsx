@@ -20,7 +20,7 @@ export default function SectionOptionsMenu(props: {
   section: Section;
 }): JSX.Element {
   const store = useAppState();
-  const live = () => store.tab(props.tabId)?.live;
+  const live = () => store.queryTab(props.tabId)?.live;
   const base = () => live()?.base.trim() ?? "";
   const kind = () => (props.section === "filter" ? "checkbox" : "radio");
   const customLabel = () =>

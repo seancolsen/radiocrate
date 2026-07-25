@@ -3,9 +3,9 @@ import { QUERIES_FIXTURE } from "./fixtures";
 import type { AppStore } from "../../src/state/store";
 
 // The command palette and the keyboard-shortcuts system: the overlay's two
-// states (unfiltered / filtered), the shortcuts editor, and the behaviors that
-// have no pixels — a chord firing its command, the palette running one, and
-// arrow-key row selection.
+// states (unfiltered / filtered), the shortcuts editor tab and the Settings menu
+// that opens it, and the behaviors that have no pixels — a chord firing its
+// command, the palette running one, and arrow-key row selection.
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
@@ -71,7 +71,9 @@ for (const colorScheme of ["light", "dark"] as const) {
     );
   });
 
-  // The keyboard-shortcuts editor: the whole command table with its bindings.
+  // The keyboard-shortcuts editor filling its own tab, beside a query tab: the
+  // whole command table with its bindings, and the tab handle with its keyboard
+  // icon (the DOM analog of egui's `app/keyboard_shortcuts.png`).
   test(`shortcuts editor - ${colorScheme}`, async ({ page }) => {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
@@ -82,6 +84,24 @@ for (const colorScheme of ["light", "dark"] as const) {
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot(`shortcuts-editor-${colorScheme}.png`, {
+      fullPage: true,
+    });
+  });
+
+  // The explorer's Settings footer with its menu open: it opens *upward* (the
+  // footer is the sidebar's bottom edge) and carries the Keyboard shortcuts
+  // entry (`explorer/settings_menu.png`).
+  test(`settings menu - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/?sidebar=open&tabs=Lemonade&grid=lemonade");
+    await page.evaluate(() => document.fonts.ready);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(
+      page.getByRole("menuitem", { name: "Keyboard shortcuts" }),
+    ).toBeVisible();
+    await expect(page).toHaveScreenshot(`settings-menu-${colorScheme}.png`, {
       fullPage: true,
     });
   });
@@ -277,35 +297,108 @@ test("a shortcut row's context menu removes and resets its binding", async ({
   await expect(row).toContainText("Ctrl+B");
 
   const sidebar = page.getByRole("complementary").first();
-  const close = page.getByRole("button", { name: "Close", exact: true });
 
   // Remove: the binding goes away, and "Reset to default" takes its place in the
-  // menu. The chord no longer fires — checked with the editor closed, since it
-  // suppresses the global pass while it's up.
+  // menu. The chord no longer fires — the editor's tab leaves the global pass
+  // running, so that's checked without leaving the page.
   await row.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Reset to default" }),
   ).toBeHidden();
   await page.getByRole("menuitem", { name: "Remove keybinding" }).click();
   await expect(row).toContainText("—");
-  await close.click();
   await page.keyboard.press("Control+b");
   await expect(sidebar).toBeHidden();
 
-  // Reopen the editor the way a user without a chord for it would — through the
-  // palette — and reset the binding back to its built-in default.
-  await page.keyboard.press("Control+Shift+P");
-  await page.keyboard.type("configure keyboard");
-  await page.keyboard.press("Enter");
+  // Reset it back to its built-in default, and it fires again.
   await row.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Remove keybinding" }),
   ).toBeHidden();
   await page.getByRole("menuitem", { name: "Reset to default" }).click();
   await expect(row).toContainText("Ctrl+B");
-  await close.click();
   await page.keyboard.press("Control+b");
   await expect(sidebar).toBeVisible();
+});
+
+test("the Settings menu opens the shortcuts editor as a singleton tab", async ({
+  page,
+}) => {
+  await mockRpc(page);
+  await page.goto("/?sidebar=open&tabs=Lemonade&expose=1");
+  const editor = page.getByTestId("shortcuts-page");
+  const queryPage = page.getByTestId("query-toolbar");
+  await expect(editor).toBeHidden();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("menuitem", { name: "Keyboard shortcuts" }).click();
+  await expect(editor).toBeVisible();
+  // A tab of its own: the query page is no longer showing, and the editor has a
+  // handle in the bar and a row in the explorer's "Opened" list.
+  await expect(queryPage).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Close Keyboard Shortcuts" }),
+  ).toHaveCount(2);
+
+  const tabs = async () =>
+    await page.evaluate(() => {
+      const store = (window as unknown as AppWindow).__appStore;
+      return store.state.tabs.map((t) => t.kind);
+    });
+  expect(await tabs()).toEqual(["query", "shortcuts"]);
+
+  // Asking again focuses the one that's open rather than opening a second.
+  await page.locator("[data-tab-id]").filter({ hasText: "Lemonade" }).click();
+  await expect(queryPage).toBeVisible();
+  await expect(editor).toBeHidden();
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("configure keyboard");
+  await page.keyboard.press("Enter");
+  await expect(editor).toBeVisible();
+  expect(await tabs()).toEqual(["query", "shortcuts"]);
+
+  // And it closes like any other tab, leaving the query page showing.
+  await page
+    .getByRole("button", { name: "Close Keyboard Shortcuts" })
+    .first()
+    .click();
+  await expect(editor).toBeHidden();
+  await expect(queryPage).toBeVisible();
+  expect(await tabs()).toEqual(["query"]);
+});
+
+test("query commands stand down on the shortcuts tab, tab commands don't", async ({
+  page,
+}) => {
+  await mockRpc(page);
+  await page.goto("/?tabs=Lemonade&grid=lemonade&shortcuts=1&expose=1");
+  const editor = page.getByTestId("shortcuts-page");
+  await expect(editor).toBeVisible();
+
+  // "Query: Focus filter builder" is gated on a *query* tab, so its chord does
+  // nothing here — no builder opens on the query tab hiding behind this one.
+  await page.keyboard.press("Control+Shift+F");
+  await expect(page.getByPlaceholder("Filter").first()).toBeHidden();
+
+  // Tab commands are gated on any tab, so this one closes the editor.
+  await page.keyboard.press("Control+Alt+w");
+  await expect(editor).toBeHidden();
+  const kinds = await page.evaluate(() => {
+    const store = (window as unknown as AppWindow).__appStore;
+    return store.state.tabs.map((t) => t.kind);
+  });
+  expect(kinds).toEqual(["query"]);
+});
+
+test("the shortcuts editor's handle takes no rename", async ({ page }) => {
+  await mockRpc(page);
+  await page.goto("/?tabs=Lemonade&shortcuts=1");
+  const handle = page.locator("[data-tab-id]").filter({ hasText: "Keyboard" });
+  await handle.dblclick();
+  // A query handle would have swapped its name for a text field; this one can't
+  // be renamed, so the name stays put.
+  await expect(handle).toContainText("Keyboard Shortcuts");
+  await expect(handle.locator("input")).toHaveCount(0);
 });
 
 test("the shortcuts editor rebinds a command", async ({ page }) => {
@@ -348,7 +441,6 @@ test("the shortcuts editor rebinds a command", async ({ page }) => {
   });
 
   // And the new chord works, while the old one no longer does.
-  await page.getByRole("button", { name: "Close", exact: true }).click();
   const sidebar = page.getByRole("complementary").first();
   await page.keyboard.press("Control+b");
   await expect(sidebar).toBeHidden();

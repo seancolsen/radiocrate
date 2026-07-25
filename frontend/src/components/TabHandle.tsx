@@ -1,19 +1,25 @@
-import { Show } from "solid-js";
+import { Show, type Component } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { Icons } from "../icons";
 
-/** One tab handle: query icon, name (ellipsis when crowded), an unsaved-changes
- * ✱ marker, and a close ×. Only the top corners are rounded so it sits flush
- * with the content below.
+/** One tab handle: the page kind's icon, the name (ellipsis when crowded), an
+ * unsaved-changes ✱ marker, and a close ×. Only the top corners are rounded so it
+ * sits flush with the content below.
  *  - Active: filled with the content-panel color + a 4px accent-blue top edge,
  *    name at full-strength text.
  *  - Inactive: bar-colored (darker on hover), icon + name dimmed.
- * Double-clicking the body starts an inline rename, replacing the name with a
- * text field (mirrors `tabs.rs` double-click-to-rename). */
+ *
+ * `renameable` is what a non-query page turns off: a settings tab's handle text
+ * is fixed, so double-clicking it does nothing (mirroring `tabs.rs`, where the
+ * query-only affordances stand down for a non-query `TabKind`). A query tab
+ * double-click starts an inline rename, replacing the name with a text field. */
 export default function TabHandle(props: {
   id: string;
   name: string;
+  icon: Component<{ class?: string }>;
   active: boolean;
   unsaved: boolean;
+  renameable: boolean;
   dragging: boolean;
   translate: number;
   renaming: boolean;
@@ -43,7 +49,7 @@ export default function TabHandle(props: {
       }}
       onPointerDown={(e) => props.onPointerDown(e)}
       onClick={() => props.onSelect()}
-      onDblClick={() => props.onRenameStart()}
+      onDblClick={() => props.renameable && props.onRenameStart()}
     >
       {/* 4px accent top edge on the active handle. */}
       <div
@@ -51,7 +57,8 @@ export default function TabHandle(props: {
         classList={{ hidden: !props.active }}
       />
       {/* Active handle: icon stays the default gray while the name goes full-strength. */}
-      <Icons.Query
+      <Dynamic
+        component={props.icon}
         class={
           props.active ? "text-ink-weak size-4 shrink-0" : "size-4 shrink-0"
         }

@@ -1,12 +1,14 @@
-import { Show } from "solid-js";
+import { Show, type Component } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { Icons } from "../icons";
 
-/** A row in the "Opened" section: an open tab. Clicking the body selects it; a
- * close (×) sits at the right. The active row is marked with a left accent bar
- * (matching the tab bar's blue top edge), not a fill. A red ✱ marks an open tab
- * with unsaved edits. */
+/** A row in the "Opened" section: an open tab of any kind, its icon taken from
+ * that kind. Clicking the body selects it; a close (×) sits at the right. The
+ * active row is marked with a left accent bar (matching the tab bar's blue top
+ * edge), not a fill. A red ✱ marks an open tab with unsaved edits. */
 export default function OpenedRow(props: {
   name: string;
+  icon: Component<{ class?: string }>;
   active: boolean;
   unsaved: boolean;
   onSelect: () => void;
@@ -27,7 +29,10 @@ export default function OpenedRow(props: {
         class="flex min-w-0 flex-1 items-center text-left"
         onClick={() => props.onSelect()}
       >
-        <Icons.Query class="text-ink-weak size-[14px] shrink-0" />
+        <Dynamic
+          component={props.icon}
+          class="text-ink-weak size-[14px] shrink-0"
+        />
         <span class="text-ink ml-2 min-w-0 truncate text-sm">{props.name}</span>
         <Show when={props.unsaved}>
           <Icons.Unsaved

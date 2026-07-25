@@ -12,7 +12,7 @@ import PresetEditor from "./PresetEditor";
  * inline editor full-width below the row. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const store = useAppState();
-  const live = () => store.tab(props.tabId)?.live;
+  const live = () => store.queryTab(props.tabId)?.live;
   const presets = () => live()?.filter.presets ?? [];
   const canSave = () => (live()?.base.trim() ?? "") !== "";
   const expandedInFilter = () => {

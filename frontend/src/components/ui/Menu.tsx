@@ -23,13 +23,15 @@ export interface MenuApi {
  * `trigger` renders the clickable anchor (given the {@link MenuApi}); `align`
  * pins the content to the trigger's left (`start`) or right (`end`) edge, and
  * `side` drops it below the trigger (the default) or opens it upward — which is
- * what a control in the bottom bar needs. */
+ * what a control in the bottom bar needs. `class` extends the anchor wrapper, for
+ * a trigger that has to fill its row rather than hug its content. */
 export function Menu(props: {
   trigger: (api: MenuApi) => JSX.Element;
   children: JSX.Element;
   align?: "start" | "end";
   side?: "below" | "above";
   width?: string;
+  class?: string;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   let wrapper: HTMLDivElement | undefined;
@@ -51,7 +53,10 @@ export function Menu(props: {
   });
 
   return (
-    <div ref={(el) => (wrapper = el)} class="relative inline-flex">
+    <div
+      ref={(el) => (wrapper = el)}
+      class={`relative inline-flex ${props.class ?? ""}`}
+    >
       {props.trigger({
         get open() {
           return open();

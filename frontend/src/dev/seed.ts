@@ -13,6 +13,7 @@ import { lemonadeGridResult } from "./gridFixture";
 // without a backend write path for session state (open tabs live only here).
 //
 //   ?sidebar=open&tabs=Lemonade,Deep%20Cuts
+//   ?shortcuts=1     ← also open the keyboard-shortcuts editor tab, active
 //   ?grid=lemonade   ← a small canned structured result for the active tab,
 //                      bypassing Querydown / /api/query so the grid snapshot
 //                      stays deterministic without a backend
@@ -57,13 +58,21 @@ export function applySeed(store: AppStore): void {
   if (sidebar === "open") store.setSidebarOpen(true);
   else if (sidebar === "closed") store.setSidebarOpen(false);
 
+  // The keyboard-shortcuts editor is a tab like any other, so it's opened last —
+  // after the seeded query tabs below have picked their active one — leaving the
+  // editor showing. With no query tabs to wait for, it can open right away.
+  const shortcuts = params.get("shortcuts") === "1";
+
   const tabsParam = params.get("tabs");
-  if (!tabsParam) return;
-  const names = tabsParam
-    .split(",")
-    .map((n) => n.trim())
-    .filter(Boolean);
-  if (names.length === 0) return;
+  const names =
+    tabsParam
+      ?.split(",")
+      .map((n) => n.trim())
+      .filter(Boolean) ?? [];
+  if (names.length === 0) {
+    if (shortcuts) store.openShortcutsTab();
+    return;
+  }
 
   const grid = params.get("grid");
   const defParam = params.get("def");
@@ -149,6 +158,7 @@ export function applySeed(store: AppStore): void {
       if (params.get("editDefault") === "1")
         store.patchPresetEdit(expand, { isDefault: true });
     }
+    if (shortcuts) store.openShortcutsTab();
   });
 }
 
@@ -157,7 +167,6 @@ export function applySeed(store: AppStore): void {
 //
 //   ?palette=1        ← open the command palette
 //   ?palette=<text>   ← …with `<text>` already typed into its search field
-//   ?shortcuts=1      ← open the keyboard-shortcuts editor
 //
 // A no-op when the params are absent, so it never affects production.
 export function applyCommandSeed(commands: CommandStore): void {
@@ -173,7 +182,6 @@ export function applyCommandSeed(commands: CommandStore): void {
     commands.togglePalette();
     if (palette !== "1") commands.setPaletteQuery(palette);
   }
-  if (params.get("shortcuts") === "1") commands.openShortcuts();
 }
 
 /** Builds the record targets `?records=` asks for: one per named table, keyed by

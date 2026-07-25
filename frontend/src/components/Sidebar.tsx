@@ -4,10 +4,11 @@ import CollapseHeader from "./CollapseHeader";
 import OpenedRow from "./OpenedRow";
 import QueryRow from "./QueryRow";
 import SettingsFooter from "./SettingsFooter";
+import { tabIcon } from "./tabKind";
 
-/** The explorer sidebar content: an "Opened" section (open tabs), a "Queries"
- * section (saved queries with a filter + refresh), and a static Settings
- * footer. Width is ORGANIZER_WIDTH (200px). */
+/** The explorer sidebar content: an "Opened" section (every open tab, whatever
+ * page it holds), a "Queries" section (saved queries with a filter + refresh),
+ * and the Settings menu footer. Width is ORGANIZER_WIDTH (200px). */
 export default function Sidebar() {
   const store = useAppState();
 
@@ -40,6 +41,7 @@ export default function Sidebar() {
               {(tab) => (
                 <OpenedRow
                   name={tab.name}
+                  icon={tabIcon(tab.kind)}
                   active={tab.id === store.state.activeTabId}
                   unsaved={store.isUnsaved(tab.id)}
                   onSelect={() => store.selectTab(tab.id)}

@@ -31,18 +31,20 @@ import { MenuItem } from "./ui/Menu";
 // name or, in "record" mode, by pressing the chord) and a capture dialog for
 // rebinding. Ported from `frontend-old-egui/src/shortcuts_tab.rs`.
 //
-// Two deliberate departures from the egui original:
+// It fills a tab, like the egui original — `shortcuts.configure` and the
+// explorer's Settings menu open that tab (the command ships unbound, as in
+// egui). The editor's transient state (search text, record mode, the open
+// capture dialog) lives in the command store rather than here, so it survives
+// switching away to another tab and back.
 //
-//  - It's a *modal*, not a tab. The DOM frontend's tabs are query tabs only —
-//    there is no settings-tab kind to port this into yet — and the editor is
-//    self-contained enough to work as a dialog. The `shortcuts.configure`
-//    command opens it (it ships unbound, as in egui).
-//  - A row opens the capture dialog on a single click rather than a
-//    double-click. egui reserved the single click because its rows were also
-//    hit-targets for the popup; here a row does exactly one thing.
+// One deliberate departure from the egui original: a row opens the capture
+// dialog on a single click rather than a double-click. egui reserved the single
+// click because its rows were also hit-targets for the popup; here a row does
+// exactly one thing.
 //
-// While it's open the global shortcut pass stands down entirely (see
-// `commands.tsx:suppressed`), so keys pressed here only ever reach this dialog.
+// The app keeps running behind the editor, so global shortcuts keep firing while
+// it's open — except while it is itself grabbing keys (record mode or the capture
+// dialog), when the global pass stands down (see `commands.tsx:suppressed`).
 
 /** An action chosen from a row's context menu (`shortcuts_tab.rs:RowAction`). */
 type RowAction = "change" | "remove" | "reset";
@@ -143,11 +145,9 @@ function CaptureDialog(props: {
   );
 }
 
-/** The editor dialog. A separate component so its key listener and local search
- * state are created fresh on each open. */
-function ShortcutsDialog(): JSX.Element {
+/** The Keyboard Shortcuts tab's page. */
+export default function ShortcutsPage(): JSX.Element {
   const commands = useCommands();
-  const [search, setSearch] = createSignal("");
   const [rowMenu, setRowMenu] = createSignal<RowMenu | undefined>();
 
   /** The commands the table lists, filtered by the search bar — by name, or in
@@ -161,7 +161,7 @@ function ShortcutsDialog(): JSX.Element {
         return bound !== null && chordsEqual(bound, chord);
       });
     }
-    const needle = search().trim().toLowerCase();
+    const needle = commands.shortcutsSearch().trim().toLowerCase();
     if (needle === "") return [...ALL_COMMANDS];
     return ALL_COMMANDS.filter((def) =>
       def.title.toLowerCase().includes(needle),
@@ -194,15 +194,15 @@ function ShortcutsDialog(): JSX.Element {
   // reads, so pressing ⌘S here rebinds rather than reaching the browser.
   //
   // Enter/Escape/Tab stay reserved for the dialog (egui's `read_chord(…,
-  // skip_control = true)`), and Escape while capturing is stopped from
-  // propagating so it closes only the capture dialog, not the editor behind it.
+  // skip_control = true)`): Escape dismisses the capture dialog, and in record
+  // mode it's left alone (no chord binds it).
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       const capturing = commands.capture() !== null;
       if (!capturing && !commands.recordMode()) return;
       if (e.key === "Tab") return;
       if (e.key === "Escape") {
-        if (!capturing) return; // let the editor's own Escape close it
+        if (!capturing) return;
         e.stopPropagation();
         commands.closeCapture();
         return;
@@ -225,14 +225,21 @@ function ShortcutsDialog(): JSX.Element {
     onCleanup(() => document.removeEventListener("keydown", onKey, true));
   });
 
+  // Leaving the tab (switching away, or closing it) drops the editor's hold on
+  // the keyboard — an open capture dialog or a live record mode would otherwise
+  // keep the global shortcut pass suppressed with nothing on screen to see it.
+  onCleanup(() => commands.stopCapturingKeys());
+
   return (
     <>
-      <Modal onClose={() => commands.closeShortcuts()} width="720px">
-        <h2 class="text-ink mb-3 text-base font-semibold">
-          Keyboard Shortcuts
-        </h2>
+      <div
+        data-testid="shortcuts-page"
+        class="bg-panel flex min-h-0 min-w-0 flex-1 flex-col px-3 pt-3"
+      >
+        <h1 class="text-ink mb-3 text-lg font-semibold">Keyboard Shortcuts</h1>
 
-        {/* Search / record bar. */}
+        {/* Search / record bar. The field stops widening at 420px, as in egui —
+            a command name never needs the whole page. */}
         <div class="mb-3 flex items-center gap-2">
           <Show
             when={commands.recordMode()}
@@ -240,14 +247,16 @@ function ShortcutsDialog(): JSX.Element {
               <input
                 type="text"
                 placeholder="Search by command name"
-                class="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent h-[34px] min-w-0 flex-1 rounded-md border px-2.5 text-sm outline-none"
-                value={search()}
-                onInput={(e) => setSearch(e.currentTarget.value)}
+                class="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent h-[34px] max-w-[420px] min-w-0 flex-1 rounded-md border px-2.5 text-sm outline-none"
+                value={commands.shortcutsSearch()}
+                onInput={(e) =>
+                  commands.setShortcutsSearch(e.currentTarget.value)
+                }
               />
             }
           >
             <RecordBox
-              class="min-w-0 flex-1"
+              class="max-w-[420px] min-w-0 flex-1"
               text={
                 commands.recorded()
                   ? formatChord(commands.recorded()!)
@@ -268,13 +277,14 @@ function ShortcutsDialog(): JSX.Element {
         </div>
 
         {/* Table header: Command | Keybinding | When. */}
-        <div class="text-ink-weak border-edge flex items-center border-b px-2 pb-1 text-xs">
+        <div class="text-ink-weak border-edge flex shrink-0 items-center border-b px-2 pb-1 text-xs">
           <span class="min-w-0 flex-1">Command</span>
           <span class="w-[170px] shrink-0">Keybinding</span>
           <span class="w-[130px] shrink-0">When</span>
         </div>
 
-        <div class="max-h-[50vh] overflow-x-hidden overflow-y-auto">
+        {/* The rows take the rest of the page and scroll within it. */}
+        <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           <Show
             when={rows().length > 0}
             fallback={
@@ -324,17 +334,7 @@ function ShortcutsDialog(): JSX.Element {
             </For>
           </Show>
         </div>
-
-        <div class="mt-4 flex justify-end">
-          <button
-            type="button"
-            class="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
-            onClick={() => commands.closeShortcuts()}
-          >
-            Close
-          </button>
-        </div>
-      </Modal>
+      </div>
 
       <Show when={rowMenu()}>
         {(menu) => (
@@ -343,8 +343,6 @@ function ShortcutsDialog(): JSX.Element {
             y={menu().y}
             onClose={() => setRowMenu(undefined)}
             width="200px"
-            // Raised from inside a dialog, so it needs the layer above it.
-            z={120}
           >
             <MenuItem
               icon={Icons.Edit}
@@ -388,15 +386,5 @@ function ShortcutsDialog(): JSX.Element {
         )}
       </Show>
     </>
-  );
-}
-
-/** Mounts the shortcuts editor while it's open. */
-export default function ShortcutsModal(): JSX.Element {
-  const commands = useCommands();
-  return (
-    <Show when={commands.shortcutsOpen()}>
-      <ShortcutsDialog />
-    </Show>
   );
 }

@@ -1,12 +1,19 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { useAppState } from "./state/store";
+import {
+  createSignal,
+  Match,
+  onCleanup,
+  onMount,
+  Show,
+  Switch,
+} from "solid-js";
+import { useAppState, type Tab } from "./state/store";
 import { useSwipeToClose } from "./gestures/useSwipeToClose";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
+import ShortcutsPage from "./components/ShortcutsPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
-import ShortcutsModal from "./components/ShortcutsModal";
 
 /** Viewport width at/above which the sidebar is a persistent left panel instead
  * of a modal drawer (PERSISTENT_ORGANIZER_MIN_WIDTH). */
@@ -15,16 +22,28 @@ const SIDEBAR_WIDTH = 200;
 /** ORGANIZER_ANIM_TIME. */
 const ANIM_MS = 100;
 
-/** The content area of the active tab: a query page when a tab is open,
- * otherwise a blank panel (no tab open). */
+/** The content area of the active tab: the page its kind calls for, or a blank
+ * panel when no tab is open. The one place tab kinds fan out into pages — every
+ * other tab surface (the bar, the explorer's "Opened" list, the tab commands)
+ * stays kind-agnostic. */
 function TabContent() {
   const store = useAppState();
+  const active = (): Tab | undefined => {
+    const id = store.state.activeTabId;
+    return id === null ? undefined : store.tab(id);
+  };
   return (
-    <Show
-      when={store.state.activeTabId}
-      fallback={<div class="bg-panel min-h-0 flex-1" />}
-    >
-      {(tabId) => <QueryPage tabId={tabId()} />}
+    <Show when={active()} fallback={<div class="bg-panel min-h-0 flex-1" />}>
+      {(tab) => (
+        <Switch>
+          <Match when={tab().kind === "query"}>
+            <QueryPage tabId={tab().id} />
+          </Match>
+          <Match when={tab().kind === "shortcuts"}>
+            <ShortcutsPage />
+          </Match>
+        </Switch>
+      )}
     </Show>
   );
 }
@@ -89,7 +108,6 @@ export default function App() {
 
       {/* App-wide overlays, above every panel and both layouts. */}
       <CommandPalette />
-      <ShortcutsModal />
     </div>
   );
 
