@@ -19,24 +19,62 @@ Notes on the mockup:
 - The fields show in the mockup are not a perfect representation of the fields in our model. That's okay because the form is to work dynamically anyway.
 - The red text is annotation explaining terminology that we use in this spec.
 
-## Container and entry point
+## Entry point and user flow
 
-- The record editor should be placed in a right sidebar panel within the query page.
+### Prerequisites
 
-- The panel should open when an "Edit [table]" action is triggered from the query result row context menu.
+For editing to be supported, the query must include an id column in the result data (which may be hidden from view via column annotations). Existing track-play logic already uses hidden id columns.
 
-- The context menu should render in the DOM, not in the canvas. When the context menu is open, interactions within the result set (hovering, scrolling, clicking) should be prevented. Clicking outside the context menu should close it without passing the click through to underlying elements.
+### Opening the record editor
 
-- Sidebar visibility state and record editor form state should be managed within the query page. When open, the sidebar should narrow the query toolbar and results pane. The tab bar and marquee should not be affected by the sidebar (they exist outside the query page). The sidebar should be resizable, with its size stored in a top-level app signal and persisted to localStorage.
+From the query results view, there are two ways to begin editing a record:
 
-- The record editor panel should receive primary key values for the selected record. The query column lineage (via polyglot analysis) determines whether edit context menu options should appear. Context menu options should be generated based on the following rules:
-  - When result columns contain a primary key for a table (single or multi-column), an "Edit [table]" option should appear for that table.
-  - When result columns contain multiple primary keys for the same table, no "Edit" option should appear for that table (since the row may represent multiple records).
-  - When result columns contain primary keys for different tables, an "Edit [table]" option should appear for each table. For example, a track row might have both track and album IDs, generating "Edit track" and "Edit album" options.
+- **(A) Context menu**: A context menu should appear when triggered on a result row. The context menu should render in the DOM, not in the canvas. When the context menu is open, interactions within the result set (hovering, scrolling, clicking) should be prevented. Clicking outside the context menu should close it without passing the click through to underlying elements. The following behavior should apply:
 
-- When the record editor panel is open, it should update to reflect changes in query result row selection. When the user selects a different row, the record editor should load that record's data. When multiple rows are selected, the heading should display "Edit N [table] records" and show all primary keys. When all rows are deselected, the panel should close.
+    - When the context menu is triggered on an unselected row, that row should become selected and all others should be deselected before the context menu opens.
+    - When the context menu is triggered on an already-selected single row, the context menu should open for that row.
+    - When the context menu is triggered on a row while multiple rows are selected, the rows should remain selected and the context menu should not open (bulk editing is not yet supported).
 
-- When multiple records are selected, a message "Bulk modification not yet supported" should display in place of the form. (Bulk modification is deferred for separate UI work.)
+- **(B) Command palette**: A command palette action should exist with the label "Results: Edit selected rows", executable via keyboard shortcut or command palette.
+
+### Context menu generation
+
+The query column lineage (via polyglot analysis) determines which edit context menu options should appear.
+
+- When result columns contain a primary key for a table (single or multi-column), an "Edit [table]" option should appear for that table.
+- When result columns contain multiple primary keys for the same table, no "Edit" option should appear for that table (since the row may represent multiple records).
+- When result columns contain primary keys for different tables, an "Edit [table]" option should appear for each table. For example, a track row might have both track and album IDs, generating "Edit track" and "Edit album" options.
+
+The context menu option label should be "Edit [table]" where "[table]" is the base table name (e.g., "Edit track"), and clicking this option opens the record editor form.
+
+### Container and placement
+
+The record editor should be placed in a right sidebar panel within the query page. When open, the sidebar should narrow the query toolbar and results pane. The tab bar and marquee should not be affected by the sidebar (they exist outside the query page). The sidebar should be resizable, with its size stored in a top-level app signal and persisted to localStorage.
+
+Sidebar visibility state and record editor form state should be managed within the query page. The record editor panel should receive primary key values for the selected record.
+
+### Form structure and UI
+
+- As shown in the mockup, the record editor form follows a tree structure, with form items that are collapsible and expandable via chevron icons.
+- All items should be initially collapsed.
+- Field values should be editable via click. When a field is in edit mode, the value should be styled as a focused text box.
+- Unfocused values should display a text selection cursor to indicate they can be clicked to edit.
+- When a field is NULL or contains an empty string, a pencil button should render to activate an empty text field for editing.
+
+### Modification and state
+
+- When a field has been modified, a red star should render as a superscript on the field label.
+- When the form has any unsaved changes, the Save button should become enabled.
+
+### Dynamic updates
+
+When the record editor panel is open, it should update to reflect changes in query result row selection:
+
+- When the user selects a different row, the record editor should load that record's data.
+- When multiple rows are selected, the heading should display "Edit N [table] records" and show all primary keys. A message "Bulk modification not yet supported" should display in place of the form. (Bulk modification is deferred for separate UI work.)
+- When all rows are deselected, the panel should close.
+
+The user can still interact with the query results while the sidebar is open. When the user clicks "Cancel", the sidebar should close.
 
 ## Terminology
 
@@ -52,34 +90,6 @@ Notes on the mockup:
 - **Multi-record field**: A collapsible field representing a set of records which each reference the record being edited.
 - **Embedded record**: A widget that provides a preview of a single row, usually in another table. A scalar linked record field can have a single embedded record as its field value. A multi-record field can have multiple embedded records as child form items.
 - **Primitive field**: A form field that is _not_ a scalar linked record field or a multi-record field, e.g. text field, number field, etc.
-
-## User flow
-
-1. For editing to be supported, the query must include an id column in the result data (which may be hidden from view via column annotations). Existing track-play logic already uses hidden id columns.
-
-1. From the query results view, there should be two ways to begin editing a record:
-
-    - (A) A context menu should appear when triggered on a result row. The following behavior should apply:
-        - When the context menu is triggered on an unselected row, that row should become selected and all others should be deselected before the context menu opens.
-        - When the context menu is triggered on an already-selected single row, the context menu should open for that row.
-        - When the context menu opens for a single selected row, it should contain one menu option labeled "Edit [table]" where "[table]" is the base table name (e.g., "Edit track"). This opens the record editor form.
-        - When the context menu is triggered on a row while multiple rows are selected, the rows should remain selected and the context menu should not open (bulk editing is not yet supported).
-
-    - (B) A command palette action should exist with the label "Results: Edit selected rows", executable via keyboard shortcut or command palette.
-
-1. The record editor UI should open in a right sidebar as shown in the mockup.
-
-1. The record editor UI follows a tree structure. Form items should be collapsible and expandable via chevron icons. All items should be initially collapsed.
-
-1. Field values should be editable via click. When a field is in edit mode, the value should be styled as a focused text box. Unfocused values should display a text selection cursor to indicate they can be clicked to edit. When a field is NULL or contains an empty string, a pencil button should render to activate an empty text field for editing.
-
-1. When a field has been modified, a red star should render as a superscript on the field label.
-
-1. When the form has any unsaved changes, the Save button should become enabled. (Submission handling is deferred.)
-
-1. With the record editor sidebar open, the user should still be able to interact with the query results. When the user selects a different result row, the record editor should update to display that record's data. When the user selects multiple records, the sidebar should display text like "2 records selected. Bulk editing not yet supported" instead of the form.
-
-1. When the user clicks "Cancel", the sidebar should close.
 
 ## Form structure and data loading
 
