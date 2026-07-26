@@ -1,36 +1,39 @@
-# Render DML form for records
+# Record editor spec
 
-Begin implementing a dynamic form system for CRUD on arbitrary records in the database with a user flow that originates from the query results view.
-
-## Scope
-
-The scope for this phase is as follows:
-
-1. Modify the query results view to allow for this new functionality.
-1. Render the edit form with all its data initialized.
-1. Allow the user to interact with the form without saving the changes.
-1. Track the changes that the user has made to the form, indicating which fields have been modified.
-
-Out of scope:
-
-- Handling submission of the form to actually save the results. (We'll handle that later.)
+The record editor is to be a dynamic form system for CRUD on arbitrary records in the database with a user flow that originates from the query results view.
 
 ## Product-level design philosophy
 
 RadioCrate is supposed to be for the user to query their music collection and play music. But it's also supposed to be a powerful tool for _organizing_ a collection of music. That means modifying data too! Currently, the only data modification we support is CRUD on some specific entities like queries and presets. We need a new API to support arbitrary DML on _anything_ in the RadioCrate database. RadioCrate will have a powerful UI that allows the user to edit relational data from the query results view. The most common workflow will be: query tracks, edit a track. But the same functionality should work for other entities too.
 
-My vision is that the schema structure of tables and columns that gets installed by radiocrate is simply a starting point for the user. If the user wants to add their own custom columns or tables, then RadioCrate will (eventually) be able to handle that. That's why we have very little in the way of ORM type logic in the backend. The frontend dynamically introspects the schema and then uses the structure to inform its queries. I would like for DML to work in the same manner. DML should begin with dynamic introspection (already in place), then dynamic UI form-building (what you are currently building), then a request to our dml API that allows for inserting/deleting/updating almost anything (already in place). Keep in mind: RadioCrate is designed to be a single-user multi-device application. The user "owns" this data. We want to give them a lot of power over it. There will be some types of records that we don't want the user editing (e.g. "file" records, because that data comes from our scanner), but we'll implement those guard rails on top of this "edit anything" functionality later on.
+Eventually, the schema structure of tables and columns that gets installed by radiocrate will simply be a starting point for the user. If the user wants to add their own custom columns or tables, then RadioCrate will be able to handle that by virtue of its dynamic introspection-driven approach. That's why we have very little in the way of ORM type logic in the backend. The frontend dynamically introspects the schema and then uses the structure to inform its queries. I would like for DML to work in the same manner. DML should begin with dynamic introspection (already in place), then dynamic UI form-building (the record editor), then a request to our DML API which allows for inserting/deleting/updating almost anything (already implemented). Keep in mind: RadioCrate is designed to be a single-user multi-device application. The user "owns" this data. We want to give them a lot of power over it. There will be some types of records that we don't want the user editing (e.g. "file" records, because that data comes from our scanner), but we'll implement those guard rails on top of this "edit anything" functionality later on.
 
 ## Attached mockup
 
-In this repo, see `plans/2026-07-dml-ui-form/mockup.png` for a mockup of the UI for editing records.
+In this repo, see `specs/2026-07-record-editor/mockup.png` for a mockup of the record editor UI.
 
 Notes on the mockup:
 
-- This is a relatively high-fidelity mockup. The spacing of things is not necessarily consistent and perfect, but the colors and styling reflect my intended outcome.
-- It's modeled after a scenario in which the user is editing a track. The track results are not shown, but the record editing UI is placed between two track result rows.
+- This is a relatively high-fidelity mockup. The spacing of things is not necessarily consistent and perfect, but the colors and styling reflect the intended outcome.
+- It's modeled after a scenario in which the user is editing a track.
 - The fields show in the mockup are not a perfect representation of the fields in our model. That's okay because the form is to work dynamically anyway.
-- The red text is annotation explaining terminology that we use in this prompt.
+- The red text is annotation explaining terminology that we use in this spec.
+
+## Container and entry point
+
+- The record editor is to be placed in a right sidebar panel within the query page.
+
+- The panel opens when the user activates an "Edit record" action within the context menu of a query result row.
+
+- The context menu should render in the DOM, not in the canvas. When the context menu is open, we should prevent interactions within the result set such as hovering, scrolling, and clicking. Clicking outside the context menu should just close the context menu — not pass the click through.
+
+- The sidebar visibility state and record editor form state should live within the query page. And layout-wise, the sidebar should also live within the query page. When it is open, it should push the query toolbar and query results to be more narrow. It should not affect the tab bar or the marquee because those regions are outside the query page. It should be resizable. Its size should be stored in a signal at the top-level of the app which is saved and read from localStorage.
+
+- The record editor panel should receive the primary key values of all the selected records. We should use polyglot to analyze the query column lineage. When the result columns contain a primary key (single or multi-column), then we offer a context menu option like "Edit track" or "Edit album". If the query contains multiple primary keys to the same table, then do not offer the context menu option (because the row could represent multiple records). If the query contains primary keys to different tables, then offer one context menu option for each table. For example, a row representing a track record might have an id for the track and an id for the album.
+
+- When the record editor panel is open and the user changes the selection of rows in the query result pane, the record editor should update to follow the selection of query rows. When the user selects a different record, propagate the primary key for that record into the record editor. If the user selects multiple records, then set the heading to read something like "Edit 2 track records" and display all primary keys. If the user un-selects the selected record(s), then close the panel.
+
+- We're not yet implementing bulk modification, because we'll have a slightly different UI for that. So if multiple records are selected, we should display a message such as "Bulk modification not yet supported." in place of the record editor form.
 
 ## Terminology
 
