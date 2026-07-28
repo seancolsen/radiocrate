@@ -90,8 +90,8 @@ The user can still interact with the query results while the sidebar is open. Wh
 
 - **Modal editing, per field**
     - Field values should be editable via click. When a field is in edit mode, the value should be styled as a focused text box.
-    - Clicking out side the editing text box should move the field back into "view" mode.
-    - Unfocused values should display a text selection cursor to indicate they can be clicked to edit.
+    - Clicking outside the editing text box should move the field back into "view" mode.
+    - Unfocused non-empty values should display a cursor to indicate they can be clicked to edit.
     - When a field is NULL or contains an empty string, a pencil button should render to activate an empty text field for editing.
 
 - **Field order**: Fields should display in the following order: the table's intrinsic fields in the order given by introspection, followed by referencing fields listed alphabetically by table. (Field order customization is deferred for future work.)
@@ -118,7 +118,7 @@ The user can still interact with the query results while the sidebar is open. Wh
     - When expanded, text should display _below_ the field label (instead of to the right) to provide more horizontal space. Linebreaks should be preserved. The layout should remain the same whether the field is in edit mode or not.
 
 - **Display of non-text values**
-    - Non-text values (e.g. UUID, timestamp, float, etc) should display on one line in view mode with truncated as needed. In edit mode, the text input should have soft wrapping which grows the height of the input as needed to contain the user's string entered.
+    - Non-text values (e.g. UUID, timestamp, float, etc) should display on one line in view mode, truncated as needed. In edit mode, the text input should grow vertically to fit multi-line content.
 
 - **Vertical alignment of form UI elements**
 
@@ -143,9 +143,9 @@ The user can still interact with the query results while the sidebar is open. Wh
     - While the data is loading, we should display a translucent overlay over the context for which the data is loading. Use the color of the form background so as to make the content underneath the overlay appear dimmed. This is our (subtle) loading indicator.
     - We should prevent the user from interacting with the specific elements into which data is being loaded. When expanding a form field like a scalar linked record field or a multi-record field, we should immediately have enough structural information to render a skeleton over which we'll render the loading overlay. A multi-record field containing 5 records should immediately render 5 embedded record widgets while loading the data to display inside them.
 
-- **Data query**: The form should populate its data via a Querydown query built from introspection info, compiled to SQL, and executed through the query API. The query fo the top-level data should include the value for each intrinsic field as well as a count of related records for each referencing field. Data for nested fields should not be loaded initially.
+- **Data query**: The form should populate its data via a Querydown query built from introspection info, compiled to SQL, and executed through the query API. The query for the top-level data should include the value for each intrinsic field as well as a count of related records for each referencing field. Data for nested fields should not be loaded initially.
 
-## Progressive expansion**
+## Progressive expansion
 
 The following types of form elements must load additional data when expanded:
 
@@ -206,9 +206,9 @@ We need to dynamically produce a list of result column expressions for the targe
 
     - **Nullability**: If the column is required (i.e. NOT NULL), award it **1 point**. If the column is nullable, award it no points.
 
-    - **Uniqueness**: If the column is unique then award it **1 point**. The column should be considered unique if it has a single-column unique constraint or if it is part of a two-column unique constraint which also contains the contextual filtering column. If the column is not unique then award it no points.
+    - **Uniqueness**: If the column has a single-column unique constraint or is part of a two-column unique constraint that includes the contextual filtering column, award it **1 point**. Otherwise award it 0 points.
 
-    - **Type**: If the column is TEXT (or similar, i.e. VARCHAR, STRING, CHAR, BPCHAR, or text-like ENUM), then award it **1 point**. IF the column is UUID, then award it **-1 point** (negative). Otherwise, award it 0 points.
+    - **Type**: If the column is TEXT (or similar: VARCHAR, STRING, CHAR, BPCHAR, or text-like ENUM), award it **1 point**. If the column is UUID, award it **-1 point**. Otherwise award it 0 points.
 
     Example of listing credits for a track:
 
@@ -219,15 +219,15 @@ We need to dynamically produce a list of result column expressions for the targe
     | artist.id   | 0           | 1                  | 1                 | -1          | 1            |
     | artist.name | 0           | 1                  | 1                 |  1          | 3            |
 
-1. Pick the first _two_ columns that tie for the maximum number of points. In this example that would be only `artist.name`. (Note that the mockup also displays the `role` column, which is a deviation from this new logic that we'd like to implement).
+1. Pick up to the first _two_ columns that have the maximum number of points, in the order they appear in the assembled list. In this example, that would be `artist.name` (3 points). If multiple columns tie for the highest score, include up to two of them. (Note: the mockup shows `role` as well, which represents an interim implementation we're refining.)
 
 **The query's "sorting" section**
 
 For the sorting section, we'll use the same points values that we calculated for the display, plus some additional logic:
 
 1. If the target table contains a column named `ord`, use that as the primary sorting column, sorted ascending.
-1. Then sort by the display columns with sorting precedence defined by the order in which they appear in the display section. Sort dates and timestamps as descending. Sort everything else ascending.
-1. Finally, sort by the primary key so that the UI is stable across refreshes.
+1. Then sort by the display columns in the order they appear in the display section. For date and timestamp columns, sort descending to show most recent first; for all other columns, sort ascending.
+1. Finally, sort by the primary key for stable ordering across refreshes.
 
 **The full query**
 
@@ -283,7 +283,7 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 
 - The border radius should be such that an embedded record widget with a single line of content has a perfect semicircle on the left and right. (And the border radius should remain static so that if the content wraps to multiple lines we'll see a flat border section on the left and right.)
 
-- Embedded records should have a background gradient that matches the query result row, including the hover styling and selected row styling.
+- Embedded records should have a background gradient and hover/selected state styling that matches the query result row.
 
 - When an embedded record component represents a _new record being added_, it should display the text "New" in italics, centered. The component should not attempt to render the user's partial field values as a preview (since aggregates and other computed columns may be unavailable until the record is saved).
 
@@ -299,7 +299,7 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 
 ## Saving the form
 
-- We have a powerful DML API that allows arbitrary changes to records in the database. The record editor should this DML API to submit a single API request to save the user's changes within the record editor form.
+- We have a powerful DML API that allows arbitrary changes to records in the database. The record editor should use this DML API to submit a single API request to save the user's changes.
 - Any errors should be handled by rendering them within the UI and retaining the changes to the form.
 - On success, we should keep the form open and update its state to reflect the saved values.
 - Updating the query result row with the new values is out of scope.
@@ -355,6 +355,7 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
     - If it's a text field, then add a newline
     - If it's a number/datetime field then: exit edit mode, save field changes within the form, and select/focus the label of this field.
 - **`Tab` key**: exit edit mode, save field changes within the form, and select/focus the label of the **next** field (or this field if it's the last one).
+- **`Shift+Tab` key**: exit edit mode, save field changes within the form, and select/focus the label of the **previous** field (or this field if it's the first one).
 
 ### Embedded record in a scalar linked record field
 
