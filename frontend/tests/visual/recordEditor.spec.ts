@@ -194,9 +194,7 @@ test("the menu blocks the rows beneath it", async ({ page }) => {
   await expect.poll(strip).not.toBe(blocked);
 });
 
-test("Escape closes the menu; the close button closes the editor", async ({
-  page,
-}) => {
+test("Escape closes the menu; Cancel closes the editor", async ({ page }) => {
   await openGrid(page);
   await rightClickRow(page);
   await page.keyboard.press("Escape");
@@ -206,7 +204,7 @@ test("Escape closes the menu; the close button closes the editor", async ({
   await page.getByRole("menuitem", { name: "Edit track" }).click();
   const editor = editorPanel(page);
   await expect(editor).toBeVisible();
-  await editor.getByRole("button", { name: "Close record editor" }).click();
+  await editor.getByRole("button", { name: "Cancel" }).click();
   await expect(editor).toBeHidden();
 });
 
@@ -991,6 +989,179 @@ test("the picker's New record button scaffolds one, seeded with the search", asy
   await expect(star(editor, "album")).toBeVisible();
 });
 
+// ── Saving ──────────────────────────────────────────────────────────────────
+//
+// One DML request per Save, carrying everything the user changed; the answer
+// becomes the form's new baseline.
+
+/** A DML operation as the form sends it (the fields these tests read). */
+interface DmlOp {
+  operation: "insert" | "update" | "delete";
+  id: string;
+  table: string;
+  where?: Record<string, unknown>;
+  values?: Record<string, unknown>;
+}
+
+/** Answers the `dml` RPC — as the database would, or with `error` — and collects
+ * every request the form makes. Registered after `mockRpc`, so it takes
+ * precedence and hands everything else back to it. */
+async function mockDml(page: Page, error?: string): Promise<DmlOp[][]> {
+  const calls: DmlOp[][] = [];
+  await page.route("**/api/rpc", async (route) => {
+    const body = route.request().postDataJSON() as {
+      method: string;
+      id: number;
+      params: { operations: DmlOp[] };
+    };
+    if (body.method !== "dml") return route.fallback();
+    calls.push(body.params.operations);
+    // The row an operation returns: what it wrote, plus the identity it wrote
+    // it under (an insert's id is the database's to issue).
+    const result = Object.fromEntries(
+      body.params.operations
+        .filter((op) => op.operation !== "delete")
+        .map((op) => [
+          op.id,
+          { id: `saved-${op.id}`, ...op.where, ...op.values },
+        ]),
+    );
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        error
+          ? { jsonrpc: "2.0", error: { code: 1, message: error }, id: body.id }
+          : { jsonrpc: "2.0", result, id: body.id },
+      ),
+    });
+  });
+  return calls;
+}
+
+const saveButton = (editor: Locator) =>
+  editor.getByRole("button", { name: "Save" });
+
+test("Save writes the form's changes, and the form stops being modified", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // Nothing to save until something has changed.
+  await expect(saveButton(editor)).toBeDisabled();
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  await expect(saveButton(editor)).toBeEnabled();
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeDisabled();
+  // One request, carrying only what changed, keyed on the record being edited.
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-1" },
+      values: { title: "Renamed" },
+    },
+  ]);
+  // The form keeps the record open on what it just saved — no longer modified.
+  await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
+  await expect(star(editor, "title")).toBeHidden();
+});
+
+test("one request carries the deletes, then the inserts", async ({ page }) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await selectableRecords(editor).first().click(); // Beyoncé
+  await page.keyboard.press("Delete");
+  await editor.getByRole("button", { name: "Add credit" }).click();
+  await expect(editor.getByRole("textbox")).toBeFocused();
+  await page.keyboard.type("3");
+  await page.keyboard.press("Escape");
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeDisabled();
+  // The record on its way out goes first — the API never cascades, and a new
+  // record could otherwise collide with the one it replaces.
+  expect(calls[0]).toEqual([
+    {
+      operation: "delete",
+      id: "op1",
+      table: "credit",
+      where: { track: "track-3", artist: "artist-1" },
+    },
+    {
+      operation: "insert",
+      id: "op2",
+      table: "credit",
+      // `track` is the field the list is filtered on: hidden in the form,
+      // supplied by the save.
+      values: { ord: "3", track: "track-3" },
+    },
+  ]);
+});
+
+test("clearing a field the user never opened still deletes its records", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2); // track-3: two credits, never expanded
+  const editor = editorPanel(page);
+
+  await rightClick(formItem(editor, "r:#credit"));
+  await page.getByRole("menuitem", { name: "Delete all records" }).click();
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeDisabled();
+
+  // The form fetched the keys of the records it was told to delete, and the
+  // save waited for them.
+  expect(calls[0]).toEqual([
+    {
+      operation: "delete",
+      id: "op1",
+      table: "credit",
+      where: { track: "track-3", artist: "artist-1" },
+    },
+    {
+      operation: "delete",
+      id: "op2",
+      table: "credit",
+      where: { track: "track-3", artist: "artist-2" },
+    },
+  ]);
+});
+
+test("a failed save says why, and keeps the changes", async ({ page }) => {
+  await openGrid(page);
+  await mockDml(page, 'Duplicate key "title" violates unique constraint.');
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  await saveButton(editor).click();
+
+  await expect(editor.getByRole("alert")).toContainText(
+    "violates unique constraint",
+  );
+  // Nothing was written, so nothing is cleared: the edit — and the way to try
+  // again — are both still there.
+  await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
+  await expect(star(editor, "title")).toBeVisible();
+  await expect(saveButton(editor)).toBeEnabled();
+});
+
 // Screenshots: the menu over the rows, and the editor sidebar open beside them.
 for (const colorScheme of ["light", "dark"] as const) {
   test(`row context menu - ${colorScheme}`, async ({ page }) => {
@@ -1078,6 +1249,32 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(editor.getByRole("textbox")).toBeFocused();
     await expect(editor).toHaveScreenshot(
       `record-editor-modified-${colorScheme}.png`,
+    );
+  });
+
+  // A save the database refused, scoped to the panel: what it said, above a form
+  // still holding the change it couldn't write.
+  test(`record editor save error - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(SEEDED);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await mockDml(
+      page,
+      'Duplicate key "title: Sorry" violates unique constraint.',
+    );
+    await rightClickRow(page);
+    await page.getByRole("menuitem", { name: "Edit track" }).click();
+    const editor = editorPanel(page);
+    await editor.getByText("Pray You Catch Me", { exact: true }).click();
+    await editor.getByRole("textbox").fill("Sorry");
+    await page.keyboard.press("Escape");
+    await saveButton(editor).click();
+    await expect(editor.getByRole("alert")).toBeVisible();
+    await expect(editor).toHaveScreenshot(
+      `record-editor-save-error-${colorScheme}.png`,
     );
   });
 

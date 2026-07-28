@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, For, Show, type Component } from "solid-js";
 import {
   RECORD_SIDEBAR_MIN_WIDTH,
   useAppState,
@@ -6,9 +6,8 @@ import {
   type RecordRef,
 } from "../state/store";
 import { Icons } from "../icons";
-import IconButton from "./ui/IconButton";
 import RecordForm from "./record/RecordForm";
-import { recordIdentity } from "./record/formStash";
+import { formFor, recordIdentity } from "./record/formStash";
 
 // The record editor: a sidebar within the query page, opened from a result row's
 // "Edit {table}" context-menu entry or the "Results: Edit selected rows"
@@ -33,6 +32,32 @@ const RESIZE_STEP = 16;
  * the record's stashed form, so "the same record" means one thing throughout. */
 function identity(record: RecordRef | undefined): string {
   return record ? recordIdentity(record.table, record.key) : "";
+}
+
+/** One labelled button of the panel's toolbar: the icon and the word, since
+ * these two are consequential enough to be worth naming (unlike the icon-only
+ * controls elsewhere). */
+function ToolbarButton(props: {
+  icon: Component<{ class?: string }>;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm"
+      classList={{
+        "text-ink hover:bg-hover": !props.disabled,
+        "text-ink-weak/40": props.disabled,
+      }}
+      onClick={() => props.onClick()}
+    >
+      {props.icon({ class: "size-4" })}
+      {props.label}
+    </button>
+  );
 }
 
 /** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
@@ -117,6 +142,15 @@ export default function RecordEditorPanel(props: {
       ? `Edit ${records().length} ${props.target.table} records`
       : `Edit ${props.target.table}`;
 
+  /** The form the toolbar acts on. It belongs to the tab rather than to this
+   * component (see `formStash.ts`), so the panel finds it by the same identity
+   * the form below registers itself under — reactively, since the form mounts
+   * within the same render this reads it in. */
+  const model = () => {
+    const record = formRecord();
+    return record ? formFor(props.tabId, identity(record)) : undefined;
+  };
+
   return (
     <aside
       class="bg-panel border-edge relative flex shrink-0 flex-col border-l shadow-[-8px_0_16px_-4px_rgba(0,0,0,0.25)]"
@@ -135,19 +169,45 @@ export default function RecordEditorPanel(props: {
         onKeyDown={onDividerKeyDown}
       />
 
-      <header class="border-edge flex items-center gap-2 border-b px-2 py-1.5">
+      {/* The record editor toolbar: what the form is editing, and the two ways
+          out of it. Cancel abandons the sidebar (the changes stay with the tab);
+          Save writes them, and is only live while there are any. */}
+      <header class="border-edge flex items-center gap-1 border-b px-2 py-1.5">
         <span class="text-ink-weak flex size-4 shrink-0 items-center justify-center">
           {Icons.Edit({ class: "size-4" })}
         </span>
         <h2 class="text-ink min-w-0 flex-1 truncate text-sm font-semibold">
           {heading()}
         </h2>
-        <IconButton
-          icon={Icons.Close}
-          label="Close record editor"
+        <ToolbarButton
+          icon={Icons.Revert}
+          label="Cancel"
           onClick={() => store.closeRecordEditor(props.tabId)}
         />
+        <Show when={model()}>
+          {(form) => (
+            <ToolbarButton
+              icon={Icons.Save}
+              label={form().saving() ? "Saving…" : "Save"}
+              disabled={form().saving() || !form().isModified()}
+              onClick={() => void form().save()}
+            />
+          )}
+        </Show>
       </header>
+
+      {/* A save that failed says why, and keeps saying so until the next one.
+          The changes it couldn't write are still in the form below. */}
+      <Show when={model()?.saveError()}>
+        {(message) => (
+          <p
+            role="alert"
+            class="text-danger border-edge bg-danger/10 border-b px-2 py-1.5 text-xs"
+          >
+            {message()}
+          </p>
+        )}
+      </Show>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
         {/* Bulk: the records the selection covers, listed by key, with no form —

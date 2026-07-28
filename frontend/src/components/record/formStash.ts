@@ -49,6 +49,17 @@ export function stashedForm(
   return model;
 }
 
+/** One record's form, if it has one — reactive, so a caller that asks before the
+ * form is mounted (the panel's toolbar renders alongside it) gets it as soon as
+ * it exists. */
+export function formFor(
+  tabId: string,
+  identity: string,
+): RecordFormModel | undefined {
+  return entries().find((e) => e.tabId === tabId && e.identity === identity)
+    ?.model;
+}
+
 /** The records of `tabId` holding unsaved changes, by identity. Reactive: it
  * reads each stashed form's modification state, so a keystroke in the sidebar
  * moves the marker on the row behind it. */

@@ -10,8 +10,8 @@
 // every level), nodes live in three **flat, id-keyed maps**: `records` (one
 // record's fields and values), `lists` (one multi-record field's children), and
 // `embeds` (the preview cells behind one embedded record). Ids encode the path —
-// see `scalarChildId` / `listId` / `childId` — which makes every update a single-
-// key write and makes a node's identity stable across collapse/expand.
+// see `formIds.ts` — which makes every update a single-key write and makes a
+// node's identity stable across collapse/expand.
 //
 // Loading is lazy and idempotent: expanding an item fetches its data the first
 // time only, and collapsing keeps it. Each fetch is guarded by a token so a
@@ -23,10 +23,19 @@
 // (`registerItem` — each rendered row hands the model a closure over its own
 // props). What the model keeps is the id of the focused item, which is what
 // decides where a keyboard command lands.
+//
+// Saving reverses the whole arrangement: `formSave.ts` reads this tree and
+// writes the DML request that puts it in the database, and what comes back
+// becomes the new baseline (`applySave`).
 
 import { untrack } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { primaryKey, type SchemaTable } from "../../query/schema";
+import { dml, type DmlResult } from "api-client";
+import {
+  identifyingColumns,
+  primaryKey,
+  type SchemaTable,
+} from "../../query/schema";
 import {
   buildFormFields,
   recordDataQuery,
@@ -43,6 +52,19 @@ import {
 } from "../../query/embeddedRecord";
 import { runRecordQuery } from "../../query/recordData";
 import { focusAdjacentItem, focusItem, itemElement } from "./formNav";
+import {
+  childId,
+  deletedChildId,
+  fieldItemId,
+  listId,
+  newChildId,
+  ROOT_ID,
+  scalarChildId,
+} from "./formIds";
+import { planSave, type SavePlan } from "./formSave";
+
+// The ids are the model's own vocabulary, so callers reach them through it.
+export { fieldItemId, listId, ROOT_ID, scalarChildId } from "./formIds";
 
 /** Where a node is in its load cycle. `unloaded` means "known to exist, nothing
  * fetched yet" — a child record listed under a multi-record field before it's
@@ -66,7 +88,7 @@ export interface RecordNode {
   /** Column → the value the database last gave us, which is what makes an edit
    * detectable: a column whose `values` entry has drifted from its `original` is
    * modified, and that's what the red star is drawn from. Written only by a load
-   * (and by a save, once that exists), never by an edit. */
+   * or a save — never by an edit. */
   original: Record<string, string | null>;
   /** Referencing field key (`#credit`) → count of related records. */
   counts: Record<string, number>;
@@ -83,6 +105,11 @@ export interface ListNode {
    * placeholders to render while the children themselves are in flight. */
   expected: number;
   childIds: string[];
+  /** The records the user has taken out of the list, kept — with their keys —
+   * because they're still in the database until the form is saved, and the save
+   * has to name them to delete them. Records the form itself created never get
+   * here: they had nothing to delete. */
+  removed: string[];
   /** Whether the list's *membership* has been edited (a record added or
    * removed). The records themselves report their own edits; this is the change
    * that belongs to no single one of them. */
@@ -145,6 +172,11 @@ interface FormState {
   menu: FormMenu | null;
   /** The field whose modal record picker is open, or null. */
   picker: PickerTarget | null;
+  /** Whether a save is in flight. */
+  saving: boolean;
+  /** Why the last save failed, or null. The form keeps the changes it couldn't
+   * write, so the user can fix what the message says and try again. */
+  saveError: string | null;
 }
 
 /** What a rendered row can do to itself, handed to the model when it mounts so
@@ -159,31 +191,6 @@ export interface ItemHandle {
   /** The "Selection: Delete" action for this item — ephemeral, like every other
    * form modification. */
   remove: () => void;
-}
-
-/** The root record's node id — the record the sidebar was opened on. */
-export const ROOT_ID = "r";
-
-/** The node id of the record behind a scalar linked record field. Also the id of
- * that field's embedded record. */
-export function scalarChildId(recordId: string, fieldKey: string): string {
-  return `${recordId}>${fieldKey}`;
-}
-
-/** The node id of a multi-record field's child list. */
-export function listId(recordId: string, fieldKey: string): string {
-  return `${recordId}#${fieldKey}`;
-}
-
-/** The node id of the nth record within a child list. */
-function childId(list: string, index: number): string {
-  return `${list}[${index}]`;
-}
-
-/** The id an expandable/editable *field* is tracked under. Records have their
- * own ids; a field is one of its record's, qualified by field key. */
-export function fieldItemId(recordId: string, fieldKey: string): string {
-  return `${recordId}:${fieldKey}`;
 }
 
 function errorMessage(err: unknown): string {
@@ -218,6 +225,10 @@ export interface RecordFormModel {
   menu: () => FormMenu | null;
   /** The field whose modal record picker is open, or null. */
   picker: () => PickerTarget | null;
+  /** Whether a save is in flight. */
+  saving: () => boolean;
+  /** Why the last save failed, or null. */
+  saveError: () => string | null;
 
   /** The preview columns (and their ordering) generated for one table — what the
    * record picker's display and sort builders open pre-filled with. */
@@ -252,9 +263,15 @@ export interface RecordFormModel {
    * edit mode — called on every keystroke, so the form (and its modification
    * stars) track what the user is typing as they type it. */
   editValue: (recordId: string, column: string, value: string) => void;
-  /** Leave edit mode, keeping `value` as the field's current (in-memory) value.
-   * Persisting it is the "Saving the form" work, still to come. */
+  /** Leave edit mode, keeping `value` as the field's current (in-memory) value —
+   * which stays in memory until {@link RecordFormModel.save}. */
   commitEdit: (recordId: string, column: string, value: string) => void;
+
+  /** Write everything the user has changed to the database, in one DML request:
+   * every edited value, every record created, every record removed. On success
+   * the form stays open on what it just saved; on failure it keeps the changes
+   * and reports why (see {@link RecordFormModel.saveError}). */
+  save: () => Promise<void>;
 
   /** Register a rendered row's capabilities (call `unregisterItem` on cleanup). */
   registerItem: (itemId: string, handle: ItemHandle) => void;
@@ -349,10 +366,15 @@ export function createRecordForm(opts: {
     selection: [],
     menu: null,
     picker: null,
+    saving: false,
+    saveError: null,
   });
 
   // Per-node load tokens: only the newest load for a node may write its result.
   const tokens = new Map<string, number>();
+  /** Fetches of records that a *save* has to delete (see
+   * `loadRemovedChildren`), which is why a save waits for them. */
+  const pendingRemovals = new Set<Promise<void>>();
   let tokenSeq = 0;
   /** Distinguishes the records the form creates, whose ids can't come from a
    * position in a loaded list. */
@@ -477,7 +499,12 @@ export function createRecordForm(opts: {
   /** Loads the preview behind one embedded record: the columns that identify it
    * at a glance, for the single record `key` identifies. Used for a scalar
    * linked record field, whose id arrives with its parent's data (a multi-record
-   * field's children come with their previews already attached).
+   * field's children come with their previews already attached), and for a
+   * record that has just been saved into either.
+   *
+   * `contextColumn` is the column a multi-record field filters its children on,
+   * which the preview leaves out — passing it keeps a freshly saved record
+   * looking like the siblings it sits among.
    *
    * With no preview columns to be had, the key stands in for them rather than
    * leaving the widget blank. */
@@ -485,9 +512,10 @@ export function createRecordForm(opts: {
     id: string,
     table: string,
     key: readonly KeyPart[],
+    contextColumn?: string,
   ) => {
     const keyCells = key.map((p) => p.value);
-    const spec = specFor(table);
+    const spec = specFor(table, contextColumn);
     if (spec.display.length === 0) {
       setState("embeds", id, { status: "loaded", cells: keyCells });
       return;
@@ -659,10 +687,56 @@ export function createRecordForm(opts: {
       error: null,
       expected: node?.counts[field.key] ?? 0,
       childIds: [],
+      removed: [],
       dirty: false,
     });
     if (parentValue !== "") void loadChildren(id, field, parentValue);
   };
+
+  /** Fetches the records a multi-record field holds *only so they can be
+   * deleted*: clearing a field the user never opened still has to name every
+   * record it stood for when the form is saved. Nothing here is rendered — the
+   * list is already empty on screen — so only the keys matter.
+   *
+   * Tracked in {@link pendingRemovals} because a save made before this lands
+   * would otherwise write a deletion it can't name. */
+  const loadRemovedChildren = async (
+    id: string,
+    field: MultiRecordField,
+    parentValue: string,
+  ) => {
+    try {
+      const rows = await runRecordQuery(
+        childRecordsQuery(
+          field,
+          parentValue,
+          specFor(field.table, field.column),
+        ),
+        opts.schemaJson,
+      );
+      const ids = rows.map((row, index) => {
+        const key = field.keyColumns.map((column, i) => ({
+          column,
+          value: row[i] ?? "",
+        }));
+        const child = deletedChildId(id, index);
+        addRecord(child, field.table, key, [field.column], "unloaded");
+        return child;
+      });
+      setState("lists", id, "removed", (prev) => [...prev, ...ids]);
+    } catch (err) {
+      setState("lists", id, { status: "error", error: errorMessage(err) });
+    }
+  };
+
+  /** The records of `childRecordIds` that the database actually holds — the ones
+   * a save has to delete. A record the form created and the user then dropped
+   * never reached it. */
+  const deletable = (childRecordIds: readonly string[]): string[] =>
+    childRecordIds.filter((child) => {
+      const node = state.records[child];
+      return node !== undefined && !node.isNew && node.key.length > 0;
+    });
 
   /** Drops records from a multi-record field — in the form only, until it's
    * saved. The field's count comes down with them, so the badge keeps saying
@@ -682,6 +756,7 @@ export function createRecordForm(opts: {
     setState("lists", id, {
       expected: remaining.length,
       childIds: remaining,
+      removed: [...list.removed, ...deletable(childRecordIds)],
       dirty: true,
     });
     setState("records", recordId, "counts", field.key, remaining.length);
@@ -719,6 +794,84 @@ export function createRecordForm(opts: {
     if (!node) return false;
     if (node.isNew) return true;
     return node.fields.some((field) => fieldModified(recordId, field));
+  };
+
+  // ── Saving ─────────────────────────────────────────────────────────────────
+  //
+  // The plan (what to send) is worked out in `formSave.ts`; what's here is what
+  // to do with the answer. A successful save makes the database and the form
+  // agree, so the form takes what came back as its new baseline: nothing is
+  // modified any more, records that were being created are records, and records
+  // that were removed are gone.
+
+  /** A returned column as the form holds values — text, or NULL. */
+  const cellText = (value: unknown): string | null => {
+    if (value == null) return null;
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  };
+
+  /** The key of a record the database has just issued one for. */
+  const keyOf = (node: RecordNode): KeyPart[] => {
+    const table = opts.tables.find((t) => t.name === node.table);
+    const columns = table ? identifyingColumns(table) : [];
+    return columns.map((column) => ({
+      column,
+      value: node.values[column] ?? "",
+    }));
+  };
+
+  /** Folds one saved record's returned row back into its node. What the user
+   * typed stays as they typed it: the row is the same value in the database's
+   * own spelling (a timestamp as a count of microseconds, say), and swapping
+   * that in would read as the save having changed what they wrote. Everything
+   * the form *didn't* have — the id of a record just created, a column the
+   * database defaulted — is taken from the row. */
+  const applyRow = (
+    recordId: string,
+    row: Record<string, unknown> | undefined,
+  ) =>
+    setState(
+      "records",
+      recordId,
+      produce((n) => {
+        for (const [column, value] of Object.entries(row ?? {})) {
+          const current = n.values[column];
+          if (current == null || current === "")
+            n.values[column] = cellText(value);
+        }
+        // Saved is the new baseline: nothing in this record is modified now.
+        for (const column of Object.keys(n.values)) {
+          n.original[column] = n.values[column];
+        }
+        if (n.isNew) {
+          n.isNew = false;
+          n.key = keyOf(n);
+        }
+      }),
+    );
+
+  const applySave = (plan: SavePlan, result: DmlResult) => {
+    for (const [opId, recordId] of plan.saved) applyRow(recordId, result[opId]);
+    // A record that was being created has never had a preview — it rendered as
+    // "New". Now that it has a key, it can have one.
+    for (const recordId of plan.created) {
+      const node = state.records[recordId];
+      if (node && node.key.length > 0) {
+        void loadEmbed(recordId, node.table, node.key, node.hidden[0]);
+      }
+    }
+    // A deleted record leaves nothing behind — not its node, not the preview
+    // that stood for it (which a child record keeps under the same id).
+    for (const recordId of plan.deleted) {
+      setState("records", recordId, dropped());
+      setState("embeds", recordId, dropped());
+    }
+    // Every list is in step with the database now: nothing pending to delete,
+    // no membership change left unwritten.
+    for (const id of Object.keys(state.lists)) {
+      setState("lists", id, { removed: [], dirty: false });
+    }
   };
 
   // ── Focus and selection ────────────────────────────────────────────────────
@@ -800,6 +953,8 @@ export function createRecordForm(opts: {
     isSelected: (itemId) => state.selection.includes(itemId),
     menu: () => state.menu,
     picker: () => state.picker,
+    saving: () => state.saving,
+    saveError: () => state.saveError,
 
     previewSpec: specFor,
 
@@ -853,6 +1008,30 @@ export function createRecordForm(opts: {
     commitEdit: (recordId, column, value) => {
       setState("records", recordId, "values", column, value);
       setState("editing", null);
+    },
+
+    save: async () => {
+      if (untrack(() => state.saving)) return;
+      setState({ saving: true, saveError: null });
+      try {
+        // A field cleared while collapsed is still fetching the records it has
+        // to delete; this request is what they're for, so it waits for them.
+        if (pendingRemovals.size > 0) await Promise.all([...pendingRemovals]);
+        const plan = untrack(() =>
+          planSave({
+            record: (id) => state.records[id],
+            list: (id) => state.lists[id],
+          }),
+        );
+        if (plan.operations.length > 0) {
+          applySave(plan, await dml({ operations: plan.operations }));
+        }
+        setState({ saving: false, saveError: null });
+      } catch (err) {
+        // The form keeps everything it failed to write, so the user can act on
+        // what the message says and save again.
+        setState({ saving: false, saveError: errorMessage(err) });
+      }
     },
 
     registerItem: (itemId, handle) => items.set(itemId, handle),
@@ -917,7 +1096,8 @@ export function createRecordForm(opts: {
       const itemId = fieldItemId(recordId, field.key);
       if (field.kind === "multiRecord") {
         const id = listId(recordId, field.key);
-        const children = state.lists[id]?.childIds ?? [];
+        const list = state.lists[id];
+        const children = list?.childIds ?? [];
         const had =
           children.length > 0 ||
           (state.records[recordId]?.counts[field.key] ?? 0) > 0;
@@ -934,8 +1114,18 @@ export function createRecordForm(opts: {
             error: null,
             expected: 0,
             childIds: [],
+            removed: [...(list?.removed ?? []), ...deletable(children)],
             dirty: true,
           });
+          // Clearing a field the user never opened deletes records the form has
+          // never seen, so it fetches their keys now — the one thing a save
+          // can't work out for itself later.
+          const parentValue = state.records[recordId]?.values["id"] ?? "";
+          if (list?.status !== "loaded" && parentValue !== "") {
+            const pending = loadRemovedChildren(id, field, parentValue);
+            pendingRemovals.add(pending);
+            void pending.finally(() => pendingRemovals.delete(pending));
+          }
         }
       } else {
         setState("records", recordId, "values", field.column, null);
@@ -959,7 +1149,7 @@ export function createRecordForm(opts: {
       const id = listId(recordId, field.key);
       const list = state.lists[id];
       if (!list) return;
-      const child = `${id}[new:${++newSeq}]`;
+      const child = newChildId(id, ++newSeq);
       addNewRecord(child, field.table, [field.column]);
       setState("lists", id, {
         childIds: [child, ...list.childIds],
