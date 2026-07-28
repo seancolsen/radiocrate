@@ -41,11 +41,6 @@ import type { ScalarLinkField } from "../../query/recordForm";
  * typed at speed is one query rather than five, short enough to feel live. */
 const DEBOUNCE_MS = 180;
 
-/** The most results rendered at once. Querydown's section API has no LIMIT, so
- * a search matching a whole table comes back whole; the cap is on what's built
- * into the DOM, and the footer says when it bit. */
-const RENDER_LIMIT = 200;
-
 /** The record picker for whichever field has one open, or nothing. Rendered once
  * per form, beside its context menu. */
 export default function RecordPicker(props: {
@@ -154,9 +149,6 @@ function PickerModal(props: {
     onCleanup(() => clearTimeout(timer));
   });
 
-  /** What's actually built into the list. */
-  const shown = () => results().slice(0, RENDER_LIMIT);
-
   /** One result's preview cells: everything after the key column, or the key
    * itself when the display section yields nothing to show. */
   const cells = (row: readonly (string | null)[]) => {
@@ -205,7 +197,7 @@ function PickerModal(props: {
   /** The keys the search box gives up to the list below it, without giving up
    * the caret: Up/Down move the highlight, Enter takes it. */
   const onKeyDown = (e: KeyboardEvent) => {
-    const count = shown().length;
+    const count = results().length;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       e.stopPropagation();
@@ -215,7 +207,7 @@ function PickerModal(props: {
     } else if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
-      const row = shown()[index()];
+      const row = results()[index()];
       if (row) choose(row);
     }
   };
@@ -301,9 +293,9 @@ function PickerModal(props: {
         <div
           ref={(el) => (list = el)}
           data-testid="picker-results"
-          class="flex max-h-[300px] min-h-[80px] flex-col gap-1 overflow-y-auto"
+          class="flex max-h-[min(300px,40vh)] min-h-[80px] flex-col gap-1 overflow-y-auto"
         >
-          <For each={shown()}>
+          <For each={results()}>
             {(row, i) => (
               <div class="flex" data-index={i()}>
                 <EmbeddedRecord
@@ -314,7 +306,7 @@ function PickerModal(props: {
               </div>
             )}
           </For>
-          <Show when={!loading() && error() === null && shown().length === 0}>
+          <Show when={!loading() && error() === null && results().length === 0}>
             <p class="text-ink-weak px-1 py-2 text-xs italic">
               No matching records
             </p>
@@ -329,8 +321,9 @@ function PickerModal(props: {
 
       <div class="mt-3 flex items-center gap-2">
         <span class="text-ink-weak min-w-0 flex-1 truncate text-xs">
-          <Show when={results().length > RENDER_LIMIT}>
-            Showing the first {RENDER_LIMIT} of {results().length}
+          <Show when={results().length > 0}>
+            {results().length.toLocaleString("en-US")}{" "}
+            {results().length === 1 ? "result" : "results"}
           </Show>
         </span>
         <button

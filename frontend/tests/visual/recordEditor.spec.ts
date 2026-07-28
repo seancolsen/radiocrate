@@ -194,7 +194,7 @@ test("the menu blocks the rows beneath it", async ({ page }) => {
   await expect.poll(strip).not.toBe(blocked);
 });
 
-test("Escape closes the menu; Cancel closes the editor", async ({ page }) => {
+test("Escape closes the menu; the X closes the editor", async ({ page }) => {
   await openGrid(page);
   await rightClickRow(page);
   await page.keyboard.press("Escape");
@@ -204,7 +204,7 @@ test("Escape closes the menu; Cancel closes the editor", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Edit track" }).click();
   const editor = editorPanel(page);
   await expect(editor).toBeVisible();
-  await editor.getByRole("button", { name: "Cancel" }).click();
+  await editor.getByRole("button", { name: "Close record editor" }).click();
   await expect(editor).toBeHidden();
 });
 
@@ -494,6 +494,64 @@ test("the arrow keys move between form items and open them", async ({
   await formItem(editor, "r:#credit").click();
   await page.keyboard.press("ArrowLeft");
   await expect(selectableRecords(editor)).toHaveCount(0);
+});
+
+test("Enter activates the focused label: edit, pick, or add, by field kind", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4); // track-5 has no album
+  const editor = editorPanel(page);
+
+  // A primitive field: its input, focused.
+  await formItem(editor, "r:title").click();
+  await page.keyboard.press("Enter");
+  await expect(editor.getByRole("textbox")).toBeFocused();
+  await page.keyboard.press("Escape");
+
+  // A scalar linked record field: the picker.
+  await formItem(editor, "r:album").click();
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // A multi-record field: a fresh child record, open and ready to type into —
+  // unlike double-click, which only expands the field.
+  await formItem(editor, "r:#credit").click();
+  await page.keyboard.press("Enter");
+  await expect(selectableRecords(editor).first()).toHaveText("New");
+  await expect(editor.getByRole("textbox")).toBeFocused();
+});
+
+test("the X on a scalar linked record field's embedded record clears it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page); // track-1 is already filed under album-1
+  const editor = editorPanel(page);
+  await expect(embeddedRecords(editor)).toHaveCount(2);
+
+  await editor.getByRole("button", { name: "Clear album" }).click();
+  await expect(embeddedRecords(editor)).toHaveCount(1);
+  await expect(
+    editor.getByRole("button", { name: "Edit album" }),
+  ).toBeVisible();
+  await expect(star(editor, "album")).toBeVisible();
+});
+
+test("the X on an embedded record within a multi-record field deletes it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(2);
+
+  await editor.getByRole("button", { name: "Delete Beyoncé" }).click();
+  await expect(credits).toHaveCount(1);
+  await expect(credits.first()).toHaveText("Jack White");
 });
 
 test("Delete clears the focused field, and drops a selected record", async ({
@@ -1079,14 +1137,15 @@ test("Save writes the form's changes, and the form stops being modified", async 
   const editor = editorPanel(page);
 
   // Nothing to save until something has changed.
-  await expect(saveButton(editor)).toBeDisabled();
+  await expect(saveButton(editor)).toBeHidden();
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
   await editor.getByRole("textbox").fill("Renamed");
   await page.keyboard.press("Escape");
   await expect(saveButton(editor)).toBeEnabled();
 
   await saveButton(editor).click();
-  await expect(saveButton(editor)).toBeDisabled();
+  // Saved: nothing modified any more, so the button goes with it.
+  await expect(saveButton(editor)).toBeHidden();
   // One request, carrying only what changed, keyed on the record being edited.
   expect(calls).toHaveLength(1);
   expect(calls[0]).toEqual([
@@ -1101,6 +1160,31 @@ test("Save writes the form's changes, and the form stops being modified", async 
   // The form keeps the record open on what it just saved — no longer modified.
   await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
   await expect(star(editor, "title")).toBeHidden();
+});
+
+test("Reset discards unsaved changes and reloads the record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  const resetButton = () => editor.getByRole("button", { name: "Reset" });
+
+  // Live only alongside Save — nothing to reset until something has changed.
+  await expect(resetButton()).toBeHidden();
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  await expect(resetButton()).toBeVisible();
+
+  await resetButton().click();
+  await expect(
+    editor.getByText("Pray You Catch Me", { exact: true }),
+  ).toBeVisible();
+  await expect(editor.getByText("Renamed", { exact: true })).toBeHidden();
+  await expect(star(editor, "title")).toBeHidden();
+  await expect(resetButton()).toBeHidden();
+  await expect(saveButton(editor)).toBeHidden();
 });
 
 test("one request carries the deletes, then the inserts", async ({ page }) => {
@@ -1118,7 +1202,7 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   await saveButton(editor).click();
-  await expect(saveButton(editor)).toBeDisabled();
+  await expect(saveButton(editor)).toBeHidden();
   // The record on its way out goes first — the API never cascades, and a new
   // record could otherwise collide with the one it replaces.
   expect(calls[0]).toEqual([
@@ -1150,7 +1234,7 @@ test("clearing a field the user never opened still deletes its records", async (
   await rightClick(formItem(editor, "r:#credit"));
   await page.getByRole("menuitem", { name: "Delete all records" }).click();
   await saveButton(editor).click();
-  await expect(saveButton(editor)).toBeDisabled();
+  await expect(saveButton(editor)).toBeHidden();
 
   // The form fetched the keys of the records it was told to delete, and the
   // save waited for them.
@@ -1188,6 +1272,26 @@ test("a failed save says why, and keeps the changes", async ({ page }) => {
   // again — are both still there.
   await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
   await expect(star(editor, "title")).toBeVisible();
+  await expect(saveButton(editor)).toBeEnabled();
+});
+
+test("the X on a failed save's error dismisses it, keeping the changes", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await mockDml(page, 'Duplicate key "title" violates unique constraint.');
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  await saveButton(editor).click();
+  await expect(editor.getByRole("alert")).toBeVisible();
+
+  await editor.getByRole("button", { name: "Dismiss error" }).click();
+  await expect(editor.getByRole("alert")).toBeHidden();
+  await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
   await expect(saveButton(editor)).toBeEnabled();
 });
 

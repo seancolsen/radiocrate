@@ -8,6 +8,7 @@ import {
   untrack,
 } from "solid-js";
 import { Icons } from "../../icons";
+import IconButton from "../ui/IconButton";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
 /** Where focus goes when an activated field leaves edit mode: back to this
@@ -124,6 +125,10 @@ export default function FieldValue(props: {
   const oneLine = () => (props.value ?? "").replace(/\s*\r?\n\s*/g, " ");
   const multiline = () =>
     props.field.kind === "primitive" && props.field.valueType === "text";
+  /** A UUID reads better small, light and monospaced — it's an identifier to
+   * skim past, not prose. */
+  const isUuid = () =>
+    props.field.kind === "primitive" && props.field.valueType === "uuid";
 
   /** Watches the collapsed line for truncation, in both directions: the text can
    * change under a fixed width (a load, an edit) and the width can change under
@@ -153,21 +158,22 @@ export default function FieldValue(props: {
         />
       </Match>
       <Match when={empty() && !readOnly()}>
-        <button
-          type="button"
-          tabindex={-1}
-          aria-label={`Edit ${props.field.label}`}
-          class="text-ink-weak hover:text-ink flex size-5 shrink-0 items-center justify-center"
-          onMouseDown={(e) => e.preventDefault()}
+        <IconButton
+          icon={Icons.Edit}
+          label={`Edit ${props.field.label}`}
+          size="sm"
+          tabIndex={-1}
           onClick={() => props.onBeginEdit()}
-        >
-          <Icons.Edit class="size-4" />
-        </button>
+        />
       </Match>
       <Match when={empty() && readOnly()}>{null}</Match>
       <Match when={props.expanded}>
         <span
-          class={`text-ink block w-full text-sm/5 break-words whitespace-pre-wrap ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          class={`block w-full break-words whitespace-pre-wrap ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          classList={{
+            "text-ink text-sm/5": !isUuid(),
+            "text-ink-weak font-mono text-xs": isUuid(),
+          }}
           onClick={() => !readOnly() && props.onBeginEdit()}
           onContextMenu={(e) => props.onContextMenu(e)}
         >
@@ -177,7 +183,11 @@ export default function FieldValue(props: {
       <Match when={true}>
         <span
           ref={watchOverflow}
-          class={`text-ink block min-w-0 flex-1 truncate text-sm/5 ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          class={`block min-w-0 flex-1 truncate ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          classList={{
+            "text-ink text-sm/5": !isUuid(),
+            "text-ink-weak font-mono text-xs": isUuid(),
+          }}
           onClick={() => !readOnly() && props.onBeginEdit()}
           onContextMenu={(e) => props.onContextMenu(e)}
         >

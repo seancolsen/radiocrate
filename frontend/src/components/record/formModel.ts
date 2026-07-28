@@ -229,6 +229,9 @@ export interface RecordFormModel {
   saving: () => boolean;
   /** Why the last save failed, or null. */
   saveError: () => string | null;
+  /** Dismiss the save-error message, leaving the unsaved changes it was about
+   * in place. */
+  clearSaveError: () => void;
 
   /** The preview columns (and their ordering) generated for one table — what the
    * record picker's display and sort builders open pre-filled with. */
@@ -272,6 +275,12 @@ export interface RecordFormModel {
    * the form stays open on what it just saved; on failure it keeps the changes
    * and reports why (see {@link RecordFormModel.saveError}). */
   save: () => Promise<void>;
+
+  /** Discard every unsaved change — every edited value, every record created
+   * or removed — and reload the record as it stands in the database. The
+   * toolbar's "Reset" button, live only while
+   * {@link RecordFormModel.isModified} is true. */
+  reset: () => void;
 
   /** Register a rendered row's capabilities (call `unregisterItem` on cleanup). */
   registerItem: (itemId: string, handle: ItemHandle) => void;
@@ -961,6 +970,7 @@ export function createRecordForm(opts: {
     picker: () => state.picker,
     saving: () => state.saving,
     saveError: () => state.saveError,
+    clearSaveError: () => setState("saveError", null),
 
     previewSpec: specFor,
 
@@ -1045,6 +1055,26 @@ export function createRecordForm(opts: {
         // what the message says and save again.
         setState({ saving: false, saveError: errorMessage(err) });
       }
+    },
+
+    reset: () => {
+      if (untrack(() => state.saving)) return;
+      anchor = null;
+      setState({
+        records: {},
+        lists: {},
+        embeds: {},
+        expanded: {},
+        editing: null,
+        focused: null,
+        selection: [],
+        menu: null,
+        picker: null,
+        saving: false,
+        saveError: null,
+      });
+      addRecord(ROOT_ID, opts.table, opts.key, [], "unloaded");
+      void loadRecord(ROOT_ID);
     },
 
     registerItem: (itemId, handle) => items.set(itemId, handle),

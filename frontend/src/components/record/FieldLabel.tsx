@@ -34,23 +34,24 @@ function appearance(field: FormField): {
 
 /** A field's label — and the field's handle: it's what the user clicks to select
  * the field, double-clicks to edit or open it, right-clicks for the field's
- * menu, and what the keyboard moves between. It's a focusable DOM element (a
- * `tabindex`ed `span`), and focus shows as a blue border — always present but
+ * menu, Enter activates (see `onKeyDown`), and what the arrow keys move
+ * between. It's always in the tab order (a `tabindex="0"` `span`, like an
+ * `EmbeddedRecord`'s), and focus shows as a blue border — always present but
  * transparent until then, so nothing shifts when it appears — and so does an
- * open context menu, which is the label saying what the menu is about to act on.
- *
- * `tabbable` gives the form a single tab stop: the focused item, or the first
- * field while focus is elsewhere. Everything else is reached with the arrow
- * keys, not by tabbing through every field of the record. */
+ * open context menu, which is the label saying what the menu is about to act
+ * on. The browser's own focus outline is suppressed (`outline-none`): without
+ * it, a keyboard-driven focus (which also matches `:focus-visible`) stacked a
+ * second ring on top of this one, reading as a thicker border than a
+ * mouse-driven focus got. */
 export default function FieldLabel(props: {
   field: FormField;
   itemId: string;
-  tabbable: boolean;
   /** Whether this label's own context menu is open. */
   menuOpen: boolean;
   onClick: () => void;
   onDblClick: () => void;
   onFocus: () => void;
+  onKeyDown: (e: KeyboardEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
   const look = () => appearance(props.field);
@@ -58,14 +59,15 @@ export default function FieldLabel(props: {
     <span
       data-form-item=""
       data-item-id={props.itemId}
-      tabindex={props.tabbable ? 0 : -1}
-      class={`text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 text-xs ${look().tint}`}
+      tabindex={0}
+      class={`text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 text-xs outline-none select-none ${look().tint}`}
       // An open menu wears the same blue border as focus, without taking focus
       // (which is on the menu): the label is what the menu is about to act on.
       classList={{ "border-accent": props.menuOpen }}
       onClick={() => props.onClick()}
       onDblClick={() => props.onDblClick()}
       onFocus={() => props.onFocus()}
+      onKeyDown={(e) => props.onKeyDown(e)}
       onContextMenu={(e) => props.onContextMenu(e)}
     >
       {look().icon({ class: "size-3.5 shrink-0 opacity-70" })}

@@ -19,7 +19,11 @@ export function Modal(props: {
 
   return (
     <Portal>
-      <div class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      {/* `items-start` + the dialog's own `my-auto` centers it vertically when
+          it fits, exactly like `items-center` would — but once the dialog is
+          taller than the viewport (a short window, a long result list), the
+          overlay scrolls instead of clipping the dialog off-screen. */}
+      <div class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4">
         <div
           class="absolute inset-0 bg-black/40"
           aria-hidden="true"
@@ -28,7 +32,7 @@ export function Modal(props: {
         <div
           role="dialog"
           aria-modal="true"
-          class="bg-panel border-edge relative z-10 max-w-full rounded-lg border p-4 shadow-2xl"
+          class="bg-panel border-edge relative z-10 my-auto max-w-full rounded-lg border p-4 shadow-2xl"
           style={{ width: props.width ?? "320px" }}
         >
           {props.children}

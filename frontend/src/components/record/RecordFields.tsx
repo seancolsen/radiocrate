@@ -16,12 +16,12 @@ import ModifiedStar from "./ModifiedStar";
 import {
   fieldItemId,
   listId,
-  ROOT_ID,
   scalarChildId,
   type RecordFormModel,
   type RecordNode,
 } from "./formModel";
 import { Icons } from "../../icons";
+import IconButton from "../ui/IconButton";
 import type { FormField, MultiRecordField } from "../../query/recordForm";
 
 // The form's tree, rendered. The components here call each other in a cycle — a
@@ -49,14 +49,12 @@ export default function RecordNodeView(props: {
       {(node) => (
         <LoadingRegion loading={node().status === "loading"}>
           <For each={node().fields}>
-            {(field, index) => (
+            {(field) => (
               <FieldRow
                 model={props.model}
                 recordId={props.recordId}
                 node={node()}
                 field={field}
-                // The form's one tab stop, while nothing in it has focus.
-                first={index() === 0 && props.recordId === ROOT_ID}
               />
             )}
           </For>
@@ -75,7 +73,6 @@ function FieldRow(props: {
   recordId: string;
   node: RecordNode;
   field: FormField;
-  first: boolean;
 }) {
   // Whether the collapsed value is actually cut off — reported up from the value
   // itself, since only it knows how much room the text needed.
@@ -201,6 +198,19 @@ function FieldRow(props: {
     else props.model.beginEdit(props.recordId, props.field.key);
   };
 
+  /** Enter on a focused label: the field's "do the thing" key, one per kind —
+   * a primitive field's input, a scalar linked record field's picker, or (unlike
+   * double-click, which only expands) a fresh child of a multi-record field. */
+  const onLabelKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (props.field.kind === "primitive")
+      props.model.beginEdit(props.recordId, props.field.key);
+    else if (props.field.kind === "scalarLink")
+      props.model.openPicker(props.recordId, props.field.key);
+    else props.model.addChild(props.recordId, props.field);
+  };
+
   /** Leaving edit mode: the value is kept in the form, and focus goes wherever
    * the key that ended the edit says. Deferred a tick so the input is gone (and
    * the label is back) before it's asked for focus. */
@@ -229,14 +239,11 @@ function FieldRow(props: {
           <FieldLabel
             field={props.field}
             itemId={itemId}
-            tabbable={
-              props.model.focused() === itemId ||
-              (props.model.focused() === null && props.first)
-            }
             menuOpen={menuOpen()}
             onClick={() => props.model.focusItem(itemId)}
             onDblClick={activate}
             onFocus={() => props.model.noteFocus(itemId)}
+            onKeyDown={onLabelKeyDown}
             onContextMenu={(e) => openMenu(e, "field")}
           />
           {/* A field of a record still being created shows no star of its own:
@@ -267,22 +274,20 @@ function FieldRow(props: {
           }
         >
           {(field) => (
-            <button
-              type="button"
-              tabindex={-1}
-              aria-label={`Add ${field().label}`}
-              class="text-ink-weak hover:text-ink hover:ring-accent flex size-5 shrink-0 items-center justify-center rounded ring-1 ring-transparent ring-inset"
-              onMouseDown={(e) => e.preventDefault()}
+            <IconButton
+              icon={Icons.Add}
+              label={`Add ${field().label}`}
+              size="sm"
+              tabIndex={-1}
               onClick={() => props.model.addChild(props.recordId, field())}
-            >
-              <Icons.Add class="size-4" />
-            </button>
+            />
           )}
         </Show>
 
         {/* A scalar linked record field shows the record it points at, rather
             than the id it holds. It isn't focusable — the field's label is what
-            the user selects — so clicking it lands there. */}
+            the user selects — so clicking it lands there. The X beside it clears
+            the field, dropping the record it points at with it. */}
         <Show when={linked()}>
           <LoadingRegion loading={embedLoading()} class="flex min-w-0 flex-1">
             <EmbeddedRecord
@@ -295,6 +300,13 @@ function FieldRow(props: {
               onContextMenu={(e) => openMenu(e, "scalarEmbed")}
             />
           </LoadingRegion>
+          <IconButton
+            icon={Icons.Close}
+            label={`Clear ${props.field.label}`}
+            size="sm"
+            tabIndex={-1}
+            onClick={() => props.model.clearField(props.recordId, props.field)}
+          />
         </Show>
 
         <Show when={plainValue()}>
@@ -565,6 +577,15 @@ function ChildRow(props: {
           }}
           onDblClick={() => props.model.toggleChild(props.recordId)}
           onFocus={() => props.model.noteFocus(props.recordId)}
+        />
+        <IconButton
+          icon={Icons.Close}
+          label={`Delete ${label()}`}
+          size="sm"
+          tabIndex={-1}
+          onClick={() =>
+            props.model.removeChild(props.parentId, props.field, props.recordId)
+          }
         />
       </div>
       <Show when={expanded()}>

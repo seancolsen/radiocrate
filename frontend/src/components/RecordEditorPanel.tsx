@@ -7,6 +7,7 @@ import {
 } from "../state/store";
 import { Icons } from "../icons";
 import RecordForm from "./record/RecordForm";
+import IconButton from "./ui/IconButton";
 import { formFor, recordIdentity } from "./record/formStash";
 
 // The record editor: a sidebar within the query page, opened from a result row's
@@ -16,10 +17,11 @@ import { formFor, recordIdentity } from "./record/formStash";
 // so opening it narrows the toolbar and the results and leaves the tab bar and
 // the now-playing bar alone.
 //
-// The panel itself is the frame — heading, close button, resize divider — and
-// the dynamic-form work happens below it in `record/`. A multi-row selection is
-// the exception it handles on its own: it lists the records it covers and says
-// bulk modification isn't supported, rather than building a form for them.
+// The panel itself is the frame — heading, close/reset/save buttons, resize
+// divider — and the dynamic-form work happens below it in `record/`. A
+// multi-row selection is the exception it handles on its own: it lists the
+// records it covers and says bulk modification isn't supported, rather than
+// building a form for them.
 
 /** Least width left to the results while dragging the divider, so the pane the
  * editor was opened *from* can't be squeezed away entirely. */
@@ -169,9 +171,10 @@ export default function RecordEditorPanel(props: {
         onKeyDown={onDividerKeyDown}
       />
 
-      {/* The record editor toolbar: what the form is editing, and the two ways
-          out of it. Cancel abandons the sidebar (the changes stay with the tab);
-          Save writes them, and is only live while there are any. */}
+      {/* The record editor toolbar: what the form is editing, and the ways out
+          of it. Reset and Save only appear once there's something to reset or
+          save; the X always closes the sidebar (the changes, if any, stay with
+          the tab). */}
       <header class="border-edge flex items-center gap-1 border-b px-2 py-1.5">
         <span class="text-ink-weak flex size-4 shrink-0 items-center justify-center">
           {Icons.Edit({ class: "size-4" })}
@@ -179,33 +182,52 @@ export default function RecordEditorPanel(props: {
         <h2 class="text-ink min-w-0 flex-1 truncate text-sm font-semibold">
           {heading()}
         </h2>
-        <ToolbarButton
-          icon={Icons.Revert}
-          label="Cancel"
-          onClick={() => store.closeRecordEditor(props.tabId)}
-        />
         <Show when={model()}>
           {(form) => (
-            <ToolbarButton
-              icon={Icons.Save}
-              label={form().saving() ? "Saving…" : "Save"}
-              disabled={form().saving() || !form().isModified()}
-              onClick={() => void form().save()}
-            />
+            <Show when={form().isModified()}>
+              <ToolbarButton
+                icon={Icons.Revert}
+                label="Reset"
+                disabled={form().saving()}
+                onClick={() => form().reset()}
+              />
+              <ToolbarButton
+                icon={Icons.Save}
+                label={form().saving() ? "Saving…" : "Save"}
+                disabled={form().saving()}
+                onClick={() => void form().save()}
+              />
+            </Show>
           )}
         </Show>
+        <IconButton
+          icon={Icons.Close}
+          label="Close record editor"
+          onClick={() => store.closeRecordEditor(props.tabId)}
+        />
       </header>
 
-      {/* A save that failed says why, and keeps saying so until the next one.
-          The changes it couldn't write are still in the form below. */}
-      <Show when={model()?.saveError()}>
-        {(message) => (
-          <p
-            role="alert"
-            class="text-danger border-edge bg-danger/10 border-b px-2 py-1.5 text-xs"
-          >
-            {message()}
-          </p>
+      {/* A save that failed says why, and keeps saying so until the next one (or
+          it's dismissed). The changes it couldn't write are still in the form
+          below. */}
+      <Show when={model()}>
+        {(form) => (
+          <Show when={form().saveError()}>
+            {(message) => (
+              <div
+                role="alert"
+                class="text-danger border-edge bg-danger/10 flex items-center gap-1 border-b py-1.5 pr-1.5 pl-2 text-xs"
+              >
+                <p class="min-w-0 flex-1">{message()}</p>
+                <IconButton
+                  icon={Icons.Close}
+                  label="Dismiss error"
+                  size="sm"
+                  onClick={() => form().clearSaveError()}
+                />
+              </div>
+            )}
+          </Show>
         )}
       </Show>
 
