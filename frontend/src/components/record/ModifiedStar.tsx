@@ -11,7 +11,7 @@ import { Icons } from "../../icons";
 export default function ModifiedStar(props: { label: string }) {
   return (
     <Icons.Unsaved
-      class="text-danger absolute -top-1.5 -left-1.5 size-3 shrink-0"
+      class="text-danger absolute -top-1 -left-1.5 size-3.5 shrink-0"
       aria-label={`${props.label} modified`}
     />
   );
