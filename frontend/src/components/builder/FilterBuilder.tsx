@@ -22,7 +22,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   // `query.focus_filter` opens this section and asks for the caret. The request
   // is consumed once: the effect also fires on mount (when the command is what
   // opened the section), so a later manual open doesn't re-steal focus.
-  let input: HTMLTextAreaElement | undefined;
+  let input: HTMLElement | undefined;
   createEffect(() => {
     const req = store.builderFocus();
     if (req?.tabId !== props.tabId || req.section !== "filter") return;

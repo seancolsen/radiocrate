@@ -33,7 +33,10 @@ import {
   type CommandDef,
   type CommandId,
 } from "../commands/registry";
-import { focusedForm } from "../components/record/formRegistry";
+import {
+  focusedForm,
+  recordPickerOpen,
+} from "../components/record/formRegistry";
 import { useAppState, type AppStore } from "./store";
 
 // The command system: the keymap (persisted user overrides over the built-in
@@ -397,7 +400,8 @@ function createCommandStore(store: AppStore): CommandStore {
     store.state.pendingDelete !== null ||
     store.state.viewSql !== null ||
     store.state.presetSave !== null ||
-    store.state.renaming !== null;
+    store.state.renaming !== null ||
+    recordPickerOpen();
 
   onMount(() => {
     const onKeyDown = (e: KeyboardEvent) => {

@@ -191,11 +191,26 @@ function FieldRow(props: {
   };
 
   /** A field label's double click: a primitive field goes into edit mode, a
-   * field that holds records opens or closes instead. */
+   * scalar linked record field opens the record picker (spec: "Modal record
+   * picker" — whatever the field currently points at, which is why this isn't
+   * the expansion the chevron and the embedded record already offer), and a
+   * multi-record field opens or closes. */
   const activate = () => {
     if (props.field.kind === "primitive")
       props.model.beginEdit(props.recordId, props.field.key);
+    else if (props.field.kind === "scalarLink")
+      props.model.openPicker(props.recordId, props.field.key);
     else props.model.toggleField(props.recordId, props.field);
+  };
+
+  /** Activating an empty field's value — the pencil button, or a click on the
+   * value itself. A scalar linked record field holds a foreign key rather than
+   * anything a user would type, so its pencil offers the picker instead of a
+   * text box. */
+  const beginEdit = () => {
+    if (props.field.kind === "scalarLink")
+      props.model.openPicker(props.recordId, props.field.key);
+    else props.model.beginEdit(props.recordId, props.field.key);
   };
 
   /** Leaving edit mode: the value is kept in the form, and focus goes wherever
@@ -296,6 +311,7 @@ function FieldRow(props: {
             field={props.field}
             value={value()}
             expanded={false}
+            onBeginEdit={beginEdit}
             onCommit={commit}
             onContextMenu={(e) => openMenu(e, "field")}
             onOverflow={setOverflowing}
@@ -312,6 +328,7 @@ function FieldRow(props: {
             field={props.field}
             value={value()}
             expanded={true}
+            onBeginEdit={beginEdit}
             onCommit={commit}
             onContextMenu={(e) => openMenu(e, "field")}
           />
@@ -361,6 +378,7 @@ function FieldValueSlot(props: {
   field: FormField;
   value: string | null | undefined;
   expanded: boolean;
+  onBeginEdit: () => void;
   onCommit: (text: string, exit: EditExit) => void;
   onContextMenu: (e: MouseEvent) => void;
   onOverflow?: (overflowing: boolean) => void;
@@ -375,7 +393,7 @@ function FieldValueSlot(props: {
             props.model.editing() === fieldItemId(props.recordId, field().key)
           }
           expanded={props.expanded}
-          onBeginEdit={() => props.model.beginEdit(props.recordId, field().key)}
+          onBeginEdit={() => props.onBeginEdit()}
           // Every keystroke goes into the form as it's typed, so what the user
           // sees elsewhere (the modification star, above all) is never a
           // keystroke behind.

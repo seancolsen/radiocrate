@@ -4,6 +4,7 @@ import { registerForm, unregisterForm } from "./formRegistry";
 import { recordIdentity, releaseUnmodified, stashedForm } from "./formStash";
 import RecordContextMenu from "./RecordContextMenu";
 import RecordNodeView from "./RecordFields";
+import RecordPicker from "./RecordPicker";
 import type { SchemaTable } from "../../query/schema";
 import type { KeyPart } from "../../query/recordForm";
 
@@ -52,6 +53,7 @@ export default function RecordForm(props: {
     // otherwise go on claiming the arrow keys when the record comes back.
     model.noteBlur();
     model.closeMenu();
+    model.closePicker();
     // Only unsaved *changes* are worth keeping — a record the user merely looked
     // at is dropped rather than held for the life of the tab.
     releaseUnmodified(props.tabId, identity);
@@ -94,6 +96,7 @@ export default function RecordForm(props: {
     >
       <RecordNodeView model={model} recordId={ROOT_ID} />
       <RecordContextMenu model={model} />
+      <RecordPicker model={model} schemaJson={props.schemaJson} />
     </div>
   );
 }

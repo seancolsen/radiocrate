@@ -21,7 +21,7 @@ export default function SingleBuilder(props: {
   // caret; see the twin effect in `FilterBuilder`. A section holding a preset
   // (or Shuffle) has no text input, so the request is still consumed — the
   // section is open, which is all there is to focus.
-  let input: HTMLTextAreaElement | undefined;
+  let input: HTMLElement | undefined;
   createEffect(() => {
     const req = store.builderFocus();
     if (req?.tabId !== props.tabId || req.section !== props.section) return;

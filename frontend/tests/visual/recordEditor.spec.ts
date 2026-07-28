@@ -314,10 +314,10 @@ test("a NULL field offers a pencil, which activates an empty input", async ({
   page,
 }) => {
   await openGrid(page);
-  await openEditor(page, "track", 4); // track-5 has no album
+  await openEditor(page, "track", 4); // track-5 is unrated
   const editor = editorPanel(page);
 
-  const pencil = editor.getByRole("button", { name: "Edit album" });
+  const pencil = editor.getByRole("button", { name: "Edit rating" });
   await expect(pencil).toBeVisible();
   await pencil.click();
   const input = editor.getByRole("textbox");
@@ -807,6 +807,190 @@ test("an embedded record's menu deletes it — or the whole selection", async ({
   await expect(credits.first()).toHaveText("Beyoncé");
 });
 
+// ── The modal record picker ─────────────────────────────────────────────────
+//
+// How a scalar linked record field is pointed at a record that already exists:
+// a dialog with a Querydown search box that runs as it's typed, and results
+// rendered as the embedded records they're about to become.
+
+/** The open record picker. */
+const picker = (page: Page) => page.getByRole("dialog");
+/** Its result list — embedded records, like the ones in the form. */
+const pickerResults = (page: Page) =>
+  picker(page).getByTestId("picker-results").locator(".rc-embedded");
+
+/** Types into the picker's search box, which queries as it goes. */
+async function searchPicker(page: Page, text: string) {
+  await picker(page)
+    .getByPlaceholder(/^Filter /)
+    .fill(text);
+}
+
+test("the pencil on a NULL linked field opens the picker", async ({ page }) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4); // track-5 has no album
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Edit album" }).click();
+  await expect(picker(page)).toBeVisible();
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick album");
+  // Every album, previewed by the columns the points-based generator picked.
+  await expect(pickerResults(page)).toHaveCount(5);
+  await expect(pickerResults(page).first()).toContainText("Lemonade");
+});
+
+test("double-clicking a linked field's label opens the picker, filled or not", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page); // track-1 is already filed under album-1
+  const editor = editorPanel(page);
+
+  await formItem(editor, "r:album").dblclick();
+  await expect(picker(page)).toBeVisible();
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick album");
+  await page.keyboard.press("Escape");
+
+  // The field's own context menu is the third way in, and takes the keyboard
+  // from the menu it was chosen in.
+  await rightClick(formItem(editor, "r:album"));
+  await page.getByRole("menuitem", { name: "Pick a record" }).click();
+  await expect(page.getByRole("menu")).toBeHidden();
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick album");
+});
+
+test("the picker searches as the user types, and picking links the record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: credits by Beyoncé and Jack White
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand Jack White" }).click();
+
+  // The `artist` field of the second credit.
+  await formItem(editor, "r##credit[1]:artist").dblclick();
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick artist");
+  await expect(pickerResults(page)).toHaveText([
+    "Beyoncé",
+    "Jack White",
+    "The Weeknd",
+  ]);
+
+  // No Ctrl+Enter: the query re-runs off the keystrokes themselves.
+  await searchPicker(page, "name:Weeknd");
+  await expect(pickerResults(page)).toHaveText(["The Weeknd"]);
+
+  // Clicking a result closes the picker and hands the whole loaded record to
+  // the form — the embedded record is filled in without another request.
+  await pickerResults(page).first().click();
+  await expect(picker(page)).toBeHidden();
+  await expect(editor.getByText("The Weeknd")).toBeVisible();
+  await expect(star(editor, "artist")).toBeVisible();
+  // Focus goes back to the field the picker was opened from.
+  await expect(formItem(editor, "r##credit[1]:artist")).toBeFocused();
+});
+
+test("Up/Down and Enter drive the results without leaving the search box", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand Beyoncé" }).click();
+  await formItem(editor, "r##credit[0]:artist").dblclick();
+
+  const search = picker(page).getByPlaceholder(/^Filter /);
+  await expect(search).toBeFocused();
+  await expect(pickerResults(page)).toHaveCount(3);
+  // The first result starts selected; Down walks the list, and the caret stays
+  // where it is.
+  await expect(pickerResults(page).first()).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(pickerResults(page).nth(2)).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+  await expect(search).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeHidden();
+  await expect(editor.getByText("The Weeknd")).toBeVisible();
+});
+
+test("closing the picker leaves the field as it was", async ({ page }) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await expect(embeddedRecords(editor).nth(1)).toContainText("Lemonade");
+
+  await formItem(editor, "r:album").dblclick();
+  await picker(page)
+    .getByRole("button", { name: "Close record picker" })
+    .click();
+  await expect(picker(page)).toBeHidden();
+  await expect(embeddedRecords(editor).nth(1)).toContainText("Lemonade");
+  await expect(star(editor, "album")).toBeHidden();
+
+  // Escape cancels it too.
+  await formItem(editor, "r:album").dblclick();
+  await expect(picker(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toBeHidden();
+  await expect(star(editor, "album")).toBeHidden();
+});
+
+test("the picker's sort and display builders re-run the query", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4);
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Edit album" }).click();
+
+  // Both builders open pre-filled with what the generator chose for `album`.
+  await picker(page).getByRole("button", { name: "Display" }).click();
+  const display = picker(page).getByPlaceholder("Display");
+  await expect(display).toHaveValue("$id $title");
+  await picker(page).getByRole("button", { name: "Sort" }).click();
+  await expect(picker(page).getByPlaceholder("Sort")).toHaveValue(
+    "\\\\id \\\\title",
+  );
+  // Only one section is open at a time, as in the toolbar.
+  await expect(display).toBeHidden();
+
+  // Overruling the display changes what the results show.
+  await picker(page).getByRole("button", { name: "Display" }).click();
+  await display.fill("$year");
+  await expect(pickerResults(page).first()).toHaveText("2016");
+});
+
+test("the picker's New record button scaffolds one, seeded with the search", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4); // track-5 has no album
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Edit album" }).click();
+  await searchPicker(page, "Renaissance");
+  await picker(page).getByRole("button", { name: "New record" }).click();
+  await expect(picker(page)).toBeHidden();
+
+  // The field points at a record being created, its form open below with the
+  // search text already in the first text field and the caret after it.
+  await expect(embeddedRecords(editor).nth(1)).toHaveText("New");
+  const input = editor.getByRole("textbox");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Renaissance");
+  await expect(star(editor, "album")).toBeVisible();
+});
+
 // Screenshots: the menu over the rows, and the editor sidebar open beside them.
 for (const colorScheme of ["light", "dark"] as const) {
   test(`row context menu - ${colorScheme}`, async ({ page }) => {
@@ -915,5 +1099,26 @@ for (const colorScheme of ["light", "dark"] as const) {
     await selectableRecords(editor).first().click();
     await expect(embeddedRecords(editor).last()).toContainText("Jack White");
     await expect(editor).toHaveScreenshot(`record-embedded-${colorScheme}.png`);
+  });
+
+  // The record picker, scoped to the dialog: the search box with its sort and
+  // display buttons, a searched-down result list, and the "New record" way out.
+  test(`record picker - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(SEEDED);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await rightClickRow(page, rowY(2));
+    await page.getByRole("menuitem", { name: "Edit track" }).click();
+    const editor = editorPanel(page);
+    await editor.getByRole("button", { name: "Expand credit" }).click();
+    await editor.getByRole("button", { name: "Expand Beyoncé" }).click();
+    await formItem(editor, "r##credit[0]:artist").dblclick();
+    await expect(pickerResults(page)).toHaveCount(3);
+    await expect(picker(page)).toHaveScreenshot(
+      `record-picker-${colorScheme}.png`,
+    );
   });
 }

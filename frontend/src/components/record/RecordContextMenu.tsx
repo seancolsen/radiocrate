@@ -82,9 +82,11 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
     }
     if (field.kind === "scalarLink") {
       return [
-        // The modal record picker is still to be built; the entry is here, inert,
-        // so the menu reads as the spec's.
-        { icon: Icons.Query, label: "Pick a record", disabled: true },
+        {
+          icon: Icons.Query,
+          label: "Pick a record",
+          run: () => model.openPicker(recordId, field.key),
+        },
         {
           icon: Icons.Add,
           label: "Enter a new record",

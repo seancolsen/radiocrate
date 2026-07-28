@@ -226,6 +226,33 @@ export function embeddedRecordQuery(
   };
 }
 
+/** The query behind the modal record picker: the records of `table` the user's
+ * filter admits, previewed the same way the form's embedded records are.
+ *
+ * `filter`, `sort` and `display` are the *live* sections of the picker — the
+ * search box the user types into and the sort/display builders beside it, which
+ * open pre-filled from {@link embedSpec} — rather than being derived here.
+ *
+ * The result's columns are positional: `keyColumns` first (how the picked record
+ * is addressed once it's chosen), then whatever `display` asks for, which is
+ * handed to the embedded record widget as it stands so choosing a record needs
+ * no further request. */
+export function recordPickerQuery(
+  table: string,
+  keyColumns: readonly string[],
+  filter: string,
+  sort: string,
+  display: string,
+): RecordQuery {
+  const keys = keyColumns.map((c) => `$${c}`);
+  return {
+    base: table,
+    filter,
+    sort,
+    display: [...keys, display.trim()].filter(Boolean).join(" "),
+  };
+}
+
 /** The query behind a multi-record field: every record of `field.table` whose
  * `field.column` points at the record `parent` identifies, in one request —
  * both the identifying columns (which is how each child record is addressed

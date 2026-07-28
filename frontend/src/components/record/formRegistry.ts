@@ -36,3 +36,10 @@ export function focusedForm(): FormHandle | undefined {
     (f) => f.model.focused() !== null || f.model.selection().length > 0,
   );
 }
+
+/** Whether any mounted form has its modal record picker open — a dialog that
+ * owns the keyboard, so the global shortcut pass stands down for it as it does
+ * for the app's other modals. */
+export function recordPickerOpen(): boolean {
+  return forms().some((f) => f.model.picker() !== null);
+}

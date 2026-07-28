@@ -3,6 +3,7 @@ import {
   childRecordsQuery,
   embeddedRecordQuery,
   embedSpec,
+  recordPickerQuery,
 } from "./embeddedRecord";
 import { buildFormFields, type MultiRecordField } from "./recordForm";
 import type { SchemaTable } from "./schema";
@@ -143,6 +144,35 @@ describe("preview queries", () => {
       filter: `track:="t1"`,
       sort: "\\\\track \\\\artist",
       display: "$track $artist",
+    });
+  });
+
+  it("searches a table for the record picker, keys first", () => {
+    const spec = embedSpec(TABLES, "artist");
+    expect(
+      recordPickerQuery(
+        "artist",
+        ["id"],
+        "name:Wee",
+        spec.sort,
+        spec.display.join(" "),
+      ),
+    ).toEqual({
+      base: "artist",
+      // The user's filter, untouched: it's Querydown they typed themselves.
+      filter: "name:Wee",
+      sort: "\\\\name \\\\id",
+      // The key the picked record is addressed by, then its preview.
+      display: "$id $name",
+    });
+  });
+
+  it("searches with no filter and no display at all", () => {
+    expect(recordPickerQuery("artist", ["id"], "", "", "")).toEqual({
+      base: "artist",
+      filter: "",
+      sort: "",
+      display: "$id",
     });
   });
 

@@ -120,6 +120,12 @@ export interface FormMenu {
   y: number;
 }
 
+/** The scalar linked record field the modal record picker is open for. */
+export interface PickerTarget {
+  recordId: string;
+  fieldKey: string;
+}
+
 interface FormState {
   records: Record<string, RecordNode>;
   lists: Record<string, ListNode>;
@@ -137,6 +143,8 @@ interface FormState {
   selection: string[];
   /** The one open context menu within this form, or null. */
   menu: FormMenu | null;
+  /** The field whose modal record picker is open, or null. */
+  picker: PickerTarget | null;
 }
 
 /** What a rendered row can do to itself, handed to the model when it mounts so
@@ -208,6 +216,12 @@ export interface RecordFormModel {
   isSelected: (itemId: string) => boolean;
   /** The open context menu, or null. */
   menu: () => FormMenu | null;
+  /** The field whose modal record picker is open, or null. */
+  picker: () => PickerTarget | null;
+
+  /** The preview columns (and their ordering) generated for one table — what the
+   * record picker's display and sort builders open pre-filled with. */
+  previewSpec: (table: string, contextColumn?: string) => EmbedSpec;
 
   /** Whether one field carries an unsaved edit — its own, or one anywhere in
    * what it expands into. What the red star is drawn from. */
@@ -290,12 +304,33 @@ export interface RecordFormModel {
    * type straight into it. */
   addChild: (recordId: string, field: MultiRecordField) => void;
   /** Scaffold a new record for a scalar linked record field to point at, in
-   * place of whatever it pointed at before. */
-  addLinkedRecord: (recordId: string, field: ScalarLinkField) => void;
+   * place of whatever it pointed at before. `seed` fills in its first text
+   * field — the record picker hands over what the user had searched for, on the
+   * grounds that a record they looked for and didn't find is a fair first draft
+   * of the one they're about to write. */
+  addLinkedRecord: (
+    recordId: string,
+    field: ScalarLinkField,
+    seed?: string,
+  ) => void;
 
   /** Open a context menu on part of the form (one at a time), and close it. */
   openMenu: (menu: FormMenu) => void;
   closeMenu: () => void;
+
+  /** Open the modal record picker on a scalar linked record field, and close it
+   * (leaving the field as it was). */
+  openPicker: (recordId: string, fieldKey: string) => void;
+  closePicker: () => void;
+  /** Point a scalar linked record field at an existing record the user chose in
+   * the picker, closing it. `cells` is the preview the picker already loaded, so
+   * the embedded record renders without a further request. */
+  pickRecord: (
+    recordId: string,
+    field: ScalarLinkField,
+    keyValue: string,
+    cells: readonly (string | null)[],
+  ) => void;
 }
 
 export function createRecordForm(opts: {
@@ -313,6 +348,7 @@ export function createRecordForm(opts: {
     focused: null,
     selection: [],
     menu: null,
+    picker: null,
   });
 
   // Per-node load tokens: only the newest load for a node may write its result.
@@ -405,24 +441,37 @@ export function createRecordForm(opts: {
 
   /** The first field of a record the user can type into — where the caret goes
    * when a new record is scaffolded. Skips the table's primary key, which the
-   * database issues rather than the user. */
-  const firstEditableField = (recordId: string): FormField | undefined => {
+   * database issues rather than the user. `preferText` picks the first *text*
+   * field instead, which is where a seed value goes: prose is the only kind of
+   * field a search box's contents are a plausible draft of. */
+  const firstEditableField = (
+    recordId: string,
+    preferText = false,
+  ): FormField | undefined => {
     const node = state.records[recordId];
     if (!node) return undefined;
     const table = opts.tables.find((t) => t.name === node.table);
     const pk = table ? primaryKey(table) : undefined;
-    return node.fields.find(
+    const editable = node.fields.filter(
       (field) => field.kind === "primitive" && field.column !== pk,
     );
+    const text = editable.find(
+      (field) => field.kind === "primitive" && field.valueType === "text",
+    );
+    return (preferText ? text : undefined) ?? editable[0];
   };
 
   /** Puts the caret in a newly scaffolded record's first editable field, so the
-   * user can begin typing immediately. The input focuses itself as it mounts, so
-   * this holds whether or not the row is on screen yet (a list still loading
-   * shows its placeholders first). */
-  const activateNewRecord = (recordId: string) => {
-    const field = firstEditableField(recordId);
-    if (field) setState("editing", fieldItemId(recordId, field.key));
+   * user can begin typing immediately, optionally with `seed` already in it. The
+   * input focuses itself as it mounts, so this holds whether or not the row is
+   * on screen yet (a list still loading shows its placeholders first). */
+  const activateNewRecord = (recordId: string, seed?: string) => {
+    const field = firstEditableField(recordId, seed !== undefined);
+    if (!field) return;
+    if (seed !== undefined && field.kind === "primitive") {
+      setState("records", recordId, "values", field.column, seed);
+    }
+    setState("editing", fieldItemId(recordId, field.key));
   };
 
   /** Loads the preview behind one embedded record: the columns that identify it
@@ -750,6 +799,9 @@ export function createRecordForm(opts: {
     selection: () => state.selection,
     isSelected: (itemId) => state.selection.includes(itemId),
     menu: () => state.menu,
+    picker: () => state.picker,
+
+    previewSpec: specFor,
 
     isFieldModified: (recordId, fieldKey) => {
       const field = state.records[recordId]?.fields.find(
@@ -924,7 +976,7 @@ export function createRecordForm(opts: {
       setState("expanded", child, true);
       activateNewRecord(child);
     },
-    addLinkedRecord: (recordId, field) => {
+    addLinkedRecord: (recordId, field, seed) => {
       const id = scalarChildId(recordId, field.key);
       // Whatever the field pointed at before, it points at this new record now.
       setState("embeds", id, dropped());
@@ -932,11 +984,33 @@ export function createRecordForm(opts: {
       setState("records", recordId, "values", field.column, null);
       addNewRecord(id, field.table, []);
       setState("expanded", fieldItemId(recordId, field.key), true);
-      activateNewRecord(id);
+      activateNewRecord(id, seed);
     },
 
     openMenu: (menu) => setState("menu", menu),
     closeMenu: () => setState("menu", null),
+
+    openPicker: (recordId, fieldKey) => {
+      // The picker is often reached *from* the field's context menu, and takes
+      // the keyboard from it.
+      setState("menu", null);
+      setState("picker", { recordId, fieldKey });
+    },
+    closePicker: () => setState("picker", null),
+    pickRecord: (recordId, field, keyValue, cells) => {
+      const id = scalarChildId(recordId, field.key);
+      // The record the field pointed at before is not this one: its preview and
+      // any sub-form the user had opened under it go, and a preview load still
+      // in flight for it is cancelled (its token is spent) so it can't land on
+      // top of the one the picker just handed over.
+      setState("embeds", id, dropped());
+      setState("records", id, dropped());
+      setState("expanded", fieldItemId(recordId, field.key), false);
+      tokens.set(id, ++tokenSeq);
+      setState("records", recordId, "values", field.column, keyValue);
+      setState("embeds", id, { status: "loaded", cells });
+      setState("picker", null);
+    },
   };
 
   return model;

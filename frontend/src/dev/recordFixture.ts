@@ -151,7 +151,9 @@ const TABLE_ROWS: Record<string, Row[]> = {
     // Two of them get a genre too long for one line, so the expandable-text
     // behavior is reachable from a row with credits and one without.
     genre: i === 0 || i === 2 ? GENRE : "R&B",
-    rating: ["3.5", "4", "4", "4", "4.5"][i],
+    // The last track is left unrated too, so a NULL *primitive* field (whose
+    // pencil activates a text box, unlike a link's) is on screen beside it.
+    rating: i === 4 ? null : ["3.5", "4", "4", "4", "4.5"][i],
   })),
   credit: [
     { track: "track-1", artist: "artist-1", ord: "1", role: null },
@@ -167,14 +169,38 @@ const TABLE_ROWS: Record<string, Row[]> = {
   ],
 };
 
-/** `col:="value"` per line, as `keyConditions` writes them. */
-function parseConditions(filter: string): [string, string][] {
-  const conditions: [string, string][] = [];
+/** One parsed filter line: a column, a value, and whether the match is exact
+ * (`:=`) or a substring (`:`). */
+interface Condition {
+  column: string;
+  value: string;
+  exact: boolean;
+}
+
+/** One condition per line: `col:="value"` as `keyConditions` writes them, and
+ * the looser `col:value` / `col:"value"` substring form a user types into the
+ * record picker's search box. */
+function parseConditions(filter: string): Condition[] {
+  const conditions: Condition[] = [];
   for (const line of filter.split("\n")) {
-    const match = /^(\w+):="((?:[^"\\]|\\.)*)"$/.exec(line.trim());
-    if (match) conditions.push([match[1], match[2].replace(/\\(.)/g, "$1")]);
+    const match = /^(\w+):(=?)\s*(?:"((?:[^"\\]|\\.)*)"|(\S+))$/.exec(
+      line.trim(),
+    );
+    if (!match) continue;
+    conditions.push({
+      column: match[1],
+      value: (match[3] ?? match[4]).replace(/\\(.)/g, "$1"),
+      exact: match[2] === "=",
+    });
   }
   return conditions;
+}
+
+/** Whether one row satisfies one condition. */
+function matches(row: Row, condition: Condition): boolean {
+  const cell = row[condition.column];
+  if (condition.exact) return cell === condition.value;
+  return (cell ?? "").toLowerCase().includes(condition.value.toLowerCase());
 }
 
 /** How many rows of `childTable` point at `row` — the `$#table` count. */
@@ -211,7 +237,7 @@ function parseSort(sort: string): { path: string; descending: boolean }[] {
 function query(q: RecordQuery): (string | null)[][] {
   const conditions = parseConditions(q.filter);
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
-    conditions.every(([column, value]) => row[column] === value),
+    conditions.every((condition) => matches(row, condition)),
   );
   const terms = parseSort(q.sort);
   rows.sort((a, b) => {
