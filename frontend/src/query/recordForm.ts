@@ -42,6 +42,9 @@ export interface PrimitiveField extends FieldBase {
   column: string;
   valueType: ValueType;
   nullable: boolean;
+  /** Whether this column is the table's primary key — issued by the database,
+   * not the user, so the form never lets it be edited. */
+  readOnly: boolean;
 }
 
 /** A field backed by a foreign-key column, referencing one record in
@@ -132,6 +135,7 @@ export function buildFormFields(
   if (!table) return [];
   const links = inferLinks(tables);
   const byName = new Map(tables.map((t) => [t.name, t]));
+  const pk = primaryKey(table);
 
   const fields: FormField[] = [];
   for (const column of table.columns) {
@@ -158,6 +162,7 @@ export function buildFormFields(
         column: column.name,
         valueType: valueTypeOf(column.type),
         nullable: column.nullable,
+        readOnly: column.name === pk,
       });
     }
   }

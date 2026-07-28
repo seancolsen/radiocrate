@@ -121,7 +121,21 @@ describe("buildFormFields", () => {
       column: "title",
       valueType: "text",
       nullable: false,
+      readOnly: false,
     });
+  });
+
+  it("marks a primitive field read-only when it's the table's primary key", () => {
+    const fields = buildFormFields(TABLES, "track");
+    expect(fields.find((f) => f.key === "id")).toMatchObject({
+      column: "id",
+      readOnly: true,
+    });
+    // A composite-keyed table (`credit`, keyed on `(track, artist)`) has no
+    // single primary key, so nothing in it is read-only on that account.
+    expect(
+      buildFormFields(TABLES, "credit").find((f) => f.key === "role"),
+    ).toMatchObject({ readOnly: false });
   });
 
   it("hides the contextual filter column of a record reached through a list", () => {

@@ -12,6 +12,7 @@ import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
 import FieldValue, { type EditExit } from "./FieldValue";
 import LoadingRegion from "./LoadingRegion";
+import ModifiedStar from "./ModifiedStar";
 import {
   fieldItemId,
   listId,
@@ -65,19 +66,6 @@ export default function RecordNodeView(props: {
         </LoadingRegion>
       )}
     </Show>
-  );
-}
-
-/** The red star marking something the user has changed but not yet saved. It
- * stands for everything underneath it too — a collapsed field wears the star of
- * an edit made deep inside it — so an unsaved change is never hidden by the part
- * of the tree it was made in being closed. */
-function ModifiedStar(props: { label: string }) {
-  return (
-    <Icons.Unsaved
-      class="text-danger size-3 shrink-0"
-      aria-label={`${props.label} modified`}
-    />
   );
 }
 
@@ -237,22 +225,27 @@ function FieldRow(props: {
           label={props.field.label}
           onToggle={toggle}
         />
-        <FieldLabel
-          field={props.field}
-          itemId={itemId}
-          tabbable={
-            props.model.focused() === itemId ||
-            (props.model.focused() === null && props.first)
-          }
-          menuOpen={menuOpen()}
-          onClick={() => props.model.focusItem(itemId)}
-          onDblClick={activate}
-          onFocus={() => props.model.noteFocus(itemId)}
-          onContextMenu={(e) => openMenu(e, "field")}
-        />
-        <Show when={modified()}>
-          <ModifiedStar label={props.field.label} />
-        </Show>
+        <div class="relative shrink-0">
+          <FieldLabel
+            field={props.field}
+            itemId={itemId}
+            tabbable={
+              props.model.focused() === itemId ||
+              (props.model.focused() === null && props.first)
+            }
+            menuOpen={menuOpen()}
+            onClick={() => props.model.focusItem(itemId)}
+            onDblClick={activate}
+            onFocus={() => props.model.noteFocus(itemId)}
+            onContextMenu={(e) => openMenu(e, "field")}
+          />
+          {/* A field of a record still being created shows no star of its own:
+              there's nothing yet to compare it against. The record's parent
+              still wears one, for having gained it. */}
+          <Show when={!props.node.isNew && modified()}>
+            <ModifiedStar label={props.field.label} />
+          </Show>
+        </div>
         <Show
           when={props.field.kind === "multiRecord" && count() !== undefined}
         >
@@ -278,7 +271,7 @@ function FieldRow(props: {
               type="button"
               tabindex={-1}
               aria-label={`Add ${field().label}`}
-              class="text-ink-weak hover:text-ink flex size-5 shrink-0 items-center justify-center"
+              class="text-ink-weak hover:text-ink hover:ring-accent flex size-5 shrink-0 items-center justify-center rounded ring-1 ring-transparent ring-inset"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => props.model.addChild(props.recordId, field())}
             >
@@ -555,6 +548,11 @@ function ChildRow(props: {
           itemId={props.recordId}
           focusable
           selected={props.model.isSelected(props.recordId)}
+          modifiedLabel={
+            !isNew() && props.model.isRecordModified(props.recordId)
+              ? label()
+              : undefined
+          }
           onContextMenu={onContextMenu}
           onClick={(e) => {
             // Clicking a widget selects it — and puts focus on it, since a
@@ -568,9 +566,6 @@ function ChildRow(props: {
           onDblClick={() => props.model.toggleChild(props.recordId)}
           onFocus={() => props.model.noteFocus(props.recordId)}
         />
-        <Show when={props.model.isRecordModified(props.recordId)}>
-          <ModifiedStar label={label()} />
-        </Show>
       </div>
       <Show when={expanded()}>
         <Subtree>

@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { computeFieldLayout } from "../../query/fieldLayout";
 import { defaultColumnMetadata } from "../../query/columns";
+import ModifiedStar from "./ModifiedStar";
 import { COL_GAP, ROW_PAD_Y, SMALL_LINE_H } from "../../query/rowGeometry";
 
 // The embedded record: a preview of one row, inside the form.
@@ -42,6 +43,11 @@ export default function EmbeddedRecord(props: {
   focusable?: boolean;
   /** A record being added but not yet saved, which has no values to preview. */
   isNew?: boolean;
+  /** The record's own preview text (or key) — shown as an unsaved-changes star
+   * pinned to this widget's top-left corner, in place of an `aria-label`. Left
+   * `undefined` to show no star: a record's own modification never shows on a
+   * widget that's still `isNew` (there's nothing to compare it against yet). */
+  modifiedLabel?: string;
   itemId?: string;
   onClick?: (e: MouseEvent & { currentTarget: HTMLElement }) => void;
   onDblClick?: () => void;
@@ -71,7 +77,7 @@ export default function EmbeddedRecord(props: {
   return (
     <div
       ref={measure}
-      class="rc-embedded text-ink-weak focus:outline-accent relative min-w-0 flex-1 cursor-default text-[11px] outline-none focus:outline-2 focus:outline-offset-0"
+      class="rc-embedded text-ink-weak focus:outline-accent relative min-w-0 flex-1 cursor-default text-[11px] outline-none select-none focus:outline-2 focus:outline-offset-0"
       style={{
         height: `${height()}px`,
         "border-radius": `${RADIUS}px`,
@@ -86,6 +92,9 @@ export default function EmbeddedRecord(props: {
       onFocus={() => props.onFocus?.()}
       onContextMenu={(e) => props.onContextMenu?.(e)}
     >
+      <Show when={props.modifiedLabel}>
+        {(label) => <ModifiedStar label={label()} />}
+      </Show>
       <Show when={props.isNew}>
         <span
           class="absolute inset-0 flex items-center justify-center italic"

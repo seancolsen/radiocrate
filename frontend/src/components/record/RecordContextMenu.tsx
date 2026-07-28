@@ -95,6 +95,14 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
         clear,
       ];
     }
+    const copy: Entry = {
+      icon: Icons.Duplicate,
+      label: "Copy",
+      run: () => copyValue(model.record(recordId)?.values[field.column] ?? ""),
+    };
+    // A primary key is issued by the database, not the user — nothing here
+    // offers to change it, only to read it.
+    if (field.kind === "primitive" && field.readOnly) return [copy];
     return [
       {
         icon: Icons.Edit,
@@ -102,12 +110,7 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
         run: () => model.beginEdit(recordId, field.key),
       },
       clear,
-      {
-        icon: Icons.Duplicate,
-        label: "Copy",
-        run: () =>
-          copyValue(model.record(recordId)?.values[field.column] ?? ""),
-      },
+      copy,
     ];
   };
 

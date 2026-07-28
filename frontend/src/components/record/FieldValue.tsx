@@ -116,6 +116,10 @@ export default function FieldValue(props: {
 }) {
   const known = () => props.value !== undefined;
   const empty = () => props.value == null || props.value === "";
+  /** A primary key: issued by the database, not the user, so nothing here
+   * activates an editor for it. */
+  const readOnly = () =>
+    props.field.kind === "primitive" && props.field.readOnly;
   /** The collapsed rendering of a value: one line, newlines flattened away. */
   const oneLine = () => (props.value ?? "").replace(/\s*\r?\n\s*/g, " ");
   const multiline = () =>
@@ -148,7 +152,7 @@ export default function FieldValue(props: {
           onCommit={(text, exit) => props.onCommit(text, exit)}
         />
       </Match>
-      <Match when={empty()}>
+      <Match when={empty() && !readOnly()}>
         <button
           type="button"
           tabindex={-1}
@@ -160,10 +164,11 @@ export default function FieldValue(props: {
           <Icons.Edit class="size-4" />
         </button>
       </Match>
+      <Match when={empty() && readOnly()}>{null}</Match>
       <Match when={props.expanded}>
         <span
-          class="text-ink block w-full cursor-text text-sm/5 break-words whitespace-pre-wrap"
-          onClick={() => props.onBeginEdit()}
+          class={`text-ink block w-full text-sm/5 break-words whitespace-pre-wrap ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          onClick={() => !readOnly() && props.onBeginEdit()}
           onContextMenu={(e) => props.onContextMenu(e)}
         >
           {props.value}
@@ -172,8 +177,8 @@ export default function FieldValue(props: {
       <Match when={true}>
         <span
           ref={watchOverflow}
-          class="text-ink block min-w-0 flex-1 cursor-text truncate text-sm/5"
-          onClick={() => props.onBeginEdit()}
+          class={`text-ink block min-w-0 flex-1 truncate text-sm/5 ${readOnly() ? "cursor-default" : "cursor-text"}`}
+          onClick={() => !readOnly() && props.onBeginEdit()}
           onContextMenu={(e) => props.onContextMenu(e)}
         >
           {oneLine()}

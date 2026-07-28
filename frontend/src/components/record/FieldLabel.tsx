@@ -34,8 +34,9 @@ function appearance(field: FormField): {
 
 /** A field's label — and the field's handle: it's what the user clicks to select
  * the field, double-clicks to edit or open it, right-clicks for the field's
- * menu, and what the keyboard moves between. Focus shows as a blue outline (an
- * outline, not a border, so nothing shifts when it appears) — and so does an
+ * menu, and what the keyboard moves between. It's a focusable DOM element (a
+ * `tabindex`ed `span`), and focus shows as a blue border — always present but
+ * transparent until then, so nothing shifts when it appears — and so does an
  * open context menu, which is the label saying what the menu is about to act on.
  *
  * `tabbable` gives the form a single tab stop: the focused item, or the first
@@ -58,14 +59,10 @@ export default function FieldLabel(props: {
       data-form-item=""
       data-item-id={props.itemId}
       tabindex={props.tabbable ? 0 : -1}
-      class={`text-ink focus:outline-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md px-1.5 text-xs focus:outline-2 focus:outline-offset-0 ${look().tint}`}
-      // An open menu wears the focus outline without taking focus (which is on
-      // the menu): the label is what the menu is about to act on.
-      classList={{
-        "outline-none": !props.menuOpen,
-        "outline-accent outline-solid outline-2 outline-offset-0":
-          props.menuOpen,
-      }}
+      class={`text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 text-xs ${look().tint}`}
+      // An open menu wears the same blue border as focus, without taking focus
+      // (which is on the menu): the label is what the menu is about to act on.
+      classList={{ "border-accent": props.menuOpen }}
       onClick={() => props.onClick()}
       onDblClick={() => props.onDblClick()}
       onFocus={() => props.onFocus()}

@@ -710,8 +710,13 @@ test("a primitive field's menu edits, clears and copies it", async ({
     "Clear",
     "Copy",
   ]);
-  // The label says what the menu is about to act on, as if it were focused.
-  await expect(formItem(editor, "r:title")).toHaveCSS("outline-style", "solid");
+  // The label says what the menu is about to act on, as if it were focused: it
+  // wears the same blue border a focused label would, instead of its usual
+  // transparent one.
+  await expect(formItem(editor, "r:title")).not.toHaveCSS(
+    "border-top-color",
+    "rgba(0, 0, 0, 0)",
+  );
 
   await menu.getByRole("menuitem", { name: "Clear" }).click();
   await expect(
@@ -719,12 +724,14 @@ test("a primitive field's menu edits, clears and copies it", async ({
   ).toBeHidden();
   await expect(star(editor, "title")).toBeVisible();
   // Clearing a field is exactly what the pencil offers to undo.
-  await expect(
-    editor.getByRole("button", { name: "Edit title" }),
-  ).toBeVisible();
+  const pencil = editor.getByRole("button", { name: "Edit title" });
+  await expect(pencil).toBeVisible();
 
-  // The value itself carries the same menu.
-  await rightClick(editor.getByText("track-1", { exact: true }));
+  // The value itself carries the same menu as the label.
+  await pencil.click();
+  await editor.getByRole("textbox").fill("Retitled");
+  await page.keyboard.press("Escape");
+  await rightClick(editor.getByText("Retitled", { exact: true }));
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Edit",
     "Clear",
@@ -732,6 +739,28 @@ test("a primitive field's menu edits, clears and copies it", async ({
   ]);
   await page.getByRole("menuitem", { name: "Edit" }).click();
   await expect(editor.getByRole("textbox")).toBeFocused();
+});
+
+test("a primary key's menu only offers to copy it, never to edit or clear it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // `id` is `track`'s primary key — issued by the database, not the user.
+  await rightClick(formItem(editor, "r:id"));
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Copy",
+  ]);
+  await page.keyboard.press("Escape");
+
+  // Nor does clicking the value itself, or double-clicking its label, open an
+  // editor for it — unlike an ordinary field.
+  await editor.getByText("track-1", { exact: true }).click();
+  await expect(editor.getByRole("textbox")).toBeHidden();
+  await formItem(editor, "r:id").dblclick();
+  await expect(editor.getByRole("textbox")).toBeHidden();
 });
 
 test("a multi-record field's menu adds and deletes records", async ({

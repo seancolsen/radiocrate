@@ -59,10 +59,9 @@ const PILL_LINE_HEIGHT = 1.2;
 const CURRENT_MARKER_W = 5;
 
 /** The glyph marking a row whose record has unsaved edits in the record editor,
- * and its size — small enough to sit in the row's left padding, beside the cell
- * text rather than over it. Matches the ✱ the tab handles wear. */
+ * drawn large enough to read at a glance over the row's left padding. */
 const MODIFIED_MARKER = "✱";
-const MODIFIED_MARKER_FONT = 9;
+const MODIFIED_MARKER_FONT = 18;
 
 /** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,
  * so the sheen reads without hiding the selection color (SELECTED_ROW_GRADIENT_

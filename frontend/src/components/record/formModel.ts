@@ -775,6 +775,12 @@ export function createRecordForm(opts: {
   // something changed somewhere under it. The recursion only ever visits nodes
   // that exist — what the user has opened — and node ids strictly grow as it
   // descends, so it terminates.
+  //
+  // A record being *created* counts as modified here — its parent's field (a
+  // dirty list, a changed foreign key) is what a star on *that* field means.
+  // The record's own star, and its own fields', are a display-layer question:
+  // `RecordFields.tsx` suppresses those directly, since a record still being
+  // filled in to insert it has nothing of its own to compare against yet.
 
   const fieldModified = (recordId: string, field: FormField): boolean => {
     const node = state.records[recordId];
@@ -1001,8 +1007,15 @@ export function createRecordForm(opts: {
       }
     },
 
-    beginEdit: (recordId, fieldKey) =>
-      setState("editing", fieldItemId(recordId, fieldKey)),
+    beginEdit: (recordId, fieldKey) => {
+      // A primary key is issued by the database, never typed by the user —
+      // the one field kind this can't open an editor on.
+      const field = state.records[recordId]?.fields.find(
+        (f) => f.key === fieldKey,
+      );
+      if (field?.kind === "primitive" && field.readOnly) return;
+      setState("editing", fieldItemId(recordId, fieldKey));
+    },
     editValue: (recordId, column, value) =>
       setState("records", recordId, "values", column, value),
     commitEdit: (recordId, column, value) => {
