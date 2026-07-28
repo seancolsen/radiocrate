@@ -2,13 +2,15 @@
 
 The record editor should be a dynamic form system for CRUD operations on arbitrary database records, with a user flow originating from the query results view.
 
-## Product-level design philosophy
+## Context
+
+### Product-level design philosophy
 
 RadioCrate is supposed to be for the user to query their music collection and play music. But it's also supposed to be a powerful tool for _organizing_ a collection of music. That means modifying data too! Currently, the only data modification we support is CRUD on some specific entities like queries and presets. We need a new API to support arbitrary DML on _anything_ in the RadioCrate database. RadioCrate will have a powerful UI that allows the user to edit relational data from the query results view. The most common workflow will be: query tracks, edit a track. But the same functionality should work for other entities too.
 
 Eventually, the schema structure of tables and columns that gets installed by radiocrate will simply be a starting point for the user. If the user wants to add their own custom columns or tables, then RadioCrate will be able to handle that by virtue of its dynamic introspection-driven approach. That's why we have very little in the way of ORM type logic in the backend. The frontend dynamically introspects the schema and then uses the structure to inform its queries. DML should work in the same manner. DML should begin with dynamic introspection (already in place), then dynamic UI form-building (the record editor), then a request to the DML API for inserting/deleting/updating records (already implemented). RadioCrate is designed as a single-user multi-device application. The user "owns" this data. We want to give them a lot of power over it. There will be some types of records that we don't want the user editing (e.g. "file" records, because that data comes from our scanner), but we'll implement those guard rails on top of this "edit anything" functionality later on.
 
-## Attached mockup
+### Attached mockup
 
 In this repo, see `specs/2026-07-record-editor/mockup.png` for a mockup of the record editor UI.
 
@@ -18,6 +20,21 @@ Notes on the mockup:
 - It's modeled after a scenario in which the user is editing a track.
 - The fields show in the mockup are not a perfect representation of the fields in our model. That's okay because the form is to work dynamically anyway.
 - The red text is annotation explaining terminology that we use in this spec.
+
+### Terminology
+
+- **Record editor form**: the top-level of the new UI that we're building.
+- **Form item**: The form is a tree of items. Some items have child items.
+- **Field**: The form has multiple fields. Each field is also an item. Not every item is necessarily a field.
+- **Field label**: the UI on the left with the colored background, border radius, and icon.
+- **Field value**: the UI to the right of the field label
+- **Activated field**: a field for which the user has entered edit mode, transforming the value into a focused component for data item (commonly a text box).
+- **Collapsible item**: A form item that the user may expand or collapse within the tree of items in the form. An item is collapsible if it has children. Additionally, a text field with long content is also collapsible.
+- **Expansion toggle**: The chevron icon that users click to expand or collapse an expandable item.
+- **Scalar linked record field**: A collapsible field backed by a foreign key column which references a record in another table.
+- **Multi-record field**: A collapsible field representing a set of records which each reference the record being edited.
+- **Embedded record**: A component that provides a preview of a single row, usually in another table. A scalar linked record field can have a single embedded record as its field value. A multi-record field can have multiple embedded records as child form items.
+- **Primitive field**: A form field that is _not_ a scalar linked record field or a multi-record field, e.g. text field, number field, etc.
 
 ## Entry point and user flow
 
@@ -64,21 +81,6 @@ When the record editor panel is open, it should update to reflect changes in que
 - When all rows are deselected, the panel should close.
 
 The user can still interact with the query results while the sidebar is open. When the user clicks "Cancel", the sidebar should close.
-
-## Terminology
-
-- **Record editor form**: the top-level of the new UI that we're building.
-- **Form item**: The form is a tree of items. Some items have child items.
-- **Field**: The form has multiple fields. Each field is also an item. Not every item is necessarily a field.
-- **Field label**: the UI on the left with the colored background, border radius, and icon.
-- **Field value**: the UI to the right of the field label
-- **Activated field**: a field for which the user has entered edit mode, transforming the value into a focused component for data item (commonly a text box).
-- **Collapsible item**: A form item that the user may expand or collapse within the tree of items in the form. An item is collapsible if it has children. Additionally, a text field with long content is also collapsible.
-- **Expansion toggle**: The chevron icon that users click to expand or collapse an expandable item.
-- **Scalar linked record field**: A collapsible field backed by a foreign key column which references a record in another table.
-- **Multi-record field**: A collapsible field representing a set of records which each reference the record being edited.
-- **Embedded record**: A component that provides a preview of a single row, usually in another table. A scalar linked record field can have a single embedded record as its field value. A multi-record field can have multiple embedded records as child form items.
-- **Primitive field**: A form field that is _not_ a scalar linked record field or a multi-record field, e.g. text field, number field, etc.
 
 ## Form structure
 
@@ -233,6 +235,21 @@ For the sorting section, we'll use the same points values that we calculated for
 
 Using the contextual filter, plus the sorting, plus the display, we can formulate a querydown query to convert to SQL and run through the query API. _That_ gives us the data we need to hand off to the embedded record component for rendering.
 
+## Display of embedded records
+
+- The embedded record component should function similarly to the query result row component, reusing field layout logic and implementation where possible.
+
+- The following style deviations from query result rows should apply:
+    - All text should be "small" size regardless of column annotations
+    - All text should be "light" color regardless of column annotations
+    - The component should have a border and large border radius
+
+- The border radius should be such that an embedded record widget with a single line of content has a perfect semicircle on the left and right. (And the border radius should remain static so that if the content wraps to multiple lines we'll see a flat border section on the left and right.)
+
+- Embedded records should have a background gradient and hover/selected state styling that matches the query result row.
+
+- When an embedded record component represents a _new record being added_, it should display the text "New" in italics, centered. The component should not attempt to render the user's partial field values as a preview (since aggregates and other computed columns may be unavailable until the record is saved).
+
 ## Selection
 
 - Embedded records within multi-link fields are to be selectable such that many of them can be selected via Shift and Ctrl just like in the query result pane. This is to allow easy deletion of many records.
@@ -272,20 +289,6 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
     - "Selection: Expand nested items" — should expand a collapsed field, if expandable.
     - "Selection: Collapse nested items" — should collapse an expanded field, if possible.
 
-## Embedded records
-
-- The embedded record component should function similarly to the query result row component, reusing field layout logic and implementation where possible.
-
-- The following style deviations from query result rows should apply:
-    - All text should be "small" size regardless of column annotations
-    - All text should be "light" color regardless of column annotations
-    - The component should have a border and large border radius
-
-- The border radius should be such that an embedded record widget with a single line of content has a perfect semicircle on the left and right. (And the border radius should remain static so that if the content wraps to multiple lines we'll see a flat border section on the left and right.)
-
-- Embedded records should have a background gradient and hover/selected state styling that matches the query result row.
-
-- When an embedded record component represents a _new record being added_, it should display the text "New" in italics, centered. The component should not attempt to render the user's partial field values as a preview (since aggregates and other computed columns may be unavailable until the record is saved).
 
 ## Form modification
 
@@ -297,12 +300,35 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 
 - **Form state within the query page**: Changes within the record editor form should persist within the query page tab, stored per record, keyed on the record's primary key value. If a record has unsaved changes, a red star should display within the query result row. The user should be able to select a record, make changes, leave the form unsaved, then switch to another record, then select the original record and save it.
 
-## Saving the form
+- **Adding a new record to a multi-record field**
+    - When the user clicks the "+" button within a multi-record field, UI should scaffold to allow creating a new record.
+    - The new record UI should appear at the _top_ of the record list, expanded, with the first editable field focused so the user can begin typing immediately.
 
-- We have a powerful DML API that allows arbitrary changes to records in the database. The record editor should use this DML API to submit a single API request to save the user's changes.
-- Any errors should be handled by rendering them within the UI and retaining the changes to the form.
-- On success, we should keep the form open and update its state to reflect the saved values.
-- Updating the query result row with the new values is out of scope.
+## Modal record picker
+
+- The modal record picker should enable searching and selection of existing records for scalar linked record fields.
+
+- The modal record picker should open when the user clicks the pencil icon (for NULL fields) or double-clicks the field label (regardless of current value).
+
+- The modal should have a window title such as "Pick album".
+
+- The title bar should have an X close button at the top right which cancels the operation, leaving the form as it was before the modal opened.
+
+- Below the title, a search box should render that accepts Querydown filtering code (matching the query filter section UI).
+
+- A Querydown query should be formulated using the user-entered filtering code, plus the sorting and display code that we generated using our smart, points-based system to display the embedded record component. This query should be executed against the query endpoint and results should render within the modal.
+
+- Single-clicking a result should close the modal and submit the entire loaded record to the form, allowing the embedded record component to render immediately without additional requests.
+
+- Icon-only buttons for sorting and display should appear to the right of the search box. These buttons should toggle sorting and display builder UIs matching the query builder.
+
+- The record picker search UX should differ from the query page in the following ways:
+    - Search should execute as the user types, not wait for Ctrl+Enter.
+    - Newlines should not be allowed in the search box.
+    - Up/Down arrow keys should select results while maintaining focus on the filter input.
+    - The Enter key should submit the selected record.
+
+- At the bottom of the modal, a "New record" button should close the record picker and scaffold UI to create and link a new record. The search filter code should be auto-populated into the first text field of the nested new record form as a convenience. (This mapping may not be perfect, but serves as a helpful starting point.)
 
 ## Interactions
 
@@ -375,36 +401,10 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 - **Shift+Click**: Select multiple (contiguous)
 - **"Selection: Delete" action**: Delete the selected items (ephemerally in the form)
 
-## Modal record picker
+## Saving the form
 
-- The modal record picker should enable searching and selection of existing records for scalar linked record fields.
-
-- The modal record picker should open when the user clicks the pencil icon (for NULL fields) or double-clicks the field label (regardless of current value).
-
-- The modal should have a window title such as "Pick album".
-
-- The title bar should have an X close button at the top right which cancels the operation, leaving the form as it was before the modal opened.
-
-- Below the title, a search box should render that accepts Querydown filtering code (matching the query filter section UI).
-
-- A Querydown query should be formulated using the user-entered filtering code, the default sorting preset, and the default display preset. This query should be executed against the query endpoint and results should render within the modal.
-
-- Single-clicking a result should close the modal and submit the entire loaded record to the form, allowing the embedded record component to render immediately without additional requests.
-
-- Icon-only buttons for sorting and display should appear to the right of the search box. These buttons should toggle sorting and display builder UIs matching the query builder.
-
-- The record picker search UX should differ from the query page in the following ways:
-    - Search should execute as the user types, not wait for Ctrl+Enter.
-    - Newlines should not be allowed in the search box.
-    - Up/Down arrow keys should select results while maintaining focus on the filter input.
-    - The Enter key should submit the selected record.
-
-- At the bottom of the modal, a "New record" button should close the record picker and scaffold UI to create and link a new record. The search filter code should be auto-populated into the first text field of the nested new record form as a convenience. (This mapping may not be perfect, but serves as a helpful starting point.)
-
-## Adding a new record to a multi-record field
-
-- When the user clicks the "+" button within a multi-record field, UI should scaffold to allow creating a new record.
-
-- The new record UI should appear at the _top_ of the record list, expanded, with the first editable field focused so the user can begin typing immediately.
-
+- We have a powerful DML API that allows arbitrary changes to records in the database. The record editor should use this DML API to submit a single API request to save the user's changes.
+- Any errors should be handled by rendering them within the UI and retaining the changes to the form.
+- On success, we should keep the form open and update its state to reflect the saved values.
+- Updating the query result row with the new values is out of scope.
 
