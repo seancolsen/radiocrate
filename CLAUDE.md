@@ -37,6 +37,10 @@ apply to it — run its checks freely from `frontend/`:
 - `bun run build` (Vite → `frontend/dist`)
 - `bun run test:visual` (Playwright whole-app screenshots, light + dark)
 
+### Writing visual snapshot tests
+
+Avoid creating new snapshots which render the entire app unless you're building a feature that affects top-level behavior or layout. (An overabundance of full-viewport snapshots creates undue churn on these visual tests.) Instead, isolate the UI you're building into a component-specific snapshot test so that you capture a rendering of it without seeing unrelated features.
+
 ## Writing SolidJS (not React)
 
 The `frontend/` app is **SolidJS**. Its JSX resembles React but the semantics
