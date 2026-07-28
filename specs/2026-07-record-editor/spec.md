@@ -250,6 +250,22 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 
 - When an embedded record component represents a _new record being added_, it should display the text "New" in italics, centered. The component should not attempt to render the user's partial field values as a preview (since aggregates and other computed columns may be unavailable until the record is saved).
 
+## Focus
+
+- The following UI elements should be focusable:
+    - Field labels
+    - _Activated_ field value inputs
+    - Embedded records in multi-record fields
+    
+- The following interactive UI elements are _not_ to be focusable:
+    - Non-activated field values
+    - Expansion toggle
+    - Pencil icon buttons
+    - Plus buttons
+    - Embedded record in a scalar linked field
+
+- Field labels and activated field value inputs should be styled with a blue border when focused. When a context menu is opened on a field label, the field label should be stylized as if it were focused.
+
 ## Selection
 
 - Embedded records within multi-link fields are to be selectable such that many of them can be selected via Shift and Ctrl just like in the query result pane. This is to allow easy deletion of many records.
@@ -267,28 +283,11 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
         - When an embedded record within a multi-record field is selected: that record should be deleted (ephemerally).
         - When an embedded record within a scalar linked record field is selected: the field should be set to NULL (ephemerally).
 
-## Focus
-
-- The following UI elements should be focusable:
-    - Field labels
-    - _Activated_ field value inputs
-    - Embedded records in multi-record fields
-    
-- The following interactive UI elements are _not_ to be focusable:
-    - Non-activated field values
-    - Expansion toggle
-    - Pencil icon buttons
-    - Plus buttons
-    - Embedded record in a scalar linked field
-
-- Field labels and activated field value inputs should be styled with a blue border when focused. When a context menu is opened on a field label, the field label should be stylized as if it were focused.
-
 - When a field label is focused, we should handle the following command actions:
     - "Selection: Select down" — should focus the next field label below, if there is one. This should recurse into opened child fields
     - "Selection: Select up" — should focus the next field label upward, if there is one, including parent fields.
     - "Selection: Expand nested items" — should expand a collapsed field, if expandable.
     - "Selection: Collapse nested items" — should collapse an expanded field, if possible.
-
 
 ## Form modification
 
