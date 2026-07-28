@@ -1,5 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import { FILTER_DEF, PRESETS_FIXTURE, QUERIES_FIXTURE } from "./fixtures";
+import type { AppStore } from "../../src/state/store";
+
+/** The store the app exposes under `?expose=1`. */
+interface AppWindow {
+  __appStore: AppStore;
+}
 
 /** Fulfill the RPC route from fixtures (no backend). `preset.list` returns the
  * "vetted" filter preset so the builder snapshots can reference it. `/api/query`
@@ -117,3 +123,48 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(el).toHaveScreenshot(`toolbar-compact-${colorScheme}.png`);
   });
 }
+
+test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
+  page,
+}) => {
+  await toolbar(
+    page,
+    "light",
+    `clean=1&count=12&def=${def(FILTER_DEF)}&expose=1`,
+  );
+  await page.getByRole("button", { name: "Query actions" }).click();
+  const menu = page.getByRole("menu");
+  const items = menu.getByRole("menuitem");
+  await expect(items).toHaveText(["Rename", "Duplicate", "View SQL", "Delete"]);
+
+  // Opening moves real focus to the first row, not the trigger that opened it.
+  await expect(items.first()).toBeFocused();
+
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused();
+
+  // Up from the top wraps to the bottom.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(items.last()).toBeFocused();
+
+  // The focus trap: Tab cycles within the menu instead of leaving it.
+  await page.keyboard.press("Tab");
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(items.last()).toBeFocused();
+
+  // Enter picks the highlighted row — "Rename" starts the tab rename and the
+  // menu dismisses, just as clicking the row would.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeHidden();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as AppWindow).__appStore.state.renaming,
+    ),
+  ).not.toBeNull();
+});

@@ -60,10 +60,17 @@ export default function FieldLabel(props: {
       data-form-item=""
       data-item-id={props.itemId}
       tabindex={0}
-      class={`text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 text-xs outline-none select-none ${look().tint}`}
-      // An open menu wears the same blue border as focus, without taking focus
-      // (which is on the menu): the label is what the menu is about to act on.
-      classList={{ "border-accent": props.menuOpen }}
+      class={`text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 text-xs outline-none select-none ${look().tint}`}
+      // An open menu wears the same blue border real focus would, even once its
+      // own focus trap has moved focus onto the menu: the label is what the
+      // menu is about to act on. `border-transparent` has to be conditional
+      // too, not just layered under `border-accent` in the static class —
+      // same-specificity utilities settle by stylesheet order, not DOM order,
+      // so a plain `border-accent` class can lose to it outright.
+      classList={{
+        "border-accent": props.menuOpen,
+        "border-transparent": !props.menuOpen,
+      }}
       onClick={() => props.onClick()}
       onDblClick={() => props.onDblClick()}
       onFocus={() => props.onFocus()}

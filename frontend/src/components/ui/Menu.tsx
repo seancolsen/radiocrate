@@ -6,6 +6,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { useMenuKeyboard } from "./menuKeyboard";
 
 /** The interaction handle a {@link Menu} hands its trigger. */
 export interface MenuApi {
@@ -14,11 +15,46 @@ export interface MenuApi {
   close: () => void;
 }
 
+/** The dropdown content itself, mounted fresh each time the menu opens — which
+ * is what gives it a focus trap and a freshly-highlighted first row every
+ * time (see {@link useMenuKeyboard}). */
+function MenuPanel(props: {
+  close: () => void;
+  align: "start" | "end";
+  side: "below" | "above";
+  width?: string;
+  children: JSX.Element;
+}): JSX.Element {
+  let content: HTMLDivElement | undefined;
+  useMenuKeyboard(
+    () => content,
+    () => props.close(),
+  );
+  return (
+    <div
+      ref={(el) => (content = el)}
+      role="menu"
+      class="bg-panel border-edge absolute z-50 flex flex-col gap-0.5 rounded-md border p-1 shadow-lg"
+      classList={{
+        "left-0": props.align === "start",
+        "right-0": props.align === "end",
+        "top-full mt-1": props.side === "below",
+        "bottom-full mb-1": props.side === "above",
+      }}
+      style={{ "min-width": props.width ?? "190px" }}
+      onClick={() => props.close()}
+    >
+      {props.children}
+    </div>
+  );
+}
+
 /** A lightweight dropdown menu anchored under its trigger. Owns open/close
- * state, closes on outside pointerdown, on Escape, and on any click inside the
- * content (any row dismisses the popup). Positions with plain absolute layout
- * relative to the trigger — adequate for the toolbar, whose menus always drop
- * downward.
+ * state, closes on outside pointerdown and on any click inside the content
+ * (any row dismisses the popup); while open, {@link useMenuKeyboard} owns
+ * Escape, the focus trap, and Up/Down/Enter navigation. Positions with plain
+ * absolute layout relative to the trigger — adequate for the toolbar, whose
+ * menus always drop downward.
  *
  * `trigger` renders the clickable anchor (given the {@link MenuApi}); `align`
  * pins the content to the trigger's left (`start`) or right (`end`) edge, and
@@ -41,15 +77,8 @@ export function Menu(props: {
     const onDown = (e: PointerEvent) => {
       if (!wrapper?.contains(e.target as Node)) close();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
     document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    });
+    onCleanup(() => document.removeEventListener("pointerdown", onDown));
   });
 
   return (
@@ -65,20 +94,14 @@ export function Menu(props: {
         close,
       })}
       <Show when={open()}>
-        <div
-          role="menu"
-          class="bg-panel border-edge absolute z-50 flex flex-col gap-0.5 rounded-md border p-1 shadow-lg"
-          classList={{
-            "left-0": (props.align ?? "start") === "start",
-            "right-0": props.align === "end",
-            "top-full mt-1": (props.side ?? "below") === "below",
-            "bottom-full mb-1": props.side === "above",
-          }}
-          style={{ "min-width": props.width ?? "190px" }}
-          onClick={() => close()}
+        <MenuPanel
+          close={close}
+          align={props.align ?? "start"}
+          side={props.side ?? "below"}
+          width={props.width}
         >
           {props.children}
-        </div>
+        </MenuPanel>
       </Show>
     </div>
   );
@@ -98,10 +121,12 @@ export function MenuItem(props: {
       type="button"
       role="menuitem"
       disabled={props.disabled}
-      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm"
+      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
       classList={{
-        "text-ink hover:bg-hover": !props.disabled && !props.danger,
-        "text-danger hover:bg-hover": !props.disabled && props.danger,
+        "text-ink hover:bg-hover focus:bg-hover":
+          !props.disabled && !props.danger,
+        "text-danger hover:bg-hover focus:bg-hover":
+          !props.disabled && props.danger,
         "text-ink-weak/40": props.disabled,
       }}
       onClick={() => props.onClick?.()}
@@ -135,9 +160,9 @@ export function MenuToggleItem(props: {
       role={props.kind === "checkbox" ? "menuitemcheckbox" : "menuitemradio"}
       aria-checked={props.checked}
       disabled={props.disabled}
-      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm"
+      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
       classList={{
-        "text-ink hover:bg-hover": !props.disabled,
+        "text-ink hover:bg-hover focus:bg-hover": !props.disabled,
         "text-ink-weak/40": props.disabled,
       }}
       onClick={() => props.onClick?.()}

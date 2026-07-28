@@ -799,6 +799,51 @@ test("a primitive field's menu edits, clears and copies it", async ({
   await expect(editor.getByRole("textbox")).toBeFocused();
 });
 
+test("a field menu traps focus and Up/Down/Enter drive it, not the form underneath", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await rightClick(formItem(editor, "r:title"));
+  const menu = page.getByRole("menu");
+  const items = menu.getByRole("menuitem");
+  await expect(items).toHaveText(["Edit", "Clear", "Copy"]);
+
+  // Opening moves real focus into the menu — off the label it was raised on,
+  // even though the label keeps its focus-styled border (spec: the label says
+  // what the menu is about to act on).
+  await expect(items.first()).toBeFocused();
+  await expect(formItem(editor, "r:title")).not.toBeFocused();
+
+  // Down highlights the next row — and does *not* also walk the form to the
+  // next field, which is what bare Down does everywhere else in the editor.
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused();
+  await expect(formItem(editor, "r:album")).not.toBeFocused();
+
+  // Up from the top wraps to the bottom.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(items.last()).toBeFocused();
+
+  // The focus trap: Tab cycles within the menu instead of leaving it.
+  await page.keyboard.press("Tab");
+  await expect(items.first()).toBeFocused();
+
+  // Enter picks the highlighted row, just as clicking it would.
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused(); // "Clear"
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(
+    editor.getByText("Pray You Catch Me", { exact: true }),
+  ).toBeHidden();
+  // Closing hands focus back to the label the menu was raised on.
+  await expect(formItem(editor, "r:title")).toBeFocused();
+});
+
 test("a primary key's menu only offers to copy it, never to edit or clear it", async ({
   page,
 }) => {

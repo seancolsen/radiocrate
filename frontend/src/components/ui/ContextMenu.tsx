@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { JSX } from "solid-js";
+import { useMenuKeyboard } from "./menuKeyboard";
 
 /** Gap kept between the menu and the viewport edges when it has to flip. */
 const EDGE_MARGIN = 8;
@@ -16,9 +17,10 @@ const EDGE_MARGIN = 8;
  * it never also selects the row it landed on. (The results grid is frozen in
  * parallel by its owner, for the events a DOM layer can't intercept.)
  *
- * Closes on outside pointerdown, on Escape, on a scroll/resize that would strand
- * it away from its anchor, and on any click inside the content — matching
- * {@link Menu}, where choosing a row dismisses the popup. */
+ * Closes on outside pointerdown, on a scroll/resize that would strand it away
+ * from its anchor, and on any click inside the content — matching {@link Menu},
+ * where choosing a row dismisses the popup. While open, {@link useMenuKeyboard}
+ * owns Escape, the focus trap, and Up/Down/Enter navigation. */
 export function ContextMenu(props: {
   /** Viewport coordinates to anchor at (the `contextmenu` event's client x/y). */
   x: number;
@@ -55,18 +57,16 @@ export function ContextMenu(props: {
     });
   });
 
+  useMenuKeyboard(
+    () => menu,
+    () => props.onClose(),
+  );
+
   onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    document.addEventListener("keydown", onKey);
     // A resize (or an on-screen keyboard) moves the content out from under the
     // anchor; dismiss rather than leave the menu pointing at nothing.
     window.addEventListener("resize", props.onClose);
-    onCleanup(() => {
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", props.onClose);
-    });
+    onCleanup(() => window.removeEventListener("resize", props.onClose));
   });
 
   return (

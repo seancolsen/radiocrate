@@ -80,10 +80,17 @@ export default function RecordForm(props: {
   /** Whether focus has left the form altogether — read from the event's
    * `relatedTarget` (the element taking focus, `null` for nothing at all)
    * rather than from `document.activeElement`, which during a `focusout` is
-   * still `<body>`: the incoming focus hasn't been applied yet. */
+   * still `<body>`: the incoming focus hasn't been applied yet.
+   *
+   * The context menu is the same exception `onPointerDown` makes for a click:
+   * it's raised *on* the selection, is portaled outside `root`, and (per
+   * `ui/menuKeyboard`) grabs real focus for its own trap the moment it opens —
+   * which must not read as focus leaving the form. */
   const onFocusOut = (root: HTMLElement) => (e: FocusEvent) => {
     const next = e.relatedTarget;
     if (next instanceof Node && root.contains(next)) return;
+    if (next instanceof HTMLElement && next.closest("[role=menu]") !== null)
+      return;
     model.noteBlur();
   };
 
