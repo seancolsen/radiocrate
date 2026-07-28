@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { QUERIES_FIXTURE } from "./fixtures";
 import type { AppStore } from "../../src/state/store";
 
@@ -65,6 +65,18 @@ async function rightClickRow(page: Page, y = 20) {
  * accessible name). */
 const editorPanel = (page: Page) =>
   page.getByRole("complementary", { name: /^Edit / });
+
+/** The embedded records within the form — the previews of other rows. Only
+ * those under a multi-record field are selectable; the one a scalar linked
+ * record field shows is not. */
+const embeddedRecords = (editor: Locator) => editor.locator(".rc-embedded");
+const selectableRecords = (editor: Locator) =>
+  editor.locator("[data-selectable]");
+
+/** One form item, by the id the model tracks it under: `r` is the record the
+ * editor was opened on, `r:title` its `title` field's label. */
+const formItem = (editor: Locator, itemId: string) =>
+  editor.locator(`[data-item-id="${itemId}"]`);
 
 const selection = (page: Page) =>
   page.evaluate(() => {
@@ -269,8 +281,14 @@ test("the form loads the record's values and its related-record counts", async (
   await openEditor(page);
   const editor = editorPanel(page);
 
-  await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
-  await expect(editor.getByText("file-1")).toBeVisible();
+  await expect(
+    editor.getByText("Pray You Catch Me", { exact: true }),
+  ).toBeVisible();
+  // The `file` link shows the record it points at, not the id it holds.
+  await expect(embeddedRecords(editor).first()).toContainText(
+    "Pray You Catch Me.flac",
+  );
+  await expect(editor.getByText("file-1")).toBeHidden();
   // `credit` and `play` show how many records reference this track.
   await expect(
     editor.getByRole("button", { name: "Expand credit" }),
@@ -283,12 +301,13 @@ test("selecting another row rebuilds the form on that record", async ({
   await openGrid(page);
   await openEditor(page);
   const editor = editorPanel(page);
-  await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
+  const title = (text: string) => editor.getByText(text, { exact: true });
+  await expect(title("Pray You Catch Me")).toBeVisible();
 
   // The sidebar follows the selection, and the form follows the sidebar.
   await page.locator("canvas").click({ position: { x: 200, y: rowY(2) } });
-  await expect(editor.getByText("Don't Hurt Yourself")).toBeVisible();
-  await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
+  await expect(title("Don't Hurt Yourself")).toBeVisible();
+  await expect(title("Pray You Catch Me")).toBeHidden();
 });
 
 test("a NULL field offers a pencil, which activates an empty input", async ({
@@ -313,7 +332,7 @@ test("clicking a value edits it; clicking away puts it back into view mode", asy
   await openEditor(page);
   const editor = editorPanel(page);
 
-  await editor.getByText("Pray You Catch Me").click();
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
   const input = editor.getByRole("textbox");
   await expect(input).toBeFocused();
   await input.fill("Pray You Catch Me (Live)");
@@ -351,15 +370,17 @@ test("expanding a multi-record field lists its records, each expandable in turn"
   const editor = editorPanel(page);
 
   await editor.getByRole("button", { name: "Expand credit" }).click();
-  // Each child is shown by its primary key — minus the `track` part, which every
-  // sibling shares. (The embedded record component that will replace this text
-  // is still to come.)
-  await expect(editor.getByText("artist-1", { exact: true })).toBeVisible();
-  await expect(editor.getByText("artist-2", { exact: true })).toBeVisible();
+  // Each credit is previewed by the one column that identifies it at a glance:
+  // its artist's name, a hop away through the `artist` link. They're ordered by
+  // `ord`, which the same generation picked up.
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(2);
+  await expect(credits.first()).toHaveText("Beyoncé");
+  await expect(credits.nth(1)).toHaveText("Jack White");
 
   // Expanding one loads that record's own form, without the `track` field it was
   // reached through.
-  await editor.getByRole("button", { name: "Expand artist-2" }).click();
+  await editor.getByRole("button", { name: "Expand Jack White" }).click();
   await expect(editor.getByText("role", { exact: true })).toBeVisible();
   await expect(editor.getByText("Featured")).toBeVisible();
   await expect(editor.getByText("track", { exact: true })).toBeHidden();
@@ -374,7 +395,9 @@ test("expanding a scalar linked record field loads that record's form", async ({
 
   await editor.getByRole("button", { name: "Expand file" }).click();
   await expect(editor.getByText("path", { exact: true })).toBeVisible();
-  await expect(editor.getByText(/Pray You Catch Me\.flac/)).toBeVisible();
+  // Both the embedded record above and the `path` field within the sub-form now
+  // show the file's path.
+  await expect(editor.getByText(/Pray You Catch Me\.flac/)).toHaveCount(2);
   // The linked record's own referencing fields are there too — the tree recurses
   // as far as the data goes.
   await expect(
@@ -390,10 +413,154 @@ test("a multi-record field skeletons its records while they load", async ({
   const editor = editorPanel(page);
 
   // The count arrived with the top-level load, so the list has its shape — two
-  // placeholder rows — before any of the records themselves are here.
+  // empty embedded records — before any of the records themselves are here.
   await editor.getByRole("button", { name: "Expand play" }).click();
   await expect(editor.getByTestId("record-placeholder")).toHaveCount(2);
   await expect(editor.getByTestId("record-placeholder")).toHaveCount(0);
+});
+
+// ── Embedded records, focus and selection ───────────────────────────────────
+
+test("a scalar linked record field previews the record it points at", async ({
+  page,
+}) => {
+  await openGrid(page, slow(700));
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // The preview is a second request, made once the top-level load hands over the
+  // id: the widget is there, empty, before its content is.
+  const preview = embeddedRecords(editor).first();
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveText("");
+  await expect(preview).toContainText("Pray You Catch Me.flac");
+  // It isn't a selectable item — the field's label is what the user selects.
+  await expect(preview).not.toHaveAttribute("data-selectable", "");
+});
+
+test("embedded records select like result rows, with Shift and Ctrl", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4); // track-5: two credits
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(2);
+  const selected = () =>
+    editor.locator('[data-selectable][data-selected="true"]');
+
+  await credits.first().click();
+  await expect(selected()).toHaveCount(1);
+  // A selected record is a focused one.
+  await expect(credits.first()).toBeFocused();
+
+  await credits.nth(1).click({ modifiers: ["Shift"] });
+  await expect(selected()).toHaveCount(2);
+
+  await credits.first().click({ modifiers: ["ControlOrMeta"] });
+  await expect(selected()).toHaveCount(1);
+  await expect(credits.nth(1)).toHaveAttribute("data-selected", "true");
+
+  // Clicking anything that isn't a selectable record ends the selection.
+  await editor.getByRole("heading").click();
+  await expect(selected()).toHaveCount(0);
+});
+
+test("the arrow keys move between form items and open them", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  // Clicking a field label selects it; Down walks to the next field's label.
+  await formItem(editor, "r:title").click();
+  await expect(formItem(editor, "r:title")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(formItem(editor, "r:album")).toBeFocused();
+
+  // Right opens the focused field, Down then recurses into what it opened, and
+  // Left closes it again.
+  await formItem(editor, "r:#credit").click();
+  await page.keyboard.press("ArrowRight");
+  await expect(selectableRecords(editor)).toHaveCount(2);
+  await page.keyboard.press("ArrowDown");
+  await expect(selectableRecords(editor).first()).toBeFocused();
+  // Arrowing onto an embedded record selects it, as clicking it would.
+  await expect(selectableRecords(editor).first()).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+
+  await formItem(editor, "r:#credit").click();
+  await page.keyboard.press("ArrowLeft");
+  await expect(selectableRecords(editor)).toHaveCount(0);
+});
+
+test("Delete clears the focused field, and drops a selected record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  // A primitive field goes to NULL — in the form only, until it's saved — which
+  // is what the pencil is offering to fill back in.
+  await formItem(editor, "r:title").click();
+  await page.keyboard.press("Delete");
+  await expect(
+    editor.getByText("Don't Hurt Yourself", { exact: true }),
+  ).toBeHidden();
+  await expect(
+    editor.getByRole("button", { name: "Edit title" }),
+  ).toBeVisible();
+
+  // A selected record within a multi-record field goes away, and the field's
+  // count follows it down.
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await selectableRecords(editor).first().click();
+  await page.keyboard.press("Delete");
+  await expect(selectableRecords(editor)).toHaveCount(1);
+  await expect(selectableRecords(editor).first()).toHaveText("Jack White");
+});
+
+test("Ctrl+Click on a toggle opens every field beside it", async ({ page }) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+
+  await editor
+    .getByRole("button", { name: "Expand credit" })
+    .click({ modifiers: ["ControlOrMeta"] });
+  // `credit` and its siblings `file`, `genre` and `play` all opened at once.
+  await expect(
+    editor.getByRole("button", { name: "Collapse play" }),
+  ).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: "Collapse file" }),
+  ).toBeVisible();
+});
+
+test("Escape and Tab leave an activated field for a label", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  // The edit is kept in the form, and focus lands back on the field's label.
+  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
+  await expect(formItem(editor, "r:title")).toBeFocused();
+
+  // Tab out of an edit and focus moves on to the next item's label instead.
+  await editor.getByText("Renamed", { exact: true }).click();
+  await page.keyboard.press("Tab");
+  await expect(formItem(editor, "r:album")).toBeFocused();
 });
 
 // Screenshots: the menu over the rows, and the editor sidebar open beside them.
@@ -425,7 +592,12 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.getByRole("menuitem", { name: "Edit track" }).click();
     const editor = editorPanel(page);
     await expect(editor).toBeVisible();
-    await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
+    await expect(
+      editor.getByText("Pray You Catch Me", { exact: true }),
+    ).toBeVisible();
+    // The `file` link's embedded record is a second request; wait for it, so the
+    // widget is filled rather than caught empty.
+    await expect(embeddedRecords(editor).first()).toContainText(".flac");
     await expect(page).toHaveScreenshot(`record-editor-${colorScheme}.png`, {
       fullPage: true,
     });
@@ -446,7 +618,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(editor).toBeVisible();
     await editor.getByRole("button", { name: "Expand genre" }).click();
     await editor.getByRole("button", { name: "Expand credit" }).click();
-    await editor.getByRole("button", { name: "Expand artist-2" }).click();
+    await editor.getByRole("button", { name: "Expand Jack White" }).click();
     await expect(editor.getByText("Featured")).toBeVisible();
     await expect(page).toHaveScreenshot(
       `record-editor-expanded-${colorScheme}.png`,
@@ -454,5 +626,25 @@ for (const colorScheme of ["light", "dark"] as const) {
         fullPage: true,
       },
     );
+  });
+
+  // The embedded records themselves, scoped to the panel: a multi-record field
+  // listing its records with one of them selected, beside the scalar link's
+  // unselectable preview.
+  test(`embedded records - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(SEEDED);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await rightClickRow(page, rowY(2)); // the track with two credits
+    await page.getByRole("menuitem", { name: "Edit track" }).click();
+    const editor = editorPanel(page);
+    await editor.getByRole("button", { name: "Expand credit" }).click();
+    await expect(selectableRecords(editor)).toHaveCount(2);
+    await selectableRecords(editor).first().click();
+    await expect(embeddedRecords(editor).last()).toContainText("Jack White");
+    await expect(editor).toHaveScreenshot(`record-embedded-${colorScheme}.png`);
   });
 }

@@ -7,10 +7,11 @@
 // rows continue the seeded "Lemonade" grid: `?records=track,album` gives its
 // rows the keys `track-1` … `track-5`, which is what the ids below are.
 //
-// The fake query runner interprets only the shapes `query/recordForm.ts`
-// generates — `col:="value"` conditions, `$col` / `$#table` display expressions,
-// `\\col` sorting — rather than being a SQL engine. If the generator learns a
-// new shape, this learns it too.
+// The fake query runner interprets only the shapes `query/recordForm.ts` and
+// `query/embeddedRecord.ts` generate — `col:="value"` conditions, `$col` /
+// `$link.col` / `$#table` display expressions, `\\col` / `\\col \d` sorting —
+// rather than being a SQL engine. If the generators learn a new shape, this
+// learns it too.
 
 import { addInferredLinks } from "../query/schema";
 import { setRecordQueryRunner } from "../query/recordData";
@@ -182,20 +183,43 @@ function relatedCount(childTable: string, base: string, row: Row): number {
     .length;
 }
 
+/** Reads a column path out of a row: `title`, or `artist.name` — one hop
+ * through the foreign key named by the first part, which the fixture resolves
+ * the way the compiler's inferred links do (`<column>` → `<column>.id`). */
+function readPath(base: string, row: Row, path: string): string | null {
+  const [first, second] = path.split(".");
+  if (second === undefined) return row[first] ?? null;
+  const id = row[first];
+  const target = (TABLE_ROWS[first] ?? []).find((r) => r.id === id);
+  return target ? (target[second] ?? null) : null;
+}
+
+/** One sort term: a column path and its direction (`\d` makes it descending). */
+function parseSort(sort: string): { path: string; descending: boolean }[] {
+  const terms: { path: string; descending: boolean }[] = [];
+  for (const token of sort.split(/\s+/).filter(Boolean)) {
+    if (token === "\\d") {
+      if (terms.length > 0) terms[terms.length - 1].descending = true;
+      continue;
+    }
+    terms.push({ path: token.replace(/^\\+/, ""), descending: false });
+  }
+  return terms;
+}
+
 /** Answers one record editor query out of the fixture rows. */
 function query(q: RecordQuery): (string | null)[][] {
   const conditions = parseConditions(q.filter);
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
     conditions.every(([column, value]) => row[column] === value),
   );
-  const sortColumns = q.sort
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((s) => s.replace(/^\\+/, ""));
+  const terms = parseSort(q.sort);
   rows.sort((a, b) => {
-    for (const column of sortColumns) {
-      const order = (a[column] ?? "").localeCompare(b[column] ?? "");
-      if (order !== 0) return order;
+    for (const { path, descending } of terms) {
+      const order = (readPath(q.base, a, path) ?? "").localeCompare(
+        readPath(q.base, b, path) ?? "",
+      );
+      if (order !== 0) return descending ? -order : order;
     }
     return 0;
   });
@@ -204,7 +228,7 @@ function query(q: RecordQuery): (string | null)[][] {
     exprs.map((expr) =>
       expr.startsWith("$#")
         ? String(relatedCount(expr.slice(2), q.base, row))
-        : (row[expr.slice(1)] ?? null),
+        : readPath(q.base, row, expr.slice(1)),
     ),
   );
 }

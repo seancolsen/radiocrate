@@ -15,10 +15,6 @@
 // - `query.new` — the tab bar's "+" is still an inert placeholder; there is no
 //   create-a-query path in the store yet.
 // - `tabs.pin_active` / `tabs.unpin_active` — tabs carry no pinned state.
-// - `selection.expand_nested` / `selection.collapse_nested` /
-//   `selection.delete` — these act on the record editor's *form* selection, and
-//   the form is not built yet; the editor panel only names the record it
-//   points at.
 //
 // Their ids stay reserved: a stored override for one of them is skipped on
 // load (`overridesFromEntries`) and left in the database untouched, so it
@@ -41,6 +37,9 @@ export type CommandId =
   | "results.extend_selection_down"
   | "results.extend_selection_up"
   | "results.edit_selected"
+  | "selection.expand_nested"
+  | "selection.collapse_nested"
+  | "selection.delete"
   | "tabs.save_active"
   | "tabs.save_all"
   | "tabs.close_active"
@@ -52,7 +51,12 @@ export type CommandId =
 /** The context gating a command. Deliberately a fixed set of boolean predicates
  * over {@link CommandContext}, not an expression language. */
 export type When =
-  "always" | "activeTab" | "queryTab" | "results" | "trackLoaded";
+  | "always"
+  | "activeTab"
+  | "queryTab"
+  | "results"
+  | "trackLoaded"
+  | "recordForm";
 
 /** A snapshot of the app state the {@link When} predicates read, computed per
  * input pass / palette render. */
@@ -65,6 +69,10 @@ export interface CommandContext {
   resultsAvailable: boolean;
   /** A track is loaded in the now-playing bar. */
   trackLoaded: boolean;
+  /** The user is working inside a record editor form: one of its items holds
+   * focus, or it has a selection. The arrow keys belong to the form then, not to
+   * the result rows or anything else on the page. */
+  recordFormFocused: boolean;
 }
 
 export interface CommandDef {
@@ -163,6 +171,28 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     when: "results",
     defaultChord: chordOf("mod+E"),
   },
+  // The three commands below act on the record editor form's selection — the
+  // items it has selected, or the one it has focused. They're gated on the form
+  // holding focus, which is what lets them claim bare arrow keys and Delete
+  // without taking those keys from the rest of the app.
+  {
+    id: "selection.expand_nested",
+    title: "Selection: Expand nested items",
+    when: "recordForm",
+    defaultChord: chordOf("Right"),
+  },
+  {
+    id: "selection.collapse_nested",
+    title: "Selection: Collapse nested items",
+    when: "recordForm",
+    defaultChord: chordOf("Left"),
+  },
+  {
+    id: "selection.delete",
+    title: "Selection: Delete",
+    when: "recordForm",
+    defaultChord: chordOf("Delete"),
+  },
   {
     id: "tabs.save_active",
     title: "Tabs: Save active tab",
@@ -238,6 +268,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.resultsAvailable;
     case "trackLoaded":
       return ctx.trackLoaded;
+    case "recordForm":
+      return ctx.recordFormFocused;
   }
 }
 
@@ -254,5 +286,7 @@ export function whenLabel(when: When): string {
       return "results";
     case "trackLoaded":
       return "track loaded";
+    case "recordForm":
+      return "record editor focused";
   }
 }

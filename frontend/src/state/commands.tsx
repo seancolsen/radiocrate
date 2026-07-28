@@ -33,6 +33,7 @@ import {
   type CommandDef,
   type CommandId,
 } from "../commands/registry";
+import { focusedForm } from "../components/record/formRegistry";
 import { useAppState, type AppStore } from "./store";
 
 // The command system: the keymap (persisted user overrides over the built-in
@@ -185,6 +186,7 @@ function createCommandStore(store: AppStore): CommandStore {
       queryTabActive: active !== null && store.queryTab(active) !== undefined,
       resultsAvailable: active !== null && (store.resultCount(active) ?? 0) > 0,
       trackLoaded: store.state.currentTrack !== null,
+      recordFormFocused: focusedForm() !== undefined,
     };
   });
 
@@ -267,6 +269,9 @@ function createCommandStore(store: AppStore): CommandStore {
     const tabId = activeTab();
     // Query-page commands read this instead, so they stand down on a settings tab.
     const queryId = activeQueryTab();
+    // The record editor form the user is working in, if any — the target of the
+    // selection commands, and the first claim on the arrow keys.
+    const form = focusedForm();
     switch (cmd) {
       case "palette.open":
         togglePalette();
@@ -292,11 +297,17 @@ function createCommandStore(store: AppStore): CommandStore {
       case "query.focus_display":
         if (queryId) store.focusBuilderSection(queryId, "display");
         break;
+      // Up/Down move the row selection — unless the user is inside a record
+      // editor form, where they move between its items instead (the form is
+      // reached *from* the rows, and its items are what's in front of the user
+      // once it is).
       case "results.select_next":
-        if (tabId) store.moveRowSelection(tabId, true, false);
+        if (form) form.model.focusAdjacent(true);
+        else if (tabId) store.moveRowSelection(tabId, true, false);
         break;
       case "results.select_previous":
-        if (tabId) store.moveRowSelection(tabId, false, false);
+        if (form) form.model.focusAdjacent(false);
+        else if (tabId) store.moveRowSelection(tabId, false, false);
         break;
       case "results.extend_selection_down":
         if (tabId) store.moveRowSelection(tabId, true, true);
@@ -320,6 +331,15 @@ function createCommandStore(store: AppStore): CommandStore {
         store.setRecordEditorRecords(tabId, table, records);
         break;
       }
+      case "selection.expand_nested":
+        form?.model.expandSelection(true);
+        break;
+      case "selection.collapse_nested":
+        form?.model.expandSelection(false);
+        break;
+      case "selection.delete":
+        form?.model.deleteSelection();
+        break;
       case "tabs.save_active":
         // Guarded on `isUnsaved`: a save is a backend write that bumps
         // `modified_at`, and the toolbar's Save button is likewise only there

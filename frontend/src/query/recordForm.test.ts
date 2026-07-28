@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFormFields,
-  childRecordsQuery,
   keyConditions,
   quoteValue,
   recordDataQuery,
   valueTypeOf,
-  type MultiRecordField,
 } from "./recordForm";
 import type { SchemaTable } from "./schema";
 
@@ -160,18 +158,6 @@ describe("Querydown generation", () => {
       filter: `id:="t1"`,
       sort: "",
       display: "$id $title $album $track_number $#credit $#play",
-    });
-  });
-
-  it("lists a multi-record field's records by key, in key order", () => {
-    const field = buildFormFields(TABLES, "track").find(
-      (f) => f.key === "#credit",
-    ) as MultiRecordField;
-    expect(childRecordsQuery(field, "t1")).toEqual({
-      base: "credit",
-      filter: `track:="t1"`,
-      sort: "\\\\track \\\\artist",
-      display: "$track $artist",
     });
   });
 });

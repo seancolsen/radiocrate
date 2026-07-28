@@ -10,16 +10,28 @@ import {
 import { Icons } from "../../icons";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
+/** Where focus goes when an activated field leaves edit mode: back to this
+ * field's own label, to the next item's, to the previous one's, or nowhere (the
+ * user clicked elsewhere, and that's where they want to be). */
+export type EditExit = "self" | "next" | "previous" | "none";
+
 /** The activated field value: a focused, auto-growing text box. Mounted only
  * while the field is in edit mode, so every activation starts from the current
  * value and lands the caret at its end.
  *
  * It grows to fit its content rather than scrolling — collapsed, that's the
  * "full height necessary to fit the content with soft wrapping"; expanded, it
- * keeps the same shape as the text it replaced. */
+ * keeps the same shape as the text it replaced.
+ *
+ * Keys: Esc leaves edit mode and goes back to the label; Tab and Shift+Tab do
+ * the same but land on the next or previous item; Enter adds a newline in a text
+ * field and leaves edit mode in any other. Every one of them keeps what was
+ * typed — the form holds it until the user saves. */
 function ValueInput(props: {
   initial: string;
-  onCommit: (text: string) => void;
+  /** Whether Enter inserts a newline rather than ending the edit. */
+  multiline: boolean;
+  onCommit: (text: string, exit: EditExit) => void;
 }) {
   const [text, setText] = createSignal(untrack(() => props.initial));
   let el: HTMLTextAreaElement | undefined;
@@ -35,6 +47,23 @@ function ValueInput(props: {
     el?.setSelectionRange(el.value.length, el.value.length);
   });
 
+  const onKeyDown = (e: KeyboardEvent) => {
+    const exit: EditExit | undefined =
+      e.key === "Escape"
+        ? "self"
+        : e.key === "Enter" && !props.multiline
+          ? "self"
+          : e.key === "Tab"
+            ? e.shiftKey
+              ? "previous"
+              : "next"
+            : undefined;
+    if (!exit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    props.onCommit(text(), exit);
+  };
+
   return (
     <textarea
       ref={(node) => (el = node)}
@@ -46,9 +75,10 @@ function ValueInput(props: {
         setText(e.currentTarget.value);
         grow();
       }}
+      onKeyDown={onKeyDown}
       // Clicking outside the box (or tabbing away) puts the field back into view
       // mode, keeping what was typed.
-      onBlur={() => props.onCommit(text())}
+      onBlur={() => props.onCommit(text(), "none")}
     />
   );
 }
@@ -73,13 +103,15 @@ export default function FieldValue(props: {
   editing: boolean;
   expanded: boolean;
   onBeginEdit: () => void;
-  onCommit: (text: string) => void;
+  onCommit: (text: string, exit: EditExit) => void;
   onOverflow?: (overflowing: boolean) => void;
 }) {
   const known = () => props.value !== undefined;
   const empty = () => props.value == null || props.value === "";
   /** The collapsed rendering of a value: one line, newlines flattened away. */
   const oneLine = () => (props.value ?? "").replace(/\s*\r?\n\s*/g, " ");
+  const multiline = () =>
+    props.field.kind === "primitive" && props.field.valueType === "text";
 
   /** Watches the collapsed line for truncation, in both directions: the text can
    * change under a fixed width (a load, an edit) and the width can change under
@@ -103,14 +135,17 @@ export default function FieldValue(props: {
       <Match when={props.editing}>
         <ValueInput
           initial={props.value ?? ""}
-          onCommit={(text) => props.onCommit(text)}
+          multiline={multiline()}
+          onCommit={(text, exit) => props.onCommit(text, exit)}
         />
       </Match>
       <Match when={empty()}>
         <button
           type="button"
+          tabindex={-1}
           aria-label={`Edit ${props.field.label}`}
           class="text-ink-weak hover:text-ink flex size-5 shrink-0 items-center justify-center"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => props.onBeginEdit()}
         >
           <Icons.Edit class="size-4" />

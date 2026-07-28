@@ -32,11 +32,32 @@ function appearance(field: FormField): {
   }
 }
 
-export default function FieldLabel(props: { field: FormField }) {
+/** A field's label — and the field's handle: it's what the user clicks to select
+ * the field, double-clicks to edit or open it, and what the keyboard moves
+ * between. Focus shows as a blue outline (an outline, not a border, so nothing
+ * shifts when it appears).
+ *
+ * `tabbable` gives the form a single tab stop: the focused item, or the first
+ * field while focus is elsewhere. Everything else is reached with the arrow
+ * keys, not by tabbing through every field of the record. */
+export default function FieldLabel(props: {
+  field: FormField;
+  itemId: string;
+  tabbable: boolean;
+  onClick: () => void;
+  onDblClick: () => void;
+  onFocus: () => void;
+}) {
   const look = () => appearance(props.field);
   return (
     <span
-      class={`text-ink flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1.5 text-xs ${look().tint}`}
+      data-form-item=""
+      data-item-id={props.itemId}
+      tabindex={props.tabbable ? 0 : -1}
+      class={`text-ink focus:outline-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md px-1.5 text-xs outline-none focus:outline-2 focus:outline-offset-0 ${look().tint}`}
+      onClick={() => props.onClick()}
+      onDblClick={() => props.onDblClick()}
+      onFocus={() => props.onFocus()}
     >
       {look().icon({ class: "size-3.5 shrink-0 opacity-70" })}
       <span class="max-w-40 truncate">{props.field.label}</span>

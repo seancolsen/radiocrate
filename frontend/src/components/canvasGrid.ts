@@ -30,21 +30,22 @@
 
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
+import {
+  BODY_FONT,
+  BODY_LINE_H,
+  COL_GAP,
+  ROW_PAD_Y,
+  SMALL_FONT,
+  SMALL_LINE_H,
+  TEXT_PAD_X,
+} from "../query/rowGeometry";
 
-// ── Geometry (logical px == CSS px) — copied verbatim from the DOM grid so the
-// two variants lay out identically and can be compared pixel-for-pixel. ──
-const ROW_PAD_Y = 6;
-const TEXT_PAD_X = 8;
-const COL_GAP = 16;
+// ── Geometry (logical px == CSS px). The row metrics are shared with the record
+// editor's embedded record widget (see `query/rowGeometry.ts`); what's left here
+// is what only the canvas draws. ──
+
 /** Extra height a line gains when it holds a pill column (`PILL_LINE_EXTRA`). */
 const PILL_LINE_EXTRA = 6;
-
-// Per-line content heights and the matching font sizes (hardcoded, not measured
-// per frame, so the layout stays deterministic and the memo effective).
-const BODY_LINE_H = 18;
-const SMALL_LINE_H = 15;
-const BODY_FONT = 14;
-const SMALL_FONT = 11;
 
 // Pill geometry (mirrors `.rc-pill`: padding 2px 6px, 4px gap, radius 4).
 const PILL_PAD_X = 6;

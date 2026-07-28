@@ -227,24 +227,6 @@ export function recordDataQuery(
   };
 }
 
-/** The query listing the records behind a multi-record field: the identifying
- * columns of every record of `field.table` whose `field.column` points at the
- * record `parent` identifies.
- *
- * Only the keys — this session renders a child as its primary key in plain text
- * rather than as an embedded record, and expanding one loads the rest. Ordered
- * by that key, so the list is stable across refreshes.
- *
- * The result's columns are positional — one per entry of `field.keyColumns`. */
-export function childRecordsQuery(
-  field: MultiRecordField,
-  parent: string,
-): RecordQuery {
-  return {
-    base: field.table,
-    filter: `${field.column}:=${quoteValue(parent)}`,
-    // Two literal backslashes: Querydown's sort marker.
-    sort: field.keyColumns.map((c) => `\\\\${c}`).join(" "),
-    display: field.keyColumns.map((c) => `$${c}`).join(" "),
-  };
-}
+// The query listing the records behind a multi-record field lives in
+// `embeddedRecord.ts`: it fetches each child's preview columns alongside its
+// key, and which columns those are is that module's business.

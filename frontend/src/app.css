@@ -180,6 +180,37 @@
   } /* keep the iOS auto-zoom guard for future forms */
 }
 
+/* The record editor's embedded record widget (EmbeddedRecord.tsx): a preview of
+   one row, wearing the results grid's row surface so it reads as the same kind
+   of thing — the top-lit gradient, the hover shift, and the flat selected fill
+   under a sheen. Its geometry (height, radius, cell positions) is inline: it
+   comes from the shared row metrics and the measured width. */
+.rc-embedded {
+  border: 1px solid var(--edge);
+  background: linear-gradient(
+    to bottom,
+    var(--row-bg-top),
+    var(--row-bg-bottom)
+  );
+}
+.rc-embedded:hover {
+  background: linear-gradient(
+    to bottom,
+    var(--row-bg-top-hover),
+    var(--row-bg-bottom-hover)
+  );
+}
+.rc-embedded[data-selected="true"] {
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0)),
+    var(--row-selected);
+}
+.rc-embedded[data-selected="true"]:hover {
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0)),
+    var(--row-selected-hover);
+}
+
 /* The results grid is painted to a <canvas> (DOM-UI experiment, canvas variant):
    its rows, cells, pills, gradient/separator, and custom scrollbar are all drawn
    imperatively in canvasGrid.ts, which reads the row-surface color tokens above

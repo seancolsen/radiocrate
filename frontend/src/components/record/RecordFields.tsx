@@ -1,16 +1,26 @@
-import { createSignal, For, Index, Show, type ParentProps } from "solid-js";
+import {
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  Show,
+  untrack,
+  type ParentProps,
+} from "solid-js";
+import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
-import FieldValue from "./FieldValue";
+import FieldValue, { type EditExit } from "./FieldValue";
 import LoadingRegion from "./LoadingRegion";
 import {
   fieldItemId,
   listId,
+  ROOT_ID,
   scalarChildId,
   type RecordFormModel,
   type RecordNode,
 } from "./formModel";
-import type { FormField } from "../../query/recordForm";
+import type { FormField, MultiRecordField } from "../../query/recordForm";
 
 // The form's tree, rendered. The components here call each other in a cycle — a
 // record's fields, a field's expansion, a multi-record field's children, and
@@ -20,6 +30,11 @@ import type { FormField } from "../../query/recordForm";
 // Every row is the same three slots in the same order: expansion toggle, field
 // label, value. Rows an item can't fill still reserve the space, so toggles and
 // labels line up down the whole form regardless of what any one row holds.
+//
+// Two kinds of row are *items*: a field (its label) and a record within a
+// multi-record field (its embedded record). Each registers what it can do with
+// the model when it mounts, so a keyboard command — which knows an item only by
+// id — can expand, collapse or delete it.
 
 /** All of one record's fields, dimmed under the loading wash while its data is
  * in flight. */
@@ -32,12 +47,14 @@ export default function RecordNodeView(props: {
       {(node) => (
         <LoadingRegion loading={node().status === "loading"}>
           <For each={node().fields}>
-            {(field) => (
+            {(field, index) => (
               <FieldRow
                 model={props.model}
                 recordId={props.recordId}
                 node={node()}
                 field={field}
+                // The form's one tab stop, while nothing in it has focus.
+                first={index() === 0 && props.recordId === ROOT_ID}
               />
             )}
           </For>
@@ -56,13 +73,16 @@ function FieldRow(props: {
   recordId: string;
   node: RecordNode;
   field: FormField;
+  first: boolean;
 }) {
   // Whether the collapsed value is actually cut off — reported up from the value
   // itself, since only it knows how much room the text needed.
   const [overflowing, setOverflowing] = createSignal(false);
 
-  const itemId = () => fieldItemId(props.recordId, props.field.key);
-  const expanded = () => props.model.isExpanded(itemId());
+  // A row stands for one field of one record for its whole life, so its id — and
+  // the registration keyed on it — is read once rather than tracked.
+  const itemId = untrack(() => fieldItemId(props.recordId, props.field.key));
+  const expanded = () => props.model.isExpanded(itemId);
 
   /** The record count behind a multi-record field, once loaded. */
   const count = (): number | undefined =>
@@ -81,16 +101,71 @@ function FieldRow(props: {
       // record identity at all can be counted but not listed.
       return (count() ?? 0) > 0 && props.field.keyColumns.length > 0;
     }
-    if (props.field.kind === "scalarLink") {
-      const linked = value();
-      return linked != null && linked !== "";
-    }
+    if (props.field.kind === "scalarLink") return linked();
     return props.field.valueType === "text" && overflowing();
+  };
+
+  /** Whether a scalar linked record field points at something — what decides
+   * between an embedded record and the pencil that offers to fill it in. */
+  const linked = () => {
+    const current = value();
+    return current != null && current !== "";
   };
 
   /** An expanded *text* field moves its value below the label, where it has the
    * width to wrap; an expanded link/record field grows a subtree instead. */
   const textBelow = () => props.field.kind === "primitive" && expanded();
+
+  /** The id of both the record behind a scalar linked record field and that
+   * field's embedded record. */
+  const embedId = () => scalarChildId(props.recordId, props.field.key);
+
+  /** Whether the row's value renders as plain text (or a pencil): everything
+   * except a record count, an embedded record, and text that has moved below
+   * its label. */
+  const plainValue = () => {
+    if (props.field.kind === "multiRecord" || textBelow()) return false;
+    return !(props.field.kind === "scalarLink" && linked());
+  };
+
+  untrack(() =>
+    props.model.registerItem(itemId, {
+      group: props.recordId,
+      expandable,
+      setExpanded: (open) =>
+        props.model.toggleField(props.recordId, props.field, open),
+      remove: () => props.model.clearField(props.recordId, props.field),
+    }),
+  );
+  onCleanup(() => props.model.unregisterItem(itemId));
+
+  const toggle = (siblings: boolean) => {
+    if (siblings) props.model.toggleSiblings(itemId, !expanded());
+    else props.model.toggleField(props.recordId, props.field);
+  };
+
+  /** A field label's double click: a primitive field goes into edit mode, a
+   * field that holds records opens or closes instead. */
+  const activate = () => {
+    if (props.field.kind === "primitive")
+      props.model.beginEdit(props.recordId, props.field.key);
+    else props.model.toggleField(props.recordId, props.field);
+  };
+
+  /** Leaving edit mode: the value is kept in the form, and focus goes wherever
+   * the key that ended the edit says. Deferred a tick so the input is gone (and
+   * the label is back) before it's asked for focus. */
+  const commit = (text: string, exit: EditExit) =>
+    untrack(() => {
+      if (props.field.kind === "multiRecord") return;
+      const model = props.model;
+      model.commitEdit(props.recordId, props.field.column, text);
+      if (exit === "none") return;
+      queueMicrotask(() => {
+        model.focusItem(itemId);
+        if (exit !== "self") model.focusAdjacent(exit === "next");
+      });
+    });
 
   return (
     <>
@@ -99,9 +174,19 @@ function FieldRow(props: {
           expandable={expandable()}
           expanded={expanded()}
           label={props.field.label}
-          onToggle={() => props.model.toggleField(props.recordId, props.field)}
+          onToggle={toggle}
         />
-        <FieldLabel field={props.field} />
+        <FieldLabel
+          field={props.field}
+          itemId={itemId}
+          tabbable={
+            props.model.focused() === itemId ||
+            (props.model.focused() === null && props.first)
+          }
+          onClick={() => props.model.focusItem(itemId)}
+          onDblClick={activate}
+          onFocus={() => props.model.noteFocus(itemId)}
+        />
         <Show
           when={props.field.kind === "multiRecord" && count() !== undefined}
         >
@@ -109,13 +194,33 @@ function FieldRow(props: {
             {count()}
           </span>
         </Show>
-        <Show when={props.field.kind !== "multiRecord" && !textBelow()}>
+
+        {/* A scalar linked record field shows the record it points at, rather
+            than the id it holds. It isn't focusable — the field's label is what
+            the user selects — so clicking it lands there. */}
+        <Show when={props.field.kind === "scalarLink" && linked()}>
+          <LoadingRegion
+            loading={props.model.embed(embedId())?.status !== "loaded"}
+            class="flex min-w-0 flex-1"
+          >
+            <EmbeddedRecord
+              cells={props.model.embed(embedId())?.cells ?? []}
+              onClick={() => props.model.focusItem(itemId)}
+              onDblClick={() =>
+                props.model.toggleField(props.recordId, props.field)
+              }
+            />
+          </LoadingRegion>
+        </Show>
+
+        <Show when={plainValue()}>
           <FieldValueSlot
             model={props.model}
             recordId={props.recordId}
             field={props.field}
             value={value()}
             expanded={false}
+            onCommit={commit}
             onOverflow={setOverflowing}
           />
         </Show>
@@ -130,6 +235,7 @@ function FieldRow(props: {
             field={props.field}
             value={value()}
             expanded={true}
+            onCommit={commit}
           />
         </div>
       </Show>
@@ -137,21 +243,27 @@ function FieldRow(props: {
       {/* A linked record expands into its own form. */}
       <Show when={expanded() && props.field.kind === "scalarLink"}>
         <Subtree>
-          <RecordNodeView
-            model={props.model}
-            recordId={scalarChildId(props.recordId, props.field.key)}
-          />
+          <RecordNodeView model={props.model} recordId={embedId()} />
         </Subtree>
       </Show>
 
       {/* A multi-record field expands into the records that reference this one. */}
-      <Show when={expanded() && props.field.kind === "multiRecord"}>
-        <Subtree>
-          <ChildList
-            model={props.model}
-            listId={listId(props.recordId, props.field.key)}
-          />
-        </Subtree>
+      <Show
+        when={
+          expanded() && props.field.kind === "multiRecord"
+            ? props.field
+            : undefined
+        }
+      >
+        {(field) => (
+          <Subtree>
+            <ChildList
+              model={props.model}
+              recordId={props.recordId}
+              field={field()}
+            />
+          </Subtree>
+        )}
       </Show>
     </>
   );
@@ -171,6 +283,7 @@ function FieldValueSlot(props: {
   field: FormField;
   value: string | null | undefined;
   expanded: boolean;
+  onCommit: (text: string, exit: EditExit) => void;
   onOverflow?: (overflowing: boolean) => void;
 }) {
   return (
@@ -184,9 +297,7 @@ function FieldValueSlot(props: {
           }
           expanded={props.expanded}
           onBeginEdit={() => props.model.beginEdit(props.recordId, field().key)}
-          onCommit={(text) =>
-            props.model.commitEdit(props.recordId, field().column, text)
-          }
+          onCommit={props.onCommit}
           onOverflow={props.onOverflow}
         />
       )}
@@ -195,10 +306,16 @@ function FieldValueSlot(props: {
 }
 
 /** The records behind an expanded multi-record field. While they load, the
- * count the parent already reported is drawn as that many placeholder rows, so
- * the list has its real shape under the loading wash before any of it arrives. */
-function ChildList(props: { model: RecordFormModel; listId: string }) {
-  const list = () => props.model.list(props.listId);
+ * count the parent already reported is drawn as that many empty embedded
+ * records, so the list has its real shape under the loading wash before any of
+ * it arrives. */
+function ChildList(props: {
+  model: RecordFormModel;
+  recordId: string;
+  field: MultiRecordField;
+}) {
+  const id = () => listId(props.recordId, props.field.key);
+  const list = () => props.model.list(id());
   const loading = () => {
     const status = list()?.status;
     return status === "unloaded" || status === "loading";
@@ -217,14 +334,22 @@ function ChildList(props: { model: RecordFormModel; listId: string }) {
                     data-testid="record-placeholder"
                   >
                     <span class="size-4 shrink-0" aria-hidden="true" />
-                    <span class="bg-edge/40 h-3 w-2/3 rounded" />
+                    <EmbeddedRecord cells={[]} />
                   </div>
                 )}
               </Index>
             }
           >
             <For each={node().childIds}>
-              {(id) => <ChildRow model={props.model} recordId={id} />}
+              {(childId) => (
+                <ChildRow
+                  model={props.model}
+                  parentId={props.recordId}
+                  field={props.field}
+                  listId={id()}
+                  recordId={childId}
+                />
+              )}
             </For>
           </Show>
           <Show when={node().status === "error"}>
@@ -236,21 +361,41 @@ function ChildList(props: { model: RecordFormModel; listId: string }) {
   );
 }
 
-/** One record within a multi-record field.
- *
- * Where the design calls for an embedded record — a preview of the row — this
- * shows the record's primary key as plain text; the embedded record component
- * and the query that feeds it are still to come. Expanding it loads that
- * record's own form. */
-function ChildRow(props: { model: RecordFormModel; recordId: string }) {
+/** One record within a multi-record field: an embedded record previewing it, and
+ * — once expanded — that record's own form. This is the form's selectable item:
+ * it can be clicked with the same range/toggle modifiers as a result row, so a
+ * run of them can be deleted in one go. */
+function ChildRow(props: {
+  model: RecordFormModel;
+  /** The record the multi-record field belongs to. */
+  parentId: string;
+  field: MultiRecordField;
+  listId: string;
+  recordId: string;
+}) {
   const expanded = () => props.model.isExpanded(props.recordId);
-  /** The key, minus the part every sibling shares (the contextual filter). */
-  const keyText = () => {
+  const cells = () => props.model.embed(props.recordId)?.cells ?? [];
+  /** What an expansion toggle's aria-label names this record: the preview it
+   * shows, falling back to its key. */
+  const label = () => {
+    const preview = cells().filter(Boolean).join(" ");
+    if (preview) return preview;
     const node = props.model.record(props.recordId);
-    if (!node) return "";
-    const own = node.key.filter((part) => !node.hidden.includes(part.column));
-    return (own.length > 0 ? own : node.key).map((p) => p.value).join(" · ");
+    return node ? node.key.map((p) => p.value).join(" ") : "";
   };
+
+  // Like a field row, a child row stands for one record for its whole life.
+  const itemId = untrack(() => props.recordId);
+  untrack(() =>
+    props.model.registerItem(itemId, {
+      group: props.listId,
+      expandable: () => true,
+      setExpanded: (open) => props.model.toggleChild(props.recordId, open),
+      remove: () =>
+        props.model.removeChild(props.parentId, props.field, props.recordId),
+    }),
+  );
+  onCleanup(() => props.model.unregisterItem(itemId));
 
   return (
     <>
@@ -258,12 +403,30 @@ function ChildRow(props: { model: RecordFormModel; recordId: string }) {
         <ExpansionToggle
           expandable={true}
           expanded={expanded()}
-          label={keyText()}
-          onToggle={() => props.model.toggleChild(props.recordId)}
+          label={label()}
+          onToggle={(siblings) =>
+            siblings
+              ? props.model.toggleSiblings(props.recordId, !expanded())
+              : props.model.toggleChild(props.recordId)
+          }
         />
-        <span class="text-ink-weak min-w-0 flex-1 truncate font-mono text-xs">
-          {keyText()}
-        </span>
+        <EmbeddedRecord
+          cells={cells()}
+          itemId={props.recordId}
+          focusable
+          selected={props.model.isSelected(props.recordId)}
+          onClick={(e) => {
+            // Clicking a widget selects it — and puts focus on it, since a
+            // selected item is a focused one.
+            e.currentTarget.focus();
+            props.model.clickEmbedded(props.recordId, {
+              shift: e.shiftKey,
+              ctrl: e.ctrlKey || e.metaKey,
+            });
+          }}
+          onDblClick={() => props.model.toggleChild(props.recordId)}
+          onFocus={() => props.model.noteFocus(props.recordId)}
+        />
       </div>
       <Show when={expanded()}>
         <Subtree>
