@@ -1,5 +1,7 @@
 // The record editor form's reactive state: what's loaded, what's loading, what's
-// expanded, what's focused or selected, and which field is being edited.
+// expanded, what's focused or selected, which field is being edited — and, since
+// nothing here is written to the database until the user saves, everything the
+// user has changed.
 //
 // The form is a tree that grows as the user opens it — a scalar linked record
 // field expands into another record's whole form, a multi-record field into a
@@ -24,7 +26,7 @@
 
 import { untrack } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { SchemaTable } from "../../query/schema";
+import { primaryKey, type SchemaTable } from "../../query/schema";
 import {
   buildFormFields,
   recordDataQuery,
@@ -61,8 +63,16 @@ export interface RecordNode {
   /** Column → current value. Seeded with the key, which is known before any
    * fetch — the id renders while the rest of the form is still loading. */
   values: Record<string, string | null>;
+  /** Column → the value the database last gave us, which is what makes an edit
+   * detectable: a column whose `values` entry has drifted from its `original` is
+   * modified, and that's what the red star is drawn from. Written only by a load
+   * (and by a save, once that exists), never by an edit. */
+  original: Record<string, string | null>;
   /** Referencing field key (`#credit`) → count of related records. */
   counts: Record<string, number>;
+  /** Whether this record is being *created* by the form rather than edited: it
+   * has no key, nothing to load, and counts as modified in its entirety. */
+  isNew: boolean;
 }
 
 /** The children of one expanded multi-record field. */
@@ -73,6 +83,10 @@ export interface ListNode {
    * placeholders to render while the children themselves are in flight. */
   expected: number;
   childIds: string[];
+  /** Whether the list's *membership* has been edited (a record added or
+   * removed). The records themselves report their own edits; this is the change
+   * that belongs to no single one of them. */
+  dirty: boolean;
 }
 
 /** One embedded record's preview: the cells the widget lays out. */
@@ -80,6 +94,30 @@ export interface EmbedNode {
   status: LoadStatus;
   /** Positionally matching the display columns of the spec it was fetched with. */
   cells: readonly (string | null)[];
+}
+
+/** What a context menu was raised on. A field's own menu ({@link FormMenu}) is
+ * the same whether the user came at it through the label or the value; the other
+ * two are the menus of the *records* a field holds. */
+export type MenuTarget =
+  /** A field, of whichever kind — which is what decides the menu's entries. */
+  | { kind: "field"; recordId: string; fieldKey: string }
+  /** The embedded record previewing a scalar linked record field's target. */
+  | { kind: "scalarEmbed"; recordId: string; fieldKey: string }
+  /** Records within a multi-record field: the one the menu was raised on, or
+   * the whole selection when that record is part of it. */
+  | {
+      kind: "childRecords";
+      recordId: string;
+      fieldKey: string;
+      ids: readonly string[];
+    };
+
+/** An open context menu: what it acts on, and where it was raised. */
+export interface FormMenu {
+  target: MenuTarget;
+  x: number;
+  y: number;
 }
 
 interface FormState {
@@ -97,6 +135,8 @@ interface FormState {
   /** The selected embedded records (only ever members of a multi-record field),
    * in click order. */
   selection: string[];
+  /** The one open context menu within this form, or null. */
+  menu: FormMenu | null;
 }
 
 /** What a rendered row can do to itself, handed to the model when it mounts so
@@ -166,6 +206,19 @@ export interface RecordFormModel {
   /** The selected embedded records. */
   selection: () => readonly string[];
   isSelected: (itemId: string) => boolean;
+  /** The open context menu, or null. */
+  menu: () => FormMenu | null;
+
+  /** Whether one field carries an unsaved edit — its own, or one anywhere in
+   * what it expands into. What the red star is drawn from. */
+  isFieldModified: (recordId: string, fieldKey: string) => boolean;
+  /** Whether one record carries an unsaved edit, at any depth. */
+  isRecordModified: (recordId: string) => boolean;
+  /** Whether the form as a whole has unsaved changes. */
+  isModified: () => boolean;
+  /** Whether a scalar linked record field has a record to show: one it points
+   * at, or a new one the user is entering into it. */
+  hasLinkedRecord: (recordId: string, field: ScalarLinkField) => boolean;
 
   /** The form's root element, set once it's rendered — how the model reaches the
    * DOM to move focus. */
@@ -181,6 +234,10 @@ export interface RecordFormModel {
 
   /** Put a field into edit mode (its value becomes an input). */
   beginEdit: (recordId: string, fieldKey: string) => void;
+  /** Take what's in the activated input as the field's value, without leaving
+   * edit mode — called on every keystroke, so the form (and its modification
+   * stars) track what the user is typing as they type it. */
+  editValue: (recordId: string, column: string, value: string) => void;
   /** Leave edit mode, keeping `value` as the field's current (in-memory) value.
    * Persisting it is the "Saving the form" work, still to come. */
   commitEdit: (recordId: string, column: string, value: string) => void;
@@ -221,6 +278,24 @@ export interface RecordFormModel {
     field: MultiRecordField,
     childRecordId: string,
   ) => void;
+  /** Drop several at once — what a context menu raised on a selection does. */
+  removeChildren: (
+    recordId: string,
+    field: MultiRecordField,
+    childRecordIds: readonly string[],
+  ) => void;
+
+  /** Scaffold a new record within a multi-record field: it goes in at the top of
+   * the list, expanded, with its first editable field activated so the user can
+   * type straight into it. */
+  addChild: (recordId: string, field: MultiRecordField) => void;
+  /** Scaffold a new record for a scalar linked record field to point at, in
+   * place of whatever it pointed at before. */
+  addLinkedRecord: (recordId: string, field: ScalarLinkField) => void;
+
+  /** Open a context menu on part of the form (one at a time), and close it. */
+  openMenu: (menu: FormMenu) => void;
+  closeMenu: () => void;
 }
 
 export function createRecordForm(opts: {
@@ -237,11 +312,15 @@ export function createRecordForm(opts: {
     editing: null,
     focused: null,
     selection: [],
+    menu: null,
   });
 
   // Per-node load tokens: only the newest load for a node may write its result.
   const tokens = new Map<string, number>();
   let tokenSeq = 0;
+  /** Distinguishes the records the form creates, whose ids can't come from a
+   * position in a loaded list. */
+  let newSeq = 0;
 
   // What each rendered row can do to itself, and the form's root element — the
   // two non-reactive registries the keyboard commands go through.
@@ -284,8 +363,66 @@ export function createRecordForm(opts: {
       status,
       error: null,
       values: seedValues(key),
+      original: seedValues(key),
       counts: {},
+      isNew: false,
     });
+  };
+
+  /** Creates a record the form is *inventing*: no key, nothing to fetch, every
+   * field empty and editable from the start. `hidden` carries the contextual
+   * filter of the field it's being created under, exactly as a loaded child of
+   * that field would (the column tying it to its parent isn't the user's to
+   * fill in).
+   *
+   * Its values are seeded NULL rather than left absent so the fields render as
+   * *known to be empty* — pencils and all — instead of as still loading. */
+  const addNewRecord = (
+    id: string,
+    table: string,
+    hidden: readonly string[],
+  ) => {
+    const fields = buildFormFields(opts.tables, table, hidden);
+    const values: Record<string, string | null> = {};
+    const counts: Record<string, number> = {};
+    for (const field of fields) {
+      if (field.kind === "multiRecord") counts[field.key] = 0;
+      else values[field.column] = null;
+    }
+    setState("records", id, {
+      table,
+      key: [],
+      hidden,
+      fields,
+      status: "loaded",
+      error: null,
+      values,
+      original: { ...values },
+      counts,
+      isNew: true,
+    });
+  };
+
+  /** The first field of a record the user can type into — where the caret goes
+   * when a new record is scaffolded. Skips the table's primary key, which the
+   * database issues rather than the user. */
+  const firstEditableField = (recordId: string): FormField | undefined => {
+    const node = state.records[recordId];
+    if (!node) return undefined;
+    const table = opts.tables.find((t) => t.name === node.table);
+    const pk = table ? primaryKey(table) : undefined;
+    return node.fields.find(
+      (field) => field.kind === "primitive" && field.column !== pk,
+    );
+  };
+
+  /** Puts the caret in a newly scaffolded record's first editable field, so the
+   * user can begin typing immediately. The input focuses itself as it mounts, so
+   * this holds whether or not the row is on screen yet (a list still loading
+   * shows its placeholders first). */
+  const activateNewRecord = (recordId: string) => {
+    const field = firstEditableField(recordId);
+    if (field) setState("editing", fieldItemId(recordId, field.key));
   };
 
   /** Loads the preview behind one embedded record: the columns that identify it
@@ -376,6 +513,7 @@ export function createRecordForm(opts: {
               n.counts[field.key] = Number(cell ?? 0) || 0;
             } else {
               n.values[field.column] = cell;
+              n.original[field.column] = cell;
             }
           });
           n.status = "loaded";
@@ -425,7 +563,16 @@ export function createRecordForm(opts: {
         });
         childIds.push(child);
       });
-      setState("lists", id, { status: "loaded", childIds });
+      // A record the user began creating before the list arrived belongs to the
+      // list too — it keeps its place at the top rather than being overwritten
+      // by what came back.
+      const created = (state.lists[id]?.childIds ?? []).filter(
+        (child) => state.records[child]?.isNew,
+      );
+      setState("lists", id, {
+        status: "loaded",
+        childIds: [...created, ...childIds],
+      });
     } catch (err) {
       if (tokens.get(id) !== token) return;
       setState("lists", id, { status: "error", error: errorMessage(err) });
@@ -454,16 +601,75 @@ export function createRecordForm(opts: {
     if (state.lists[id]) return;
     const node = state.records[recordId];
     // Every inferred link points at `<table>.id`, so that — not this record's
-    // key, which may be composite — is the value the children carry.
-    const parentValue = node?.values["id"];
-    if (parentValue == null || parentValue === "") return;
+    // key, which may be composite — is the value the children carry. A record
+    // with no id of its own (one the form is creating) has nothing to fetch, but
+    // still gets a list: records can be added to it.
+    const parentValue = node?.values["id"] ?? "";
     setState("lists", id, {
-      status: "unloaded",
+      status: parentValue === "" ? "loaded" : "unloaded",
       error: null,
       expected: node?.counts[field.key] ?? 0,
       childIds: [],
+      dirty: false,
     });
-    void loadChildren(id, field, parentValue);
+    if (parentValue !== "") void loadChildren(id, field, parentValue);
+  };
+
+  /** Drops records from a multi-record field — in the form only, until it's
+   * saved. The field's count comes down with them, so the badge keeps saying
+   * what the form actually holds. */
+  const removeChildren = (
+    recordId: string,
+    field: MultiRecordField,
+    childRecordIds: readonly string[],
+  ) => {
+    const id = listId(recordId, field.key);
+    const list = state.lists[id];
+    if (!list) return;
+    const remaining = list.childIds.filter(
+      (child) => !childRecordIds.includes(child),
+    );
+    if (remaining.length === list.childIds.length) return;
+    setState("lists", id, {
+      expected: remaining.length,
+      childIds: remaining,
+      dirty: true,
+    });
+    setState("records", recordId, "counts", field.key, remaining.length);
+    deselect(childRecordIds);
+  };
+
+  // ── Modification ───────────────────────────────────────────────────────────
+  //
+  // Nothing is written to the database until the user saves, so "modified" is a
+  // question the form answers by comparing what it holds against the baseline it
+  // loaded — and by remembering the structural edits that no single value
+  // records (a list gaining or losing a record, a record being created).
+  //
+  // The two functions below recurse into each other, so a field reports the
+  // edits made *inside* it as its own: a star on a collapsed field says there's
+  // something changed somewhere under it. The recursion only ever visits nodes
+  // that exist — what the user has opened — and node ids strictly grow as it
+  // descends, so it terminates.
+
+  const fieldModified = (recordId: string, field: FormField): boolean => {
+    const node = state.records[recordId];
+    if (!node) return false;
+    if (field.kind === "multiRecord") {
+      const list = state.lists[listId(recordId, field.key)];
+      if (!list) return false;
+      return list.dirty || list.childIds.some(recordModified);
+    }
+    if (node.values[field.column] !== node.original[field.column]) return true;
+    if (field.kind !== "scalarLink") return false;
+    return recordModified(scalarChildId(recordId, field.key));
+  };
+
+  const recordModified = (recordId: string): boolean => {
+    const node = state.records[recordId];
+    if (!node) return false;
+    if (node.isNew) return true;
+    return node.fields.some((field) => fieldModified(recordId, field));
   };
 
   // ── Focus and selection ────────────────────────────────────────────────────
@@ -543,6 +749,21 @@ export function createRecordForm(opts: {
     focused: () => state.focused,
     selection: () => state.selection,
     isSelected: (itemId) => state.selection.includes(itemId),
+    menu: () => state.menu,
+
+    isFieldModified: (recordId, fieldKey) => {
+      const field = state.records[recordId]?.fields.find(
+        (f) => f.key === fieldKey,
+      );
+      return field !== undefined && fieldModified(recordId, field);
+    },
+    isRecordModified: recordModified,
+    isModified: () => recordModified(ROOT_ID),
+    hasLinkedRecord: (recordId, field) => {
+      const value = state.records[recordId]?.values[field.column];
+      if (value != null && value !== "") return true;
+      return state.records[scalarChildId(recordId, field.key)]?.isNew === true;
+    },
 
     setRoot: (el) => (root = el),
 
@@ -575,6 +796,8 @@ export function createRecordForm(opts: {
 
     beginEdit: (recordId, fieldKey) =>
       setState("editing", fieldItemId(recordId, fieldKey)),
+    editValue: (recordId, column, value) =>
+      setState("records", recordId, "values", column, value),
     commitEdit: (recordId, column, value) => {
       setState("records", recordId, "values", column, value);
       setState("editing", null);
@@ -642,11 +865,25 @@ export function createRecordForm(opts: {
       const itemId = fieldItemId(recordId, field.key);
       if (field.kind === "multiRecord") {
         const id = listId(recordId, field.key);
-        setState("records", recordId, "counts", field.key, 0);
         const children = state.lists[id]?.childIds ?? [];
-        if (children.length > 0) {
-          setState("lists", id, { expected: 0, childIds: [] });
-          deselect(children);
+        const had =
+          children.length > 0 ||
+          (state.records[recordId]?.counts[field.key] ?? 0) > 0;
+        setState("records", recordId, "counts", field.key, 0);
+        deselect(children);
+        // The deletion is recorded whether or not the list was ever opened: an
+        // unopened one is replaced by an empty, *loaded* list, so the records it
+        // stood for don't come back when the user expands the field — nor when a
+        // load that was already in flight lands (which the new token cancels).
+        if (had) {
+          tokens.set(id, ++tokenSeq);
+          setState("lists", id, {
+            status: "loaded",
+            error: null,
+            expected: 0,
+            childIds: [],
+            dirty: true,
+          });
         }
       } else {
         setState("records", recordId, "values", field.column, null);
@@ -660,18 +897,46 @@ export function createRecordForm(opts: {
       }
       setExpandedItem(itemId, false);
     },
-    removeChild: (recordId, field, childRecordId) => {
+    removeChild: (recordId, field, childRecordId) =>
+      removeChildren(recordId, field, [childRecordId]),
+    removeChildren,
+
+    addChild: (recordId, field) => {
+      setState("expanded", fieldItemId(recordId, field.key), true);
+      ensureList(recordId, field);
       const id = listId(recordId, field.key);
-      const remaining = (state.lists[id]?.childIds ?? []).filter(
-        (child) => child !== childRecordId,
-      );
+      const list = state.lists[id];
+      if (!list) return;
+      const child = `${id}[new:${++newSeq}]`;
+      addNewRecord(child, field.table, [field.column]);
       setState("lists", id, {
-        expected: remaining.length,
-        childIds: remaining,
+        childIds: [child, ...list.childIds],
+        expected: list.expected + 1,
+        dirty: true,
       });
-      setState("records", recordId, "counts", field.key, remaining.length);
-      deselect([childRecordId]);
+      setState(
+        "records",
+        recordId,
+        "counts",
+        field.key,
+        (count) => (count ?? 0) + 1,
+      );
+      setState("expanded", child, true);
+      activateNewRecord(child);
     },
+    addLinkedRecord: (recordId, field) => {
+      const id = scalarChildId(recordId, field.key);
+      // Whatever the field pointed at before, it points at this new record now.
+      setState("embeds", id, dropped());
+      setState("records", id, dropped());
+      setState("records", recordId, "values", field.column, null);
+      addNewRecord(id, field.table, []);
+      setState("expanded", fieldItemId(recordId, field.key), true);
+      activateNewRecord(id);
+    },
+
+    openMenu: (menu) => setState("menu", menu),
+    closeMenu: () => setState("menu", null),
   };
 
   return model;

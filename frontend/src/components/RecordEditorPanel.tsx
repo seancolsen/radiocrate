@@ -8,6 +8,7 @@ import {
 import { Icons } from "../icons";
 import IconButton from "./ui/IconButton";
 import RecordForm from "./record/RecordForm";
+import { recordIdentity } from "./record/formStash";
 
 // The record editor: a sidebar within the query page, opened from a result row's
 // "Edit {table}" context-menu entry or the "Results: Edit selected rows"
@@ -28,11 +29,10 @@ const MIN_RESULTS_WIDTH = 160;
 const RESIZE_STEP = 16;
 
 /** A record's identity as a string — table plus key — for comparing two
- * `RecordRef`s without caring which object carries them. */
+ * `RecordRef`s without caring which object carries them. The same string keys
+ * the record's stashed form, so "the same record" means one thing throughout. */
 function identity(record: RecordRef | undefined): string {
-  return record
-    ? `${record.table}(${record.key.map((p) => `${p.column}=${p.value}`).join(",")})`
-    : "";
+  return record ? recordIdentity(record.table, record.key) : "";
 }
 
 /** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
@@ -186,6 +186,7 @@ export default function RecordEditorPanel(props: {
             <Show when={formRecord()} keyed>
               {(record) => (
                 <RecordForm
+                  tabId={props.tabId}
                   tables={store.schemaTables()}
                   schemaJson={schemaJson()}
                   table={record.table}

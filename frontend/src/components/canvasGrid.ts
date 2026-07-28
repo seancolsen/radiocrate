@@ -58,6 +58,12 @@ const PILL_LINE_HEIGHT = 1.2;
  * that the marker reads at a glance on a dense grid. */
 const CURRENT_MARKER_W = 5;
 
+/** The glyph marking a row whose record has unsaved edits in the record editor,
+ * and its size — small enough to sit in the row's left padding, beside the cell
+ * text rather than over it. Matches the ✱ the tab handles wear. */
+const MODIFIED_MARKER = "✱";
+const MODIFIED_MARKER_FONT = 9;
+
 /** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,
  * so the sheen reads without hiding the selection color (SELECTED_ROW_GRADIENT_
  * ALPHA = 90/255 in results.rs). */
@@ -100,6 +106,8 @@ interface Theme {
    * of that row. */
   currentMarker: string;
   currentWash: string;
+  /** The unsaved-changes ✱, in the same red as everywhere else. */
+  danger: string;
 }
 
 /** Callbacks the owner wires up to react to row interaction. */
@@ -181,6 +189,8 @@ export class CanvasGrid {
   private selection: ReadonlySet<number> = new Set();
   /** The row holding the now-playing track, when it's in this result set. */
   private currentRow: number | undefined;
+  /** Rows whose record has unsaved changes in the record editor. */
+  private modifiedRows: ReadonlySet<number> = new Set();
   private hoverRow: number | undefined;
   private lastMouseY: number | undefined;
   private interaction: GridInteraction | undefined;
@@ -288,6 +298,15 @@ export class CanvasGrid {
   setSelection(selection: ReadonlySet<number>): void {
     if (selection === this.selection) return;
     this.selection = selection;
+    this.requestDraw();
+  }
+
+  /** Marks the rows whose records the record editor is holding unsaved changes
+   * for, painted with a red ✱ in the left margin. Replaced wholesale, like the
+   * selection, so a new set means a repaint. */
+  setModifiedRows(rows: ReadonlySet<number>): void {
+    if (rows === this.modifiedRows) return;
+    this.modifiedRows = rows;
     this.requestDraw();
   }
 
@@ -758,6 +777,7 @@ export class CanvasGrid {
       for (let k = 0; k < result.columns.length; k++) {
         this.drawCell(r, k, screenY);
       }
+      if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
     }
 
     this.drawScrollbar();
@@ -824,6 +844,23 @@ export class CanvasGrid {
     // so the 1px line stays a crisp single pixel instead of a blurred 2px smear.
     ctx.fillStyle = t.rowSep;
     ctx.fillRect(0, this.snap(screenY + rowH - 1), this.vw, this.snap(1));
+  }
+
+  /** The unsaved-changes ✱ for one row: the record editor is holding edits to
+   * the record this row stands for, whether or not its form is open. Drawn in
+   * the row's left padding, where no cell text reaches. */
+  private drawModifiedMarker(screenY: number, rowH: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = this.theme.danger;
+    ctx.font = `${MODIFIED_MARKER_FONT}px ${this.fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.fillText(
+      MODIFIED_MARKER,
+      this.snap(TEXT_PAD_X / 2),
+      this.centeredBaseline(screenY + rowH / 2),
+    );
+    ctx.restore();
   }
 
   /** A vertical `top`→`bottom` gradient spanning one row. */
@@ -1023,6 +1060,7 @@ export class CanvasGrid {
       inkWeak: v("--ink-weak", "#5a5a5a"),
       currentMarker: v("--accent-soft", "#bcd0ea"),
       currentWash: v("--row-current", "rgb(46 124 246 / 0.063)"),
+      danger: v("--danger", "#c0392b"),
       // No CSS token for the thumb; a mid-gray reads on both themes.
       scrollThumb: "rgba(130, 130, 130, 0.55)",
     };

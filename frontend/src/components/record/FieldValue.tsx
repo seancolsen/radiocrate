@@ -26,11 +26,16 @@ export type EditExit = "self" | "next" | "previous" | "none";
  * Keys: Esc leaves edit mode and goes back to the label; Tab and Shift+Tab do
  * the same but land on the next or previous item; Enter adds a newline in a text
  * field and leaves edit mode in any other. Every one of them keeps what was
- * typed — the form holds it until the user saves. */
+ * typed — the form holds it until the user saves.
+ *
+ * The form doesn't wait for any of them, though: `onInput` writes each keystroke
+ * through to the form as it happens, so the value (and the star marking it
+ * modified) tracks the typing. */
 function ValueInput(props: {
   initial: string;
   /** Whether Enter inserts a newline rather than ending the edit. */
   multiline: boolean;
+  onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
 }) {
   const [text, setText] = createSignal(untrack(() => props.initial));
@@ -73,6 +78,7 @@ function ValueInput(props: {
       value={text()}
       onInput={(e) => {
         setText(e.currentTarget.value);
+        props.onInput(e.currentTarget.value);
         grow();
       }}
       onKeyDown={onKeyDown}
@@ -103,7 +109,9 @@ export default function FieldValue(props: {
   editing: boolean;
   expanded: boolean;
   onBeginEdit: () => void;
+  onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
+  onContextMenu: (e: MouseEvent) => void;
   onOverflow?: (overflowing: boolean) => void;
 }) {
   const known = () => props.value !== undefined;
@@ -136,6 +144,7 @@ export default function FieldValue(props: {
         <ValueInput
           initial={props.value ?? ""}
           multiline={multiline()}
+          onInput={(text) => props.onInput(text)}
           onCommit={(text, exit) => props.onCommit(text, exit)}
         />
       </Match>
@@ -155,6 +164,7 @@ export default function FieldValue(props: {
         <span
           class="text-ink block w-full cursor-text text-sm/5 break-words whitespace-pre-wrap"
           onClick={() => props.onBeginEdit()}
+          onContextMenu={(e) => props.onContextMenu(e)}
         >
           {props.value}
         </span>
@@ -164,6 +174,7 @@ export default function FieldValue(props: {
           ref={watchOverflow}
           class="text-ink block min-w-0 flex-1 cursor-text truncate text-sm/5"
           onClick={() => props.onBeginEdit()}
+          onContextMenu={(e) => props.onContextMenu(e)}
         >
           {oneLine()}
         </span>

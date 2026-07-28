@@ -3,6 +3,7 @@ import { useAppState } from "../state/store";
 import QueryToolbar from "./QueryToolbar";
 import QueryResults from "./QueryResults";
 import RecordEditorPanel from "./RecordEditorPanel";
+import { pruneForms } from "./record/formStash";
 
 /** The content of an open tab: a toolbar over the results pane, with the record
  * editor as a sidebar beside them when one is open. Runs the tab's saved query
@@ -21,6 +22,12 @@ export default function QueryPage(props: { tabId: string }) {
   createEffect(() => {
     if (store.schemaReady()) store.ensureRun(props.tabId);
   });
+
+  // Unsaved record-editor changes live as long as the tab they were made in, not
+  // as long as the sidebar showing them — so a closed tab is where they're let
+  // go. (This page is reused across tab switches, so it can't do that on its own
+  // cleanup; it watches the tab list instead.)
+  createEffect(() => pruneForms(store.state.tabs.map((tab) => tab.id)));
 
   // Dynamic updates: while the sidebar is open, keep it pointed at the current
   // result-row selection rather than the row(s) it was opened on — selecting a

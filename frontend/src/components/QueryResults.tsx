@@ -14,6 +14,7 @@ import { Icons } from "../icons";
 import { ContextMenu } from "./ui/ContextMenu";
 import { MenuItem } from "./ui/Menu";
 import { CanvasGrid } from "./canvasGrid";
+import { modifiedRecords, recordIdentity } from "./record/formStash";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).
 // This component is a thin Solid shell: it owns the canvas element's lifecycle
@@ -85,6 +86,31 @@ export default function QueryResults(props: { tabId: string }) {
     grid?.setSelection(selection);
   });
 
+  // The rows whose records the editor is holding unsaved changes for — a ✱ on
+  // the row, so an edit left behind on one record is visible while the user is
+  // off editing another (spec: "Form state within the query page"). The rows
+  // themselves are found by matching each row's key against the records the
+  // stash reports as modified, which is nothing to do while it reports none.
+  const modifiedRows = (): ReadonlySet<number> => {
+    const modified = new Set(modifiedRecords(props.tabId));
+    const rows = new Set<number>();
+    if (modified.size === 0) return rows;
+    const count = store.resultCount(props.tabId) ?? 0;
+    for (let row = 0; row < count; row++) {
+      const marked = store
+        .rowRecords(props.tabId, row)
+        .some((record) =>
+          modified.has(recordIdentity(record.table, record.key)),
+        );
+      if (marked) rows.add(row);
+    }
+    return rows;
+  };
+  createEffect(() => {
+    const rows = modifiedRows();
+    grid?.setModifiedRows(rows);
+  });
+
   // The playing track's row, when it lives in *this* tab's results — the grid
   // paints it with an accent edge marker. Re-runs when the track, its row, or the
   // tab changes.
@@ -137,6 +163,7 @@ export default function QueryResults(props: { tabId: string }) {
     grid.setResult(currentResult());
     grid.setSelection(store.rowSelection(props.tabId));
     grid.setCurrentRow(currentRow());
+    grid.setModifiedRows(modifiedRows());
     applyReveal();
 
     // Observe the *container*, not the canvas, for backing-store resizes. The

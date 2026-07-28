@@ -33,9 +33,10 @@ function appearance(field: FormField): {
 }
 
 /** A field's label — and the field's handle: it's what the user clicks to select
- * the field, double-clicks to edit or open it, and what the keyboard moves
- * between. Focus shows as a blue outline (an outline, not a border, so nothing
- * shifts when it appears).
+ * the field, double-clicks to edit or open it, right-clicks for the field's
+ * menu, and what the keyboard moves between. Focus shows as a blue outline (an
+ * outline, not a border, so nothing shifts when it appears) — and so does an
+ * open context menu, which is the label saying what the menu is about to act on.
  *
  * `tabbable` gives the form a single tab stop: the focused item, or the first
  * field while focus is elsewhere. Everything else is reached with the arrow
@@ -44,9 +45,12 @@ export default function FieldLabel(props: {
   field: FormField;
   itemId: string;
   tabbable: boolean;
+  /** Whether this label's own context menu is open. */
+  menuOpen: boolean;
   onClick: () => void;
   onDblClick: () => void;
   onFocus: () => void;
+  onContextMenu: (e: MouseEvent) => void;
 }) {
   const look = () => appearance(props.field);
   return (
@@ -54,10 +58,18 @@ export default function FieldLabel(props: {
       data-form-item=""
       data-item-id={props.itemId}
       tabindex={props.tabbable ? 0 : -1}
-      class={`text-ink focus:outline-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md px-1.5 text-xs outline-none focus:outline-2 focus:outline-offset-0 ${look().tint}`}
+      class={`text-ink focus:outline-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md px-1.5 text-xs focus:outline-2 focus:outline-offset-0 ${look().tint}`}
+      // An open menu wears the focus outline without taking focus (which is on
+      // the menu): the label is what the menu is about to act on.
+      classList={{
+        "outline-none": !props.menuOpen,
+        "outline-accent outline-solid outline-2 outline-offset-0":
+          props.menuOpen,
+      }}
       onClick={() => props.onClick()}
       onDblClick={() => props.onDblClick()}
       onFocus={() => props.onFocus()}
+      onContextMenu={(e) => props.onContextMenu(e)}
     >
       {look().icon({ class: "size-3.5 shrink-0 opacity-70" })}
       <span class="max-w-40 truncate">{props.field.label}</span>

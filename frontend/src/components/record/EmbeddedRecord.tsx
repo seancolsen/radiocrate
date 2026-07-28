@@ -46,6 +46,7 @@ export default function EmbeddedRecord(props: {
   onClick?: (e: MouseEvent & { currentTarget: HTMLElement }) => void;
   onDblClick?: () => void;
   onFocus?: () => void;
+  onContextMenu?: (e: MouseEvent & { currentTarget: HTMLElement }) => void;
 }) {
   // The available width decides the layout, so it's measured rather than
   // assumed: the sidebar is resizable and the widget is nested arbitrarily deep.
@@ -83,6 +84,7 @@ export default function EmbeddedRecord(props: {
       onClick={(e) => props.onClick?.(e)}
       onDblClick={() => props.onDblClick?.()}
       onFocus={() => props.onFocus?.()}
+      onContextMenu={(e) => props.onContextMenu?.(e)}
     >
       <Show when={props.isNew}>
         <span

@@ -20,6 +20,7 @@ import {
   type RecordFormModel,
   type RecordNode,
 } from "./formModel";
+import { Icons } from "../../icons";
 import type { FormField, MultiRecordField } from "../../query/recordForm";
 
 // The form's tree, rendered. The components here call each other in a cycle — a
@@ -67,6 +68,19 @@ export default function RecordNodeView(props: {
   );
 }
 
+/** The red star marking something the user has changed but not yet saved. It
+ * stands for everything underneath it too — a collapsed field wears the star of
+ * an edit made deep inside it — so an unsaved change is never hidden by the part
+ * of the tree it was made in being closed. */
+function ModifiedStar(props: { label: string }) {
+  return (
+    <Icons.Unsaved
+      class="text-danger size-3 shrink-0"
+      aria-label={`${props.label} modified`}
+    />
+  );
+}
+
 /** One field: its row, plus whatever the row expands into. */
 function FieldRow(props: {
   model: RecordFormModel;
@@ -105,11 +119,37 @@ function FieldRow(props: {
     return props.field.valueType === "text" && overflowing();
   };
 
-  /** Whether a scalar linked record field points at something — what decides
-   * between an embedded record and the pencil that offers to fill it in. */
-  const linked = () => {
-    const current = value();
-    return current != null && current !== "";
+  /** Whether a scalar linked record field has a record to show — one it points
+   * at, or a new one the user is entering into it. What decides between an
+   * embedded record and the pencil that offers to fill the field in. */
+  const linked = () =>
+    props.field.kind === "scalarLink" &&
+    props.model.hasLinkedRecord(props.recordId, props.field);
+
+  /** Whether this field carries an unsaved change, its own or one anywhere
+   * inside it. */
+  const modified = () =>
+    props.model.isFieldModified(props.recordId, props.field.key);
+
+  /** Whether the open context menu is this field's own. */
+  const menuOpen = () => {
+    const menu = props.model.menu();
+    return (
+      menu?.target.kind === "field" &&
+      menu.target.recordId === props.recordId &&
+      menu.target.fieldKey === props.field.key
+    );
+  };
+
+  /** Raises the menu for this field — from its label, its value, or the
+   * embedded record a scalar linked record field shows. */
+  const openMenu = (e: MouseEvent, kind: "field" | "scalarEmbed") => {
+    e.preventDefault();
+    props.model.openMenu({
+      target: { kind, recordId: props.recordId, fieldKey: props.field.key },
+      x: e.clientX,
+      y: e.clientY,
+    });
   };
 
   /** An expanded *text* field moves its value below the label, where it has the
@@ -120,12 +160,18 @@ function FieldRow(props: {
    * field's embedded record. */
   const embedId = () => scalarChildId(props.recordId, props.field.key);
 
+  /** Whether the embedded record's preview is still on its way. A record the
+   * form is *creating* has no preview to wait for — it renders as "New". */
+  const embedLoading = () =>
+    props.model.record(embedId())?.isNew !== true &&
+    props.model.embed(embedId())?.status !== "loaded";
+
   /** Whether the row's value renders as plain text (or a pencil): everything
    * except a record count, an embedded record, and text that has moved below
    * its label. */
   const plainValue = () => {
     if (props.field.kind === "multiRecord" || textBelow()) return false;
-    return !(props.field.kind === "scalarLink" && linked());
+    return !linked();
   };
 
   untrack(() =>
@@ -183,10 +229,15 @@ function FieldRow(props: {
             props.model.focused() === itemId ||
             (props.model.focused() === null && props.first)
           }
+          menuOpen={menuOpen()}
           onClick={() => props.model.focusItem(itemId)}
           onDblClick={activate}
           onFocus={() => props.model.noteFocus(itemId)}
+          onContextMenu={(e) => openMenu(e, "field")}
         />
+        <Show when={modified()}>
+          <ModifiedStar label={props.field.label} />
+        </Show>
         <Show
           when={props.field.kind === "multiRecord" && count() !== undefined}
         >
@@ -195,20 +246,45 @@ function FieldRow(props: {
           </span>
         </Show>
 
+        {/* The one way into a multi-record field that doesn't need a record to
+            already be there: add one. Like the expansion toggle beside it, it's
+            a control *on* the field rather than an item of its own, so it isn't
+            focusable and doesn't take focus when clicked. */}
+        <Show
+          when={
+            props.field.kind === "multiRecord" &&
+            props.field.keyColumns.length > 0
+              ? props.field
+              : undefined
+          }
+        >
+          {(field) => (
+            <button
+              type="button"
+              tabindex={-1}
+              aria-label={`Add ${field().label}`}
+              class="text-ink-weak hover:text-ink flex size-5 shrink-0 items-center justify-center"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => props.model.addChild(props.recordId, field())}
+            >
+              <Icons.Add class="size-4" />
+            </button>
+          )}
+        </Show>
+
         {/* A scalar linked record field shows the record it points at, rather
             than the id it holds. It isn't focusable — the field's label is what
             the user selects — so clicking it lands there. */}
-        <Show when={props.field.kind === "scalarLink" && linked()}>
-          <LoadingRegion
-            loading={props.model.embed(embedId())?.status !== "loaded"}
-            class="flex min-w-0 flex-1"
-          >
+        <Show when={linked()}>
+          <LoadingRegion loading={embedLoading()} class="flex min-w-0 flex-1">
             <EmbeddedRecord
               cells={props.model.embed(embedId())?.cells ?? []}
+              isNew={props.model.record(embedId())?.isNew}
               onClick={() => props.model.focusItem(itemId)}
               onDblClick={() =>
                 props.model.toggleField(props.recordId, props.field)
               }
+              onContextMenu={(e) => openMenu(e, "scalarEmbed")}
             />
           </LoadingRegion>
         </Show>
@@ -221,6 +297,7 @@ function FieldRow(props: {
             value={value()}
             expanded={false}
             onCommit={commit}
+            onContextMenu={(e) => openMenu(e, "field")}
             onOverflow={setOverflowing}
           />
         </Show>
@@ -236,6 +313,7 @@ function FieldRow(props: {
             value={value()}
             expanded={true}
             onCommit={commit}
+            onContextMenu={(e) => openMenu(e, "field")}
           />
         </div>
       </Show>
@@ -284,6 +362,7 @@ function FieldValueSlot(props: {
   value: string | null | undefined;
   expanded: boolean;
   onCommit: (text: string, exit: EditExit) => void;
+  onContextMenu: (e: MouseEvent) => void;
   onOverflow?: (overflowing: boolean) => void;
 }) {
   return (
@@ -297,7 +376,14 @@ function FieldValueSlot(props: {
           }
           expanded={props.expanded}
           onBeginEdit={() => props.model.beginEdit(props.recordId, field().key)}
+          // Every keystroke goes into the form as it's typed, so what the user
+          // sees elsewhere (the modification star, above all) is never a
+          // keystroke behind.
+          onInput={(text) =>
+            props.model.editValue(props.recordId, field().column, text)
+          }
           onCommit={props.onCommit}
+          onContextMenu={props.onContextMenu}
           onOverflow={props.onOverflow}
         />
       )}
@@ -375,13 +461,48 @@ function ChildRow(props: {
 }) {
   const expanded = () => props.model.isExpanded(props.recordId);
   const cells = () => props.model.embed(props.recordId)?.cells ?? [];
+  /** Whether this record is one the form is creating rather than one it
+   * loaded — which is what the widget says, in place of a preview it has no
+   * values for yet. */
+  const isNew = () => props.model.record(props.recordId)?.isNew === true;
   /** What an expansion toggle's aria-label names this record: the preview it
    * shows, falling back to its key. */
   const label = () => {
+    if (isNew()) return "new record";
     const preview = cells().filter(Boolean).join(" ");
     if (preview) return preview;
     const node = props.model.record(props.recordId);
     return node ? node.key.map((p) => p.value).join(" ") : "";
+  };
+
+  /** The records a menu raised on this one acts on: the whole selection when
+   * this record is part of it, otherwise just this record. Fixed as the menu
+   * opens, so the action isn't at the mercy of what happens to the selection
+   * while the menu is up. */
+  const menuTargets = (): string[] => {
+    if (!props.model.isSelected(props.recordId)) return [props.recordId];
+    const siblings = props.model.list(props.listId)?.childIds ?? [];
+    return props.model.selection().filter((id) => siblings.includes(id));
+  };
+
+  const onContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    const targets = menuTargets();
+    // Right-clicking outside the selection moves it here first, so the menu's
+    // target is visible — the same courtesy the result rows extend.
+    if (!props.model.isSelected(props.recordId)) {
+      props.model.clickEmbedded(props.recordId, { shift: false, ctrl: false });
+    }
+    props.model.openMenu({
+      target: {
+        kind: "childRecords",
+        recordId: props.parentId,
+        fieldKey: props.field.key,
+        ids: targets,
+      },
+      x: e.clientX,
+      y: e.clientY,
+    });
   };
 
   // Like a field row, a child row stands for one record for its whole life.
@@ -411,10 +532,12 @@ function ChildRow(props: {
           }
         />
         <EmbeddedRecord
-          cells={cells()}
+          cells={isNew() ? [] : cells()}
+          isNew={isNew()}
           itemId={props.recordId}
           focusable
           selected={props.model.isSelected(props.recordId)}
+          onContextMenu={onContextMenu}
           onClick={(e) => {
             // Clicking a widget selects it — and puts focus on it, since a
             // selected item is a focused one.
@@ -427,6 +550,9 @@ function ChildRow(props: {
           onDblClick={() => props.model.toggleChild(props.recordId)}
           onFocus={() => props.model.noteFocus(props.recordId)}
         />
+        <Show when={props.model.isRecordModified(props.recordId)}>
+          <ModifiedStar label={label()} />
+        </Show>
       </div>
       <Show when={expanded()}>
         <Subtree>

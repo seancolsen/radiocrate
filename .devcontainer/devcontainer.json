@@ -23,7 +23,8 @@
       // Match the in-container editor to the host setup.
       "extensions": [
         "rust-lang.rust-analyzer",
-        "anthropic.claude-code"
+        "anthropic.claude-code",
+        "jcrengifoa.snapdiff"
       ],
       // Mirrors the relevant bits of the repo's .vscode/settings.json so
       // rust-analyzer and formatting behave the same inside the container.

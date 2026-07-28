@@ -563,6 +563,250 @@ test("Escape and Tab leave an activated field for a label", async ({
   await expect(formItem(editor, "r:album")).toBeFocused();
 });
 
+// ── Form modification ───────────────────────────────────────────────────────
+//
+// Every change here is ephemeral: it lives in the form (and, once the form is
+// closed, in the tab) until the user saves.
+
+/** The red ✱ marking one field — or one embedded record — as modified. */
+const star = (editor: Locator, label: string) =>
+  editor.locator(`[aria-label="${label} modified"]`);
+
+test("typing into a field marks it modified as it's typed", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await expect(star(editor, "title")).toBeHidden();
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await page.keyboard.type(" (Live)");
+  // The star is there before the edit is committed — the form takes each
+  // keystroke as it happens.
+  await expect(star(editor, "title")).toBeVisible();
+  await expect(editor.getByRole("textbox")).toBeFocused();
+
+  // Typing it back to what it was is no longer a modification.
+  for (let i = 0; i < " (Live)".length; i++)
+    await page.keyboard.press("Backspace");
+  await expect(star(editor, "title")).toBeHidden();
+});
+
+test("a change deep in the tree stars the collapsed field above it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand Jack White" }).click();
+  await editor.getByText("Featured", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Producer");
+  await page.keyboard.press("Escape");
+
+  // The edited record wears a star, and so does the field holding it.
+  await expect(star(editor, "role")).toBeVisible();
+  await expect(star(editor, "credit")).toBeVisible();
+
+  // Collapsing hides the field it was made in, not the fact that it was made —
+  // and the change itself survives being closed and opened again.
+  await editor.getByRole("button", { name: "Collapse credit" }).click();
+  await expect(star(editor, "credit")).toBeVisible();
+  await expect(editor.getByText("Producer", { exact: true })).toBeHidden();
+  // Reopening finds everything as it was left — the record still expanded, the
+  // edit still in it.
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await expect(editor.getByText("Producer", { exact: true })).toBeVisible();
+});
+
+test("unsaved changes stay with the record when another is edited", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+
+  // Off to another record, and back: the form picks up where it was left.
+  await page.locator("canvas").click({ position: { x: 200, y: rowY(2) } });
+  await expect(
+    editor.getByText("Don't Hurt Yourself", { exact: true }),
+  ).toBeVisible();
+  await page.locator("canvas").click({ position: { x: 200, y: rowY(0) } });
+  await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
+  await expect(star(editor, "title")).toBeVisible();
+});
+
+test("a record with unsaved changes is marked in the results", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // The left margin of row 0, where the ✱ is painted — no cell text reaches it.
+  const gutter = () =>
+    page.evaluate(() => {
+      const canvas = document.querySelector("canvas")!;
+      const dpr = window.devicePixelRatio || 1;
+      const ctx = canvas.getContext("2d")!;
+      const d = ctx.getImageData(0, 4 * dpr, 8 * dpr, 28 * dpr).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i++) sum = (sum * 31 + d[i]) >>> 0;
+      return sum;
+    });
+  const clean = await gutter();
+
+  await editor.getByText("Pray You Catch Me", { exact: true }).click();
+  await editor.getByRole("textbox").fill("Renamed");
+  await page.keyboard.press("Escape");
+  await expect.poll(gutter).not.toBe(clean);
+});
+
+test("the + button scaffolds a new record, open and ready to type into", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Add credit" }).click();
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(3);
+  // It goes in at the top, previews as "New" (it has no values to preview yet),
+  // and the caret is already in its first editable field.
+  await expect(credits.first()).toHaveText("New");
+  await expect(editor.getByRole("textbox")).toBeFocused();
+  await page.keyboard.type("3");
+
+  // Its own form is open below it, and the field it was added to is starred and
+  // counts it.
+  await expect(editor.getByText("role", { exact: true })).toBeVisible();
+  await expect(star(editor, "credit")).toBeVisible();
+  await expect(editor.getByText("3", { exact: true }).first()).toBeVisible();
+});
+
+// ── Context menus ───────────────────────────────────────────────────────────
+
+/** Right-clicks one of the form's items. */
+async function rightClick(target: Locator) {
+  await target.click({ button: "right" });
+}
+
+test("a primitive field's menu edits, clears and copies it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await rightClick(formItem(editor, "r:title"));
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Edit",
+    "Clear",
+    "Copy",
+  ]);
+  // The label says what the menu is about to act on, as if it were focused.
+  await expect(formItem(editor, "r:title")).toHaveCSS("outline-style", "solid");
+
+  await menu.getByRole("menuitem", { name: "Clear" }).click();
+  await expect(
+    editor.getByText("Pray You Catch Me", { exact: true }),
+  ).toBeHidden();
+  await expect(star(editor, "title")).toBeVisible();
+  // Clearing a field is exactly what the pencil offers to undo.
+  await expect(
+    editor.getByRole("button", { name: "Edit title" }),
+  ).toBeVisible();
+
+  // The value itself carries the same menu.
+  await rightClick(editor.getByText("track-1", { exact: true }));
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Edit",
+    "Clear",
+    "Copy",
+  ]);
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  await expect(editor.getByRole("textbox")).toBeFocused();
+});
+
+test("a multi-record field's menu adds and deletes records", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  await rightClick(formItem(editor, "r:#credit"));
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "New record",
+    "Delete all records",
+  ]);
+  await page.getByRole("menuitem", { name: "New record" }).click();
+  await expect(selectableRecords(editor).first()).toHaveText("New");
+
+  await rightClick(formItem(editor, "r:#credit"));
+  await page.getByRole("menuitem", { name: "Delete all records" }).click();
+  await expect(selectableRecords(editor)).toHaveCount(0);
+  await expect(star(editor, "credit")).toBeVisible();
+  // With nothing left in it, the field can't be expanded any more.
+  await expect(
+    editor.getByRole("button", { name: "Expand credit" }),
+  ).toBeHidden();
+});
+
+test("a scalar linked record field's menu enters a new record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await rightClick(formItem(editor, "r:album"));
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Pick a record",
+    "Enter a new record",
+    "Clear",
+  ]);
+  await menu.getByRole("menuitem", { name: "Enter a new record" }).click();
+
+  // The field points at a record being created: its preview says so, and its
+  // form is open below with the caret in the first field the user fills in.
+  await expect(embeddedRecords(editor).nth(1)).toHaveText("New");
+  await expect(editor.getByText("year", { exact: true })).toBeVisible();
+  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(star(editor, "album")).toBeVisible();
+});
+
+test("an embedded record's menu deletes it — or the whole selection", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(2);
+
+  // Right-clicking outside the selection moves it there first, as the result
+  // rows do.
+  await rightClick(credits.nth(1));
+  await expect(credits.nth(1)).toHaveAttribute("data-selected", "true");
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Delete",
+  ]);
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await expect(credits).toHaveCount(1);
+  await expect(credits.first()).toHaveText("Beyoncé");
+});
+
 // Screenshots: the menu over the rows, and the editor sidebar open beside them.
 for (const colorScheme of ["light", "dark"] as const) {
   test(`row context menu - ${colorScheme}`, async ({ page }) => {
@@ -625,6 +869,31 @@ for (const colorScheme of ["light", "dark"] as const) {
       {
         fullPage: true,
       },
+    );
+  });
+
+  // The form mid-edit, scoped to the panel: an edited field and the record being
+  // created under `credit`, each starred, and the "+" buttons that put it there.
+  test(`record editor modified - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(SEEDED);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await rightClickRow(page, rowY(2)); // the track with two credits
+    await page.getByRole("menuitem", { name: "Edit track" }).click();
+    const editor = editorPanel(page);
+    await expect(editor).toBeVisible();
+
+    await editor.getByText("Don't Hurt Yourself", { exact: true }).click();
+    await editor.getByRole("textbox").fill("Don't Hurt Yourself (Live)");
+    await page.keyboard.press("Escape");
+    await editor.getByRole("button", { name: "Add credit" }).click();
+    await expect(selectableRecords(editor).first()).toHaveText("New");
+    await expect(editor.getByRole("textbox")).toBeFocused();
+    await expect(editor).toHaveScreenshot(
+      `record-editor-modified-${colorScheme}.png`,
     );
   });
 
