@@ -1,6 +1,7 @@
 import {
   batch,
   createContext,
+  createMemo,
   createResource,
   createSignal,
   useContext,
@@ -29,6 +30,7 @@ import {
   addInferredLinks,
   INTROSPECTION_SQL,
   parseSchemaTables,
+  type SchemaTable,
 } from "../query/schema";
 import { compileSavedQuery } from "../query/compile";
 import {
@@ -397,6 +399,15 @@ export interface AppStore {
   toggleQueriesCollapsed: () => void;
   /** Whether the introspection schema has loaded (compiles can proceed). */
   schemaReady: () => boolean;
+  /** The enriched introspection JSON the Querydown compiler takes, once loaded. */
+  schemaJson: () => string | undefined;
+  /** The same schema parsed into tables — what the record editor builds a form's
+   * fields from. Empty until introspection lands. */
+  schemaTables: () => readonly SchemaTable[];
+  /** Install an introspection document directly (dev/test seam — lets the
+   * harness render schema-driven UI, the record editor above all, without a
+   * backend). Takes the *enriched* JSON, as `schemaJson` returns. */
+  setSchemaJson: (json: string) => void;
   /** Compile + run the tab's *working* query, storing the structured result. */
   runQuery: (tabId: string) => void;
   /** Run the tab once, the first time it's viewed (idempotent per tab). */
@@ -628,9 +639,18 @@ function createAppStore(): AppStore {
 
   // The enriched introspection schema JSON — run the introspection SQL, read the
   // single JSON cell, apply RadioCrate's link inference. Cached for the session.
-  const [schema] = createResource<string>(async () => {
+  const [schemaResource] = createResource<string>(async () => {
     const raw = await runSqlScalar(INTROSPECTION_SQL);
     return addInferredLinks(raw);
+  });
+  // A seeded document (dev/test) stands in for the fetched one when present.
+  const [schemaOverride, setSchemaOverride] = createSignal<string>();
+  const schema = (): string | undefined =>
+    schemaOverride() ??
+    (schemaResource.state === "ready" ? schemaResource() : undefined);
+  const schemaTables = createMemo(() => {
+    const json = schema();
+    return json === undefined ? [] : parseSchemaTables(json);
   });
 
   const setSidebarOpen = (open: boolean) => {
@@ -1200,7 +1220,10 @@ function createAppStore(): AppStore {
       setState("openedCollapsed", !state.openedCollapsed),
     toggleQueriesCollapsed: () =>
       setState("queriesCollapsed", !state.queriesCollapsed),
-    schemaReady: () => schema.state === "ready",
+    schemaReady: () => schema() !== undefined,
+    schemaJson: schema,
+    schemaTables,
+    setSchemaJson: setSchemaOverride,
     runQuery,
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);

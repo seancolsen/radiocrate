@@ -1,11 +1,13 @@
-import { For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 import {
   RECORD_SIDEBAR_MIN_WIDTH,
   useAppState,
   type RecordEditorTarget,
+  type RecordRef,
 } from "../state/store";
 import { Icons } from "../icons";
 import IconButton from "./ui/IconButton";
+import RecordForm from "./record/RecordForm";
 
 // The record editor: a sidebar within the query page, opened from a result row's
 // "Edit {table}" context-menu entry or the "Results: Edit selected rows"
@@ -14,15 +16,24 @@ import IconButton from "./ui/IconButton";
 // so opening it narrows the toolbar and the results and leaves the tab bar and
 // the now-playing bar alone.
 //
-// This session it only shows which record it's pointing at (the primary-key
-// column/value pairs) and offers a way out; the form itself — by some margin
-// the largest thing left to build — lands next.
+// The panel itself is the frame — heading, close button, resize divider — and
+// the dynamic-form work happens below it in `record/`. A multi-row selection is
+// the exception it handles on its own: it lists the records it covers and says
+// bulk modification isn't supported, rather than building a form for them.
 
 /** Least width left to the results while dragging the divider, so the pane the
  * editor was opened *from* can't be squeezed away entirely. */
 const MIN_RESULTS_WIDTH = 160;
 /** Keyboard resize step (Arrow keys on the divider). */
 const RESIZE_STEP = 16;
+
+/** A record's identity as a string — table plus key — for comparing two
+ * `RecordRef`s without caring which object carries them. */
+function identity(record: RecordRef | undefined): string {
+  return record
+    ? `${record.table}(${record.key.map((p) => `${p.column}=${p.value}`).join(",")})`
+    : "";
+}
 
 /** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
  * `target.records` holds more than one entry when the result-row selection it
@@ -87,6 +98,20 @@ export default function RecordEditorPanel(props: {
 
   const records = () => props.target.records;
   const isBulk = () => records().length > 1;
+
+  /** The one record the form is for. Held behind a memo that compares records by
+   * identity-in-the-database rather than by object identity, so the resyncing
+   * the sidebar does as the selection moves only yields a new value when it has
+   * genuinely landed on a different record — and only then is the form (and its
+   * load) rebuilt underneath the user. */
+  const formRecord = createMemo(
+    () => (isBulk() ? undefined : records()[0]),
+    undefined,
+    {
+      equals: (a, b) => identity(a) === identity(b),
+    },
+  );
+
   const heading = () =>
     isBulk()
       ? `Edit ${records().length} ${props.target.table} records`
@@ -125,26 +150,50 @@ export default function RecordEditorPanel(props: {
       </header>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
-        <For each={records()}>
-          {(record) => (
-            <div class="border-edge flex flex-col gap-0.5 border-b py-1 last:border-b-0">
-              <For each={record.key}>
-                {(part) => (
-                  <div class="flex flex-col gap-0.5 py-0.5">
-                    <span class="text-ink-weak text-[11px]">{part.column}</span>
-                    <span class="text-ink font-mono text-xs break-all">
-                      {part.value}
-                    </span>
-                  </div>
-                )}
-              </For>
-            </div>
-          )}
-        </For>
+        {/* Bulk: the records the selection covers, listed by key, with no form —
+            editing them together is separate UI, still to come. */}
         <Show when={isBulk()}>
+          <For each={records()}>
+            {(record) => (
+              <div class="border-edge flex flex-col gap-0.5 border-b py-1 last:border-b-0">
+                <For each={record.key}>
+                  {(part) => (
+                    <div class="flex flex-col gap-0.5 py-0.5">
+                      <span class="text-ink-weak text-[11px]">
+                        {part.column}
+                      </span>
+                      <span class="text-ink font-mono text-xs break-all">
+                        {part.value}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
           <p class="text-ink-weak mt-2 text-xs italic">
             Bulk modification not yet supported
           </p>
+        </Show>
+
+        {/* One record: the form. Keyed on the record, so re-pointing the sidebar
+            builds a fresh form (and a fresh load) rather than mutating this one.
+            It needs the schema — the form's whole structure comes from
+            introspection — which by this point has long since loaded, since
+            running the query the row came from needed it too. */}
+        <Show when={store.schemaJson()}>
+          {(schemaJson) => (
+            <Show when={formRecord()} keyed>
+              {(record) => (
+                <RecordForm
+                  tables={store.schemaTables()}
+                  schemaJson={schemaJson()}
+                  table={record.table}
+                  recordKey={record.key}
+                />
+              )}
+            </Show>
+          )}
         </Show>
       </div>
     </aside>

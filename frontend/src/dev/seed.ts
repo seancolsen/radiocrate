@@ -7,6 +7,7 @@ import {
   type Section,
 } from "../query/definition";
 import { lemonadeGridResult } from "./gridFixture";
+import { FIXTURE_SCHEMA_JSON, installRecordFixture } from "./recordFixture";
 
 // Prod-safe seeding seam. Reads URL params on startup and applies them to the
 // store, so Playwright (and manual dev) can reach a deterministic UI state
@@ -34,6 +35,10 @@ import { lemonadeGridResult } from "./gridFixture";
 //                    ← tables whose (single-column `id`) primary key the seeded
 //                      rows carry, standing in for the lineage analysis so a
 //                      right-click offers "Edit track" / "Edit album"
+//   ?recordFixture=1 ← install the canned schema + record data (see
+//                      `recordFixture.ts`), so the record editor's form renders
+//                      without a backend; `&recordDelay=<ms>` slows every answer
+//                      so its loading states can be seen
 //   ?playing=Title|Artist%20A,Artist%20B
 //                    ← fill the now-playing bar with a frozen transport (no
 //                      audio element, no stream request)
@@ -52,6 +57,13 @@ export function applySeed(store: AppStore): void {
   // result *replace* — the reload path — without a resize forcing the draw.
   if (params.get("expose") === "1") {
     (window as unknown as { __appStore: AppStore }).__appStore = store;
+  }
+
+  // The record editor's stand-in backend, installed before anything opens a tab
+  // so the form finds a schema the moment it's asked for one.
+  if (params.get("recordFixture") !== null) {
+    store.setSchemaJson(FIXTURE_SCHEMA_JSON);
+    installRecordFixture(Number(params.get("recordDelay") ?? 0) || 0);
   }
 
   const sidebar = params.get("sidebar");

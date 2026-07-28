@@ -37,8 +37,15 @@ async function mockRpc(page: Page) {
   );
 }
 
-/** The seeded grid, with rows carrying both a `track` and an `album` key. */
-const SEEDED = "/?tabs=Lemonade&grid=lemonade&records=track,album&expose=1";
+/** The seeded grid, with rows carrying both a `track` and an `album` key, plus
+ * the canned schema + record data the form is built and filled from (`?records=`
+ * numbers rows from 1, and the fixture's ids match: row 0 is `track-1`). */
+const SEEDED =
+  "/?tabs=Lemonade&grid=lemonade&records=track,album&recordFixture=1&expose=1";
+
+/** The same, with every record query held back — long enough to see the form
+ * before its data lands. */
+const slow = (ms: number) => `${SEEDED}&recordDelay=${ms}`;
 
 async function openGrid(page: Page, url = SEEDED) {
   await mockRpc(page);
@@ -64,6 +71,18 @@ const selection = (page: Page) =>
     const store = (window as unknown as AppWindow).__appStore;
     return [...store.rowSelection(store.state.activeTabId!)];
   });
+
+/** A y inside the nth seeded row. The grid lays rows out from its content, so
+ * this is measured (~36px each) rather than declared — near enough the middle of
+ * each of the five rows to be safe. */
+const rowY = (index: number) => index * 36 + 18;
+
+/** Opens the editor on a grid row through the context menu. */
+async function openEditor(page: Page, table = "track", row = 0) {
+  await rightClickRow(page, rowY(row));
+  await page.getByRole("menuitem", { name: `Edit ${table}` }).click();
+  await expect(editorPanel(page)).toBeVisible();
+}
 
 test("a row's context menu offers one entry per table it identifies", async ({
   page,
@@ -214,6 +233,169 @@ test("the sidebar is resizable, and its width persists", async ({ page }) => {
   ).toBeCloseTo(before.width + 120, 0);
 });
 
+// ── The form ────────────────────────────────────────────────────────────────
+//
+// Structure from introspection, data from the seeded fixture (`?recordFixture`),
+// and everything below the top level fetched only once it's opened.
+
+test("the form shows its field labels — and the id — before any data lands", async ({
+  page,
+}) => {
+  await openGrid(page, slow(5000));
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // Every field of `track` is there: its own columns, then the tables that
+  // reference it, alphabetically.
+  await expect(editor.getByText("title", { exact: true })).toBeVisible();
+  await expect(editor.getByText("credit", { exact: true })).toBeVisible();
+  await expect(editor.getByText("play", { exact: true })).toBeVisible();
+  // The key came with the row, so it renders; nothing else has arrived.
+  await expect(editor.getByText("track-1")).toBeVisible();
+  await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
+  // No pencils either — an unloaded field isn't known to be empty.
+  await expect(editor.getByRole("button", { name: "Edit title" })).toBeHidden();
+  // Nor anything to expand: the counts that say whether there's anything in
+  // there haven't arrived.
+  await expect(
+    editor.getByRole("button", { name: "Expand credit" }),
+  ).toBeHidden();
+});
+
+test("the form loads the record's values and its related-record counts", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
+  await expect(editor.getByText("file-1")).toBeVisible();
+  // `credit` and `play` show how many records reference this track.
+  await expect(
+    editor.getByRole("button", { name: "Expand credit" }),
+  ).toBeVisible();
+});
+
+test("selecting another row rebuilds the form on that record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
+
+  // The sidebar follows the selection, and the form follows the sidebar.
+  await page.locator("canvas").click({ position: { x: 200, y: rowY(2) } });
+  await expect(editor.getByText("Don't Hurt Yourself")).toBeVisible();
+  await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
+});
+
+test("a NULL field offers a pencil, which activates an empty input", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 4); // track-5 has no album
+  const editor = editorPanel(page);
+
+  const pencil = editor.getByRole("button", { name: "Edit album" });
+  await expect(pencil).toBeVisible();
+  await pencil.click();
+  const input = editor.getByRole("textbox");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("");
+});
+
+test("clicking a value edits it; clicking away puts it back into view mode", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByText("Pray You Catch Me").click();
+  const input = editor.getByRole("textbox");
+  await expect(input).toBeFocused();
+  await input.fill("Pray You Catch Me (Live)");
+  // Clicking outside the box leaves edit mode, keeping what was typed.
+  await editor.getByRole("heading").click();
+  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(editor.getByText("Pray You Catch Me (Live)")).toBeVisible();
+});
+
+test("a text field too long for its line expands below its label", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // `title` fits on its line, so it has nothing to expand; the long `genre`
+  // doesn't.
+  await expect(
+    editor.getByRole("button", { name: "Expand title" }),
+  ).toBeHidden();
+  await editor.getByRole("button", { name: "Expand genre" }).click();
+  // Expanded, the value keeps its linebreaks instead of being flattened to one
+  // ellipsized line.
+  await expect(
+    editor.getByText(/whole point is that it doesn't sit still/),
+  ).toBeVisible();
+});
+
+test("expanding a multi-record field lists its records, each expandable in turn", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  // Each child is shown by its primary key — minus the `track` part, which every
+  // sibling shares. (The embedded record component that will replace this text
+  // is still to come.)
+  await expect(editor.getByText("artist-1", { exact: true })).toBeVisible();
+  await expect(editor.getByText("artist-2", { exact: true })).toBeVisible();
+
+  // Expanding one loads that record's own form, without the `track` field it was
+  // reached through.
+  await editor.getByRole("button", { name: "Expand artist-2" }).click();
+  await expect(editor.getByText("role", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Featured")).toBeVisible();
+  await expect(editor.getByText("track", { exact: true })).toBeHidden();
+});
+
+test("expanding a scalar linked record field loads that record's form", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await editor.getByRole("button", { name: "Expand file" }).click();
+  await expect(editor.getByText("path", { exact: true })).toBeVisible();
+  await expect(editor.getByText(/Pray You Catch Me\.flac/)).toBeVisible();
+  // The linked record's own referencing fields are there too — the tree recurses
+  // as far as the data goes.
+  await expect(
+    editor.getByRole("button", { name: "Collapse file" }),
+  ).toBeVisible();
+});
+
+test("a multi-record field skeletons its records while they load", async ({
+  page,
+}) => {
+  await openGrid(page, slow(500));
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  // The count arrived with the top-level load, so the list has its shape — two
+  // placeholder rows — before any of the records themselves are here.
+  await editor.getByRole("button", { name: "Expand play" }).click();
+  await expect(editor.getByTestId("record-placeholder")).toHaveCount(2);
+  await expect(editor.getByTestId("record-placeholder")).toHaveCount(0);
+});
+
 // Screenshots: the menu over the rows, and the editor sidebar open beside them.
 for (const colorScheme of ["light", "dark"] as const) {
   test(`row context menu - ${colorScheme}`, async ({ page }) => {
@@ -230,6 +412,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     });
   });
 
+  // The form as it lands: every field of `track`, the values and counts loaded,
+  // everything collapsed.
   test(`record editor sidebar - ${colorScheme}`, async ({ page }) => {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
@@ -239,9 +423,36 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.evaluate(() => document.fonts.ready);
     await rightClickRow(page);
     await page.getByRole("menuitem", { name: "Edit track" }).click();
-    await expect(editorPanel(page)).toBeVisible();
+    const editor = editorPanel(page);
+    await expect(editor).toBeVisible();
+    await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
     await expect(page).toHaveScreenshot(`record-editor-${colorScheme}.png`, {
       fullPage: true,
     });
+  });
+
+  // …and opened out: a long text field expanded below its label, a multi-record
+  // field listing its records, and one of those expanded into its own form.
+  test(`record editor expanded - ${colorScheme}`, async ({ page }) => {
+    await mockRpc(page);
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(SEEDED);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await rightClickRow(page, rowY(2)); // the track with two credits
+    await page.getByRole("menuitem", { name: "Edit track" }).click();
+    const editor = editorPanel(page);
+    await expect(editor).toBeVisible();
+    await editor.getByRole("button", { name: "Expand genre" }).click();
+    await editor.getByRole("button", { name: "Expand credit" }).click();
+    await editor.getByRole("button", { name: "Expand artist-2" }).click();
+    await expect(editor.getByText("Featured")).toBeVisible();
+    await expect(page).toHaveScreenshot(
+      `record-editor-expanded-${colorScheme}.png`,
+      {
+        fullPage: true,
+      },
+    );
   });
 }

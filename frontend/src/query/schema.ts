@@ -127,6 +127,48 @@ export function identifyingColumns(table: SchemaTable): string[] {
   return table.uniqueConstraints[0] ?? [];
 }
 
+/** RadioCrate's foreign-key convention, in one place: a `UUID` column
+ * (case-insensitive) named after a table links to that table's `id`. Both link
+ * derivations below — the JSON rewrite the compiler consumes, and the structured
+ * one the record editor builds its form from — decide with this. */
+function isLinkColumn(
+  columnName: string,
+  columnType: string | undefined,
+  tableNames: ReadonlySet<string>,
+): boolean {
+  return (
+    (columnType ?? "").toUpperCase() === "UUID" && tableNames.has(columnName)
+  );
+}
+
+/** A convention-inferred foreign key: `fromTable.fromColumn` → `toTable.id`.
+ * The structured form of the links {@link addInferredLinks} writes into the
+ * compiler's schema JSON — what the record editor reads to decide which of a
+ * table's columns are scalar linked record fields, and which *other* tables
+ * reference it (its multi-record fields). */
+export interface SchemaLink {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+}
+
+/** Every convention-inferred link among `tables`, in table then column order. */
+export function inferLinks(tables: readonly SchemaTable[]): SchemaLink[] {
+  const tableNames = new Set(tables.map((t) => t.name));
+  const links: SchemaLink[] = [];
+  for (const table of tables) {
+    for (const column of table.columns) {
+      if (!isLinkColumn(column.name, column.type, tableNames)) continue;
+      links.push({
+        fromTable: table.name,
+        fromColumn: column.name,
+        toTable: column.name,
+      });
+    }
+  }
+  return links;
+}
+
 /** Rewrites the `links` array of a raw introspection JSON document with
  * convention-inferred links, preserving every other field. Ports
  * `add_inferred_links` + `infer_links` (`introspection/src/lib.rs:147`): for
@@ -147,8 +189,7 @@ export function addInferredLinks(rawJson: string): string {
   const links: unknown[] = [];
   for (const table of rawTables) {
     for (const col of table.columns) {
-      const type = col.type ?? "";
-      if (type.toUpperCase() === "UUID" && tableNames.has(col.name)) {
+      if (isLinkColumn(col.name, col.type, tableNames)) {
         links.push({
           from: { table: table.name, column: col.name },
           to: { table: col.name, column: "id" },

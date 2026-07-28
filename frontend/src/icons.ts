@@ -43,6 +43,15 @@ import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
+// The record editor's field-label glyphs, one per value category.
+import FieldText from "~icons/material-symbols/notes";
+import FieldNumber from "~icons/material-symbols/tag";
+import FieldId from "~icons/material-symbols/fingerprint";
+import FieldLink from "~icons/material-symbols/link";
+import FieldRecords from "~icons/material-symbols/table";
+import FieldTime from "~icons/material-symbols/schedule";
+import FieldBoolean from "~icons/material-symbols/check-box";
+import FieldOther from "~icons/material-symbols/data-object";
 import LightMode from "~icons/material-symbols/light-mode";
 import DarkMode from "~icons/material-symbols/dark-mode";
 import SystemTheme from "~icons/material-symbols/settings-brightness";
@@ -81,6 +90,14 @@ export const Icons = {
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
   Keyboard, // shortcuts editor: "Record keys" search toggle
+  FieldText, // record editor: a text field's label
+  FieldNumber, // record editor: a numeric field's label
+  FieldId, // record editor: a UUID field's label
+  FieldLink, // record editor: a scalar linked record field's label
+  FieldRecords, // record editor: a multi-record field's label
+  FieldTime, // record editor: a date/time field's label
+  FieldBoolean, // record editor: a boolean field's label
+  FieldOther, // record editor: a field of any other type
   LightMode, // Settings footer: Light theme option
   DarkMode, // Settings footer: Dark theme option
   SystemTheme, // Settings footer: System theme option

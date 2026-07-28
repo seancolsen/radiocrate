@@ -110,6 +110,11 @@ http://localhost:5173/?sidebar=open&tabs=Lemonade,Deep%20Cuts
 http://localhost:5173/?results=<url-encoded%20plain%20text>   # canned results, bypasses /api/query
 http://localhost:5173/?tabs=Lemonade&palette=1                # command palette open (or ?palette=<text>)
 http://localhost:5173/?tabs=Lemonade&shortcuts=1              # keyboard-shortcuts editor open
+http://localhost:5173/?tabs=Lemonade&grid=lemonade&records=track,album&recordFixture=1
+                                                              # right-click a row → "Edit track": the
+                                                              # record editor's form, fed by a canned
+                                                              # schema + records (add &recordDelay=800
+                                                              # to watch it load)
 ```
 
 ## Other commands

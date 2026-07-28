@@ -16,6 +16,12 @@
   --color-danger: var(--danger);
   --color-accent-soft: var(--accent-soft);
   --color-timeline-rest: var(--timeline-rest);
+  --color-field-text: var(--field-text);
+  --color-field-number: var(--field-number);
+  --color-field-uuid: var(--field-uuid);
+  --color-field-link: var(--field-link);
+  --color-field-records: var(--field-records);
+  --color-field-other: var(--field-other);
 }
 
 @layer base {
@@ -50,6 +56,14 @@
     --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #efddff;
     --row-sep: rgb(200 200 200 / 0.5);
+    /* Record editor field-label pills, one tint per value category (sampled
+       from the record-editor mockup). */
+    --field-text: #c8e3c7;
+    --field-number: #fdd8d8;
+    --field-uuid: #ead7fc;
+    --field-link: #f8f4b6;
+    --field-records: #b4d3fb;
+    --field-other: #e4e4e4;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -77,6 +91,12 @@
       --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
       --pill-bg: #4a2c6d;
       --row-sep: rgb(60 60 60 / 0.5);
+      --field-text: #35492f;
+      --field-number: #53312f;
+      --field-uuid: #3f3050;
+      --field-link: #4e4820;
+      --field-records: #26405e;
+      --field-other: #3a3a3a;
     }
   }
   /* An explicit stored choice (set pre-paint in index.html) wins over system. */
@@ -104,6 +124,14 @@
     --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #efddff;
     --row-sep: rgb(200 200 200 / 0.5);
+    /* Record editor field-label pills, one tint per value category (sampled
+       from the record-editor mockup). */
+    --field-text: #c8e3c7;
+    --field-number: #fdd8d8;
+    --field-uuid: #ead7fc;
+    --field-link: #f8f4b6;
+    --field-records: #b4d3fb;
+    --field-other: #e4e4e4;
     color-scheme: light;
   }
   :root[data-theme="dark"] {
@@ -130,6 +158,12 @@
     --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
     --pill-bg: #4a2c6d;
     --row-sep: rgb(60 60 60 / 0.5);
+    --field-text: #35492f;
+    --field-number: #53312f;
+    --field-uuid: #3f3050;
+    --field-link: #4e4820;
+    --field-records: #26405e;
+    --field-other: #3a3a3a;
     color-scheme: dark;
   }
 
