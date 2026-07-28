@@ -40,6 +40,7 @@ export type CommandId =
   | "results.select_previous"
   | "results.extend_selection_down"
   | "results.extend_selection_up"
+  | "results.edit_selected"
   | "tabs.save_active"
   | "tabs.save_all"
   | "tabs.close_active"
@@ -150,6 +151,17 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Selection: Extend selection up",
     when: "results",
     defaultChord: chordOf("shift+Up"),
+  },
+  {
+    // Opens the record editor on the current row selection — the keyboard/
+    // palette equivalent of a row's "Edit {table}" context-menu entry. `when`
+    // only requires *some* results (not a non-empty selection): the command
+    // simply does nothing if nothing's selected, same as the other row commands
+    // racing a tab close.
+    id: "results.edit_selected",
+    title: "Results: Edit selected rows",
+    when: "results",
+    defaultChord: chordOf("mod+E"),
   },
   {
     id: "tabs.save_active",

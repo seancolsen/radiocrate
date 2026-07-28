@@ -1,16 +1,18 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import {
   RECORD_SIDEBAR_MIN_WIDTH,
   useAppState,
-  type RecordRef,
+  type RecordEditorTarget,
 } from "../state/store";
 import { Icons } from "../icons";
 import IconButton from "./ui/IconButton";
 
 // The record editor: a sidebar within the query page, opened from a result row's
-// "Edit {table}" context-menu entry. It lives *inside* the page (not the app
-// frame) so opening it narrows the toolbar and the results and leaves the tab
-// bar and the now-playing bar alone.
+// "Edit {table}" context-menu entry or the "Results: Edit selected rows"
+// command, and kept in sync with the result-row selection while it's open
+// (QueryPage owns that wiring). It lives *inside* the page (not the app frame)
+// so opening it narrows the toolbar and the results and leaves the tab bar and
+// the now-playing bar alone.
 //
 // This session it only shows which record it's pointing at (the primary-key
 // column/value pairs) and offers a way out; the form itself — by some margin
@@ -22,10 +24,13 @@ const MIN_RESULTS_WIDTH = 160;
 /** Keyboard resize step (Arrow keys on the divider). */
 const RESIZE_STEP = 16;
 
-/** The record-editor sidebar for `tabId`, showing the record it's open on. */
+/** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
+ * `target.records` holds more than one entry when the result-row selection it
+ * tracks widens to multiple rows (bulk modification isn't supported yet — see
+ * the body below). */
 export default function RecordEditorPanel(props: {
   tabId: string;
-  record: RecordRef;
+  target: RecordEditorTarget;
 }) {
   const store = useAppState();
 
@@ -80,11 +85,18 @@ export default function RecordEditorPanel(props: {
     store.commitRecordSidebarWidth();
   };
 
+  const records = () => props.target.records;
+  const isBulk = () => records().length > 1;
+  const heading = () =>
+    isBulk()
+      ? `Edit ${records().length} ${props.target.table} records`
+      : `Edit ${props.target.table}`;
+
   return (
     <aside
-      class="bg-panel border-edge relative flex shrink-0 flex-col border-l"
+      class="bg-panel border-edge relative flex shrink-0 flex-col border-l shadow-[-8px_0_16px_-4px_rgba(0,0,0,0.25)]"
       style={{ width: `${store.recordSidebarWidth()}px` }}
-      aria-label={`Edit ${props.record.table}`}
+      aria-label={`Edit ${props.target.table}`}
     >
       {/* The resize divider straddles the border so it's grabbable from either
           side without widening the visible seam. */}
@@ -103,7 +115,7 @@ export default function RecordEditorPanel(props: {
           {Icons.Edit({ class: "size-4" })}
         </span>
         <h2 class="text-ink min-w-0 flex-1 truncate text-sm font-semibold">
-          Edit {props.record.table}
+          {heading()}
         </h2>
         <IconButton
           icon={Icons.Close}
@@ -113,16 +125,27 @@ export default function RecordEditorPanel(props: {
       </header>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
-        <For each={props.record.key}>
-          {(part) => (
-            <div class="flex flex-col gap-0.5 py-1">
-              <span class="text-ink-weak text-[11px]">{part.column}</span>
-              <span class="text-ink font-mono text-xs break-all">
-                {part.value}
-              </span>
+        <For each={records()}>
+          {(record) => (
+            <div class="border-edge flex flex-col gap-0.5 border-b py-1 last:border-b-0">
+              <For each={record.key}>
+                {(part) => (
+                  <div class="flex flex-col gap-0.5 py-0.5">
+                    <span class="text-ink-weak text-[11px]">{part.column}</span>
+                    <span class="text-ink font-mono text-xs break-all">
+                      {part.value}
+                    </span>
+                  </div>
+                )}
+              </For>
             </div>
           )}
         </For>
+        <Show when={isBulk()}>
+          <p class="text-ink-weak mt-2 text-xs italic">
+            Bulk modification not yet supported
+          </p>
+        </Show>
       </div>
     </aside>
   );

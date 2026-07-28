@@ -304,6 +304,22 @@ function createCommandStore(store: AppStore): CommandStore {
       case "results.extend_selection_up":
         if (tabId) store.moveRowSelection(tabId, false, true);
         break;
+      case "results.edit_selected": {
+        if (!tabId) break;
+        // Same table for every row in the selection: the first selected row's
+        // first record picks it (context-menu order — the row's "primary"
+        // table), then the rest of the selection is filtered down to records
+        // of that same table, mirroring the "Dynamic updates" resync in
+        // QueryPage.
+        const indices = [...store.rowSelection(tabId)].sort((a, b) => a - b);
+        const table = store.rowRecords(tabId, indices[0] ?? -1)[0]?.table;
+        if (table === undefined) break;
+        const records = indices.flatMap((index) =>
+          store.rowRecords(tabId, index).filter((r) => r.table === table),
+        );
+        store.setRecordEditorRecords(tabId, table, records);
+        break;
+      }
       case "tabs.save_active":
         // Guarded on `isUnsaved`: a save is a backend write that bumps
         // `modified_at`, and the toolbar's Save button is likewise only there

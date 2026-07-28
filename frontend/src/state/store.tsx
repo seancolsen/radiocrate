@@ -181,6 +181,16 @@ export interface RecordRef {
   key: readonly { column: string; value: string }[];
 }
 
+/** What's open in a tab's record-editor sidebar: the table being edited and the
+ * records the current result-row selection identifies for it. A single entry
+ * is the ordinary case; more than one is the multi-row "bulk" case (the
+ * "Dynamic updates" behavior — the sidebar stays open and resyncs to it as the
+ * selection changes, rather than the form itself supporting bulk edits). */
+export interface RecordEditorTarget {
+  table: string;
+  records: readonly RecordRef[];
+}
+
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
   theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
@@ -204,10 +214,10 @@ export interface AppState {
    * context menu's "Edit {table}" entries. Empty when the rows identify nothing
    * editable. */
   recordTargetsByTab: Record<string, readonly RecordTarget[]>;
-  /** The record open in each tab's record-editor sidebar (`null`/absent when the
-   * sidebar is closed). Per-tab — the sidebar belongs to the query page, so
+  /** The record(s) open in each tab's record-editor sidebar (`null`/absent when
+   * the sidebar is closed). Per-tab — the sidebar belongs to the query page, so
    * switching tabs switches editors. */
-  recordEditorByTab: Record<string, RecordRef | null>;
+  recordEditorByTab: Record<string, RecordEditorTarget | null>;
   /** Whether a run is in flight, keyed by tab id (errors are console-only). */
   runningByTab: Record<string, boolean>;
   /** The open builder section per tab (null = builder closed). */
@@ -452,10 +462,21 @@ export interface AppStore {
   rowRecords: (tabId: string, index: number) => RecordRef[];
 
   // The record editor (a sidebar within the query page).
-  /** The record open in `tabId`'s record-editor sidebar, or `null` when closed. */
-  recordEditor: (tabId: string) => RecordRef | null;
-  /** Open (or re-point) `tabId`'s record-editor sidebar on `record`. */
+  /** What's open in `tabId`'s record-editor sidebar, or `null` when closed. */
+  recordEditor: (tabId: string) => RecordEditorTarget | null;
+  /** Open (or re-point) `tabId`'s record-editor sidebar on a single `record` —
+   * the context menu's and the `results.edit_selected` command's single-row
+   * entry point. */
   openRecordEditor: (tabId: string, record: RecordRef) => void;
+  /** Replace `tabId`'s sidebar contents with exactly these `records` of `table`;
+   * an empty list closes it. Used both to open on an arbitrary (possibly
+   * multi-row) selection and to resync the open sidebar as the selection
+   * changes underneath it. */
+  setRecordEditorRecords: (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
@@ -1101,6 +1122,33 @@ function createAppStore(): AppStore {
     recordQueryPlay(tabId);
   };
 
+  // ── The record editor (a sidebar within the query page) ────────────────────
+
+  /** Replaces `tabId`'s sidebar contents wholesale — an empty `records` closes
+   * it, same as `closeRecordEditor`. Delete-then-set so the entry holds a *new*
+   * object rather than the previous one merged in place (same hazard
+   * `setTabResult` documents): re-pointing the editor, or narrowing/widening a
+   * bulk selection, must read as a swap, not a patch. */
+  const setRecordEditorRecords = (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => {
+    if (records.length === 0) {
+      setState("recordEditorByTab", tabId, null);
+      return;
+    }
+    batch(() => {
+      setState(
+        "recordEditorByTab",
+        produce((m) => {
+          delete m[tabId];
+        }),
+      );
+      setState("recordEditorByTab", tabId, { table, records });
+    });
+  };
+
   return {
     state,
     queries,
@@ -1263,19 +1311,9 @@ function createAppStore(): AppStore {
     },
 
     recordEditor: (tabId) => state.recordEditorByTab[tabId] ?? null,
-    // Delete-then-set so the tab's entry holds a *new* object rather than the
-    // previous record merged in place — same hazard `setTabResult` documents.
-    // Re-pointing the editor at another record must read as a swap.
     openRecordEditor: (tabId, record) =>
-      batch(() => {
-        setState(
-          "recordEditorByTab",
-          produce((m) => {
-            delete m[tabId];
-          }),
-        );
-        setState("recordEditorByTab", tabId, record);
-      }),
+      setRecordEditorRecords(tabId, record.table, [record]),
+    setRecordEditorRecords,
     closeRecordEditor: (tabId) => setState("recordEditorByTab", tabId, null),
     recordSidebarWidth,
     setRecordSidebarWidth: (px) =>
