@@ -807,10 +807,11 @@ function createAppStore(): AppStore {
   /** Reads one Arrow column out as per-row strings (`null` for a NULL cell). */
   const columnValues = (table: Table, col: number): (string | null)[] => {
     const vector = table.getChildAt(col);
+    const type = table.schema.fields[col]?.type;
     const values: (string | null)[] = new Array<string | null>(table.numRows);
     for (let r = 0; r < table.numRows; r++) {
       const v = vector?.get(r);
-      values[r] = v == null ? null : stringifyArrowValue(v);
+      values[r] = v == null ? null : stringifyArrowValue(v, type);
     }
     return values;
   };

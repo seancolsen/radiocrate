@@ -38,7 +38,10 @@ async function runViaApi(
     const row: (string | null)[] = new Array<string | null>(width);
     for (let c = 0; c < width; c++) {
       const value = table.getChildAt(c)?.get(r);
-      row[c] = value == null ? null : stringifyArrowValue(value);
+      row[c] =
+        value == null
+          ? null
+          : stringifyArrowValue(value, table.schema.fields[c]?.type);
     }
     rows.push(row);
   }

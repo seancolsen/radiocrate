@@ -88,7 +88,10 @@ export function buildResultFromArrow(
     } else {
       const cells: string[] = new Array<string>(rowCount);
       for (let r = 0; r < rowCount; r++) {
-        cells[r] = displayText(meta, stringifyArrowValue(vector?.get(r)));
+        cells[r] = displayText(
+          meta,
+          stringifyArrowValue(vector?.get(r), fields[i].type),
+        );
       }
       columns.push({ meta, isList, cells });
     }

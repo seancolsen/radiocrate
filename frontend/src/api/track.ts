@@ -43,7 +43,7 @@ export async function fetchTrackMetadata(
       artists: isListLikeValue(artists)
         ? Array.from(artists as Iterable<unknown>)
             .filter((a) => a != null)
-            .map(stringifyArrowValue)
+            .map((a) => stringifyArrowValue(a))
         : [],
     };
   } catch (err) {
@@ -52,10 +52,17 @@ export async function fetchTrackMetadata(
   }
 }
 
-/** Current UTC wall-clock as `YYYY-MM-DD HH:MM:SS` — the literal form DuckDB
- * casts into the `play.timestamp` (`timestamp_s`) column. */
+/** Current local wall-clock as `YYYY-MM-DD HH:MM:SS` — the literal form DuckDB
+ * casts into the `play.timestamp` (`timestamp_s`) column. `timestamp_s` is
+ * timezone-naive, so this must be the listener's local time, not UTC — a UTC
+ * stamp would silently drift by the local offset. */
 function nowTimestamp(): string {
-  return new Date().toISOString().slice(0, 19).replace("T", " ");
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
 }
 
 /** Logs a completed play of `trackId` by inserting a `play` record through the

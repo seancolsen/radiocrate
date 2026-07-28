@@ -66,3 +66,33 @@ describe("buildResultFromArrow", () => {
     expect(duration.cells).toEqual(["3:16", "3:54"]);
   });
 });
+
+describe("buildResultFromArrow with a Timestamp column", () => {
+  it("feeds the relativeTime formatter a value it parses correctly (not off by 1000x)", () => {
+    // Regression: apache-arrow normalizes every Timestamp* unit to epoch ms,
+    // and a naive `String(value)` produced a raw ms digit string that
+    // `format.ts`'s relative-time parser then misread as epoch *seconds* and
+    // multiplied by 1000 again — landing tens of thousands of years off.
+    const oneDayAgoMs = Math.floor(Date.now() / 1000) * 1000 - 86_400_000;
+    const type = new arrow.TimestampSecond();
+    const played = new arrow.Table({
+      played_at: arrow.vectorFromArray([oneDayAgoMs], type),
+    });
+    const annotations: (AnnotationValue | null)[] = [
+      mapAnno([
+        [
+          "formatter",
+          new Map<string, unknown>([
+            ["type", "relativeTime"],
+            ["units", ["days"]],
+          ]) as unknown as AnnotationValue,
+        ],
+      ]),
+    ];
+    const result = buildResultFromArrow(played, annotations);
+    // Exact wording can land on either side of a day boundary depending on
+    // the host's local timezone offset — what matters is that it's ~1 day,
+    // not (as the bug produced) tens of thousands of years away.
+    expect(result.columns[0].cells[0]).toMatch(/^[01] days? ago$/);
+  });
+});
