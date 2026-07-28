@@ -123,10 +123,8 @@ export function MenuItem(props: {
       disabled={props.disabled}
       class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
       classList={{
-        "text-ink hover:bg-hover focus:bg-hover":
-          !props.disabled && !props.danger,
-        "text-danger hover:bg-hover focus:bg-hover":
-          !props.disabled && props.danger,
+        "text-ink focus:bg-hover": !props.disabled && !props.danger,
+        "text-danger focus:bg-hover": !props.disabled && props.danger,
         "text-ink-weak/40": props.disabled,
       }}
       onClick={() => props.onClick?.()}
@@ -162,7 +160,7 @@ export function MenuToggleItem(props: {
       disabled={props.disabled}
       class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
       classList={{
-        "text-ink hover:bg-hover focus:bg-hover": !props.disabled,
+        "text-ink focus:bg-hover": !props.disabled,
         "text-ink-weak/40": props.disabled,
       }}
       onClick={() => props.onClick?.()}

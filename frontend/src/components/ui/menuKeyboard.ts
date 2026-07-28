@@ -56,6 +56,19 @@ export function useMenuKeyboard(
     openCount++;
     focusAt(0);
 
+    // Keeps the mouse in sync with the roving focus: hovering a row focuses
+    // it, so the highlighted row always matches whichever input (keyboard or
+    // mouse) moved last. Needs `mousemove`, not `mouseover`/`mouseenter`: if
+    // the keyboard moves focus away while the pointer sits still over a row,
+    // the next pointer motion — even within that same row, i.e. no new
+    // enter/leave transition — must reclaim focus for it.
+    const onMouseMove = (e: MouseEvent): void => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>(ROW_SELECTOR);
+      if (row && row !== document.activeElement) row.focus();
+    };
+    const container = getContainer();
+    container?.addEventListener("mousemove", onMouseMove);
+
     const onKeyDown = (e: KeyboardEvent): void => {
       switch (e.key) {
         case "Escape":
@@ -92,6 +105,7 @@ export function useMenuKeyboard(
     document.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       document.removeEventListener("keydown", onKeyDown);
+      container?.removeEventListener("mousemove", onMouseMove);
       openCount--;
       // Deferred, and only once nothing else has claimed focus: several menu
       // rows (Edit, "Enter a new record", "Pick a record", ...) deliberately
