@@ -162,6 +162,10 @@ interface FormState {
   expanded: Record<string, boolean>;
   /** The one field in edit mode (`<recordId>:<fieldKey>`), or null. */
   editing: string | null;
+  /** Whether entering edit mode on {@link FormState.editing} should select its
+   * whole value rather than place the caret at the end — set when edit mode was
+   * entered by Tabbing in from another field's editor. */
+  editingSelectAll: boolean;
   /** The item id holding focus within this form, or null when focus is
    * elsewhere. */
   focused: string | null;
@@ -191,10 +195,30 @@ export interface ItemHandle {
   /** The "Selection: Delete" action for this item — ephemeral, like every other
    * form modification. */
   remove: () => void;
+  /** Puts this item into edit mode, when it's a field with a value the user can
+   * type into — absent for anything else (a scalar linked record field, a
+   * multi-record field, a record within one). What Tabbing out of one field's
+   * editor into the next item uses to keep moving through editors rather than
+   * stopping on a label. */
+  beginEdit?: (selectAll: boolean) => void;
 }
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** The current moment, in the naive `YYYY-MM-DD HH:MM:SS` spelling a timestamp
+ * column's text form takes — read off the local wall clock (unlike
+ * `stringifyArrowValue`'s UTC-as-civil reading of a *stored* value, "now" is
+ * civil time here from the start). What a timestamp field is pre-filled with
+ * when the user starts adding one. */
+function formatCurrentTimestamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
 }
 
 /** The value that removes an id-keyed entry from the store: Solid deletes a
@@ -216,6 +240,9 @@ export interface RecordFormModel {
   isExpanded: (itemId: string) => boolean;
   /** The field in edit mode, or null. */
   editing: () => string | null;
+  /** Whether the field in edit mode should have its value selected whole,
+   * rather than the caret placed at the end. */
+  editingSelectAll: () => boolean;
   /** The item holding focus within the form, or null. */
   focused: () => string | null;
   /** The selected embedded records. */
@@ -260,14 +287,27 @@ export interface RecordFormModel {
   /** Expand/collapse every item alongside this one — Ctrl+Click on a toggle. */
   toggleSiblings: (itemId: string, open: boolean) => void;
 
-  /** Put a field into edit mode (its value becomes an input). */
-  beginEdit: (recordId: string, fieldKey: string) => void;
+  /** Put a field into edit mode (its value becomes an input). `selectAll` marks
+   * that value to be selected whole once the input mounts, rather than have the
+   * caret placed at its end — set when Tabbing in from another field's editor. */
+  beginEdit: (
+    recordId: string,
+    fieldKey: string,
+    opts?: { selectAll?: boolean },
+  ) => void;
+  /** Puts whichever item currently holds focus into edit mode, when it's a
+   * field with one to enter — the rest of the Tab-out-of-an-editor flow, once
+   * {@link RecordFormModel.focusAdjacent} has moved focus to it. A no-op for any
+   * other kind of item (nothing to do), or when nothing is focused. */
+  beginEditAtFocused: (selectAll: boolean) => void;
   /** Take what's in the activated input as the field's value, without leaving
    * edit mode — called on every keystroke, so the form (and its modification
    * stars) track what the user is typing as they type it. */
   editValue: (recordId: string, column: string, value: string) => void;
   /** Leave edit mode, keeping `value` as the field's current (in-memory) value —
-   * which stays in memory until {@link RecordFormModel.save}. */
+   * which stays in memory until {@link RecordFormModel.save}. An empty string is
+   * stored as NULL, unless the column is non-nullable text — the one kind of
+   * field an empty string is itself a legitimate value for. */
   commitEdit: (recordId: string, column: string, value: string) => void;
 
   /** Write everything the user has changed to the database, in one DML request:
@@ -376,6 +416,7 @@ export function createRecordForm(opts: {
     embeds: {},
     expanded: {},
     editing: null,
+    editingSelectAll: false,
     focused: null,
     selection: [],
     menu: null,
@@ -968,6 +1009,7 @@ export function createRecordForm(opts: {
     embed: (id) => state.embeds[id],
     isExpanded: (itemId) => state.expanded[itemId] === true,
     editing: () => state.editing,
+    editingSelectAll: () => state.editingSelectAll,
     focused: () => state.focused,
     selection: () => state.selection,
     isSelected: (itemId) => state.selection.includes(itemId),
@@ -1022,19 +1064,56 @@ export function createRecordForm(opts: {
       }
     },
 
-    beginEdit: (recordId, fieldKey) => {
+    beginEdit: (recordId, fieldKey, opts) => {
       // A primary key is issued by the database, never typed by the user —
       // the one field kind this can't open an editor on.
       const field = state.records[recordId]?.fields.find(
         (f) => f.key === fieldKey,
       );
       if (field?.kind === "primitive" && field.readOnly) return;
-      setState("editing", fieldItemId(recordId, fieldKey));
+      // Adding a timestamp starts from now, rather than blank — a blank one is
+      // no more likely to be right than the moment the user opened it, and is
+      // more keystrokes away from it.
+      if (
+        field?.kind === "primitive" &&
+        field.valueType === "timestamp" &&
+        (state.records[recordId]?.values[field.column] ?? null) === null
+      ) {
+        setState(
+          "records",
+          recordId,
+          "values",
+          field.column,
+          formatCurrentTimestamp(),
+        );
+      }
+      setState({
+        editing: fieldItemId(recordId, fieldKey),
+        editingSelectAll: opts?.selectAll ?? false,
+      });
+    },
+    beginEditAtFocused: (selectAll) => {
+      const id = state.focused;
+      if (id === null) return;
+      items.get(id)?.beginEdit?.(selectAll);
     },
     editValue: (recordId, column, value) =>
       setState("records", recordId, "values", column, value),
     commitEdit: (recordId, column, value) => {
-      setState("records", recordId, "values", column, value);
+      const field = state.records[recordId]?.fields.find(
+        (f) => f.kind !== "multiRecord" && f.column === column,
+      );
+      const nonNullableText =
+        field?.kind === "primitive" &&
+        field.valueType === "text" &&
+        !field.nullable;
+      setState(
+        "records",
+        recordId,
+        "values",
+        column,
+        value === "" && !nonNullableText ? null : value,
+      );
       setState("editing", null);
     },
 
@@ -1072,6 +1151,7 @@ export function createRecordForm(opts: {
         embeds: {},
         expanded: {},
         editing: null,
+        editingSelectAll: false,
         focused: null,
         selection: [],
         menu: null,

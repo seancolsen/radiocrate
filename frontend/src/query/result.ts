@@ -13,10 +13,15 @@
 // reference, which is what the grid's effect watches (see `setTabResult` in
 // `state/store.tsx`).
 
+import * as arrow from "apache-arrow";
 import type { DataType as ArrowType, Table } from "apache-arrow";
 import type { AnnotationValue } from "querydown-js";
 import { isListLikeValue, isListType, stringifyArrowValue } from "../api/query";
-import { columnMetadataFromAnnotation, type ColumnMetadata } from "./columns";
+import {
+  columnMetadataFromAnnotation,
+  defaultColumnMetadata,
+  type ColumnMetadata,
+} from "./columns";
 import { displayText } from "./format";
 import type { ColSize } from "./fieldLayout";
 
@@ -173,4 +178,29 @@ export function buildResultFromCells(
   metas: readonly ColumnMetadata[],
 ): QueryResult {
   return buildResult(table, metas);
+}
+
+/** Builds a {@link QueryResult} from rows of plain strings (and nulls) — what a
+ * record editor query hands back (see `query/recordData.ts`), which has already
+ * lost its Arrow typing on the way through. Every column comes back as a Utf8
+ * vector, which is honest: display text is already all these rows are.
+ *
+ * `hiddenColumns` names the positions (the key columns the record picker
+ * addresses a chosen row by, typically) that should occupy a column slot
+ * without the grid laying one out for them — the same "kept but not shown"
+ * treatment {@link QueryResult} gives every hidden column. The column count is
+ * read off the first row; with none, the result is the same empty one a real
+ * zero-row query would produce. */
+export function buildResultFromStringRows(
+  rows: readonly (readonly (string | null)[])[],
+  hiddenColumns: readonly number[] = [],
+): QueryResult {
+  const columnCount = rows[0]?.length ?? 0;
+  const vectors: Record<string, arrow.Vector> = {};
+  const metas: ColumnMetadata[] = [];
+  for (let c = 0; c < columnCount; c++) {
+    vectors[`c${c}`] = arrow.vectorFromArray(rows.map((r) => r[c] ?? null));
+    metas.push({ ...defaultColumnMetadata(), hide: hiddenColumns.includes(c) });
+  }
+  return buildResultFromCells(new arrow.Table(vectors), metas);
 }

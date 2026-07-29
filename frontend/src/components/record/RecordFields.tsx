@@ -159,6 +159,14 @@ function FieldRow(props: {
     return !linked();
   };
 
+  // Only an editable primitive field has an editor to Tab into — a field's kind
+  // and read-only-ness are as fixed for its row's lifetime as its key is.
+  const editable = untrack(
+    () => props.field.kind === "primitive" && !props.field.readOnly,
+  );
+  const beginTabEdit = (selectAll: boolean) => {
+    props.model.beginEdit(props.recordId, props.field.key, { selectAll });
+  };
   untrack(() =>
     props.model.registerItem(itemId, {
       group: props.recordId,
@@ -166,6 +174,7 @@ function FieldRow(props: {
       setExpanded: (open) =>
         props.model.toggleField(props.recordId, props.field, open),
       remove: () => props.model.clearField(props.recordId, props.field),
+      beginEdit: editable ? beginTabEdit : undefined,
     }),
   );
   onCleanup(() => props.model.unregisterItem(itemId));
@@ -222,7 +231,12 @@ function FieldRow(props: {
       if (exit === "none") return;
       queueMicrotask(() => {
         model.focusItem(itemId);
-        if (exit !== "self") model.focusAdjacent(exit === "next");
+        if (exit === "self") return;
+        // Tab/Shift+Tab: keep moving through editors, not just labels — the
+        // item Tabbed onto begins editing itself, if it's a field that has an
+        // editor to begin (see `ItemHandle.beginEdit`).
+        model.focusAdjacent(exit === "next");
+        model.beginEditAtFocused(true);
       });
     });
 
@@ -286,8 +300,9 @@ function FieldRow(props: {
 
         {/* A scalar linked record field shows the record it points at, rather
             than the id it holds. It isn't focusable — the field's label is what
-            the user selects — so clicking it lands there. The X beside it clears
-            the field, dropping the record it points at with it. */}
+            the user selects — so clicking it lands there. The button beside it
+            clears the field, dropping the record it points at with it — the
+            same action, and the same icon, as "Clear" on its context menu. */}
         <Show when={linked()}>
           <LoadingRegion loading={embedLoading()} class="flex min-w-0 flex-1">
             <EmbeddedRecord
@@ -301,7 +316,7 @@ function FieldRow(props: {
             />
           </LoadingRegion>
           <IconButton
-            icon={Icons.Close}
+            icon={Icons.Clear}
             label={`Clear ${props.field.label}`}
             size="sm"
             tabIndex={-1}
@@ -324,20 +339,23 @@ function FieldRow(props: {
         </Show>
       </div>
 
-      {/* Expanded text: the same value, given the full width below the label. */}
+      {/* Expanded text: the same value, given the full width below the label —
+          under the same tree line every other kind of expansion draws. */}
       <Show when={textBelow()}>
-        <div class="pr-1 pb-1 pl-5">
-          <FieldValueSlot
-            model={props.model}
-            recordId={props.recordId}
-            field={props.field}
-            value={value()}
-            expanded={true}
-            onBeginEdit={beginEdit}
-            onCommit={commit}
-            onContextMenu={(e) => openMenu(e, "field")}
-          />
-        </div>
+        <Subtree>
+          <div class="pr-1 pb-1">
+            <FieldValueSlot
+              model={props.model}
+              recordId={props.recordId}
+              field={props.field}
+              value={value()}
+              expanded={true}
+              onBeginEdit={beginEdit}
+              onCommit={commit}
+              onContextMenu={(e) => openMenu(e, "field")}
+            />
+          </div>
+        </Subtree>
       </Show>
 
       {/* A linked record expands into its own form. */}
@@ -397,6 +415,7 @@ function FieldValueSlot(props: {
           editing={
             props.model.editing() === fieldItemId(props.recordId, field().key)
           }
+          editingSelectAll={props.model.editingSelectAll()}
           expanded={props.expanded}
           onBeginEdit={() => props.onBeginEdit()}
           // Every keystroke goes into the form as it's typed, so what the user
@@ -579,7 +598,7 @@ function ChildRow(props: {
           onFocus={() => props.model.noteFocus(props.recordId)}
         />
         <IconButton
-          icon={Icons.Close}
+          icon={Icons.Delete}
           label={`Delete ${label()}`}
           size="sm"
           tabIndex={-1}

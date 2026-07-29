@@ -18,24 +18,34 @@ export type EditExit = "self" | "next" | "previous" | "none";
 
 /** The activated field value: a focused, auto-growing text box. Mounted only
  * while the field is in edit mode, so every activation starts from the current
- * value and lands the caret at its end.
+ * value and lands the caret at its end (or, Tabbed in from another field's
+ * editor, selects it whole — see `selectAll`).
  *
  * It grows to fit its content rather than scrolling — collapsed, that's the
  * "full height necessary to fit the content with soft wrapping"; expanded, it
  * keeps the same shape as the text it replaced.
  *
- * Keys: Esc leaves edit mode and goes back to the label; Tab and Shift+Tab do
- * the same but land on the next or previous item; Enter adds a newline in a text
- * field and leaves edit mode in any other. Every one of them keeps what was
- * typed — the form holds it until the user saves.
+ * Keys: Esc leaves edit mode and goes back to the label. Tab and Shift+Tab do
+ * the same, but also begin editing the next or previous field (see
+ * `RecordFields.tsx`'s `commit`). Enter leaves edit mode too, *unless* the
+ * value already holds a line break, in which case it adds another — a text
+ * field the user is already writing multiple lines into keeps taking them;
+ * every other field (and a text field still on its first line) reads Enter as
+ * "done," and Shift+Enter is what starts a new line from there. Every one of
+ * them keeps what was typed — the form holds it until the user saves.
  *
  * The form doesn't wait for any of them, though: `onInput` writes each keystroke
  * through to the form as it happens, so the value (and the star marking it
  * modified) tracks the typing. */
 function ValueInput(props: {
   initial: string;
-  /** Whether Enter inserts a newline rather than ending the edit. */
+  /** Whether Enter inserts a newline rather than ending the edit, when the
+   * value already has one — see `onKeyDown`. */
   multiline: boolean;
+  /** Whether the value should be selected whole as the input mounts, rather
+   * than have the caret placed at its end — set when edit mode was entered by
+   * Tabbing in from another field's editor. */
+  selectAll: boolean;
   onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
 }) {
@@ -50,14 +60,24 @@ function ValueInput(props: {
   onMount(() => {
     grow();
     el?.focus();
-    el?.setSelectionRange(el.value.length, el.value.length);
+    if (props.selectAll) el?.select();
+    else el?.setSelectionRange(el.value.length, el.value.length);
   });
 
+  /** Escape and Tab always end the edit — Tab keeps moving through the form's
+   * editors (see `RecordFields.tsx`'s `commit`). Enter's behavior depends on
+   * whether there's already a line break in the value: a text field the user
+   * is already writing multiple lines into gets another one, so real prose
+   * stays easy to keep editing; anything else — including a text field that's
+   * still one line — treats Enter as "done" the way every other field kind
+   * does, and Shift+Enter is what starts a new line from there. */
   const onKeyDown = (e: KeyboardEvent) => {
     const exit: EditExit | undefined =
       e.key === "Escape"
         ? "self"
-        : e.key === "Enter" && !props.multiline
+        : e.key === "Enter" &&
+            !e.shiftKey &&
+            !(props.multiline && text().includes("\n"))
           ? "self"
           : e.key === "Tab"
             ? e.shiftKey
@@ -108,6 +128,9 @@ export default function FieldValue(props: {
   /** `undefined` until loaded; `null` for NULL. */
   value: string | null | undefined;
   editing: boolean;
+  /** Whether entering edit mode should select the value whole — see
+   * `ValueInput`. Only meaningful while `editing` is true. */
+  editingSelectAll: boolean;
   expanded: boolean;
   onBeginEdit: () => void;
   onInput: (text: string) => void;
@@ -153,6 +176,7 @@ export default function FieldValue(props: {
         <ValueInput
           initial={props.value ?? ""}
           multiline={multiline()}
+          selectAll={props.editingSelectAll}
           onInput={(text) => props.onInput(text)}
           onCommit={(text, exit) => props.onCommit(text, exit)}
         />

@@ -945,9 +945,11 @@ test("an embedded record's menu deletes it — or the whole selection", async ({
 
 /** The open record picker. */
 const picker = (page: Page) => page.getByRole("dialog");
-/** Its result list — embedded records, like the ones in the form. */
-const pickerResults = (page: Page) =>
-  picker(page).getByTestId("picker-results").locator(".rc-embedded");
+/** Its results, painted to a canvas — the query page's own grid engine, reused
+ * (see `RecordPicker.tsx`). Not queryable DOM, so tests read the grid's
+ * readiness/row-count marker (`data-rows`) instead of row text, and click or
+ * keyboard it the same way the main grid's own tests do. */
+const pickerCanvas = (page: Page) => picker(page).getByTestId("picker-results");
 
 /** Types into the picker's search box, which queries as it goes. */
 async function searchPicker(page: Page, text: string) {
@@ -965,8 +967,11 @@ test("the pencil on a NULL linked field opens the picker", async ({ page }) => {
   await expect(picker(page)).toBeVisible();
   await expect(picker(page).getByRole("heading")).toHaveText("Pick album");
   // Every album, previewed by the columns the points-based generator picked.
-  await expect(pickerResults(page)).toHaveCount(5);
-  await expect(pickerResults(page).first()).toContainText("Lemonade");
+  await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "5");
+  // The first result starts highlighted; picking it straight from the search
+  // box proves it's the album the generator ordered first.
+  await page.keyboard.press("Enter");
+  await expect(embeddedRecords(editor).nth(1)).toContainText("Lemonade");
 });
 
 test("double-clicking a linked field's label opens the picker, filled or not", async ({
@@ -1001,19 +1006,15 @@ test("the picker searches as the user types, and picking links the record", asyn
   // The `artist` field of the second credit.
   await formItem(editor, "r##credit[1]:artist").dblclick();
   await expect(picker(page).getByRole("heading")).toHaveText("Pick artist");
-  await expect(pickerResults(page)).toHaveText([
-    "Beyoncé",
-    "Jack White",
-    "The Weeknd",
-  ]);
+  await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
 
   // No Ctrl+Enter: the query re-runs off the keystrokes themselves.
   await searchPicker(page, "name:Weeknd");
-  await expect(pickerResults(page)).toHaveText(["The Weeknd"]);
+  await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "1");
 
   // Clicking a result closes the picker and hands the whole loaded record to
   // the form — the embedded record is filled in without another request.
-  await pickerResults(page).first().click();
+  await pickerCanvas(page).click({ position: { x: 100, y: 15 } });
   await expect(picker(page)).toBeHidden();
   await expect(editor.getByText("The Weeknd")).toBeVisible();
   await expect(star(editor, "artist")).toBeVisible();
@@ -1033,19 +1034,13 @@ test("Up/Down and Enter drive the results without leaving the search box", async
 
   const search = picker(page).getByPlaceholder(/^Filter /);
   await expect(search).toBeFocused();
-  await expect(pickerResults(page)).toHaveCount(3);
-  // The first result starts selected; Down walks the list, and the caret stays
-  // where it is.
-  await expect(pickerResults(page).first()).toHaveAttribute(
-    "data-selected",
-    "true",
-  );
+  await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
+  // The first result starts highlighted; Down walks the list without the caret
+  // ever leaving the search box. Landing two presses later on the third (and
+  // last) result is what the Enter below proves — the highlight itself is
+  // canvas paint, not DOM a locator can read.
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
-  await expect(pickerResults(page).nth(2)).toHaveAttribute(
-    "data-selected",
-    "true",
-  );
   await expect(search).toBeFocused();
 
   await page.keyboard.press("Enter");
@@ -1094,10 +1089,17 @@ test("the picker's sort and display builders re-run the query", async ({
   // Only one section is open at a time, as in the toolbar.
   await expect(display).toBeHidden();
 
-  // Overruling the display changes what the results show.
+  // Overruling the display changes what the results show — read off the
+  // canvas's own pixels (there's no row text a locator can read) rather than
+  // asserted directly, the same way `reload.spec.ts` proves a repaint.
   await picker(page).getByRole("button", { name: "Display" }).click();
+  const before = await pickerCanvas(page).screenshot();
   await display.fill("$year");
-  await expect(pickerResults(page).first()).toHaveText("2016");
+  await expect
+    .poll(async () =>
+      Buffer.compare(before, await pickerCanvas(page).screenshot()),
+    )
+    .not.toBe(0);
 });
 
 test("the picker's New record button scaffolds one, seeded with the search", async ({
@@ -1491,7 +1493,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await editor.getByRole("button", { name: "Expand credit" }).click();
     await editor.getByRole("button", { name: "Expand Beyoncé" }).click();
     await formItem(editor, "r##credit[0]:artist").dblclick();
-    await expect(pickerResults(page)).toHaveCount(3);
+    await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
     await expect(picker(page)).toHaveScreenshot(
       `record-picker-${colorScheme}.png`,
     );

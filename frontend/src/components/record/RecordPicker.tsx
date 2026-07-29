@@ -1,7 +1,6 @@
 import {
   createEffect,
   createSignal,
-  For,
   onCleanup,
   onMount,
   Show,
@@ -10,12 +9,13 @@ import {
 import { Modal } from "../ui/Modal";
 import IconButton from "../ui/IconButton";
 import CustomInput from "../builder/CustomInput";
-import EmbeddedRecord from "./EmbeddedRecord";
 import LoadingRegion from "./LoadingRegion";
 import { fieldItemId, type RecordFormModel } from "./formModel";
 import { Icons } from "../../icons";
+import { CanvasGrid } from "../canvasGrid";
 import { recordPickerQuery } from "../../query/embeddedRecord";
 import { runRecordQuery, type RecordRows } from "../../query/recordData";
+import { buildResultFromStringRows } from "../../query/result";
 import type { ScalarLinkField } from "../../query/recordForm";
 
 // The modal record picker: how a scalar linked record field is pointed at a
@@ -218,10 +218,73 @@ function PickerModal(props: {
   // after-the-fact insertion doesn't honor.
   onMount(() => searchEl?.focus());
 
-  let list: HTMLDivElement | undefined;
+  // The results, painted to a canvas — the query page's own grid engine (see
+  // `canvasGrid.ts`), reused wholesale: same row metrics, same scroll/paint
+  // machinery. Only the interaction differs from a result row's: a click
+  // *picks* a record immediately rather than selecting it, there's no
+  // double-click or context menu, and the highlighted row is driven by the
+  // search box's Up/Down (`index`) rather than a click-built selection — pushed
+  // in the same way a result row's selection is, so it paints with the grid's
+  // own selected-row treatment.
+  let canvas: HTMLCanvasElement | undefined;
+  let grid: CanvasGrid | undefined;
+
+  // Column 0 is the key column `choose` addresses the picked row by — the
+  // query page shows this exact result column-hidden too, in spirit if not in
+  // mechanism (see `buildResultFromStringRows`).
   createEffect(() => {
-    const el = list?.querySelector<HTMLElement>(`[data-index="${index()}"]`);
-    el?.scrollIntoView({ block: "nearest" });
+    // Read outside the optional chain: `grid?.setResult(...)` would short
+    // -circuit *before* evaluating its argument while `grid` is still
+    // undefined (the first run, before `onMount` creates it) — which would
+    // read `results()` zero times and never subscribe this effect to it.
+    const result = buildResultFromStringRows(results(), [0]);
+    grid?.setResult(result);
+  });
+  createEffect(() => {
+    const i = index();
+    grid?.setSelection(new Set([i]));
+    grid?.revealRow(i);
+  });
+
+  onMount(() => {
+    const el = canvas;
+    if (!el) return;
+    grid = new CanvasGrid(el);
+    grid.setInteraction({
+      onRowClick: (i) => {
+        const row = results()[i];
+        if (row) choose(row);
+      },
+      onRowDoubleClick: (i) => {
+        const row = results()[i];
+        if (row) choose(row);
+      },
+      // No context menu here — a right-click over the results does nothing.
+      onRowContextMenu: () => {},
+    });
+    grid.setResult(buildResultFromStringRows(results(), [0]));
+    grid.setSelection(new Set([index()]));
+
+    const host = el.parentElement ?? el;
+    const ro = new ResizeObserver(() => grid?.resize());
+    ro.observe(host);
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onTheme = () => grid?.refreshTheme();
+    mq.addEventListener("change", onTheme);
+    const mo = new MutationObserver(onTheme);
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    onCleanup(() => {
+      ro.disconnect();
+      mq.removeEventListener("change", onTheme);
+      mo.disconnect();
+      grid?.destroy();
+      grid = undefined;
+    });
   });
 
   const toggleSection = (which: "sort" | "display") =>
@@ -290,30 +353,20 @@ function PickerModal(props: {
       </Show>
 
       <LoadingRegion loading={loading()} class="mt-3">
-        <div
-          ref={(el) => (list = el)}
-          data-testid="picker-results"
-          class="flex max-h-[min(300px,40vh)] min-h-[80px] flex-col gap-1 overflow-y-auto"
-        >
-          <For each={results()}>
-            {(row, i) => (
-              <div class="flex" data-index={i()}>
-                <EmbeddedRecord
-                  cells={cells(row)}
-                  selected={index() === i()}
-                  onClick={() => choose(row)}
-                />
-              </div>
-            )}
-          </For>
-          <Show when={!loading() && error() === null && results().length === 0}>
-            <p class="text-ink-weak px-1 py-2 text-xs italic">
-              No matching records
-            </p>
-          </Show>
+        <div class="relative h-[min(300px,40vh)] min-h-[80px]">
+          <canvas
+            ref={(el) => (canvas = el)}
+            data-testid="picker-results"
+            class="block h-full w-full"
+          />
+          {/* The canvas already paints "No results" over a genuinely empty
+              result; a query error gets its own message, since the grid has no
+              notion of one. */}
           <Show when={error()}>
             {(message) => (
-              <p class="text-danger px-1 py-2 text-xs">{message()}</p>
+              <p class="text-danger pointer-events-none absolute inset-x-0 top-0 px-1 py-2 text-xs">
+                {message()}
+              </p>
             )}
           </Show>
         </div>
