@@ -38,6 +38,7 @@ import { compileSavedQuery } from "../query/compile";
 import {
   cloneDefinition,
   defsEqual,
+  definitionForBase,
   definitionFromStored,
   definitionToStored,
   rebasedDefinition,
@@ -566,6 +567,9 @@ export interface AppStore {
   /** Create a persisted copy of query `id` (from its live definition) and open
    * it in a new tab. */
   duplicateQuery: (id: string) => void;
+  /** Open a new ephemeral (unsaved) query tab based on "track", seeded with
+   * that base's default filter/sort/display presets. */
+  newQueryTab: () => void;
 
   // Inline rename.
   /** Begin renaming query `id`, seeding the buffer with its current name. */
@@ -1592,6 +1596,19 @@ function createAppStore(): AppStore {
         name: nowName(),
         saved: cloneDefinition(live),
         live,
+        persisted: false,
+      });
+      setState("activeTabId", newId);
+    },
+    newQueryTab: () => {
+      const def = definitionForBase("track", effectivePresets());
+      const newId = newUuid();
+      setState("tabs", state.tabs.length, {
+        kind: "query",
+        id: newId,
+        name: nowName(),
+        saved: cloneDefinition(def),
+        live: def,
         persisted: false,
       });
       setState("activeTabId", newId);

@@ -63,11 +63,12 @@ export default function TabBar() {
         )}
       </For>
 
-      {/* New tab (+): visible; inert placeholder this phase. */}
+      {/* New tab (+): opens a fresh ephemeral "track" query. */}
       <button
         type="button"
         aria-label="New tab"
         class="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
+        onClick={() => store.newQueryTab()}
       >
         <Icons.Add class="size-5" />
       </button>
