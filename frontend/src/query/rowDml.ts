@@ -30,6 +30,7 @@
 // The module deals only in *reading the row back*; where those cells then go
 // (into the tab's stored result, in place) is the store's business.
 
+import type { Table } from "apache-arrow";
 import {
   dml,
   type DmlOperation,
@@ -42,7 +43,6 @@ import type { QueryDefinition } from "./definition";
 import { analyzeColumnSources, recordKeyColumns } from "./lineage";
 import { querydownReady } from "./querydown";
 import { keyConditions, type KeyPart } from "./recordForm";
-import { buildResultFromArrow, type QueryResult } from "./result";
 import { parseSchemaTables } from "./schema";
 
 /** A record a result row identifies: the table, plus the key values that row
@@ -53,10 +53,12 @@ export interface RowRecord {
   key: readonly KeyPart[];
 }
 
-/** One row's cells, per visible column and in the result's column order: a
- * string for a scalar column, the pill strings for a list column — exactly what
- * `QueryResult.columns[i].cells[row]` holds. */
-export type RowCells = readonly (string | readonly string[])[];
+/** Where a re-read row's values live: `table`'s row `row` — what
+ * `QueryResult.patchRow` takes to re-point the display row at it. */
+export interface RowLocation {
+  table: Table;
+  row: number;
+}
 
 /** The row a DML request is being made in the context of, and everything needed
  * to read it back afterwards.
@@ -76,15 +78,16 @@ export interface RowContext {
   records: readonly RowRecord[];
 }
 
-/** What a row-context DML request produced: the API's answer, and the row as it
- * now reads. */
+/** What a row-context DML request produced: the API's answer, and where the row
+ * now reads from. */
 export interface RowDmlOutcome {
   /** Per-operation returned rows, exactly as the API gave them. */
   result: DmlResult;
-  /** The refreshed row, or `undefined` when it couldn't be read back — no row
-   * context, a query that can't be narrowed *and* whose re-run no longer carries
-   * the row, or a failure along the way. The write still happened. */
-  row: RowCells | undefined;
+  /** The refreshed row's location, or `undefined` when it couldn't be read back
+   * — no row context, a query that can't be narrowed *and* whose re-run no
+   * longer carries the row, or a failure along the way. The write still
+   * happened. */
+  row: RowLocation | undefined;
 }
 
 /** Runs `operations` as one DML request, then re-reads the row it was made
@@ -99,7 +102,7 @@ export async function runRowDml(
   context: RowContext | undefined,
 ): Promise<RowDmlOutcome> {
   const result = await dml({ operations });
-  let row: RowCells | undefined;
+  let row: RowLocation | undefined;
   if (context) {
     try {
       row = await refreshRow(context);
@@ -112,7 +115,9 @@ export async function runRowDml(
 
 /** Re-reads one row: through the narrowed query when the definition can be
  * picked apart, else by finding it in a re-run of the query as it stands. */
-async function refreshRow(context: RowContext): Promise<RowCells | undefined> {
+async function refreshRow(
+  context: RowContext,
+): Promise<RowLocation | undefined> {
   await querydownReady();
   const narrowed = narrowedDefinition(context.definition, context.records);
   return narrowed === undefined
@@ -151,15 +156,11 @@ export function narrowedDefinition(
 async function fetchNarrowedRow(
   def: QueryDefinition,
   context: RowContext,
-): Promise<RowCells | undefined> {
-  const { sql, columnAnnotations } = compileSavedQuery(
-    def,
-    context.presets,
-    context.schemaJson,
-  );
+): Promise<RowLocation | undefined> {
+  const { sql } = compileSavedQuery(def, context.presets, context.schemaJson);
   const table = await runSql(sql);
   if (table.numRows !== 1) return undefined;
-  return cellsAt(buildResultFromArrow(table, columnAnnotations), 0);
+  return { table, row: 0 };
 }
 
 /** Re-runs the query as it stands and finds the row again by the records it
@@ -170,8 +171,8 @@ async function fetchNarrowedRow(
  * it was. */
 async function findRowInFullRun(
   context: RowContext,
-): Promise<RowCells | undefined> {
-  const { sql, columnAnnotations } = compileSavedQuery(
+): Promise<RowLocation | undefined> {
+  const { sql } = compileSavedQuery(
     context.definition,
     context.presets,
     context.schemaJson,
@@ -214,14 +215,7 @@ async function findRowInFullRun(
       const value = m.vector?.get(row);
       return value != null && stringifyArrowValue(value, m.type) === m.value;
     });
-    if (matched) {
-      return cellsAt(buildResultFromArrow(table, columnAnnotations), row);
-    }
+    if (matched) return { table, row };
   }
   return undefined;
-}
-
-/** One row's cells out of a decoded result, per visible column. */
-function cellsAt(result: QueryResult, row: number): RowCells {
-  return result.columns.map((c) => c.cells[row] ?? (c.isList ? [] : ""));
 }

@@ -270,9 +270,9 @@ export class CanvasGrid {
   }
 
   /** Repaints the current result. For a change *within* the rows the engine
-   * already holds — a row re-read after a DML write, which rewrites its cells in
-   * the same arrays (see the store's `applyRowCells`) — where the result object,
-   * the layout and the scroll position all still stand. */
+   * already holds — a row re-read after a DML write, which re-points the row at
+   * a fresh one-row table (see the store's `patchRow`) — where the result
+   * object, the layout and the scroll position all still stand. */
   redraw(): void {
     this.requestDraw();
   }
@@ -459,7 +459,7 @@ export class CanvasGrid {
     const fl = this.memo(cols, avail, COL_GAP);
 
     const lineHeights = new Array<number>(fl.lineCount).fill(0);
-    result.columns.forEach((col, k) => {
+    result.visible.forEach((col, k) => {
       const p = fl.placements[k];
       let h =
         fontSizeOf(col.meta.font_size) === SMALL_FONT
@@ -781,7 +781,7 @@ export class CanvasGrid {
         this.hoverRow === r,
         this.currentRow === r,
       );
-      for (let k = 0; k < result.columns.length; k++) {
+      for (let k = 0; k < result.visible.length; k++) {
         this.drawCell(r, k, screenY);
       }
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
@@ -884,7 +884,8 @@ export class CanvasGrid {
   }
 
   private drawCell(r: number, k: number, screenY: number): void {
-    const col = this.result!.columns[k];
+    const result = this.result!;
+    const col = result.visible[k];
     const layout = this.layout!;
     const p = layout.placements[k];
     const cellX = TEXT_PAD_X + p.x;
@@ -906,7 +907,7 @@ export class CanvasGrid {
 
     if (col.isList) {
       this.drawPills(
-        col.cells[r] as readonly string[],
+        result.pills(r, col),
         cellX,
         cellY,
         cellW,
@@ -917,7 +918,7 @@ export class CanvasGrid {
       );
     } else {
       this.drawText(
-        col.cells[r] as string,
+        result.text(r, col),
         cellX,
         cellY,
         cellW,

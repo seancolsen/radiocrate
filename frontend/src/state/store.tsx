@@ -50,11 +50,11 @@ import {
   analyzeColumnSources,
   recordKeyColumns,
   trackIdColumn,
+  type LineageMapping,
 } from "../query/lineage";
 import { buildResultFromArrow, type QueryResult } from "../query/result";
-import { runRowDml, type RowCells, type RowContext } from "../query/rowDml";
-import { isListLikeValue, isListType, stringifyArrowValue } from "../api/query";
-import type { Table } from "apache-arrow";
+import { runRowDml, type RowContext } from "../query/rowDml";
+import * as arrow from "apache-arrow";
 
 /** An in-progress, uncommitted edit of a saved preset's fields. Keyed by preset
  * id in `presetEdits`; persists across collapse / tab navigation. This session
@@ -173,22 +173,6 @@ export interface BuilderFocus {
   seq: number;
 }
 
-/** A table whose records this tab's result rows identify, with the key values
- * carried by each row — the lineage analysis's output, cached per tab.
- *
- * Values are snapshotted from the Arrow table at analysis time (as the track ids
- * are) rather than read back from `QueryResult`, which holds only *visible*
- * columns and only their formatted text: a query's id columns are usually hidden
- * and would be gone by then. */
-export interface RecordTarget {
-  /** The table a row of these results stands for. */
-  table: string;
-  /** The columns identifying one of its records, in constraint order. */
-  keyColumns: readonly string[];
-  /** Per row, the key values parallel to `keyColumns` (`null` for a NULL cell). */
-  keyValues: readonly (readonly (string | null)[])[];
-}
-
 /** One record identified by a result row: the table plus a fully-resolved key.
  * What the context menu offers and the record editor opens. */
 export interface RecordRef {
@@ -221,15 +205,13 @@ export interface AppState {
    * every change so subscribers observe a new reference; cleared when the
    * tab's result changes. */
   selectionByTab: Record<string, ReadonlySet<number>>;
-  /** Per-tab per-row track ids, present only when the query's rows represent
-   * tracks (a column traces to `track.id`). Indexed by row; drives
-   * double-click-to-play. Absent/empty when the query isn't track-based. */
-  trackIdsByTab: Record<string, readonly (string | null)[]>;
-  /** Per-tab record targets from the lineage analysis: the tables whose primary
-   * keys this tab's rows carry, and each row's key values. Drives the results
-   * context menu's "Edit {table}" entries. Empty when the rows identify nothing
-   * editable. */
-  recordTargetsByTab: Record<string, readonly RecordTarget[]>;
+  /** Per-tab lineage mapping: which output column (if any) carries `track.id`
+   * (drives double-click-to-play) and which tables the rows carry a full
+   * primary key for (drives the results context menu's "Edit {table}"
+   * entries). A positional mapping into the tab's `QueryResult`, not a
+   * snapshot of row data — absent for a tab whose analysis hasn't landed (or
+   * found nothing), same as an empty mapping. */
+  lineageByTab: Record<string, LineageMapping>;
   /** The record(s) open in each tab's record-editor sidebar (`null`/absent when
    * the sidebar is closed). Per-tab — the sidebar belongs to the query page, so
    * switching tabs switches editors. */
@@ -367,6 +349,21 @@ function newUuid(): string {
   return crypto.randomUUID();
 }
 
+/** A one-row `List<Utf8>` vector holding `items` — `setResultRow`'s (dev/test
+ * seam) way of patching a list column. Built explicitly rather than through
+ * `arrow.vectorFromArray`'s own list inference, which throws for a single-row
+ * `Utf8` list: its dictionary-encoded child type fails its own
+ * self-comparison (`compareTypes` on two independently-constructed
+ * `Dictionary`s). */
+function oneRowListVector(items: readonly string[]): arrow.Vector {
+  const type = new arrow.List(
+    arrow.Field.new({ name: "item", type: new arrow.Utf8(), nullable: true }),
+  );
+  const b = arrow.makeBuilder({ type, nullValues: [null] });
+  b.append(items as unknown as arrow.Vector<arrow.Utf8>);
+  return b.finish().toVector();
+}
+
 function nowEpoch(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -427,20 +424,24 @@ export interface AppStore {
   /** Run the tab once, the first time it's viewed (idempotent per tab). */
   ensureRun: (tabId: string) => void;
   /** Inject a canned structured result for a tab (dev/test seam — bypasses the
-   * compile/fetch/decode path). `trackIds` and `recordTargets` stand in for the
-   * lineage analysis, making the rows playable / editable without a real
-   * compile. */
+   * compile/fetch/decode path). `lineage` stands in for the lineage analysis,
+   * making the rows playable / editable without a real compile. */
   setResults: (
     tabId: string,
     result: QueryResult,
-    trackIds?: readonly (string | null)[],
-    recordTargets?: readonly RecordTarget[],
+    lineage?: LineageMapping,
   ) => void;
-  /** Rewrite one result row's cells in place, exactly as the re-read that
-   * follows a DML write does (dev/test seam — the tail of a row-context write,
-   * without the write). Unlike {@link setResults} this keeps the selection, the
-   * scroll position and the lineage mappings: one row changed, not the rows. */
-  setResultRow: (tabId: string, index: number, cells: RowCells) => void;
+  /** Re-points one result row at freshly-seeded values, exactly as the re-read
+   * that follows a DML write does (dev/test seam — the tail of a row-context
+   * write, without the write). `values` are raw, one per column of the result
+   * in order (hidden columns included, matching a real re-read's projection).
+   * Unlike {@link setResults} this keeps the selection, the scroll position and
+   * the lineage mapping: one row changed, not the rows. */
+  setResultRow: (
+    tabId: string,
+    index: number,
+    values: readonly unknown[],
+  ) => void;
   /** Overwrite a tab's saved/working definitions directly (dev/test seam —
    * lets the harness reach a specific builder state without a backend). */
   setTabDefinitions: (
@@ -641,8 +642,7 @@ function createAppStore(): AppStore {
     queriesCollapsed: false,
     resultsByTab: {},
     selectionByTab: {},
-    trackIdsByTab: {},
-    recordTargetsByTab: {},
+    lineageByTab: {},
     recordEditorByTab: {},
     runningByTab: {},
     builderSectionByTab: {},
@@ -788,26 +788,15 @@ function createAppStore(): AppStore {
 
   /** Installs a tab's decoded result, forcing a fresh object reference.
    *
-   * Solid shallow-*merges* an object assigned at a store leaf that already holds
-   * one — it mutates the existing object in place rather than swapping the
-   * reference. `QueryResults` drives the canvas from an effect that tracks the
-   * result's *identity*, so an in-place merge updates the data but never notifies
-   * that effect: the grid keeps its stale reference and only repaints when some
-   * other event (a resize) forces a draw. Deleting the key first (a non-object
-   * set can't merge) makes the following set install a new reference that does
-   * notify. Both writes are synchronous, so Solid batches them and subscribers
-   * only ever observe the final result — no transient clear. */
+   * `QueryResult` is a class, so assigning one at a store leaf always swaps the
+   * reference (Solid only shallow-*merges* an assigned object when both old and
+   * new are plain/"wrappable", which a class instance never is) — the effect
+   * that drives the canvas from the result's identity always notifies. */
   const setTabResult = (tabId: string, result: QueryResult) => {
     batch(() => {
-      setState(
-        "resultsByTab",
-        produce((m) => {
-          delete m[tabId];
-        }),
-      );
       setState("resultsByTab", tabId, result);
-      // New rows invalidate the old selection and any prior lineage mappings (the
-      // latter are repopulated asynchronously by `analyzeLineage`).
+      // New rows invalidate the old selection and any prior lineage mapping (the
+      // latter is repopulated asynchronously by `analyzeLineage`).
       setState(
         "selectionByTab",
         produce((m) => {
@@ -815,13 +804,7 @@ function createAppStore(): AppStore {
         }),
       );
       setState(
-        "trackIdsByTab",
-        produce((m) => {
-          delete m[tabId];
-        }),
-      );
-      setState(
-        "recordTargetsByTab",
+        "lineageByTab",
         produce((m) => {
           delete m[tabId];
         }),
@@ -836,81 +819,40 @@ function createAppStore(): AppStore {
     rowSelectionLead.delete(tabId);
   };
 
-  /** Reads one Arrow column out as per-row strings (`null` for a NULL cell). */
-  const columnValues = (table: Table, col: number): (string | null)[] => {
-    const vector = table.getChildAt(col);
-    const type = table.schema.fields[col]?.type;
-    const values: (string | null)[] = new Array<string | null>(table.numRows);
-    for (let r = 0; r < table.numRows; r++) {
-      const v = vector?.get(r);
-      values[r] = v == null ? null : stringifyArrowValue(v, type);
-    }
-    return values;
-  };
-
-  /** Whether an Arrow column holds lists rather than scalars. A list column can
-   * still trace back to an id (an aggregated `[artist.id, …]`), but a list of
-   * ids identifies no single record — so it can't serve as a key. Detected as
-   * in `buildResultFromArrow`: by type, falling back to the first non-null
-   * value for the DuckDB list types apache-arrow 18 can't classify. */
-  const isListColumn = (table: Table, col: number): boolean => {
-    const field = table.schema.fields[col];
-    if (field && isListType(field.type)) return true;
-    const vector = table.getChildAt(col);
-    if (!vector) return false;
-    for (let r = 0; r < table.numRows; r++) {
-      const v = vector.get(r);
-      if (v != null) return isListLikeValue(v);
-    }
-    return false;
-  };
-
   /** Off the critical path: traces the compiled SQL's output columns back to
    * their source table columns, then caches the two things the rows' affordances
-   * need — the per-row `track.id` values (double-click plays) and, per table
-   * whose primary key the rows carry, that key's per-row values (right-click
-   * edits the record). Both are read out of the Arrow table here, once, rather
-   * than from the decoded `QueryResult`, whose hidden columns are gone.
+   * need — which output column carries `track.id` (double-click plays) and,
+   * per table whose primary key the rows carry, which output columns carry it
+   * (right-click edits the record). A positional mapping only: the per-row
+   * values are read back out of `result` on demand, not snapshotted here.
    *
    * Guarded by `token` so a superseded run can't win a race; a query with no
-   * traceable ids simply leaves both mappings cleared (`setTabResult` already
+   * traceable ids simply leaves the mapping cleared (`setTabResult` already
    * dropped the previous run's). */
   const analyzeLineage = async (
     tabId: string,
     sql: string,
-    table: Table,
+    result: QueryResult,
     token: number,
   ) => {
     const sources = await analyzeColumnSources(sql);
     if (runTokens.get(tabId) !== token) return; // a newer run superseded this one
     if (!sources) return; // unparseable — no affordances
-    const schemaJson = schema();
 
-    // Likewise a list of track ids isn't a playable row.
+    // A list of track ids isn't a playable row (an aggregated `[track.id, …]`).
+    const isListColumn = (i: number) => result.columns[i]?.isList ?? false;
     const trackCol = trackIdColumn(sources);
-    const playable = trackCol !== undefined && !isListColumn(table, trackCol);
-    const targets: RecordTarget[] = schemaJson
+    const playable = trackCol !== undefined && !isListColumn(trackCol);
+    const schemaJson = schema();
+    const records = schemaJson
       ? recordKeyColumns(sources, parseSchemaTables(schemaJson))
           // A key whose value arrives as a list identifies no one record.
-          .filter((k) => !k.keyIndices.some((i) => isListColumn(table, i)))
-          .map((k) => {
-            const columns = k.keyIndices.map((i) => columnValues(table, i));
-            return {
-              table: k.table,
-              keyColumns: k.keyColumns,
-              // Transpose column-major reads into one key tuple per row.
-              keyValues: Array.from({ length: table.numRows }, (_, r) =>
-                columns.map((values) => values[r]),
-              ),
-            };
-          })
+          .filter((k) => !k.keyIndices.some(isListColumn))
       : [];
 
-    batch(() => {
-      if (playable) {
-        setState("trackIdsByTab", tabId, columnValues(table, trackCol));
-      }
-      if (targets.length > 0) setState("recordTargetsByTab", tabId, targets);
+    setState("lineageByTab", tabId, {
+      trackIdColumn: playable ? trackCol : undefined,
+      records,
     });
     if (!playable) return;
     // Re-locate the playing track's row in the rows that just landed, so
@@ -943,13 +885,14 @@ function createAppStore(): AppStore {
           schemaJson,
         );
         const table = await runSql(sql);
-        // Decode + precompute the render-ready result once, here — never per
-        // resize/frame (§6).
-        setTabResult(tabId, buildResultFromArrow(table, columnAnnotations));
+        // Decode the result once, here — never per resize/frame (§6). Display
+        // text is derived from it on read, not precomputed.
+        const result = buildResultFromArrow(table, columnAnnotations);
+        setTabResult(tabId, result);
         // Then, off the critical path, figure out what these rows *are* — tracks
         // to play, records to edit. Deliberately not awaited: the results are
         // already shown, and the WASM lineage analysis is heavy.
-        void analyzeLineage(tabId, sql, table, token);
+        void analyzeLineage(tabId, sql, result, token);
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
@@ -1015,8 +958,7 @@ function createAppStore(): AppStore {
         s.tabs.splice(idx, 1);
         delete s.resultsByTab[id];
         delete s.selectionByTab[id];
-        delete s.trackIdsByTab[id];
-        delete s.recordTargetsByTab[id];
+        delete s.lineageByTab[id];
         delete s.recordEditorByTab[id];
         delete s.runningByTab[id];
         delete s.builderSectionByTab[id];
@@ -1048,18 +990,20 @@ function createAppStore(): AppStore {
   // re-reads that one row; this half finds the row, and puts the answer back.
 
   const rowRecords = (tabId: string, index: number): RecordRef[] => {
-    const targets = state.recordTargetsByTab[tabId] ?? [];
+    const result = state.resultsByTab[tabId];
+    const targets = state.lineageByTab[tabId]?.records ?? [];
+    if (!result) return [];
     const records: RecordRef[] = [];
     for (const target of targets) {
-      const values = target.keyValues[index];
+      const values = target.keyIndices.map((i) => result.value(index, i));
       // A row that's NULL in any key column doesn't identify a record there —
       // an outer join with nothing on the far side, say.
-      if (!values || values.some((v) => v === null || v === "")) continue;
+      if (values.some((v) => v == null || v === "")) continue;
       records.push({
         table: target.table,
         key: target.keyColumns.map((column, i) => ({
           column,
-          value: values[i] as string,
+          value: result.keyText(index, target.keyIndices[i]),
         })),
       });
     }
@@ -1119,51 +1063,37 @@ function createAppStore(): AppStore {
     };
   };
 
-  /** Writes a re-read row's cells into a tab's stored result — in place.
+  /** Re-points a tab's stored result at a re-read row — in place.
    *
    * In place, rather than as a fresh result object, because a new result is the
    * signal for a whole new run: the grid resets its scroll position and drops
-   * its hover when it gets one, and the selection, the lineage mappings and the
+   * its hover when it gets one, and the selection, the lineage mapping and the
    * playing row's index are all cleared alongside it (see `setTabResult`). None
-   * of that should happen because one row's data changed. So the cells are
-   * mutated where they sit — the grid paints from those very arrays — and the
-   * repaint is asked for separately, through `rowPatch`.
+   * of that should happen because one row's data changed. `QueryResult` isn't a
+   * Solid store leaf itself (a class instance is never wrapped — see
+   * `query/result.ts`), so `patchRow` mutates it directly; the repaint is asked
+   * for separately, through `rowPatch`.
    *
-   * The row is left alone when the re-read doesn't line up with what's on screen
-   * (a different column count means a different query) or when the tab has been
-   * re-run since the write, which replaced the rows this one belonged to. */
-  const applyRowCells = (
+   * The row is left alone when the re-read's projection doesn't line up with
+   * this result's (a different column count means a different query — see
+   * `QueryResult.patchRow`) or when the tab has been re-run since the write,
+   * which replaced the rows this one belonged to. */
+  const patchRow = (
     tabId: string,
     index: number,
-    cells: RowCells,
+    table: arrow.Table,
+    from: number,
     token: number | undefined,
   ) => {
     if (runTokens.get(tabId) !== token) return;
     const result = state.resultsByTab[tabId];
     if (!result || index < 0 || index >= result.rowCount) return;
-    if (cells.length !== result.columns.length) return;
-    setState(
-      "resultsByTab",
-      tabId,
-      "columns",
-      produce((columns) => {
-        columns.forEach((column, i) => {
-          const fresh = cells[i];
-          // A one-row read can't tell a list column from a scalar one when that
-          // row's cell is NULL — `buildResultFromArrow` classifies from the data
-          // it has (see `isListType`). So a cell that comes back the wrong shape
-          // means "nothing here", not a column that changed kind.
-          const isText = typeof fresh === "string";
-          (column.cells as (string | readonly string[])[])[index] =
-            column.isList ? (isText ? [] : fresh) : isText ? fresh : "";
-        });
-      }),
-    );
+    if (!result.patchRow(index, table, from)) return;
     setRowPatch({ tabId, row: index, seq: ++rowPatchSeq });
   };
 
   /** Runs a DML request in the context of one result row: the write goes through
-   * the API, then the row is re-read and updated in place. Rejects only when the
+   * the API, then the row is re-read and patched in. Rejects only when the
    * write itself failed (a refresh that can't be done leaves the row as it was —
    * see `query/rowDml.ts`). */
   const runDmlForRow = async (
@@ -1176,7 +1106,7 @@ function createAppStore(): AppStore {
     const token = row ? runTokens.get(row.tabId) : undefined;
     const outcome = await runRowDml(operations, context);
     if (row && outcome.row) {
-      applyRowCells(row.tabId, row.index, outcome.row, token);
+      patchRow(row.tabId, row.index, outcome.row.table, outcome.row.row, token);
     }
     return outcome.result;
   };
@@ -1212,13 +1142,17 @@ function createAppStore(): AppStore {
   let revealSeq = 0;
 
   /** The playable track id at `index` of `tabId`'s results, if the rows are
-   * tracks and that one carries an id. */
+   * tracks and that one carries an id. Read from the result on demand, not
+   * cached — the value is as fresh as the row it comes from. */
   const trackIdAt = (tabId: string, index: number): string | undefined => {
-    const id = state.trackIdsByTab[tabId]?.[index];
-    return id == null || id === "" ? undefined : id;
+    const result = state.resultsByTab[tabId];
+    const col = state.lineageByTab[tabId]?.trackIdColumn;
+    if (!result || col === undefined) return undefined;
+    const id = result.keyText(index, col);
+    return id === "" ? undefined : id;
   };
 
-  /** Snapshots `tabId`'s results around row `index` into the play context the
+  /** Reads `tabId`'s results around row `index` into the play context the
    * engine navigates. `preceding` is every playable id before `index` (nearest
    * last, for "previous"); `upcoming` is the contiguous run of ids after it,
    * stopping at the first row without one (mirrors `playlist_around`). */
@@ -1226,16 +1160,18 @@ function createAppStore(): AppStore {
     tabId: string,
     index: number,
   ): { preceding: string[]; upcoming: string[] } => {
-    const ids = state.trackIdsByTab[tabId] ?? [];
+    const result = state.resultsByTab[tabId];
+    const col = state.lineageByTab[tabId]?.trackIdColumn;
+    if (!result || col === undefined) return { preceding: [], upcoming: [] };
     const preceding: string[] = [];
-    for (let i = 0; i < Math.min(index, ids.length); i++) {
-      const id = ids[i];
-      if (id != null && id !== "") preceding.push(id);
+    for (let i = 0; i < Math.min(index, result.rowCount); i++) {
+      const id = trackIdAt(tabId, i);
+      if (id !== undefined) preceding.push(id);
     }
     const upcoming: string[] = [];
-    for (let i = index + 1; i < ids.length; i++) {
-      const id = ids[i];
-      if (id == null || id === "") break;
+    for (let i = index + 1; i < result.rowCount; i++) {
+      const id = trackIdAt(tabId, i);
+      if (id === undefined) break;
       upcoming.push(id);
     }
     return { preceding, upcoming };
@@ -1244,10 +1180,11 @@ function createAppStore(): AppStore {
   /** Finds the row index of `id` within `tabId`'s current results, if present.
    * Capped so a huge result set can't stall a transition. */
   const locateRow = (tabId: string, id: string): number | null => {
-    const ids = state.trackIdsByTab[tabId];
-    if (!ids) return null;
-    const limit = Math.min(ids.length, 1000);
-    for (let i = 0; i < limit; i++) if (ids[i] === id) return i;
+    const result = state.resultsByTab[tabId];
+    const col = state.lineageByTab[tabId]?.trackIdColumn;
+    if (!result || col === undefined) return null;
+    const limit = Math.min(result.rowCount, 1000);
+    for (let i = 0; i < limit; i++) if (trackIdAt(tabId, i) === id) return i;
     return null;
   };
 
@@ -1425,13 +1362,30 @@ function createAppStore(): AppStore {
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);
     },
-    setResults: (tabId, result, trackIds, recordTargets) => {
+    setResults: (tabId, result, lineage) => {
       setTabResult(tabId, result);
-      if (trackIds) setState("trackIdsByTab", tabId, trackIds);
-      if (recordTargets) setState("recordTargetsByTab", tabId, recordTargets);
+      if (lineage) setState("lineageByTab", tabId, lineage);
     },
-    setResultRow: (tabId, index, cells) =>
-      applyRowCells(tabId, index, cells, runTokens.get(tabId)),
+    setResultRow: (tabId, index, values) => {
+      const result = state.resultsByTab[tabId];
+      if (!result) return;
+      // A one-row table built by type-inferring each raw value, exactly the
+      // shape a real re-read hands `QueryResult.patchRow` (see
+      // `query/rowDml.ts`). Dev/test-only, so honest Arrow *types* don't matter
+      // here — only the values, which dispatch on at runtime regardless of
+      // what TS infers for the array. A list column is built explicitly
+      // (`oneRowListVector`) rather than through `vectorFromArray`'s own list
+      // inference, which is unreliable for a single-row `Utf8` list — its
+      // dictionary-encoded child type fails its own self-comparison.
+      const vectors: Record<string, arrow.Vector> = {};
+      result.columns.forEach((col, i) => {
+        vectors[String(i)] = col.isList
+          ? oneRowListVector((values[i] as readonly string[] | undefined) ?? [])
+          : arrow.vectorFromArray([values[i]] as unknown as string[]);
+      });
+      const table = new arrow.Table(vectors);
+      patchRow(tabId, index, table, 0, runTokens.get(tabId));
+    },
     setTabDefinitions: (tabId, saved, live) => {
       editQueryTab(tabId, (t) => {
         t.saved = saved;

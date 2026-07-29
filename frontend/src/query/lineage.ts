@@ -145,3 +145,14 @@ export function recordKeyColumns(
     (a, b) => Math.min(...a.keyIndices) - Math.min(...b.keyIndices),
   );
 }
+
+/** The lineage analysis's answer for one tab, cached in the store: which output
+ * column (if any) carries `track.id` — rows are tracks, double-click plays —
+ * and which tables the rows carry a full primary key for. Positional, so it
+ * stays valid however the rows themselves change (a re-read after a DML write
+ * included), and reads through `QueryResult.value` on demand rather than
+ * snapshotting anything. */
+export interface LineageMapping {
+  trackIdColumn?: number;
+  records: readonly RecordKeyColumns[];
+}

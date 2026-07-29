@@ -46,20 +46,19 @@ test("query grid repaints when the result is replaced (no resize)", async ({
 
   // Replace the active tab's result with a visibly different one (an empty
   // result → the grid's "empty" rendering), WITHOUT resizing the window.
+  // `QueryResult` is a class (private fields), so the seed seam hands the page
+  // a real-instance builder (`__emptyResult`) rather than a bare object literal
+  // — see `dev/seed.ts`.
   await page.evaluate(() => {
-    const store = (
-      window as unknown as {
-        __appStore: {
-          state: { activeTabId: string | null };
-          setResults: (
-            id: string,
-            r: { rowCount: number; columns: [] },
-          ) => void;
-        };
-      }
-    ).__appStore;
-    const id = store.state.activeTabId;
-    if (id) store.setResults(id, { rowCount: 0, columns: [] });
+    const w = window as unknown as {
+      __appStore: {
+        state: { activeTabId: string | null };
+        setResults: (id: string, r: unknown) => void;
+      };
+      __emptyResult: (rowCount: number) => unknown;
+    };
+    const id = w.__appStore.state.activeTabId;
+    if (id) w.__appStore.setResults(id, w.__emptyResult(0));
   });
   await page.waitForTimeout(100);
   const after = await canvas.screenshot();
@@ -96,11 +95,7 @@ test("query grid repaints a single rewritten row, keeping the selection", async 
       mods: { shift: boolean; ctrl: boolean },
     ) => void;
     rowSelection: (id: string) => ReadonlySet<number>;
-    setResultRow: (
-      id: string,
-      index: number,
-      cells: (string | string[])[],
-    ) => void;
+    setResultRow: (id: string, index: number, values: unknown[]) => void;
   };
   // Select the row that's about to change, so the repaint has to preserve it.
   await page.evaluate(() => {
@@ -111,20 +106,24 @@ test("query grid repaints a single rewritten row, keeping the selection", async 
   await page.waitForTimeout(100);
   const before = await canvas.screenshot();
 
-  // Rewrite row 1's cells, in the visible columns' order (the fixture's id
-  // column is hidden): artists, year, album, number, title, duration, rating.
+  // Rewrite row 1's cells: one raw value per column, in the fixture's Arrow
+  // column order (id, artists, year, album, track number, title, duration,
+  // rating) — hidden columns included, matching a real re-read's projection.
+  // Display text (the `#` prefix, the `M:SS` duration, the ` ☆` suffix) is
+  // derived from these at paint time, not supplied here.
   await page.evaluate(() => {
     const store = (window as unknown as { __appStore: SeededStore }).__appStore;
     const id = store.state.activeTabId;
     if (id)
       store.setResultRow(id, 1, [
+        "t2",
         ["Beyoncé", "Ezra Koenig"],
-        "2016",
+        2016,
         "Lemonade",
-        "#2",
+        2,
         "Hold Up (refreshed)",
-        "3:41",
-        "5 ☆",
+        221, // 3:41
+        5, // "5 ☆"
       ]);
   });
   await page.waitForTimeout(100);

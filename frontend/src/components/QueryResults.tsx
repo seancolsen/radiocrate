@@ -7,7 +7,6 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { unwrap } from "solid-js/store";
 import { useAppState } from "../state/store";
 import type { QueryResult } from "../query/result";
 import { Icons } from "../icons";
@@ -21,9 +20,9 @@ import { modifiedRecords, recordIdentity } from "./record/formStash";
 // and feeds it the current tab's result; all layout, painting, and scrolling
 // live in the framework-agnostic `CanvasGrid` engine (see canvasGrid.ts).
 //
-// The result set is an immutable snapshot, so `unwrap` hands the engine the raw
-// object rather than a Solid store proxy — reading tens of thousands of cells
-// during paint never wraps them reactively.
+// `QueryResult` is a class, so Solid never wraps it in a reactive store proxy —
+// the engine reads straight off the plain instance, cell derivation included,
+// with nothing to unwrap.
 //
 // The one thing this shell owns beyond the canvas is the row context menu, which
 // is real DOM (rows are painted pixels; a menu needs to be hit-testable, styled
@@ -52,10 +51,8 @@ export default function QueryResults(props: { tabId: string }) {
     return menu ? store.rowRecords(props.tabId, menu.row) : [];
   };
 
-  const currentResult = (): QueryResult | undefined => {
-    const tracked = store.state.resultsByTab[props.tabId];
-    return tracked ? (unwrap(tracked) as QueryResult) : undefined;
-  };
+  const currentResult = (): QueryResult | undefined =>
+    store.state.resultsByTab[props.tabId];
 
   // Push the tab's result into the engine whenever it changes (or the tab
   // switches). No-op until the engine exists (created in onMount).
@@ -150,6 +147,31 @@ export default function QueryResults(props: { tabId: string }) {
   };
   createEffect(applyReveal);
 
+  // A 60 s ticker so a `relativeTime` cell ("3 minutes ago") keeps advancing on
+  // a still grid, not just on scroll — the same repaint the row-patch signal
+  // asks for, so nothing new is needed downstream. Armed only when some visible
+  // column actually carries a `relativeTime` formatter, so every other query
+  // doesn't pay for a wakeup that changes no pixel; paused while the tab is
+  // backgrounded, so it isn't a wakeup a battery report notices either.
+  const hasRelativeTime = (): boolean =>
+    (currentResult()?.visible ?? []).some(
+      (c) => c.meta.formatter?.type === "relativeTime",
+    );
+  let ticker: ReturnType<typeof setInterval> | undefined;
+  const syncTicker = () => {
+    const armed = hasRelativeTime() && !document.hidden;
+    if (armed === (ticker !== undefined)) return;
+    if (armed) ticker = setInterval(() => grid?.redraw(), 60_000);
+    else {
+      clearInterval(ticker);
+      ticker = undefined;
+    }
+  };
+  createEffect(() => {
+    hasRelativeTime();
+    syncTicker();
+  });
+
   onMount(() => {
     const el = canvas;
     if (!el) return;
@@ -194,10 +216,17 @@ export default function QueryResults(props: { tabId: string }) {
       attributeFilter: ["data-theme"],
     });
 
+    // Pause/resume the relative-time ticker as the tab is backgrounded/foregrounded.
+    document.addEventListener("visibilitychange", syncTicker);
+    syncTicker();
+
     onCleanup(() => {
       ro.disconnect();
       mq.removeEventListener("change", onTheme);
       mo.disconnect();
+      document.removeEventListener("visibilitychange", syncTicker);
+      clearInterval(ticker);
+      ticker = undefined;
       grid?.destroy();
       grid = undefined;
     });

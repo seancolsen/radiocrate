@@ -1,12 +1,15 @@
+import * as arrow from "apache-arrow";
 import { createEffect } from "solid-js";
 import type { CommandStore } from "../state/commands";
-import type { AppStore, RecordTarget } from "../state/store";
+import type { AppStore } from "../state/store";
+import { defaultColumnMetadata } from "../query/columns";
 import {
   emptyDefinition,
   type QueryDefinition,
   type Section,
 } from "../query/definition";
-import { lemonadeGridResult } from "./gridFixture";
+import { buildResultFromCells } from "../query/result";
+import { lemonadeGridResult, ROW_COUNT } from "./gridFixture";
 import { FIXTURE_SCHEMA_JSON, installRecordFixture } from "./recordFixture";
 
 // Prod-safe seeding seam. Reads URL params on startup and applies them to the
@@ -55,8 +58,16 @@ export function applySeed(store: AppStore): void {
   // Expose the store to the page (test-only, gated on a param) so a Playwright
   // test can drive a second `setResults` and assert the canvas repaints on a
   // result *replace* — the reload path — without a resize forcing the draw.
+  // `__emptyResult` rides along: `QueryResult` is a class (private fields), so
+  // a test driving `setResults` from `page.evaluate` needs a real instance
+  // rather than a bare object literal — this hands it one.
   if (params.get("expose") === "1") {
-    (window as unknown as { __appStore: AppStore }).__appStore = store;
+    const w = window as unknown as {
+      __appStore: AppStore;
+      __emptyResult: typeof emptyCountResult;
+    };
+    w.__appStore = store;
+    w.__emptyResult = emptyCountResult;
   }
 
   // The record editor's stand-in backend, installed before anything opens a tab
@@ -115,16 +126,14 @@ export function applySeed(store: AppStore): void {
     // Drop a canned structured result straight into the active tab, bypassing
     // the compile / fetch / decode path so snapshots stay deterministic.
     // `tracks=` stands in for the WASM lineage analysis, so the seeded rows are
-    // playable (double-click) without compiling a real query.
-    const trackIds = params.get("tracks")?.split(",");
+    // playable (double-click) without compiling a real query — the ids become a
+    // hidden column of the seeded table, same as a real lineage-mapped column.
     if (grid === "lemonade") {
-      const result = lemonadeGridResult();
-      store.setResults(
-        activeId,
-        result,
-        trackIds,
-        recordTargets(params.get("records"), result.rowCount),
-      );
+      const { result, lineage } = lemonadeGridResult({
+        trackIds: params.get("tracks")?.split(","),
+        recordKeys: recordKeys(params.get("records")),
+      });
+      store.setResults(activeId, result, lineage);
     }
 
     // Override the active tab's working definition (unsaved unless `clean=1`).
@@ -134,8 +143,7 @@ export function applySeed(store: AppStore): void {
       store.setTabDefinitions(activeId, saved, def);
     }
     const count = params.get("count");
-    if (count)
-      store.setResults(activeId, { rowCount: Number(count), columns: [] });
+    if (count) store.setResults(activeId, emptyCountResult(Number(count)));
     // Open a builder section before expanding a preset (toggling a section
     // clears the expansion).
     if (section) store.toggleBuilderSection(activeId, section);
@@ -196,23 +204,38 @@ export function applyCommandSeed(commands: CommandStore): void {
   }
 }
 
-/** Builds the record targets `?records=` asks for: one per named table, keyed by
- * a single `id` column whose per-row values are `<table>-<row>`. Stands in for
- * the lineage analysis, which needs a real compile and the introspected schema. */
-function recordTargets(
+/** Builds the per-row identity `?records=` asks for: one named table's worth of
+ * `<table>-<row>` values, fed to `lemonadeGridResult` as an extra hidden
+ * column. Stands in for the lineage analysis, which needs a real compile and
+ * the introspected schema. */
+function recordKeys(
   param: string | null,
-  rowCount: number,
-): RecordTarget[] | undefined {
+): Record<string, readonly string[]> | undefined {
   const tables = param
     ?.split(",")
     .map((t) => t.trim())
     .filter(Boolean);
   if (!tables || tables.length === 0) return undefined;
-  return tables.map((table) => ({
-    table,
-    keyColumns: ["id"],
-    keyValues: Array.from({ length: rowCount }, (_, r) => [
-      `${table}-${r + 1}`,
-    ]),
-  }));
+  const keys: Record<string, readonly string[]> = {};
+  for (const table of tables) {
+    keys[table] = Array.from(
+      { length: ROW_COUNT },
+      (_, r) => `${table}-${r + 1}`,
+    );
+  }
+  return keys;
+}
+
+/** An empty result of `rowCount` rows and no visible columns — `?count=`'s
+ * stand-in for "N results" without a real compile. A real `Table` (one hidden
+ * `Null`-typed column, so `numRows` is honest) rather than a bare object
+ * literal: `QueryResult` is a class with private fields, so nothing but a real
+ * instance satisfies its type. */
+function emptyCountResult(rowCount: number) {
+  const table = new arrow.Table({
+    seed_count: arrow.vectorFromArray(new Array<null>(rowCount).fill(null)),
+  });
+  return buildResultFromCells(table, [
+    { ...defaultColumnMetadata(), hide: true },
+  ]);
 }
