@@ -40,7 +40,9 @@ import {
   defsEqual,
   definitionFromStored,
   definitionToStored,
+  rebasedDefinition,
   shuffleContent,
+  toFullQuery,
   type QueryDefinition,
   type Section,
   type SectionContent,
@@ -220,6 +222,11 @@ export interface AppState {
   runningByTab: Record<string, boolean>;
   /** The open builder section per tab (null = builder closed). */
   builderSectionByTab: Record<string, Section | null>;
+  /** Whether the whole-query Querydown editor is open, per tab. Kept apart from
+   * `builderSectionByTab` because it belongs to the other mode: a full-mode
+   * query has no sections to open, and a query converted back to sections finds
+   * its section state where it left it. */
+  fullEditorByTab: Record<string, boolean>;
   /** The expanded preset id per tab (null = none expanded). */
   expandedPresetByTab: Record<string, string | null>;
   /** Saved query-section presets — a mutable copy of `preset.list` so local
@@ -590,12 +597,28 @@ export interface AppStore {
   builderFocus: Accessor<BuilderFocus | undefined>;
   /** Clear the pending focus request once it has been applied. */
   clearBuilderFocus: () => void;
+  /** Whether a tab's working query is one hand-written Querydown query rather
+   * than the four builder sections. */
+  isFullQuery: (tabId: string) => boolean;
+  /** Whether the whole-query editor is open for a tab (full mode's analog of an
+   * open builder section). */
+  fullEditorOpen: (tabId: string) => boolean;
+  /** Toggle the whole-query editor open/closed. */
+  toggleFullEditor: (tabId: string) => void;
   /** The expanded preset id for a tab (null when none). */
   expandedPreset: (tabId: string) => string | null;
   /** Toggle a preset's inline editor open/closed. */
   toggleExpandPreset: (tabId: string, presetId: string) => void;
 
   // Working-definition mutators (all re-run the query).
+  /** Move a tab's query onto another base table, keeping the hand-written filter
+   * and reseeding everything else from the new table's default presets. */
+  setBase: (tabId: string, table: string) => void;
+  /** Flatten a tab's sectioned query into one hand-written Querydown query and
+   * open the editor on it. */
+  convertToFull: (tabId: string) => void;
+  /** Replace a full-mode query's text. */
+  setFullText: (tabId: string, text: string) => void;
   setFilterCustom: (tabId: string, text: string) => void;
   clearFilterCustom: (tabId: string) => void;
   toggleFilterPreset: (tabId: string, presetId: string) => void;
@@ -646,6 +669,7 @@ function createAppStore(): AppStore {
     recordEditorByTab: {},
     runningByTab: {},
     builderSectionByTab: {},
+    fullEditorByTab: {},
     expandedPresetByTab: {},
     presets: [],
     presetEdits: {},
@@ -962,6 +986,7 @@ function createAppStore(): AppStore {
         delete s.recordEditorByTab[id];
         delete s.runningByTab[id];
         delete s.builderSectionByTab[id];
+        delete s.fullEditorByTab[id];
         delete s.expandedPresetByTab[id];
         if (s.activeTabId === id) {
           // Select the neighbor (prefer the one to the left), or clear.
@@ -1631,11 +1656,22 @@ function createAppStore(): AppStore {
     },
     focusBuilderSection: (tabId, section) => {
       setState("expandedPresetByTab", tabId, null);
+      // A full-mode query has no sections: the `query.focus_*` commands open the
+      // one editor it does have, rather than doing nothing at all.
+      if (queryTab(tabId)?.live.full != null) {
+        setState("fullEditorByTab", tabId, true);
+        setBuilderFocus({ tabId, section, seq: ++builderFocusSeq });
+        return;
+      }
       setState("builderSectionByTab", tabId, section);
       setBuilderFocus({ tabId, section, seq: ++builderFocusSeq });
     },
     builderFocus,
     clearBuilderFocus: () => setBuilderFocus(undefined),
+    isFullQuery: (tabId) => queryTab(tabId)?.live.full != null,
+    fullEditorOpen: (tabId) => state.fullEditorByTab[tabId] ?? false,
+    toggleFullEditor: (tabId) =>
+      setState("fullEditorByTab", tabId, !state.fullEditorByTab[tabId]),
     expandedPreset: (tabId) => state.expandedPresetByTab[tabId] ?? null,
     toggleExpandPreset: (tabId, presetId) => {
       const cur = state.expandedPresetByTab[tabId] ?? null;
@@ -1646,6 +1682,40 @@ function createAppStore(): AppStore {
       );
     },
 
+    setBase: (tabId, table) => {
+      const t = queryTab(tabId);
+      if (!t) return;
+      const live = unwrap(t.live);
+      // Re-picking the table a sectioned query already sits on is a no-op —
+      // otherwise it would silently throw away the sort and display the user
+      // built on it. (In full mode there's always something to do: leave it.)
+      if (live.full == null && live.base === table) return;
+      const rebased = rebasedDefinition(live, table, effectivePresets());
+      editQueryTab(tabId, (x) => {
+        x.live = rebased;
+      });
+      setState("expandedPresetByTab", tabId, null);
+      setState("fullEditorByTab", tabId, false);
+      runQuery(tabId);
+    },
+    convertToFull: (tabId) => {
+      const t = queryTab(tabId);
+      if (!t) return;
+      // Show the editor either way — for an already-full query that's all the
+      // menu entry can still do.
+      setState("fullEditorByTab", tabId, true);
+      if (t.live.full != null) return;
+      const full = toFullQuery(unwrap(t.live), effectivePresets());
+      setState("expandedPresetByTab", tabId, null);
+      setState("builderSectionByTab", tabId, null);
+      editLive(tabId, (def) => {
+        def.full = full;
+      });
+    },
+    setFullText: (tabId, text) =>
+      editLiveDebounced(tabId, (def) => {
+        def.full = text;
+      }),
     setFilterCustom: (tabId, text) =>
       editLiveDebounced(tabId, (def) => {
         def.filter.custom = text;

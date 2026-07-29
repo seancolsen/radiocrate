@@ -29,6 +29,7 @@ import { FIXTURE_SCHEMA_JSON, installRecordFixture } from "./recordFixture";
 //   ?clean=1         ← save the given `def` as the baseline too (no Save button)
 //   ?count=12        ← seed an empty result of N rows ("12 results")
 //   ?section=filter  ← open a builder section (filter|sort|display)
+//   ?full=1          ← open the whole-query Querydown editor (full-mode `def`s)
 //   ?expand=<id>     ← expand a preset's inline editor
 //   ?editName=base   ← rename the expanded preset (makes it dirty)
 //   ?editDefault=1   ← toggle the expanded preset's "Apply by default" (dirty)
@@ -147,6 +148,7 @@ export function applySeed(store: AppStore): void {
     // Open a builder section before expanding a preset (toggling a section
     // clears the expansion).
     if (section) store.toggleBuilderSection(activeId, section);
+    if (params.get("full") === "1") store.toggleFullEditor(activeId);
     // Fill the now-playing bar without an audio element or a backend: the
     // title/artists come straight from the param, the transport is frozen.
     //

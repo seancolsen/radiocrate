@@ -1,5 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
-import { FILTER_DEF, PRESETS_FIXTURE, QUERIES_FIXTURE } from "./fixtures";
+import {
+  ALBUM_SORT_PRESET_ID,
+  FILTER_DEF,
+  FULL_DEF,
+  PRESETS_FIXTURE,
+  QUERIES_FIXTURE,
+} from "./fixtures";
 import type { AppStore } from "../../src/state/store";
 
 /** The store the app exposes under `?expose=1`. */
@@ -108,6 +114,43 @@ for (const colorScheme of ["light", "dark"] as const) {
     );
   });
 
+  // Full-Querydown mode: the three section toggles collapse into the single
+  // "Querydown" toggle (no ⋮ — there are no sections to configure), over the
+  // whole-query editor.
+  test(`toolbar full querydown - ${colorScheme}`, async ({ page }) => {
+    const el = await toolbar(
+      page,
+      colorScheme,
+      `clean=1&count=12&full=1&def=${def(FULL_DEF)}`,
+    );
+    await expect(page.getByPlaceholder("Querydown")).toBeVisible();
+    await expect(el).toHaveScreenshot(
+      `toolbar-full-querydown-${colorScheme}.png`,
+    );
+  });
+
+  // The wrench menu's Base submenu, opened: the schema's tables as an exclusive
+  // choice (the query's own is checked) over the "Full Querydown" escape hatch.
+  // Clipped to the menus' corner rather than shot full-page — nothing below or
+  // right of it is part of what this proves.
+  test(`base submenu - ${colorScheme}`, async ({ page }) => {
+    await toolbar(
+      page,
+      colorScheme,
+      `clean=1&count=12&recordFixture=1&sidebar=closed&def=${def(FILTER_DEF)}`,
+      1280,
+      false,
+    );
+    await page.getByRole("button", { name: "Query actions" }).click();
+    await page.getByRole("menuitem", { name: "Base" }).click();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Full Querydown" }),
+    ).toBeVisible();
+    await expect(page).toHaveScreenshot(`base-submenu-${colorScheme}.png`, {
+      clip: { x: 0, y: 0, width: 700, height: 400 },
+    });
+  });
+
   // Compact bar (< 500px): section buttons drop their labels and the separator
   // is hidden.
   test(`toolbar compact - ${colorScheme}`, async ({ page }) => {
@@ -124,6 +167,82 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
+/** The active tab's working definition, read straight out of the exposed store
+ * (`?expose=1`) — what the base-switching assertions are actually about. */
+async function liveDefinition(page: Page) {
+  return await page.evaluate(() => {
+    const store = (window as unknown as AppWindow).__appStore;
+    const id = store.state.activeTabId ?? "";
+    return store.queryTab(id)?.live;
+  });
+}
+
+test("switching the base keeps the filter and reseeds the rest from the new table's defaults", async ({
+  page,
+}) => {
+  await toolbar(
+    page,
+    "light",
+    `clean=1&count=12&recordFixture=1&expose=1&def=${def(FILTER_DEF)}`,
+  );
+  await page.getByRole("button", { name: "Query actions" }).click();
+  await page.getByRole("menuitem", { name: "Base" }).click();
+  // The query's own base is checked; the tables come from the schema.
+  await expect(
+    page.getByRole("menuitemradio", { name: "track" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("menuitemradio", { name: "album" }).click();
+
+  // The filter the user typed survives verbatim; the "vetted" preset (scoped to
+  // `track`) does not, and sorting comes back as `album`'s apply-by-default
+  // preset.
+  expect(await liveDefinition(page)).toEqual({
+    base: "album",
+    filter: { custom: "jazz playcount:<100", presets: [] },
+    sort: { preset: ALBUM_SORT_PRESET_ID },
+    display: { custom: "" },
+  });
+  // Choosing a base dismisses the whole menu stack.
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("Full Querydown flattens the query into one editable field", async ({
+  page,
+}) => {
+  await toolbar(
+    page,
+    "light",
+    `clean=1&count=12&recordFixture=1&expose=1&def=${def(FILTER_DEF)}`,
+  );
+  await page.getByRole("button", { name: "Query actions" }).click();
+  await page.getByRole("menuitem", { name: "Base" }).click();
+  await page.getByRole("menuitemradio", { name: "Full Querydown" }).click();
+
+  // The section toggles are gone, replaced by one Querydown toggle over the
+  // whole-query editor, which holds the flattened query.
+  await expect(page.getByRole("button", { name: "Filter" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Querydown" })).toBeVisible();
+  await expect(page.getByPlaceholder("Querydown")).toHaveValue(
+    "#track\njazz playcount:<100\nrating:>=4 !genre:duplicate file.deletion:@null",
+  );
+
+  // Editing it writes back to the working definition…
+  await page.getByPlaceholder("Querydown").fill("#album $title");
+  expect((await liveDefinition(page))?.full).toBe("#album $title");
+
+  // …and picking a base table again drops back to the builder.
+  await page.getByRole("button", { name: "Query actions" }).click();
+  await page.getByRole("menuitem", { name: "Base" }).click();
+  await page.getByRole("menuitemradio", { name: "track" }).click();
+  expect(await liveDefinition(page)).toEqual({
+    base: "track",
+    filter: { custom: "jazz playcount:<100", presets: [] },
+    sort: { custom: "" },
+    display: { custom: "" },
+  });
+  await expect(page.getByRole("button", { name: "Filter" })).toBeVisible();
+});
+
 test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   page,
 }) => {
@@ -135,7 +254,13 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   await page.getByRole("button", { name: "Query actions" }).click();
   const menu = page.getByRole("menu");
   const items = menu.getByRole("menuitem");
-  await expect(items).toHaveText(["Rename", "Duplicate", "View SQL", "Delete"]);
+  await expect(items).toHaveText([
+    "Base",
+    "Rename",
+    "Duplicate",
+    "View SQL",
+    "Delete",
+  ]);
 
   // Opening moves real focus to the first row, not the trigger that opened it.
   await expect(items.first()).toBeFocused();
@@ -159,7 +284,7 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await expect(items.first()).toBeFocused();
+  await expect(items.nth(1)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(menu).toBeHidden();
   expect(

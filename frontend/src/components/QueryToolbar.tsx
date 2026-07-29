@@ -50,7 +50,13 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   onCleanup(() => ro.disconnect());
 
   const count = () => store.resultCount(props.tabId);
-  const builderOpen = () => store.builderSection(props.tabId) !== null;
+  // Full mode swaps the three section toggles for one Querydown toggle, so what
+  // "the builder is open" means swaps with it.
+  const fullMode = () => store.isFullQuery(props.tabId);
+  const builderOpen = () =>
+    fullMode()
+      ? store.fullEditorOpen(props.tabId)
+      : store.builderSection(props.tabId) !== null;
 
   return (
     <div data-testid="query-toolbar" class="bg-panel shrink-0">
@@ -90,22 +96,36 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <div class="bg-edge mx-1 h-5 w-px shrink-0" />
         </Show>
 
-        <For each={SECTIONS}>
-          {(s) => (
+        <Show
+          when={!fullMode()}
+          fallback={
             <SplitButton
-              icon={s.icon}
-              label={sectionLabel(s.section)}
-              active={store.builderSection(props.tabId) === s.section}
+              icon={Icons.Querydown}
+              label="Querydown"
+              active={store.fullEditorOpen(props.tabId)}
               showLabel={!compact()}
-              onMainClick={() =>
-                store.toggleBuilderSection(props.tabId, s.section)
-              }
-              menu={
-                <SectionOptionsMenu tabId={props.tabId} section={s.section} />
-              }
+              showMenu={false}
+              onMainClick={() => store.toggleFullEditor(props.tabId)}
             />
-          )}
-        </For>
+          }
+        >
+          <For each={SECTIONS}>
+            {(s) => (
+              <SplitButton
+                icon={s.icon}
+                label={sectionLabel(s.section)}
+                active={store.builderSection(props.tabId) === s.section}
+                showLabel={!compact()}
+                onMainClick={() =>
+                  store.toggleBuilderSection(props.tabId, s.section)
+                }
+                menu={
+                  <SectionOptionsMenu tabId={props.tabId} section={s.section} />
+                }
+              />
+            )}
+          </For>
+        </Show>
 
         <div class="flex-1" />
         <Show when={count() !== undefined}>

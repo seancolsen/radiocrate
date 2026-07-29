@@ -6,6 +6,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { Icons } from "../../icons";
 import { useMenuKeyboard } from "./menuKeyboard";
 
 /** The interaction handle a {@link Menu} hands its trigger. */
@@ -191,6 +192,77 @@ export function MenuToggleItem(props: {
   );
 }
 
+/** Roughly how wide a submenu panel is, used to decide which side of its row it
+ * opens on before it exists to be measured. */
+const SUBMENU_WIDTH = 200;
+
+/** A menu row that opens a nested panel of its own rows beside it — clicked, not
+ * hovered, so it works the same under a finger as under a pointer. The panel
+ * opens to the row's right, flipping to its left when the viewport hasn't room
+ * (the wrench menu is near the left edge on a phone, where a right-hand flyout
+ * would run off-screen).
+ *
+ * The nested panel deliberately doesn't wire up {@link useMenuKeyboard} of its
+ * own: its rows are descendants of the parent menu's container, so the parent's
+ * roving focus already walks into them in DOM order, and a second handler would
+ * move the highlight twice per arrow press. The row swallows its own click so
+ * opening the submenu doesn't dismiss the menu that holds it; clicks on the
+ * nested rows still bubble, dismissing the whole stack as any menu row does. */
+export function MenuSubmenu(props: {
+  icon?: Component<{ class?: string }>;
+  label: string;
+  width?: string;
+  children: JSX.Element;
+}): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const [flipped, setFlipped] = createSignal(false);
+  let row: HTMLButtonElement | undefined;
+
+  const toggle = (e: MouseEvent) => {
+    e.stopPropagation();
+    const right = row?.getBoundingClientRect().right ?? 0;
+    setFlipped(right + SUBMENU_WIDTH > window.innerWidth);
+    setOpen((o) => !o);
+  };
+
+  return (
+    <div class="relative">
+      <button
+        ref={(el) => (row = el)}
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        class="text-ink focus:bg-hover flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
+        onClick={toggle}
+      >
+        <Show when={props.icon}>
+          {(icon) => (
+            <span class="text-ink-weak flex size-4 shrink-0 items-center justify-center">
+              {icon()({ class: "size-4" })}
+            </span>
+          )}
+        </Show>
+        <span class="min-w-0 flex-1 truncate">{props.label}</span>
+        <Icons.ExpandClosed class="text-ink-weak size-4 shrink-0" />
+      </button>
+      <Show when={open()}>
+        <div
+          role="menu"
+          class="bg-panel border-edge absolute top-0 z-50 flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto rounded-md border p-1 shadow-lg"
+          classList={{
+            "left-full ml-1": !flipped(),
+            "right-full mr-1": flipped(),
+          }}
+          style={{ "min-width": props.width ?? `${SUBMENU_WIDTH}px` }}
+        >
+          {props.children}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 /** A small all-caps category heading inside an options menu. */
 export function MenuHeading(props: { text: string }): JSX.Element {
   return (
@@ -198,6 +270,13 @@ export function MenuHeading(props: { text: string }): JSX.Element {
       {props.text}
     </div>
   );
+}
+
+/** A non-interactive line of explanatory text inside a menu — what stands in for
+ * rows that aren't there yet (an empty list, a schema still loading). Carries no
+ * `menuitem` role, so the keyboard walks straight past it. */
+export function MenuNote(props: { text: string }): JSX.Element {
+  return <div class="text-ink-weak px-2 py-1 text-sm">{props.text}</div>;
 }
 
 /** A hairline separator between menu groups. */

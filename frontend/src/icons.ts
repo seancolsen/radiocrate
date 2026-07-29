@@ -34,6 +34,7 @@ import Delete from "~icons/material-symbols/delete";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
+import Querydown from "~icons/material-symbols/code";
 // One glyph, two concepts: `Rename` and `Edit` share the same icon.
 import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
@@ -82,6 +83,7 @@ export const Icons = {
   ViewSql, // View SQL menu entry
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
+  Querydown, // full-querydown mode: its Base-submenu entry and toolbar toggle
   Rename, // rename query (wrench menu + double-click)
   Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)

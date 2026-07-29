@@ -1,15 +1,19 @@
 import { Show, type JSX } from "solid-js";
 import { Icons } from "../icons";
 import { useAppState } from "../state/store";
+import BaseSubmenu from "./BaseSubmenu";
 import { MenuItem, MenuSeparator } from "./ui/Menu";
 
-/** The wrench "query actions" menu body. Rename, Duplicate, Revert (only while
- * the working query differs from its saved form), View SQL, and Delete
- * (Change base, Pin, and Convert-to-full remain deferred). */
+/** The wrench "query actions" menu body. The Base submenu (which table the query
+ * is built on, or full-Querydown mode), then Rename, Duplicate, Revert (only
+ * while the working query differs from its saved form), View SQL, and Delete
+ * (Pin remains deferred). */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
   const store = useAppState();
   return (
     <>
+      <BaseSubmenu tabId={props.tabId} />
+      <MenuSeparator />
       <MenuItem
         icon={Icons.Rename}
         label="Rename"

@@ -93,6 +93,51 @@ export function cloneDefinition(def: QueryDefinition): QueryDefinition {
   return structuredClone(def);
 }
 
+/** Whether a sort/display section holds nothing at all — the empty custom
+ * fragment {@link emptyDefinition} starts it out with. */
+function isEmptySection(content: SectionContent): boolean {
+  return "custom" in content && content.custom.trim() === "";
+}
+
+/** A fresh definition for `base`, seeded with that table's default presets:
+ * every default filter preset (the filter combines them), and the first default
+ * sort / display preset (each of those sections holds exactly one thing, so any
+ * further default for it is ignored). */
+export function definitionForBase(
+  base: string,
+  presets: readonly Preset[],
+): QueryDefinition {
+  const def = emptyDefinition();
+  def.base = base;
+  for (const preset of presets) {
+    if (!preset.isDefault || preset.baseTable !== base) continue;
+    if (preset.section === "filter") {
+      def.filter.presets.push(preset.id);
+    } else if (preset.section === "sort" && isEmptySection(def.sort)) {
+      def.sort = { preset: preset.id };
+    } else if (preset.section === "display" && isEmptySection(def.display)) {
+      def.display = { preset: preset.id };
+    }
+  }
+  return def;
+}
+
+/** `def` moved onto a different base table. The hand-written filter carries over
+ * verbatim — it's what the user typed, and re-typing it after every base change
+ * would be the annoying part. Everything else is rebuilt from the new table's
+ * defaults ({@link definitionForBase}): filter presets, sort and display are all
+ * scoped to the table they were written against, so they can't follow the query
+ * to another one. A full-mode definition drops back to sectioned mode. */
+export function rebasedDefinition(
+  def: QueryDefinition,
+  base: string,
+  presets: readonly Preset[],
+): QueryDefinition {
+  const next = definitionForBase(base, presets);
+  next.filter.custom = def.filter.custom;
+  return next;
+}
+
 /** A section's content rewritten into a canonical, fixed-key-order object, so
  * two structurally-equal sections serialize identically regardless of how they
  * were built (parsed JSON vs. mutated in place). */
@@ -225,7 +270,7 @@ function resolveSection(content: SectionContent, presets: Preset[]): string {
  * throwing. */
 export function sectionSeedText(
   content: SectionContent,
-  presets: Preset[],
+  presets: readonly Preset[],
 ): string {
   if ("custom" in content) return content.custom;
   if ("preset" in content)
@@ -265,4 +310,36 @@ export function assemble(
     sort: resolveSection(def.sort, presets),
     display: resolveSection(def.display, presets),
   };
+}
+
+/** A definition flattened into one hand-written Querydown query — what the
+ * "Full Querydown" conversion seeds its editor with: the base table with its `#`
+ * sigil, then the filter, sort and display fragments, newline-separated. Preset
+ * references resolve to their text (a dangling one is simply omitted, so the
+ * conversion always yields editable text rather than throwing), which is exactly
+ * what makes this a one-way door: the parts stop being separately editable.
+ * An already-full definition returns its text unchanged. */
+export function toFullQuery(
+  def: QueryDefinition,
+  presets: readonly Preset[],
+): string {
+  if (def.full != null) return def.full;
+
+  const filterParts: string[] = [];
+  const custom = def.filter.custom.trim();
+  if (custom !== "") filterParts.push(custom);
+  for (const id of def.filter.presets) {
+    const fragment = presets.find((p) => p.id === id)?.definition.trim();
+    if (fragment) filterParts.push(fragment);
+  }
+
+  const parts = [`#${def.base.trim()}`];
+  for (const fragment of [
+    filterParts.join("\n"),
+    sectionSeedText(def.sort, presets),
+    sectionSeedText(def.display, presets),
+  ]) {
+    if (fragment.trim() !== "") parts.push(fragment.trim());
+  }
+  return parts.join("\n");
 }

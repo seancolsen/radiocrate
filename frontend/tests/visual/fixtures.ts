@@ -35,7 +35,13 @@ export const QUERIES_FIXTURE: Query[] = [
 /** A stable id for the "vetted" filter preset used by the builder snapshots. */
 export const VETTED_PRESET_ID = "00000000-0000-0000-0000-0000000000a1";
 
-/** Preset fixture for the RPC mock: a "vetted" filter preset. */
+/** A stable id for the album sort preset the base-switching test lands on. */
+export const ALBUM_SORT_PRESET_ID = "00000000-0000-0000-0000-0000000000a2";
+
+/** Preset fixture for the RPC mock: a "vetted" filter preset, plus an
+ * apply-by-default sort preset on *another* base table — what switching the base
+ * to `album` is expected to seed its sorting with. Being scoped to `album`, it
+ * stays invisible to every track-based snapshot. */
 export const PRESETS_FIXTURE: Preset[] = [
   {
     id: VETTED_PRESET_ID,
@@ -44,6 +50,16 @@ export const PRESETS_FIXTURE: Preset[] = [
     section: "filter",
     definition: "rating:>=4 !genre:duplicate file.deletion:@null",
     isDefault: false,
+    createdAt: 1_700_000_000,
+    modifiedAt: 1_700_000_000,
+  },
+  {
+    id: ALBUM_SORT_PRESET_ID,
+    name: "newest first",
+    baseTable: "album",
+    section: "sort",
+    definition: "\\\\year%desc",
+    isDefault: true,
     createdAt: 1_700_000_000,
     modifiedAt: 1_700_000_000,
   },
@@ -56,4 +72,11 @@ export const FILTER_DEF = {
   filter: { custom: "jazz playcount:<100", presets: [VETTED_PRESET_ID] },
   sort: { custom: "" },
   display: { custom: "" },
+};
+
+/** {@link FILTER_DEF} after the "Full Querydown" conversion: the same query as
+ * one hand-written string, which is all a full-mode query carries. */
+export const FULL_DEF = {
+  ...FILTER_DEF,
+  full: "#track\njazz playcount:<100\nrating:>=4 !genre:duplicate file.deletion:@null\n$title $album.title",
 };
