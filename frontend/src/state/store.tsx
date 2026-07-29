@@ -418,6 +418,9 @@ export interface AppStore {
   toggleQueriesCollapsed: () => void;
   /** Whether the introspection schema has loaded (compiles can proceed). */
   schemaReady: () => boolean;
+  /** Whether presets have loaded (compiles can proceed without spuriously
+   * throwing "this query references a preset that no longer exists"). */
+  presetsReady: () => boolean;
   /** The enriched introspection JSON the Querydown compiler takes, once loaded. */
   schemaJson: () => string | undefined;
   /** The same schema parsed into tables — what the record editor builds a form's
@@ -691,7 +694,9 @@ function createAppStore(): AppStore {
 
   // Presets load once, then live in the mutable store (above) so local edits and
   // "Save as preset" can add/update them without a refetch.
-  createResource<Preset[]>(async () => {
+  const [presetsResource, { refetch: refetchPresetsResource }] = createResource<
+    Preset[]
+  >(async () => {
     const loaded = await presetList();
     setState("presets", loaded);
     return loaded;
@@ -708,6 +713,7 @@ function createAppStore(): AppStore {
   const schema = (): string | undefined =>
     schemaOverride() ??
     (schemaResource.state === "ready" ? schemaResource() : undefined);
+  const presetsReady = () => presetsResource.state === "ready";
   const schemaTables = createMemo(() => {
     const json = schema();
     return json === undefined ? [] : parseSchemaTables(json);
@@ -1335,7 +1341,10 @@ function createAppStore(): AppStore {
   return {
     state,
     queries,
-    refetchQueries: () => void refetch(),
+    refetchQueries: () => {
+      void refetch();
+      void refetchPresetsResource();
+    },
     toggleSidebar: () => setSidebarOpen(!state.sidebarOpen),
     setSidebarOpen,
     setTheme,
@@ -1384,6 +1393,7 @@ function createAppStore(): AppStore {
     toggleQueriesCollapsed: () =>
       setState("queriesCollapsed", !state.queriesCollapsed),
     schemaReady: () => schema() !== undefined,
+    presetsReady,
     schemaJson: schema,
     schemaTables,
     setSchemaJson: setSchemaOverride,

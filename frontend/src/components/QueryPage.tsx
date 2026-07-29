@@ -16,11 +16,15 @@ import { pruneForms } from "./record/formStash";
  * and below keep their full width. */
 export default function QueryPage(props: { tabId: string }) {
   const store = useAppState();
-  // Auto-run the tab once, but only once the schema has loaded so the compile
-  // can succeed — the effect re-runs when introspection resolves. `ensureRun`
-  // guards against duplicate runs (and against re-running on tab switches).
+  // Auto-run the tab once, but only once both the schema and presets have
+  // loaded so the compile can succeed — the effect re-runs as each resolves.
+  // (Running before presets have loaded can throw "this query references a
+  // preset that no longer exists" for a query that references one.)
+  // `ensureRun` guards against duplicate runs (and against re-running on tab
+  // switches).
   createEffect(() => {
-    if (store.schemaReady()) store.ensureRun(props.tabId);
+    if (store.schemaReady() && store.presetsReady())
+      store.ensureRun(props.tabId);
   });
 
   // Unsaved record-editor changes live as long as the tab they were made in, not
