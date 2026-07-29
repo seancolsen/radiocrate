@@ -20,11 +20,13 @@ import {
   queryRecordPlay,
   queryRename,
   queryUpdateDefinition,
+  type DmlOperation,
+  type DmlResult,
   type Preset,
   type Query,
 } from "api-client";
 import { runSql, runSqlScalar } from "../api/query";
-import { fetchTrackMetadata, logPlay } from "../api/track";
+import { fetchTrackMetadata, playInsert } from "../api/track";
 import { AudioEngine } from "../audio/engine";
 import {
   addInferredLinks,
@@ -50,6 +52,7 @@ import {
   trackIdColumn,
 } from "../query/lineage";
 import { buildResultFromArrow, type QueryResult } from "../query/result";
+import { runRowDml, type RowCells, type RowContext } from "../query/rowDml";
 import { isListLikeValue, isListType, stringifyArrowValue } from "../api/query";
 import type { Table } from "apache-arrow";
 
@@ -144,6 +147,17 @@ export interface PlaybackState {
  * signal rather than store state: it's a one-shot event, and `seq` makes two
  * locates of the *same* row still register as two events. */
 export interface RowReveal {
+  tabId: string;
+  row: number;
+  seq: number;
+}
+
+/** Notice that one result row's cells have just been rewritten in place — the
+ * re-read that follows a DML write (see `query/rowDml.ts`). Carried as a signal
+ * for the same reason as {@link RowReveal}: it's an event, and the results grid
+ * consumes it (the result object itself doesn't change, precisely so that the
+ * grid *doesn't* treat this as a new result set). */
+export interface RowPatch {
   tabId: string;
   row: number;
   seq: number;
@@ -422,6 +436,11 @@ export interface AppStore {
     trackIds?: readonly (string | null)[],
     recordTargets?: readonly RecordTarget[],
   ) => void;
+  /** Rewrite one result row's cells in place, exactly as the re-read that
+   * follows a DML write does (dev/test seam — the tail of a row-context write,
+   * without the write). Unlike {@link setResults} this keeps the selection, the
+   * scroll position and the lineage mappings: one row changed, not the rows. */
+  setResultRow: (tabId: string, index: number, cells: RowCells) => void;
   /** Overwrite a tab's saved/working definitions directly (dev/test seam —
    * lets the harness reach a specific builder state without a backend). */
   setTabDefinitions: (
@@ -471,6 +490,9 @@ export interface AppStore {
    * analysis found none (or hasn't finished), which is what leaves the row's
    * context menu with nothing to offer. */
   rowRecords: (tabId: string, index: number) => RecordRef[];
+  /** The pending "this row's cells were rewritten" notice, consumed by the
+   * results grid (which repaints). `undefined` when there is none. */
+  rowPatch: Accessor<RowPatch | undefined>;
 
   // The record editor (a sidebar within the query page).
   /** What's open in `tabId`'s record-editor sidebar, or `null` when closed. */
@@ -490,6 +512,16 @@ export interface AppStore {
   ) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
+  /** Send the record editor's save through the DML API in the context of the
+   * result row `record` sits on: the operations run as one request, and the row
+   * is then re-read so the results show what they did (see `query/rowDml.ts`).
+   * Resolves to the API's answer — which the form folds back into itself — and
+   * rejects only when the write itself failed. */
+  runRecordDml: (
+    tabId: string,
+    record: RecordRef,
+    operations: DmlOperation[],
+  ) => Promise<DmlResult>;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
    * query page) and persisted, like the explorer's open state. */
   recordSidebarWidth: Accessor<number>;
@@ -1009,6 +1041,146 @@ function createAppStore(): AppStore {
     runTokens.delete(id);
   };
 
+  // ── Writing to a result row ─────────────────────────────────────────────────
+  //
+  // Every write the app makes is made *from* a row: the play log as a track
+  // finishes, the record editor's save. `query/rowDml.ts` runs the request and
+  // re-reads that one row; this half finds the row, and puts the answer back.
+
+  const rowRecords = (tabId: string, index: number): RecordRef[] => {
+    const targets = state.recordTargetsByTab[tabId] ?? [];
+    const records: RecordRef[] = [];
+    for (const target of targets) {
+      const values = target.keyValues[index];
+      // A row that's NULL in any key column doesn't identify a record there —
+      // an outer join with nothing on the far side, say.
+      if (!values || values.some((v) => v === null || v === "")) continue;
+      records.push({
+        table: target.table,
+        key: target.keyColumns.map((column, i) => ({
+          column,
+          value: values[i] as string,
+        })),
+      });
+    }
+    return records;
+  };
+
+  // A row rewritten in place tells the grid to repaint through this signal (see
+  // `RowPatch`); `seq` distinguishes repeat writes to the same row.
+  const [rowPatch, setRowPatch] = createSignal<RowPatch | undefined>();
+  let rowPatchSeq = 0;
+
+  /** Whether two references name the same database row. */
+  const sameRecord = (a: RecordRef, b: RecordRef): boolean =>
+    a.table === b.table &&
+    a.key.length === b.key.length &&
+    a.key.every(
+      (part, i) =>
+        part.column === b.key[i].column && part.value === b.key[i].value,
+    );
+
+  /** The result row of `tabId` that identifies `record`, preferring a selected
+   * one: a record can occupy several rows (the same album across all of its
+   * tracks), and the row the user has selected is the one they opened the editor
+   * from. `undefined` when no row does — the results have moved on, or the
+   * lineage analysis never found the record. Scanning is capped like
+   * {@link locateRow}, so a huge result set can't stall a save. */
+  const rowForRecord = (
+    tabId: string,
+    record: RecordRef,
+  ): number | undefined => {
+    const identifies = (row: number) =>
+      rowRecords(tabId, row).some((r) => sameRecord(r, record));
+    for (const row of state.selectionByTab[tabId] ?? []) {
+      if (identifies(row)) return row;
+    }
+    const limit = Math.min(state.resultsByTab[tabId]?.rowCount ?? 0, 1000);
+    for (let row = 0; row < limit; row++) if (identifies(row)) return row;
+    return undefined;
+  };
+
+  /** What re-reading row `index` of `tabId` takes: the query as the user built
+   * it, and what the row stands for. `undefined` — which runs the write with no
+   * refresh at all — when the tab holds no query, the schema hasn't loaded, or
+   * the row identifies no record to narrow the query to. */
+  const rowContext = (tabId: string, index: number): RowContext | undefined => {
+    const t = queryTab(tabId);
+    const schemaJson = schema();
+    if (!t || schemaJson === undefined) return undefined;
+    const records = rowRecords(tabId, index);
+    if (records.length === 0) return undefined;
+    // The *working* definition: it's the one the displayed rows came from.
+    return {
+      definition: unwrap(t.live),
+      presets: effectivePresets(),
+      schemaJson,
+      records,
+    };
+  };
+
+  /** Writes a re-read row's cells into a tab's stored result — in place.
+   *
+   * In place, rather than as a fresh result object, because a new result is the
+   * signal for a whole new run: the grid resets its scroll position and drops
+   * its hover when it gets one, and the selection, the lineage mappings and the
+   * playing row's index are all cleared alongside it (see `setTabResult`). None
+   * of that should happen because one row's data changed. So the cells are
+   * mutated where they sit — the grid paints from those very arrays — and the
+   * repaint is asked for separately, through `rowPatch`.
+   *
+   * The row is left alone when the re-read doesn't line up with what's on screen
+   * (a different column count means a different query) or when the tab has been
+   * re-run since the write, which replaced the rows this one belonged to. */
+  const applyRowCells = (
+    tabId: string,
+    index: number,
+    cells: RowCells,
+    token: number | undefined,
+  ) => {
+    if (runTokens.get(tabId) !== token) return;
+    const result = state.resultsByTab[tabId];
+    if (!result || index < 0 || index >= result.rowCount) return;
+    if (cells.length !== result.columns.length) return;
+    setState(
+      "resultsByTab",
+      tabId,
+      "columns",
+      produce((columns) => {
+        columns.forEach((column, i) => {
+          const fresh = cells[i];
+          // A one-row read can't tell a list column from a scalar one when that
+          // row's cell is NULL — `buildResultFromArrow` classifies from the data
+          // it has (see `isListType`). So a cell that comes back the wrong shape
+          // means "nothing here", not a column that changed kind.
+          const isText = typeof fresh === "string";
+          (column.cells as (string | readonly string[])[])[index] =
+            column.isList ? (isText ? [] : fresh) : isText ? fresh : "";
+        });
+      }),
+    );
+    setRowPatch({ tabId, row: index, seq: ++rowPatchSeq });
+  };
+
+  /** Runs a DML request in the context of one result row: the write goes through
+   * the API, then the row is re-read and updated in place. Rejects only when the
+   * write itself failed (a refresh that can't be done leaves the row as it was —
+   * see `query/rowDml.ts`). */
+  const runDmlForRow = async (
+    operations: DmlOperation[],
+    row: { tabId: string; index: number } | undefined,
+  ): Promise<DmlResult> => {
+    // Both the context and the run token are read *before* the request: they
+    // describe the row as it is now, which is what the answer will be about.
+    const context = row ? rowContext(row.tabId, row.index) : undefined;
+    const token = row ? runTokens.get(row.tabId) : undefined;
+    const outcome = await runRowDml(operations, context);
+    if (row && outcome.row) {
+      applyRowCells(row.tabId, row.index, outcome.row, token);
+    }
+    return outcome.result;
+  };
+
   // ── Playback ────────────────────────────────────────────────────────────────
 
   // The audio engine, built on the first play so a session that never plays
@@ -1077,6 +1249,30 @@ function createAppStore(): AppStore {
     const limit = Math.min(ids.length, 1000);
     for (let i = 0; i < limit; i++) if (ids[i] === id) return i;
     return null;
+  };
+
+  /** Logs a completed play of `trackId`, against the row it's playing from when
+   * that row is still on screen — so the play count in it (and anything else the
+   * query derives from the log) moves with the log.
+   *
+   * The engine reports the completed play *before* it advances, so the bar's
+   * track is still this one; an id that has somehow moved on is looked up in the
+   * rows instead. Fire-and-forget either way: this runs from media events that
+   * can fire while the app is backgrounded, and a failed insert must never
+   * interrupt playback. */
+  const logPlay = (trackId: string) => {
+    const ct = state.currentTrack;
+    const source = ct?.sourceTabId ?? null;
+    const index =
+      source === null
+        ? null
+        : ct?.id === trackId
+          ? ct.rowIndex
+          : locateRow(source, trackId);
+    void runDmlForRow(
+      [playInsert(trackId)],
+      source !== null && index !== null ? { tabId: source, index } : undefined,
+    ).catch((err) => console.error("play log failed", err));
   };
 
   /** Fetches the track's title/artists, then fills them into the bar and pushes
@@ -1234,6 +1430,8 @@ function createAppStore(): AppStore {
       if (trackIds) setState("trackIdsByTab", tabId, trackIds);
       if (recordTargets) setState("recordTargetsByTab", tabId, recordTargets);
     },
+    setResultRow: (tabId, index, cells) =>
+      applyRowCells(tabId, index, cells, runTokens.get(tabId)),
     setTabDefinitions: (tabId, saved, live) => {
       editQueryTab(tabId, (t) => {
         t.saved = saved;
@@ -1315,30 +1513,21 @@ function createAppStore(): AppStore {
       setState("selectionByTab", tabId, next);
       setRowReveal({ tabId, row: target, seq: ++revealSeq });
     },
-    rowRecords: (tabId, index) => {
-      const targets = state.recordTargetsByTab[tabId] ?? [];
-      const records: RecordRef[] = [];
-      for (const target of targets) {
-        const values = target.keyValues[index];
-        // A row that's NULL in any key column doesn't identify a record there —
-        // an outer join with nothing on the far side, say.
-        if (!values || values.some((v) => v === null || v === "")) continue;
-        records.push({
-          table: target.table,
-          key: target.keyColumns.map((column, i) => ({
-            column,
-            value: values[i] as string,
-          })),
-        });
-      }
-      return records;
-    },
+    rowRecords,
+    rowPatch,
 
     recordEditor: (tabId) => state.recordEditorByTab[tabId] ?? null,
     openRecordEditor: (tabId, record) =>
       setRecordEditorRecords(tabId, record.table, [record]),
     setRecordEditorRecords,
     closeRecordEditor: (tabId) => setState("recordEditorByTab", tabId, null),
+    runRecordDml: (tabId, record, operations) => {
+      const index = rowForRecord(tabId, record);
+      return runDmlForRow(
+        operations,
+        index === undefined ? undefined : { tabId, index },
+      );
+    },
     recordSidebarWidth,
     setRecordSidebarWidth: (px) =>
       setRecordSidebarWidthSignal(clampRecordSidebarWidth(px)),

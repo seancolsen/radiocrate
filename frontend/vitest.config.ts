@@ -7,10 +7,18 @@ export default defineConfig({
   // Mirrors the app's `api-client` alias (vite.config.ts). Without it any module
   // that transitively imports the generated client fails to resolve here, even
   // when the test itself never calls it.
+  //
+  // The vendored `querydown-js` needs one too: its wasm-pack package.json
+  // declares only `module`, which the browser build resolves and Vitest's Node
+  // resolution doesn't — so a module that merely *imports* the compiler (nothing
+  // here instantiates the WASM) fails to load without it.
   resolve: {
     alias: {
       "api-client": fileURLToPath(
         new URL("../api-client/src/index.ts", import.meta.url),
+      ),
+      "querydown-js": fileURLToPath(
+        new URL("./vendor/querydown-js/querydown_js.js", import.meta.url),
       ),
     },
   },

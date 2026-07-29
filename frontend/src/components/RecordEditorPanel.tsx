@@ -273,6 +273,12 @@ export default function RecordEditorPanel(props: {
                   schemaJson={schemaJson()}
                   table={record.table}
                   recordKey={record.key}
+                  // The save is a write *from* a result row, so it goes through
+                  // the store: what it changed is read back into the row the
+                  // editor was opened on (see `query/rowDml.ts`).
+                  runDml={(operations) =>
+                    store.runRecordDml(props.tabId, record, operations)
+                  }
                 />
               )}
             </Show>

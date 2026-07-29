@@ -1,4 +1,5 @@
 import { onCleanup, untrack } from "solid-js";
+import type { DmlOperation, DmlResult } from "api-client";
 import { createRecordForm, ROOT_ID } from "./formModel";
 import { registerForm, unregisterForm } from "./formRegistry";
 import { recordIdentity, releaseUnmodified, stashedForm } from "./formStash";
@@ -30,6 +31,9 @@ export default function RecordForm(props: {
   schemaJson: string;
   table: string;
   recordKey: readonly KeyPart[];
+  /** How this form's save reaches the database — the panel hands down one that
+   * refreshes the result row the record is being edited from. */
+  runDml: (operations: DmlOperation[]) => Promise<DmlResult>;
 }) {
   // These props are this instance's subject, fixed for its life — a different
   // record means a different instance — so they're read once, untracked.
@@ -40,6 +44,7 @@ export default function RecordForm(props: {
       table: props.table,
       key: props.recordKey,
       schemaJson: props.schemaJson,
+      runDml: (operations: DmlOperation[]) => props.runDml(operations),
     };
     return stashedForm(props.tabId, identity, () => createRecordForm(opts));
   });

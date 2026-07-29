@@ -269,6 +269,14 @@ export class CanvasGrid {
     this.requestDraw();
   }
 
+  /** Repaints the current result. For a change *within* the rows the engine
+   * already holds — a row re-read after a DML write, which rewrites its cells in
+   * the same arrays (see the store's `applyRowCells`) — where the result object,
+   * the layout and the scroll position all still stand. */
+  redraw(): void {
+    this.requestDraw();
+  }
+
   /** Registers the owner's row-interaction callbacks (click / double-click /
    * context menu). */
   setInteraction(interaction: GridInteraction): void {

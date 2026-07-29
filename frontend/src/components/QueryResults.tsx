@@ -64,6 +64,16 @@ export default function QueryResults(props: { tabId: string }) {
     grid?.setResult(result);
   });
 
+  // A row re-read after a DML write is rewritten *inside* the result the engine
+  // already holds, so that a single changed row doesn't read as a new result set
+  // (which would reset the scroll and clear the selection). Nothing about the
+  // result's identity changes, so the effect above never fires — this is what
+  // asks for the repaint.
+  createEffect(() => {
+    const patch = store.rowPatch();
+    if (patch?.tabId === props.tabId) grid?.redraw();
+  });
+
   // This component outlives a tab switch (the query page is reused, with a new
   // `tabId`), so a menu raised on the old tab's rows would otherwise linger over
   // rows it no longer refers to.

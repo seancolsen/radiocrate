@@ -68,3 +68,76 @@ test("query grid repaints when the result is replaced (no resize)", async ({
   // lemonade grid and the two buffers would be identical.
   expect(Buffer.compare(before, after)).not.toBe(0);
 });
+
+// The other half of that story: a row re-read after a DML write (a play logged,
+// a record saved) rewrites *one row's* cells inside the result the grid already
+// holds — deliberately not a new result, so the grid keeps its scroll position
+// and the page keeps its selection. Nothing about the result's identity changes,
+// which means the effect above can't be what repaints it. This asserts the row
+// does repaint, and that the selection it was written under survives.
+test("query grid repaints a single rewritten row, keeping the selection", async ({
+  page,
+}) => {
+  await mockRpc(page);
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
+  await page.evaluate(() => document.fonts.ready);
+
+  const canvas = page.locator("canvas");
+  await expect(canvas).toBeVisible();
+  await page.waitForTimeout(100);
+
+  type SeededStore = {
+    state: { activeTabId: string | null };
+    clickRow: (
+      id: string,
+      index: number,
+      mods: { shift: boolean; ctrl: boolean },
+    ) => void;
+    rowSelection: (id: string) => ReadonlySet<number>;
+    setResultRow: (
+      id: string,
+      index: number,
+      cells: (string | string[])[],
+    ) => void;
+  };
+  // Select the row that's about to change, so the repaint has to preserve it.
+  await page.evaluate(() => {
+    const store = (window as unknown as { __appStore: SeededStore }).__appStore;
+    const id = store.state.activeTabId;
+    if (id) store.clickRow(id, 1, { shift: false, ctrl: false });
+  });
+  await page.waitForTimeout(100);
+  const before = await canvas.screenshot();
+
+  // Rewrite row 1's cells, in the visible columns' order (the fixture's id
+  // column is hidden): artists, year, album, number, title, duration, rating.
+  await page.evaluate(() => {
+    const store = (window as unknown as { __appStore: SeededStore }).__appStore;
+    const id = store.state.activeTabId;
+    if (id)
+      store.setResultRow(id, 1, [
+        ["Beyoncé", "Ezra Koenig"],
+        "2016",
+        "Lemonade",
+        "#2",
+        "Hold Up (refreshed)",
+        "3:41",
+        "5 ☆",
+      ]);
+  });
+  await page.waitForTimeout(100);
+  const after = await canvas.screenshot();
+
+  // Without the repaint request the canvas would still show the old row.
+  expect(Buffer.compare(before, after)).not.toBe(0);
+
+  // …and the write must not have read as a new result set.
+  const selection = await page.evaluate(() => {
+    const store = (window as unknown as { __appStore: SeededStore }).__appStore;
+    const id = store.state.activeTabId;
+    return id ? [...store.rowSelection(id)] : [];
+  });
+  expect(selection).toEqual([1]);
+});

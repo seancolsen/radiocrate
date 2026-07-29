@@ -30,7 +30,7 @@
 
 import { untrack } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { dml, type DmlResult } from "api-client";
+import { dml, type DmlOperation, type DmlResult } from "api-client";
 import {
   identifyingColumns,
   primaryKey,
@@ -364,6 +364,11 @@ export function createRecordForm(opts: {
   table: string;
   key: readonly KeyPart[];
   schemaJson: string;
+  /** How the save reaches the database. The plain DML call by default; the query
+   * page passes one that carries the result row the record is being edited from,
+   * so the row is re-read once the save lands (see `query/rowDml.ts`). Either way
+   * what comes back is the API's own answer, which is all this model reads. */
+  runDml?: (operations: DmlOperation[]) => Promise<DmlResult>;
 }): RecordFormModel {
   const [state, setState] = createStore<FormState>({
     records: {},
@@ -1047,7 +1052,8 @@ export function createRecordForm(opts: {
           }),
         );
         if (plan.operations.length > 0) {
-          applySave(plan, await dml({ operations: plan.operations }));
+          const runDml = opts.runDml ?? ((operations) => dml({ operations }));
+          applySave(plan, await runDml(plan.operations));
         }
         setState({ saving: false, saveError: null });
       } catch (err) {
