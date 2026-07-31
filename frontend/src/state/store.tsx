@@ -320,6 +320,33 @@ function applyThemeToDocument(pref: ThemePref): void {
   meta.content = pref === "dark" ? "#1b1b1b" : "#f8f8f8";
 }
 
+/** The audio-streaming quality preference: "higher" streams the source file
+ * as-is; "lower" asks the backend to transcode lossless sources down to Opus
+ * (lossy sources stream unchanged either way). Persisted, defaulting to
+ * "higher". */
+export type AudioQualityPref = "higher" | "lower";
+
+const AUDIO_QUALITY_KEY = "audioQuality";
+
+function storedAudioQuality(): AudioQualityPref {
+  try {
+    const v = localStorage.getItem(AUDIO_QUALITY_KEY);
+    if (v === "lower") return v;
+  } catch {
+    // Private-mode localStorage denial — fall back to the default.
+  }
+  return "higher";
+}
+
+function persistAudioQuality(pref: AudioQualityPref): void {
+  try {
+    if (pref === "higher") localStorage.removeItem(AUDIO_QUALITY_KEY);
+    else localStorage.setItem(AUDIO_QUALITY_KEY, pref);
+  } catch {
+    // ignore
+  }
+}
+
 /** Width bounds for the record-editor sidebar, in CSS px. The maximum is also
  * capped against the live viewport while dragging (see `RecordEditorPanel`), so
  * these are just the absolute limits a persisted value is trusted within. */
@@ -405,6 +432,10 @@ export interface AppStore {
   setSidebarOpen: (open: boolean) => void;
   /** Sets the theme override ("system" clears it) — the Settings menu's action. */
   setTheme: (pref: ThemePref) => void;
+  /** The audio-streaming quality preference (persisted, like theme). */
+  audioQuality: Accessor<AudioQualityPref>;
+  /** Sets the audio-streaming quality preference — the Settings menu's action. */
+  setAudioQuality: (pref: AudioQualityPref) => void;
   /** Open (or focus) a query in a tab. */
   openTab: (query: { id: string; name: string; definition: string }) => void;
   /** Open (or focus) the singleton Keyboard Shortcuts tab — the
@@ -728,6 +759,16 @@ function createAppStore(): AppStore {
     setState("theme", pref);
     persistTheme(pref);
     applyThemeToDocument(pref);
+  };
+
+  // The audio-streaming quality preference: a plain signal (read by the audio
+  // engine outside any tracked scope), persisted on every change.
+  const [audioQuality, setAudioQualitySignal] =
+    createSignal<AudioQualityPref>(storedAudioQuality());
+
+  const setAudioQuality = (pref: AudioQualityPref) => {
+    setAudioQualitySignal(pref);
+    persistAudioQuality(pref);
   };
 
   // The record-editor sidebar's width: a plain signal (no per-tab state — every
@@ -1152,12 +1193,15 @@ function createAppStore(): AppStore {
   // anything creates no <audio> element and claims no OS media session.
   let audio: AudioEngine | undefined;
   const engine = (): AudioEngine =>
-    (audio ??= new AudioEngine({
-      onTrackChange: (id) => reconcileTrackChange(id),
-      onPlayCompleted: (id) => logPlay(id),
-      onQueueDry: () => clearNowPlaying(),
-      onTransport: () => syncTransport(),
-    }));
+    (audio ??= new AudioEngine(
+      {
+        onTrackChange: (id) => reconcileTrackChange(id),
+        onPlayCompleted: (id) => logPlay(id),
+        onQueueDry: () => clearNowPlaying(),
+        onTransport: () => syncTransport(),
+      },
+      audioQuality,
+    ));
 
   /** Mirrors the engine's transport state into the store for the bar to render.
    * The engine stays the source of truth; this is a projection of it. */
@@ -1348,6 +1392,8 @@ function createAppStore(): AppStore {
     toggleSidebar: () => setSidebarOpen(!state.sidebarOpen),
     setSidebarOpen,
     setTheme,
+    audioQuality,
+    setAudioQuality,
     openTab: (query) => {
       if (!state.tabs.some((t) => t.id === query.id)) {
         const saved = definitionFromStored(query.definition);

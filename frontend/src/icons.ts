@@ -56,6 +56,8 @@ import FieldOther from "~icons/material-symbols/data-object";
 import LightMode from "~icons/material-symbols/light-mode";
 import DarkMode from "~icons/material-symbols/dark-mode";
 import SystemTheme from "~icons/material-symbols/settings-brightness";
+import HigherQuality from "~icons/material-symbols/high-quality";
+import LowerBandwidth from "~icons/material-symbols/data-saver-on";
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -103,4 +105,6 @@ export const Icons = {
   LightMode, // Settings footer: Light theme option
   DarkMode, // Settings footer: Dark theme option
   SystemTheme, // Settings footer: System theme option
+  HigherQuality, // Settings footer: Higher quality streaming option
+  LowerBandwidth, // Settings footer: Lower bandwidth streaming option
 };

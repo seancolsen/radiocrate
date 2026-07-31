@@ -10,6 +10,14 @@
 // (`EngineEvents`), never the driver.
 
 import { trackStreamUrl } from "api-client";
+import type { AudioQualityPref } from "../state/store";
+
+/** Maps the persisted quality preference to the backend's `quality` query
+ * param: "higher" streams the source as-is (the param is omitted, matching
+ * the server's default); "lower" requests the Opus transcode. */
+function streamQualityParam(pref: AudioQualityPref): string | undefined {
+  return pref === "lower" ? "opus128" : undefined;
+}
 
 /** What the engine reports back to its owner. Every callback can fire while the
  * app is backgrounded (the browser keeps dispatching media events), so the store
@@ -57,9 +65,12 @@ export class AudioEngine {
   private history: string[] = [];
   /** Tracks queued after the current one, next up at the front. */
   private queue: string[] = [];
+  /** Reads the live streaming-quality preference, consulted on every `load`. */
+  private readonly getQuality: () => AudioQualityPref;
 
-  constructor(events: EngineEvents) {
+  constructor(events: EngineEvents, getQuality: () => AudioQualityPref) {
     this.events = events;
+    this.getQuality = getQuality;
 
     const audio = new Audio();
     audio.preload = "auto";
@@ -167,7 +178,7 @@ export class AudioEngine {
   // ── Internals ──────────────────────────────────────────────────────────────
 
   private load(id: string): void {
-    this.audio.src = trackStreamUrl(id);
+    this.audio.src = trackStreamUrl(id, streamQualityParam(this.getQuality()));
     this.audio.load();
     void this.audio.play().catch(() => {});
     this.current = id;

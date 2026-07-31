@@ -1,6 +1,10 @@
 import { For, type JSX } from "solid-js";
 import { Icons } from "../icons";
-import { useAppState, type ThemePref } from "../state/store";
+import {
+  useAppState,
+  type AudioQualityPref,
+  type ThemePref,
+} from "../state/store";
 import {
   Menu,
   MenuHeading,
@@ -19,9 +23,19 @@ const THEME_OPTIONS: {
   { pref: "system", label: "System", icon: Icons.SystemTheme },
 ];
 
+const AUDIO_QUALITY_OPTIONS: {
+  pref: AudioQualityPref;
+  label: string;
+  icon: typeof Icons.HigherQuality;
+}[] = [
+  { pref: "higher", label: "Higher quality", icon: Icons.HigherQuality },
+  { pref: "lower", label: "Lower bandwidth", icon: Icons.LowerBandwidth },
+];
+
 /** The Settings dropdown pinned to the sidebar bottom: gear icon + muted
  * "Settings" label, opening a menu upward (it sits on the bottom edge) with a
- * Light/Dark/System theme picker and the Keyboard shortcuts entry. */
+ * Light/Dark/System theme picker, a Higher quality/Lower bandwidth audio
+ * streaming picker, and the Keyboard shortcuts entry. */
 export default function SettingsFooter(): JSX.Element {
   const store = useAppState();
   return (
@@ -53,6 +67,19 @@ export default function SettingsFooter(): JSX.Element {
             label={option.label}
             checked={store.state.theme === option.pref}
             onClick={() => store.setTheme(option.pref)}
+          />
+        )}
+      </For>
+      <MenuSeparator />
+      <MenuHeading text="Audio streaming" />
+      <For each={AUDIO_QUALITY_OPTIONS}>
+        {(option) => (
+          <MenuToggleItem
+            kind="radio"
+            icon={option.icon}
+            label={option.label}
+            checked={store.audioQuality() === option.pref}
+            onClick={() => store.setAudioQuality(option.pref)}
           />
         )}
       </For>

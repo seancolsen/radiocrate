@@ -78,7 +78,14 @@ export async function postQuery(sql: string): Promise<ArrayBuffer> {
   return res.arrayBuffer();
 }
 
-/** The streaming-audio URL for a track id (`GET /api/tracks/{id}/stream`). */
-export function trackStreamUrl(id: string): string {
-  return `/api/tracks/${encodeURIComponent(id)}/stream`;
+/**
+ * The streaming-audio URL for a track id (`GET /api/tracks/{id}/stream`).
+ * `quality` mirrors the backend's `StreamParams.quality`: omit it (or pass
+ * "original") to stream the source file as-is; pass "opus128" to request
+ * the low-bandwidth transcode (the server only transcodes lossless sources —
+ * a lossy file streams unchanged either way).
+ */
+export function trackStreamUrl(id: string, quality?: string): string {
+  const q = quality ? `?quality=${encodeURIComponent(quality)}` : "";
+  return `/api/tracks/${encodeURIComponent(id)}/stream${q}`;
 }
