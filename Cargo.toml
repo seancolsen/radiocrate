@@ -12,6 +12,21 @@ default-members = ["backend"]
 [profile.dev.package.libduckdb-sys]
 opt-level = 3
 
+# Used for the Raspberry Pi home-lab deployment build (see `cargo xtask
+# build-release-pi` and DEVELOPMENT.md). Separate from `release` so ordinary
+# x86 release builds stay on the fast/default settings; this profile trades
+# link time for a smaller, faster binary — worthwhile since it's built rarely,
+# not on every iteration.
+#
+# `panic = "abort"` is deliberately NOT set here: it would remove per-task
+# unwind isolation in the axum/tokio server, turning an isolated request panic
+# into a whole-process crash.
+[profile.release-pi]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

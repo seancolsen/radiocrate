@@ -8,10 +8,11 @@ fn usage() {
     eprintln!(
         "cargo xtask <command>\n\n\
          Commands:\n  \
-           build-release   Build the Solid frontend with Bun/Vite and the production binary\n  \
-           clean-web       Remove the frontend/dist directory\n  \
-           icons           Regenerate the PWA icon set from branding/logo.svg\n  \
-           gen-api         Regenerate the TypeScript API client under api-client/"
+           build-release      Build the Solid frontend with Bun/Vite and the production binary\n  \
+           build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (aarch64)\n  \
+           clean-web          Remove the frontend/dist directory\n  \
+           icons              Regenerate the PWA icon set from branding/logo.svg\n  \
+           gen-api            Regenerate the TypeScript API client under api-client/"
     );
 }
 
@@ -112,7 +113,10 @@ fn build_querydown_js() -> Result<(), String> {
     Ok(())
 }
 
-fn build_release() -> Result<(), String> {
+/// Builds `frontend/dist`, which `radiocrate` embeds via `rust-embed`. Shared
+/// by both the native and cross-compiled release builds — only the final
+/// `cargo`/`cross` invocation differs between them.
+fn build_frontend() -> Result<(), String> {
     let root = workspace_root();
     let frontend = root.join("frontend");
 
@@ -140,12 +144,88 @@ fn build_release() -> Result<(), String> {
         .args(["run", "build"])
         .current_dir(&frontend))?;
 
+    Ok(())
+}
+
+fn build_release() -> Result<(), String> {
+    let root = workspace_root();
+    build_frontend()?;
+
     println!("==> cargo build --release -p radiocrate");
     run(Command::new("cargo")
         .args(["build", "--release", "-p", "radiocrate"])
         .current_dir(&root))?;
 
     let bin = root.join("target/release/radiocrate");
+    println!("\nBuilt: {}", bin.display());
+    Ok(())
+}
+
+/// Cross-compiles the production binary for the Raspberry Pi 4 (32-bit
+/// Raspberry Pi OS / armhf, Cortex-A72) home-lab deployment target. The
+/// target triple is armv7, not aarch64, even though the Pi's kernel is
+/// 64-bit-capable — this Pi runs the 32-bit userland (see DEVELOPMENT.md).
+/// Targets musl, not glibc: the default cross image for the gnueabihf target
+/// links against a newer glibc than Raspberry Pi OS Bookworm ships, so the
+/// binary fails at runtime with a `GLIBC_2.38' not found` error; musl statics
+/// links libc instead, sidestepping that entirely (see DEVELOPMENT.md).
+/// Requires `cross` (Docker-based) — see DEVELOPMENT.md — because
+/// `duckdb-sys` and `audiopus_sys` compile bundled C/C++ from source and need
+/// a real cross toolchain, not just a Rust target. Must be run on a host with
+/// a Docker daemon (not from inside this project's own dev container, which
+/// doesn't nest Docker).
+fn build_release_pi() -> Result<(), String> {
+    let root = workspace_root();
+
+    let cross_check = Command::new("cross").arg("--version").output();
+    if cross_check.is_err() || !cross_check.unwrap().status.success() {
+        return Err(
+            "`cross` is required. Install with:\n  \
+             cargo install cross --git https://github.com/cross-rs/cross --locked\n\
+             and make sure a Docker daemon is running. See DEVELOPMENT.md."
+                .into(),
+        );
+    }
+
+    build_frontend()?;
+
+    const TARGET: &str = "armv7-unknown-linux-musleabihf";
+    println!("==> cross build --profile release-pi --target {TARGET} -p radiocrate");
+    run(Command::new("cross")
+        // `cross` re-derives settings like `rustc-wrapper` from the *effective
+        // Cargo config* (including ~/.cargo/config.toml) and injects them into
+        // the container itself — so a host-wide sccache setup breaks the build
+        // (the cross image doesn't have `sccache` installed) even after
+        // clearing the env vars below, since those only cover ambient env
+        // forwarding, not config-derived settings. The `--config` overrides
+        // take the highest precedence in Cargo's own resolution and empty
+        // string is cargo's documented way to disable a wrapper.
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env_remove("CARGO_BUILD_RUSTC_WRAPPER")
+        .env_remove("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+        // Matches the `+neon` target-feature in .cargo/config.toml so the
+        // bundled C/C++ builds (Opus, DuckDB) use the same FPU as the Rust
+        // code they link against. Forwarded into the container via
+        // Cross.toml's passthrough list.
+        .env("CFLAGS_armv7_unknown_linux_musleabihf", "-mfpu=neon")
+        .env("CXXFLAGS_armv7_unknown_linux_musleabihf", "-mfpu=neon")
+        .args([
+            "build",
+            "--config",
+            "build.rustc-wrapper=\"\"",
+            "--config",
+            "build.rustc-workspace-wrapper=\"\"",
+            "--profile",
+            "release-pi",
+            "--target",
+            TARGET,
+            "-p",
+            "radiocrate",
+        ])
+        .current_dir(&root))?;
+
+    let bin = root.join(format!("target/{TARGET}/release-pi/radiocrate"));
     println!("\nBuilt: {}", bin.display());
     Ok(())
 }
@@ -168,6 +248,7 @@ fn main() -> ExitCode {
 
     let result = match cmd.as_str() {
         "build-release" => build_release(),
+        "build-release-pi" => build_release_pi(),
         "clean-web" => clean_web(),
         "icons" => icons::generate(&workspace_root()),
         "gen-api" => gen_api::generate(&workspace_root()),
