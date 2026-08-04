@@ -9,7 +9,7 @@ fn usage() {
         "cargo xtask <command>\n\n\
          Commands:\n  \
            build-release      Build the Solid frontend with Bun/Vite and the production binary\n  \
-           build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (aarch64)\n  \
+           build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (armv7)\n  \
            clean-web          Remove the frontend/dist directory\n  \
            icons              Regenerate the PWA icon set from branding/logo.svg\n  \
            gen-api            Regenerate the TypeScript API client under api-client/"
@@ -165,37 +165,37 @@ fn build_release() -> Result<(), String> {
 /// Raspberry Pi OS / armhf, Cortex-A72) home-lab deployment target. The
 /// target triple is armv7, not aarch64, even though the Pi's kernel is
 /// 64-bit-capable — this Pi runs the 32-bit userland (see DEVELOPMENT.md).
-/// Targets musl, not glibc: the default cross image for the gnueabihf target
-/// links against a newer glibc than Raspberry Pi OS Bookworm ships, so the
-/// binary fails at runtime with a `GLIBC_2.38' not found` error; musl statics
-/// links libc instead, sidestepping that entirely (see DEVELOPMENT.md).
+/// Builds against glibc using a custom Debian Bookworm image (Cross.toml +
+/// docker/cross-armv7-gnueabihf.Dockerfile), not cross-rs's default Ubuntu-
+/// based image or musl — see DEVELOPMENT.md for why (in short: the default
+/// image's glibc is too new for the Pi, and musl's unwinder is incompatible
+/// with `DuckDB`'s C++ exceptions and crashes the process).
 /// Requires `cross` (Docker-based) — see DEVELOPMENT.md — because
 /// `duckdb-sys` and `audiopus_sys` compile bundled C/C++ from source and need
 /// a real cross toolchain, not just a Rust target. Must be run on a host with
 /// a Docker daemon (not from inside this project's own dev container, which
 /// doesn't nest Docker).
 fn build_release_pi() -> Result<(), String> {
+    const TARGET: &str = "armv7-unknown-linux-gnueabihf";
+
     let root = workspace_root();
 
     let cross_check = Command::new("cross").arg("--version").output();
     if cross_check.is_err() || !cross_check.unwrap().status.success() {
-        return Err(
-            "`cross` is required. Install with:\n  \
+        return Err("`cross` is required. Install with:\n  \
              cargo install cross --git https://github.com/cross-rs/cross --locked\n\
              and make sure a Docker daemon is running. See DEVELOPMENT.md."
-                .into(),
-        );
+            .into());
     }
 
     build_frontend()?;
 
-    const TARGET: &str = "armv7-unknown-linux-musleabihf";
     println!("==> cross build --profile release-pi --target {TARGET} -p radiocrate");
     run(Command::new("cross")
         // `cross` re-derives settings like `rustc-wrapper` from the *effective
         // Cargo config* (including ~/.cargo/config.toml) and injects them into
         // the container itself — so a host-wide sccache setup breaks the build
-        // (the cross image doesn't have `sccache` installed) even after
+        // (our custom image doesn't have `sccache` installed) even after
         // clearing the env vars below, since those only cover ambient env
         // forwarding, not config-derived settings. The `--config` overrides
         // take the highest precedence in Cargo's own resolution and empty
@@ -204,12 +204,6 @@ fn build_release_pi() -> Result<(), String> {
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .env_remove("CARGO_BUILD_RUSTC_WRAPPER")
         .env_remove("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
-        // Matches the `+neon` target-feature in .cargo/config.toml so the
-        // bundled C/C++ builds (Opus, DuckDB) use the same FPU as the Rust
-        // code they link against. Forwarded into the container via
-        // Cross.toml's passthrough list.
-        .env("CFLAGS_armv7_unknown_linux_musleabihf", "-mfpu=neon")
-        .env("CXXFLAGS_armv7_unknown_linux_musleabihf", "-mfpu=neon")
         .args([
             "build",
             "--config",

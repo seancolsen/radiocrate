@@ -736,8 +736,16 @@ function createAppStore(): AppStore {
   // The enriched introspection schema JSON — run the introspection SQL, read the
   // single JSON cell, apply RadioCrate's link inference. Cached for the session.
   const [schemaResource] = createResource<string>(async () => {
-    const raw = await runSqlScalar(INTROSPECTION_SQL);
-    return addInferredLinks(raw);
+    try {
+      const raw = await runSqlScalar(INTROSPECTION_SQL);
+      return addInferredLinks(raw);
+    } catch (err) {
+      // No error UI this phase — console only (see plan non-goals). Without
+      // this, a failed introspection query left `schema()` undefined forever
+      // with no indication why — nothing else reads `schemaResource.error`.
+      console.error("introspection query failed", err);
+      throw err;
+    }
   });
   // A seeded document (dev/test) stands in for the fetched one when present.
   const [schemaOverride, setSchemaOverride] = createSignal<string>();

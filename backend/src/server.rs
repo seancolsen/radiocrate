@@ -171,10 +171,13 @@ async fn query(State(state): State<Arc<AppState>>, body: String) -> Response<Bod
                 .body(Body::from_stream(stream))
                 .unwrap()
         }
-        Ok(Err(msg)) => Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(Body::from(msg))
-            .unwrap(),
+        Ok(Err(msg)) => {
+            eprintln!("query: {msg}");
+            Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(msg))
+                .unwrap()
+        }
         Err(_) => Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(Body::from("query task panicked"))

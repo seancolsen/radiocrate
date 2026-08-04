@@ -1,9 +1,6 @@
-# Forwards the NEON compiler flags xtask sets (see build_release_pi in
-# xtask/src/main.rs) into the cross container, so the bundled C/C++ builds
-# (Opus via audiopus_sys, DuckDB via libduckdb-sys) match the `+neon`
-# target-feature set in .cargo/config.toml for armv7-unknown-linux-musleabihf.
-[build.env]
-passthrough = [
-    "CFLAGS_armv7_unknown_linux_musleabihf",
-    "CXXFLAGS_armv7_unknown_linux_musleabihf",
-]
+# Custom build image for armv7-unknown-linux-gnueabihf: Debian Bookworm-based
+# (matching Raspberry Pi OS's own glibc, 2.36) instead of cross-rs's default
+# Ubuntu-based image, whose newer glibc produces binaries that fail to run on
+# the Pi. See docker/cross-armv7-gnueabihf.Dockerfile and DEVELOPMENT.md.
+[target.armv7-unknown-linux-gnueabihf]
+dockerfile = "docker/cross-armv7-gnueabihf.Dockerfile"

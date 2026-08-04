@@ -6,37 +6,24 @@ xtask = "run --package xtask --release --"
 # OS userland on top of a 64-bit-capable kernel — `uname -m` reports the
 # kernel's architecture (aarch64) regardless, so it doesn't reveal userland
 # bitness here; `file /bin/bash` does (see DEVELOPMENT.md).
-# musl, not gnueabihf: statically links libc, avoiding any dependency on the
-# Pi's installed glibc version. The default cross image for
-# armv7-unknown-linux-gnueabihf links against a newer glibc (2.38) than
-# Raspberry Pi OS Bookworm ships (2.36), producing a binary that fails at
-# runtime with "version `GLIBC_2.38' not found". musl sidesteps that
-# entirely — see DEVELOPMENT.md.
+# glibc, not musl: we tried armv7-unknown-linux-musleabihf first (static
+# musl, no runtime libc-version dependency at all), but it crashes the first
+# time any DuckDB code path throws a C++ exception — musl builds link Rust's
+# LLVM `libunwind`, which is ABI-incompatible with GCC-compiled DuckDB's own
+# unwinder. glibc keeps them sharing the same system `libgcc_s` unwinder. We
+# build against a custom Debian Bookworm image (see Cross.toml) rather than
+# cross-rs's default image, which links a newer glibc than Raspberry Pi OS
+# Bookworm ships and produces binaries that fail with "version `GLIBC_2.38'
+# not found". See DEVELOPMENT.md for the full story.
 # If you ever target different ARM hardware (e.g. a Pi 5's Cortex-A76, or a
 # 64-bit Raspberry Pi OS install), this flag AND the target triple both need
 # to change — `target-cpu` is per-microarchitecture, and a mismatch can make
 # LLVM emit instructions the actual CPU doesn't support.
-# `+neon`: the Cortex-A72 has a NEON SIMD unit, but Rust's generic armv7
-# musl/gnueabihf targets default to `vfpv3-d16` (no NEON), since they also
-# cover ARMv7 hardfloat boards without it. Without this, the bundled C build
+# `+neon`: the Cortex-A72 has a NEON SIMD unit, but this Rust target's
+# generic default (`vfpv3-d16`, no NEON) doesn't assume one, since it also
+# covers ARMv7 hardfloat boards without it. Without this, the bundled C build
 # of Opus (`audiopus_sys`) fails to compile its ARM NEON intrinsics file with
-# "target specific option mismatch" — the C toolchain flags need the
-# matching override too, see Cross.toml.
-# `link-arg=-lc`: `audiopus_sys` registers `opus` as a dynamic-style link
-# dependency even though we only build a static libopus.a (no shared library
-# support in its CMake config), so rustc places it after `-lc` in the linker
-# command. GNU ld resolves archives in a single left-to-right pass, so by the
-# time it reaches libopus.a's calls to lrintf/atoi, it's already past `-lc`
-# and won't go back — link fails with "undefined reference to `lrintf'"
-# despite musl's libc providing it. Appending `-lc` again at the very end
-# (rustc appends `-C link-arg` values after its own generated linker args)
-# makes the linker re-scan it after everything else.
-[target.armv7-unknown-linux-musleabihf]
-rustflags = [
-    "-C",
-    "target-cpu=cortex-a72",
-    "-C",
-    "target-feature=+neon",
-    "-C",
-    "link-arg=-lc",
-]
+# "target specific option mismatch" — the matching C-toolchain flag is baked
+# into docker/cross-armv7-gnueabihf.Dockerfile.
+[target.armv7-unknown-linux-gnueabihf]
+rustflags = ["-C", "target-cpu=cortex-a72", "-C", "target-feature=+neon"]

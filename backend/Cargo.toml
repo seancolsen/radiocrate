@@ -21,7 +21,12 @@ axum = "0.8"
 blake3 = "1"
 bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
-duckdb = { version = "1.10504.0", features = ["bundled"] }
+# `json`: statically compiles DuckDB's JSON extension into the bundled build
+# (introspection's SQL uses to_json/json_object). Without it, DuckDB falls
+# back to autoloading the extension over the network at query time, which
+# fails outright on 32-bit ARM (DuckDB doesn't publish extension binaries for
+# that platform) and is undesirable anywhere for a self-hosted app regardless.
+duckdb = { version = "1.10504.0", features = ["bundled", "json"] }
 jiff = "0.2"
 audiopus = "0.3.0-rc.0"
 ogg = "0.9"
