@@ -1,5 +1,4 @@
 import { createSignal, onCleanup } from "solid-js";
-import type { AppStore } from "../state/store";
 
 /** Static-friction scale (ORGANIZER_DRAG_FRICTION): small finger movements barely
  * move the drawer, so a vertical scroll inside it isn't read as a close-swipe. */
@@ -17,7 +16,7 @@ function staticFriction(dx: number): number {
 /** Hand-rolled Pointer Events swipe-to-close for the mobile drawer (no gesture
  * library). Tracks a leftward drag with static friction; release closes on a
  * fast leftward flick or when dragged past halfway, else snaps back open. */
-export function useSwipeToClose(store: AppStore, getWidth: () => number) {
+export function useSwipeToClose(onClose: () => void, getWidth: () => number) {
   const [offset, setOffset] = createSignal(0);
   const [dragging, setDragging] = createSignal(false);
 
@@ -71,7 +70,7 @@ export function useSwipeToClose(store: AppStore, getWidth: () => number) {
     const width = getWidth();
     const shouldClose = velocity < -FLICK_VELOCITY || offset() < -width / 2;
     setOffset(0);
-    if (shouldClose) store.setSidebarOpen(false);
+    if (shouldClose) onClose();
   }
 
   onCleanup(() => {

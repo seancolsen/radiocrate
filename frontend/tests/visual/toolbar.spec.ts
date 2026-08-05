@@ -2,10 +2,9 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   ALBUM_SORT_PRESET_ID,
   FILTER_DEF,
-  FULL_DEF,
   PRESETS_FIXTURE,
   QUERIES_FIXTURE,
-} from "./fixtures";
+} from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
 /** The store the app exposes under `?expose=1`. */
@@ -13,10 +12,14 @@ interface AppWindow {
   __appStore: AppStore;
 }
 
+// The query toolbar's behaviors — the ones that only exist with the whole page
+// assembled behind them. Its pixels are covered component-by-component in
+// `query.spec.ts`, through the harness.
+
 /** Fulfill the RPC route from fixtures (no backend). `preset.list` returns the
- * "vetted" filter preset so the builder snapshots can reference it. `/api/query`
- * is stubbed empty — the introspection call fails gracefully, so no tab ever
- * runs a real query and the seeded state stays put. */
+ * "vetted" filter preset the seeded definition references. `/api/query` is
+ * stubbed empty — the introspection call fails gracefully, so no tab ever runs
+ * a real query and the seeded state stays put. */
 async function mockRpc(page: Page) {
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
@@ -41,130 +44,12 @@ async function mockRpc(page: Page) {
 
 const def = (d: unknown) => encodeURIComponent(JSON.stringify(d));
 
-/** Set up the mock + theme + viewport, navigate, wait for fonts and the toolbar,
- * and return its element locator so the snapshot captures just the toolbar
- * (component isolation). Setup is per-test (not a shared `beforeEach`) so the
- * light/dark loop can't cross-register hooks. */
-async function toolbar(
-  page: Page,
-  colorScheme: "light" | "dark",
-  query: string,
-  width = 1280,
-  sidebar = true,
-) {
+/** Set up the mock, navigate to a seeded query page, and wait for its toolbar. */
+async function openQueryPage(page: Page, query: string) {
   await mockRpc(page);
-  await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-  await page.setViewportSize({ width, height: 800 });
-  const s = sidebar ? "sidebar=open&" : "";
-  await page.goto(`/?${s}tabs=Lemonade&${query}`);
-  await page.evaluate(() => document.fonts.ready);
-  const el = page.getByTestId("query-toolbar");
-  await expect(el).toBeVisible();
-  return el;
-}
-
-for (const colorScheme of ["light", "dark"] as const) {
-  // Saved (clean) query, no builder open: no Save button; the section toggles
-  // sit inactive; "12 results" at the far right. The DOM analog of whole_app's
-  // top line before the filter is opened.
-  test(`toolbar saved - ${colorScheme}`, async ({ page }) => {
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `clean=1&count=12&def=${def(FILTER_DEF)}`,
-    );
-    await expect(el).toHaveScreenshot(`toolbar-saved-${colorScheme}.png`);
-  });
-
-  // Filter section active + unsaved: Save button shown, the active blue split
-  // button with its ⋮, and the second builder line (custom input + "vetted"
-  // preset tab). Matches whole_app.png's toolbar.
-  test(`toolbar filter active - ${colorScheme}`, async ({ page }) => {
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `count=12&section=filter&def=${def(FILTER_DEF)}`,
-    );
-    await expect(page.getByRole("button", { name: "vetted" })).toBeVisible();
-    await expect(el).toHaveScreenshot(
-      `toolbar-filter-active-${colorScheme}.png`,
-    );
-  });
-
-  // Sort section active: the sort split button is highlighted; the second line
-  // is a single (empty) custom input.
-  test(`toolbar sort active - ${colorScheme}`, async ({ page }) => {
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `count=12&section=sort&def=${def(FILTER_DEF)}`,
-    );
-    await expect(el).toHaveScreenshot(`toolbar-sort-active-${colorScheme}.png`);
-  });
-
-  // Display section active.
-  test(`toolbar display active - ${colorScheme}`, async ({ page }) => {
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `count=12&section=display&def=${def(FILTER_DEF)}`,
-    );
-    await expect(el).toHaveScreenshot(
-      `toolbar-display-active-${colorScheme}.png`,
-    );
-  });
-
-  // Full-Querydown mode: the three section toggles collapse into the single
-  // "Querydown" toggle (no ⋮ — there are no sections to configure), over the
-  // whole-query editor.
-  test(`toolbar full querydown - ${colorScheme}`, async ({ page }) => {
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `clean=1&count=12&full=1&def=${def(FULL_DEF)}`,
-    );
-    await expect(page.getByPlaceholder("Querydown")).toBeVisible();
-    await expect(el).toHaveScreenshot(
-      `toolbar-full-querydown-${colorScheme}.png`,
-    );
-  });
-
-  // The wrench menu's Base submenu, opened: the schema's tables as an exclusive
-  // choice (the query's own is checked) over the "Full Querydown" escape hatch.
-  // Clipped to the menus' corner rather than shot full-page — nothing below or
-  // right of it is part of what this proves.
-  test(`base submenu - ${colorScheme}`, async ({ page }) => {
-    await toolbar(
-      page,
-      colorScheme,
-      `clean=1&count=12&recordFixture=1&sidebar=closed&def=${def(FILTER_DEF)}`,
-      1280,
-      false,
-    );
-    await page.getByRole("button", { name: "Query actions" }).click();
-    await page.getByRole("menuitem", { name: "Base" }).click();
-    await expect(
-      page.getByRole("menuitemradio", { name: "Full Querydown" }),
-    ).toBeVisible();
-    await expect(page).toHaveScreenshot(`base-submenu-${colorScheme}.png`, {
-      clip: { x: 0, y: 0, width: 700, height: 400 },
-    });
-  });
-
-  // Compact bar (< 500px): section buttons drop their labels and the separator
-  // is hidden.
-  test(`toolbar compact - ${colorScheme}`, async ({ page }) => {
-    // Sidebar closed: at < 500px an open sidebar is a drawer that would overlay
-    // the bar. Closed, the compact bar (no labels, no separator) is unobstructed.
-    const el = await toolbar(
-      page,
-      colorScheme,
-      `count=12&section=filter&def=${def(FILTER_DEF)}`,
-      460,
-      false,
-    );
-    await expect(el).toHaveScreenshot(`toolbar-compact-${colorScheme}.png`);
-  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/?sidebar=open&tabs=Lemonade&${query}`);
+  await expect(page.getByTestId("query-toolbar")).toBeVisible();
 }
 
 /** The active tab's working definition, read straight out of the exposed store
@@ -180,9 +65,8 @@ async function liveDefinition(page: Page) {
 test("switching the base keeps the filter and reseeds the rest from the new table's defaults", async ({
   page,
 }) => {
-  await toolbar(
+  await openQueryPage(
     page,
-    "light",
     `clean=1&count=12&recordFixture=1&expose=1&def=${def(FILTER_DEF)}`,
   );
   await page.getByRole("button", { name: "Query actions" }).click();
@@ -209,9 +93,8 @@ test("switching the base keeps the filter and reseeds the rest from the new tabl
 test("Full Querydown flattens the query into one editable field", async ({
   page,
 }) => {
-  await toolbar(
+  await openQueryPage(
     page,
-    "light",
     `clean=1&count=12&recordFixture=1&expose=1&def=${def(FILTER_DEF)}`,
   );
   await page.getByRole("button", { name: "Query actions" }).click();
@@ -246,11 +129,7 @@ test("Full Querydown flattens the query into one editable field", async ({
 test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   page,
 }) => {
-  await toolbar(
-    page,
-    "light",
-    `clean=1&count=12&def=${def(FILTER_DEF)}&expose=1`,
-  );
+  await openQueryPage(page, `clean=1&count=12&def=${def(FILTER_DEF)}&expose=1`);
   await page.getByRole("button", { name: "Query actions" }).click();
   const menu = page.getByRole("menu");
   const items = menu.getByRole("menuitem");

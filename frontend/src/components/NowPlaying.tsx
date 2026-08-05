@@ -2,7 +2,8 @@ import { Show, type JSX } from "solid-js";
 import { Icons } from "../icons";
 import { useAppState } from "../state/store";
 import IconButton from "./ui/IconButton";
-import { Menu, MenuItem } from "./ui/Menu";
+import { Menu } from "./ui/Menu";
+import PlaybackActionsMenu from "./PlaybackActionsMenu";
 
 /** The played/remaining progress bar pinned to the bottom of the bar: two pills
  * with a gap between them, the played one in the accent blue. Display only —
@@ -78,23 +79,7 @@ export default function NowPlaying(): JSX.Element {
                 />
               )}
             >
-              <MenuItem
-                icon={Icons.Next}
-                label="Next"
-                disabled={!store.state.playback.hasNext}
-                onClick={() => store.skipNext()}
-              />
-              <MenuItem
-                icon={Icons.Close}
-                label="Close"
-                onClick={() => store.stopPlayback()}
-              />
-              <MenuItem
-                icon={Icons.Locate}
-                label="Locate"
-                disabled={current().rowIndex === null}
-                onClick={() => store.locateCurrentTrack()}
-              />
+              <PlaybackActionsMenu />
             </Menu>
           </div>
           <Timeline progress={progress()} />

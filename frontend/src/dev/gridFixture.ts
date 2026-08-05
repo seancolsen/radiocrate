@@ -177,3 +177,18 @@ export function lemonadeGridResult(identity: LemonadeIdentity = {}): {
   const result = buildResultFromCells(table, metas);
   return { result, lineage: { trackIdColumn, records } };
 }
+
+/** An empty result of `rowCount` rows and no visible columns — what stands in
+ * for "N results" without a real compile, so the toolbar's result count has
+ * something to report. A real `Table` (one hidden `Null`-typed column, so
+ * `numRows` is honest) rather than a bare object literal: `QueryResult` is a
+ * class with private fields, so nothing but a real instance satisfies its
+ * type. */
+export function emptyCountResult(rowCount: number): QueryResult {
+  const table = new arrow.Table({
+    seed_count: arrow.vectorFromArray(new Array<null>(rowCount).fill(null)),
+  });
+  return buildResultFromCells(table, [
+    { ...defaultColumnMetadata(), hide: true },
+  ]);
+}

@@ -1,26 +1,12 @@
-import {
-  createSignal,
-  Match,
-  onCleanup,
-  onMount,
-  Show,
-  Switch,
-} from "solid-js";
+import { Match, Show, Switch } from "solid-js";
 import { useAppState, type Tab } from "./state/store";
-import { useSwipeToClose } from "./gestures/useSwipeToClose";
-import Sidebar from "./components/Sidebar";
+import SidebarLeft from "./components/ui/SidebarLeft";
+import Explorer from "./components/Explorer";
 import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
-
-/** Viewport width at/above which the sidebar is a persistent left panel instead
- * of a modal drawer (PERSISTENT_ORGANIZER_MIN_WIDTH). */
-const PERSISTENT_MIN_WIDTH = 500;
-const SIDEBAR_WIDTH = 200;
-/** ORGANIZER_ANIM_TIME. */
-const ANIM_MS = 100;
 
 /** The content area of the active tab: the page its kind calls for, or a blank
  * panel when no tab is open. The one place tab kinds fan out into pages — every
@@ -48,9 +34,9 @@ function TabContent() {
   );
 }
 
-/** The main column, right of the sidebar: tab bar, the active tab's content, and
- * the now-playing bar pinned to the bottom (which spans this column only — the
- * sidebar keeps its own full height). */
+/** The main column, right of the explorer: tab bar, the active tab's content,
+ * and the now-playing bar pinned to the bottom (which spans this column only —
+ * the explorer keeps its own full height). */
 function Main() {
   return (
     <div class="flex min-w-0 flex-1 flex-col">
@@ -64,31 +50,6 @@ function Main() {
 export default function App() {
   const store = useAppState();
 
-  const [width, setWidth] = createSignal(
-    typeof window === "undefined" ? 1280 : window.innerWidth,
-  );
-  onMount(() => {
-    const onResize = () => setWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    onCleanup(() => window.removeEventListener("resize", onResize));
-  });
-  const persistent = () => width() >= PERSISTENT_MIN_WIDTH;
-
-  const reducedMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  const swipe = useSwipeToClose(store, () => SIDEBAR_WIDTH);
-
-  const drawerVisible = () => store.state.sidebarOpen || swipe.dragging();
-  const drawerTransform = () =>
-    drawerVisible() ? `translateX(${swipe.offset()}px)` : "translateX(-100%)";
-  // Scrim fades with the drag; full when open at rest.
-  const scrimOpacity = () =>
-    drawerVisible()
-      ? Math.max(0, Math.min(1, 1 + swipe.offset() / SIDEBAR_WIDTH))
-      : 0;
-
   return (
     <div
       class="bg-panel fixed inset-0 flex"
@@ -99,54 +60,16 @@ export default function App() {
         "padding-left": "env(safe-area-inset-left)",
       }}
     >
-      <Show when={persistent()} fallback={<DrawerLayout />}>
-        <Show when={store.state.sidebarOpen}>
-          <Sidebar />
-        </Show>
-        <Main />
-      </Show>
+      <SidebarLeft
+        open={store.state.sidebarOpen}
+        onClose={() => store.setSidebarOpen(false)}
+        main={<Main />}
+      >
+        <Explorer />
+      </SidebarLeft>
 
       {/* App-wide overlays, above every panel and both layouts. */}
       <CommandPalette />
     </div>
   );
-
-  /** Narrow viewport: the sidebar overlays as a modal drawer with a scrim. The
-   * drawer node stays mounted (translated off-screen when closed) so slide
-   * animations and an in-flight swipe's release handler both work. */
-  function DrawerLayout() {
-    return (
-      <>
-        <Main />
-        {/* Scrim: shown while open or mid-drag; tap to close. */}
-        <div
-          aria-hidden="true"
-          class="absolute inset-0 bg-black"
-          classList={{ "pointer-events-none": !drawerVisible() }}
-          style={{
-            opacity: `${scrimOpacity() * 0.4}`,
-            transition:
-              swipe.dragging() || reducedMotion
-                ? "none"
-                : `opacity ${ANIM_MS}ms ease`,
-            visibility: drawerVisible() ? "visible" : "hidden",
-          }}
-          onClick={() => store.setSidebarOpen(false)}
-        />
-        <div
-          class="absolute top-0 left-0 h-full"
-          style={{
-            transform: drawerTransform(),
-            transition:
-              swipe.dragging() || reducedMotion
-                ? "none"
-                : `transform ${ANIM_MS}ms ease`,
-          }}
-          onPointerDown={(e) => swipe.onPointerDown(e)}
-        >
-          <Sidebar />
-        </div>
-      </>
-    );
-  }
 }

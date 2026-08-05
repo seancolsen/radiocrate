@@ -1,11 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "./fixtures";
+import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
-// The command palette and the keyboard-shortcuts system: the overlay's two
-// states (unfiltered / filtered), the shortcuts editor tab and the Settings menu
-// that opens it, and the behaviors that have no pixels — a chord firing its
-// command, the palette running one, and arrow-key row selection.
+// The command palette and the keyboard-shortcuts system, behaviorally: a chord
+// firing its command, the palette running one, arrow-key row selection, and the
+// shortcuts editor rebinding. What any of it looks like is covered
+// component-by-component through the harness (`shell.spec.ts`, `app.spec.ts`).
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
@@ -41,95 +41,6 @@ async function mockRpc(page: Page) {
 const palette = (page: Page) => page.getByTestId("command-palette");
 const option = (page: Page, name: string | RegExp) =>
   page.getByRole("option", { name });
-
-for (const colorScheme of ["light", "dark"] as const) {
-  // The palette over the populated frame, unfiltered: every available command,
-  // each with its shortcut, the first row highlighted.
-  test(`command palette - ${colorScheme}`, async ({ page }) => {
-    await mockRpc(page);
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&palette=1");
-    await expect(option(page, "Commands: Open command palette")).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    await expect(page).toHaveScreenshot(`command-palette-${colorScheme}.png`, {
-      fullPage: true,
-    });
-  });
-
-  // Filtered by a typed query, which also drops the non-matching commands.
-  test(`command palette filtered - ${colorScheme}`, async ({ page }) => {
-    await mockRpc(page);
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&palette=tab");
-    await expect(option(page, "Tabs: Save active tab")).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    await expect(page).toHaveScreenshot(
-      `command-palette-filtered-${colorScheme}.png`,
-      { fullPage: true },
-    );
-  });
-
-  // The keyboard-shortcuts editor filling its own tab, beside a query tab: the
-  // whole command table with its bindings, and the tab handle with its
-  // keyboard icon.
-  test(`shortcuts editor - ${colorScheme}`, async ({ page }) => {
-    await mockRpc(page);
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/?tabs=Lemonade&grid=lemonade&shortcuts=1");
-    await expect(
-      page.getByRole("heading", { name: "Keyboard Shortcuts" }),
-    ).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    await expect(page).toHaveScreenshot(`shortcuts-editor-${colorScheme}.png`, {
-      fullPage: true,
-    });
-  });
-
-  // The explorer's Settings footer with its menu open: it opens *upward* (the
-  // footer is the sidebar's bottom edge) and carries the Keyboard shortcuts
-  // entry (`explorer/settings_menu.png`).
-  test(`settings menu - ${colorScheme}`, async ({ page }) => {
-    await mockRpc(page);
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/?sidebar=open&tabs=Lemonade&grid=lemonade");
-    await page.evaluate(() => document.fonts.ready);
-    await page.getByRole("button", { name: "Settings" }).click();
-    await expect(
-      page.getByRole("menuitem", { name: "Keyboard shortcuts" }),
-    ).toBeVisible();
-    await expect(page).toHaveScreenshot(`settings-menu-${colorScheme}.png`, {
-      fullPage: true,
-    });
-  });
-}
-
-for (const colorScheme of ["light", "dark"] as const) {
-  // The rebind-capture dialog, holding a chord that another command already
-  // owns — so the "currently bound to" warning shows too.
-  test(`shortcut capture dialog - ${colorScheme}`, async ({ page }) => {
-    await mockRpc(page);
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/?tabs=Lemonade&grid=lemonade&shortcuts=1");
-    await page
-      .getByRole("button", { name: /Explorer: Toggle explorer sidebar/ })
-      .click();
-    await expect(
-      page.getByRole("heading", { name: "Set keyboard shortcut" }),
-    ).toBeVisible();
-    // `Ctrl+S` belongs to "Tabs: Save active tab".
-    await page.keyboard.press("Control+s");
-    await expect(page.getByText(/Currently bound to/)).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    await expect(page).toHaveScreenshot(`shortcut-capture-${colorScheme}.png`, {
-      fullPage: true,
-    });
-  });
-}
 
 test("the open shortcut toggles the palette", async ({ page }) => {
   await mockRpc(page);

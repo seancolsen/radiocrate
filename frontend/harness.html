@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RadioCrate component harness</title>
+    <!--
+      The visual-test harness (see src/dev/harness/). Dev-only: `vite build`
+      takes index.html as its single input, so this page and everything it
+      imports stay out of the production bundle. Deliberately spare — no
+      manifest, no service worker, no icons — so nothing but the component
+      under test can reach a screenshot.
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/dev/harness/main.tsx"></script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "./fixtures";
+import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
 
 /** Fulfill the RPC route from fixtures (no backend), like the other specs. */
 async function mockRpc(page: Page) {

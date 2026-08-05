@@ -1061,7 +1061,7 @@ export class CanvasGrid {
       rowTopHover: v("--row-bg-top-hover", "#f5f5f5"),
       rowBottomHover: v("--row-bg-bottom-hover", "#e8e8e8"),
       rowSep: v("--row-sep", "rgb(200 200 200 / 0.5)"),
-      pillBg: v("--pill-bg", "#f8e4b2"),
+      pillBg: v("--pill-bg", "#efddff"),
       selectedBg: v("--row-selected", "#c8e4ff"),
       selectedBgHover: v("--row-selected-hover", "#b4d0eb"),
       ink: v("--ink", "#1b1b1b"),

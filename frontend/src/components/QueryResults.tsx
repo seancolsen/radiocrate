@@ -1,7 +1,6 @@
 import {
   createEffect,
   createSignal,
-  For,
   on,
   onCleanup,
   onMount,
@@ -9,9 +8,8 @@ import {
 } from "solid-js";
 import { useAppState } from "../state/store";
 import type { QueryResult } from "../query/result";
-import { Icons } from "../icons";
 import { ContextMenu } from "./ui/ContextMenu";
-import { MenuItem } from "./ui/Menu";
+import RowActionsMenu from "./RowActionsMenu";
 import { CanvasGrid } from "./canvasGrid";
 import { modifiedRecords, recordIdentity } from "./record/formStash";
 
@@ -241,15 +239,10 @@ export default function QueryResults(props: { tabId: string }) {
       <Show when={rowMenu()}>
         {(menu) => (
           <ContextMenu x={menu().x} y={menu().y} onClose={closeMenu}>
-            <For each={menuRecords()}>
-              {(record) => (
-                <MenuItem
-                  icon={Icons.Edit}
-                  label={`Edit ${record.table}`}
-                  onClick={() => store.openRecordEditor(props.tabId, record)}
-                />
-              )}
-            </For>
+            <RowActionsMenu
+              records={menuRecords()}
+              onEdit={(record) => store.openRecordEditor(props.tabId, record)}
+            />
           </ContextMenu>
         )}
       </Show>

@@ -61,7 +61,11 @@ function MenuPanel(props: {
  * pins the content to the trigger's left (`start`) or right (`end`) edge, and
  * `side` drops it below the trigger (the default) or opens it upward — which is
  * what a control in the bottom bar needs. `class` extends the anchor wrapper, for
- * a trigger that has to fill its row rather than hug its content. */
+ * a trigger that has to fill its row rather than hug its content.
+ *
+ * `defaultOpen` starts the menu open, so a menu's own contents can be put on
+ * screen without a trigger to click (the visual-test harness renders them that
+ * way); it's read once, at creation. */
 export function Menu(props: {
   trigger: (api: MenuApi) => JSX.Element;
   children: JSX.Element;
@@ -69,8 +73,9 @@ export function Menu(props: {
   side?: "below" | "above";
   width?: string;
   class?: string;
+  defaultOpen?: boolean;
 }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpen] = createSignal(props.defaultOpen ?? false);
   let wrapper: HTMLDivElement | undefined;
   const close = () => setOpen(false);
 

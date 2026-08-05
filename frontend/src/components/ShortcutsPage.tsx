@@ -68,8 +68,11 @@ function RecordBox(props: { text: string; class?: string }): JSX.Element {
 }
 
 /** The rebind-capture dialog. Pressing a chord updates the pending binding; the
- * buttons (or Enter / Esc, handled by the editor's key listener) resolve it. */
-function CaptureDialog(props: {
+ * buttons (or Enter / Esc, handled by the editor's key listener) resolve it.
+ *
+ * Exported so it can be rendered on its own, from the props above rather than
+ * from the editor around it (the visual-test harness does exactly that). */
+export function CaptureDialog(props: {
   cmd: CommandId;
   pending: Chord | null;
   onAssign: () => void;

@@ -1,43 +1,12 @@
-import { For, type JSX } from "solid-js";
+import { type JSX } from "solid-js";
 import { Icons } from "../icons";
-import {
-  useAppState,
-  type AudioQualityPref,
-  type ThemePref,
-} from "../state/store";
-import {
-  Menu,
-  MenuHeading,
-  MenuItem,
-  MenuSeparator,
-  MenuToggleItem,
-} from "./ui/Menu";
+import { Menu } from "./ui/Menu";
+import SettingsMenu from "./SettingsMenu";
 
-const THEME_OPTIONS: {
-  pref: ThemePref;
-  label: string;
-  icon: typeof Icons.LightMode;
-}[] = [
-  { pref: "light", label: "Light", icon: Icons.LightMode },
-  { pref: "dark", label: "Dark", icon: Icons.DarkMode },
-  { pref: "system", label: "System", icon: Icons.SystemTheme },
-];
-
-const AUDIO_QUALITY_OPTIONS: {
-  pref: AudioQualityPref;
-  label: string;
-  icon: typeof Icons.HigherQuality;
-}[] = [
-  { pref: "higher", label: "Higher quality", icon: Icons.HigherQuality },
-  { pref: "lower", label: "Lower bandwidth", icon: Icons.LowerBandwidth },
-];
-
-/** The Settings dropdown pinned to the sidebar bottom: gear icon + muted
- * "Settings" label, opening a menu upward (it sits on the bottom edge) with a
- * Light/Dark/System theme picker, a Higher quality/Lower bandwidth audio
- * streaming picker, and the Keyboard shortcuts entry. */
+/** The Settings dropdown pinned to the explorer's bottom: gear icon + muted
+ * "Settings" label, opening {@link SettingsMenu} upward (it sits on the bottom
+ * edge). */
 export default function SettingsFooter(): JSX.Element {
-  const store = useAppState();
   return (
     <Menu
       side="above"
@@ -58,37 +27,7 @@ export default function SettingsFooter(): JSX.Element {
         </button>
       )}
     >
-      <MenuHeading text="Theme" />
-      <For each={THEME_OPTIONS}>
-        {(option) => (
-          <MenuToggleItem
-            kind="radio"
-            icon={option.icon}
-            label={option.label}
-            checked={store.state.theme === option.pref}
-            onClick={() => store.setTheme(option.pref)}
-          />
-        )}
-      </For>
-      <MenuSeparator />
-      <MenuHeading text="Audio streaming" />
-      <For each={AUDIO_QUALITY_OPTIONS}>
-        {(option) => (
-          <MenuToggleItem
-            kind="radio"
-            icon={option.icon}
-            label={option.label}
-            checked={store.audioQuality() === option.pref}
-            onClick={() => store.setAudioQuality(option.pref)}
-          />
-        )}
-      </For>
-      <MenuSeparator />
-      <MenuItem
-        icon={Icons.Keyboard}
-        label="Keyboard shortcuts"
-        onClick={() => store.openShortcutsTab()}
-      />
+      <SettingsMenu />
     </Menu>
   );
 }

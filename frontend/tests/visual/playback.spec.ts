@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "./fixtures";
+import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
 /** The store the app exposes under `?expose=1` (the same seam reload.spec uses). */
