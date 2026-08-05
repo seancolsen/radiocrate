@@ -11,7 +11,6 @@ import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
 import FieldValue, { type EditExit } from "./FieldValue";
-import LoadingRegion from "./LoadingRegion";
 import ModifiedStar from "./ModifiedStar";
 import {
   fieldItemId,
@@ -22,6 +21,7 @@ import {
 } from "./formModel";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
+import LoadingRegion from "../ui/LoadingRegion";
 import type { FormField, MultiRecordField } from "../../query/recordForm";
 
 // The form's tree, rendered. The components here call each other in a cycle — a

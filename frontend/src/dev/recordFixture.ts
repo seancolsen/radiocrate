@@ -233,8 +233,9 @@ function parseSort(sort: string): { path: string; descending: boolean }[] {
   return terms;
 }
 
-/** Answers one record editor query out of the fixture rows. */
-function query(q: RecordQuery): (string | null)[][] {
+/** Answers one record editor query out of the fixture rows — a mock of the
+ * query API a story can hand a component directly, with no runner install. */
+export function fixtureQuery(q: RecordQuery): (string | null)[][] {
   const conditions = parseConditions(q.filter);
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
     conditions.every((condition) => matches(row, condition)),
@@ -266,6 +267,8 @@ function query(q: RecordQuery): (string | null)[][] {
 export function installRecordFixture(delayMs: number): void {
   setRecordQueryRunner(
     (q) =>
-      new Promise((resolve) => setTimeout(() => resolve(query(q)), delayMs)),
+      new Promise((resolve) =>
+        setTimeout(() => resolve(fixtureQuery(q)), delayMs),
+      ),
   );
 }

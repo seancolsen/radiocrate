@@ -3,9 +3,9 @@ import type { DmlOperation, DmlResult } from "api-client";
 import { createRecordForm, ROOT_ID } from "./formModel";
 import { registerForm, unregisterForm } from "./formRegistry";
 import { recordIdentity, releaseUnmodified, stashedForm } from "./formStash";
+import FieldRecordPicker from "./FieldRecordPicker";
 import RecordContextMenu from "./RecordContextMenu";
 import RecordNodeView from "./RecordFields";
-import RecordPicker from "./RecordPicker";
 import type { SchemaTable } from "../../query/schema";
 import type { KeyPart } from "../../query/recordForm";
 
@@ -108,7 +108,7 @@ export default function RecordForm(props: {
     >
       <RecordNodeView model={model} recordId={ROOT_ID} />
       <RecordContextMenu model={model} />
-      <RecordPicker model={model} schemaJson={props.schemaJson} />
+      <FieldRecordPicker model={model} schemaJson={props.schemaJson} />
     </div>
   );
 }

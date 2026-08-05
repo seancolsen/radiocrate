@@ -81,15 +81,11 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The modal picker a scalar linked record field opens: the search box with
-  // its sort and display buttons, the results as the embedded records they're
-  // about to become, and the "New record" way out. Shot through the dialog (it
-  // portals out of the stage).
+  // The modal picker on its own: the search box with its sort and display
+  // buttons, and the results as the embedded records they're about to become.
+  // Shot through the dialog (it portals out of the stage).
   test(`record-picker/basic - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(page, "record-picker/basic", colorScheme);
-    await stage.getByRole("button", { name: "Expand credit" }).click();
-    await stage.getByRole("button", { name: "Expand Beyoncé" }).click();
-    await stage.locator('[data-item-id="r##credit[0]:artist"]').dblclick();
+    await openStory(page, "record-picker/basic", colorScheme);
     const picker = page.getByRole("dialog");
     await expect(picker.getByTestId("picker-results")).toHaveAttribute(
       "data-rows",

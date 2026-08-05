@@ -1,32 +1,26 @@
-import {
-  createEffect,
-  createSignal,
-  onCleanup,
-  onMount,
-  Show,
-  untrack,
-} from "solid-js";
-import { Modal } from "../ui/Modal";
-import IconButton from "../ui/IconButton";
-import CustomInput from "../builder/CustomInput";
-import LoadingRegion from "./LoadingRegion";
-import { fieldItemId, type RecordFormModel } from "./formModel";
-import { Icons } from "../../icons";
-import { CanvasGrid } from "../canvasGrid";
-import { recordPickerQuery } from "../../query/embeddedRecord";
-import { runRecordQuery, type RecordRows } from "../../query/recordData";
-import { buildResultFromStringRows } from "../../query/result";
-import type { ScalarLinkField } from "../../query/recordForm";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Modal } from "./ui/Modal";
+import IconButton from "./ui/IconButton";
+import LoadingRegion from "./ui/LoadingRegion";
+import CustomInput from "./builder/CustomInput";
+import { Icons } from "../icons";
+import { CanvasGrid } from "./canvasGrid";
+import { recordPickerQuery } from "../query/embeddedRecord";
+import type { RecordQuery } from "../query/recordForm";
+import type { RecordRows } from "../query/recordData";
+import { buildResultFromStringRows } from "../query/result";
 
-// The modal record picker: how a scalar linked record field is pointed at a
-// record that already exists.
+// The modal record picker: a small query page in a dialog, letting the user
+// search a table and hand one record's key value — plus the preview cells
+// already loaded for it — back to whoever opened it.
 //
-// It's a small query page in a dialog. The search box takes Querydown filtering
-// code, exactly as the toolbar's filter section does; the sort and display
-// sections behind the two icon buttons take the same code and open pre-filled
-// with what the points-based generator picked for this table (see
-// `query/embeddedRecord.ts`) — so the results read as the embedded records they
-// are about to become, and the user can overrule that choice for one search.
+// The search box takes Querydown filtering code, exactly as the toolbar's
+// filter section does; the sort and display sections behind the two icon
+// buttons take the same code and open pre-filled with whatever the caller
+// hands in as `initialSort` / `initialDisplay` — in the record editor, that's
+// what the points-based generator picked for this table (see
+// `query/embeddedRecord.ts`), so the results read as the embedded records
+// they are about to become. The user can overrule that choice for one search.
 //
 // What it does *not* do is behave like the query page's search: the query runs
 // as the user types rather than on a keystroke, the search box holds one line,
@@ -34,62 +28,40 @@ import type { ScalarLinkField } from "../../query/recordForm";
 // box — because picking a record is one continuous act of typing, not a query
 // you compose and then run.
 //
-// The chosen record is handed to the form whole (key *and* preview cells), so
-// the embedded record that replaces this modal renders without another request.
+// The chosen record is handed back whole (key *and* preview cells), so
+// whatever replaces this modal renders without another request.
 
 /** How long typing settles before the query runs. Long enough that a word
  * typed at speed is one query rather than five, short enough to feel live. */
 const DEBOUNCE_MS = 180;
 
-/** The record picker for whichever field has one open, or nothing. Rendered once
- * per form, beside its context menu. */
+/** A modal letting the user search `table` and pick one record from it. */
 export default function RecordPicker(props: {
-  model: RecordFormModel;
-  schemaJson: string;
+  /** The table being picked from: names the dialog and the search box. */
+  table: string;
+  /** The column identifying a record there. It is column 0 of every result
+   * row, and its value is what `onPick` hands back. */
+  keyColumn: string;
+  /** Querydown the sort / display builders open pre-filled with. */
+  initialSort: string;
+  initialDisplay: string;
+  /** Runs one picker query. The picker builds the query (it knows its own
+   * column order); the caller decides how it reaches a database. */
+  runQuery: (query: RecordQuery) => Promise<RecordRows>;
+  /** The user chose a record: its key value, and the preview cells already
+   * loaded for it — so whatever replaces this modal renders without a further
+   * request. */
+  onPick: (keyValue: string, cells: readonly (string | null)[]) => void;
+  /** Dismissed without picking (the X, the scrim, Escape). */
+  onCancel: () => void;
+  /** Offered as "New record" when the search finds nothing worth linking to,
+   * carrying whatever was typed. Omit in a context that can only pick an
+   * existing record — the button is then not rendered. */
+  onCreate?: (seed: string | undefined) => void;
 }) {
-  /** The field the open picker belongs to — only ever a scalar linked record
-   * field, which is the only kind that points at a single existing record. */
-  const field = (recordId: string, fieldKey: string) => {
-    const found = props.model
-      .record(recordId)
-      ?.fields.find((f) => f.key === fieldKey);
-    return found?.kind === "scalarLink" ? found : undefined;
-  };
-
-  return (
-    // Keyed on the target, so each opening starts from a fresh search rather
-    // than from where the last one left off.
-    <Show when={props.model.picker()} keyed>
-      {(open) => (
-        <Show when={field(open.recordId, open.fieldKey)}>
-          {(target) => (
-            <PickerModal
-              model={props.model}
-              schemaJson={props.schemaJson}
-              recordId={open.recordId}
-              field={target()}
-            />
-          )}
-        </Show>
-      )}
-    </Show>
-  );
-}
-
-function PickerModal(props: {
-  model: RecordFormModel;
-  schemaJson: string;
-  recordId: string;
-  field: ScalarLinkField;
-}) {
-  // One modal belongs to one field for its whole life (the `keyed` Show above
-  // rebuilds it otherwise), so its subject is read once.
-  const itemId = untrack(() => fieldItemId(props.recordId, props.field.key));
-  const spec = untrack(() => props.model.previewSpec(props.field.table));
-
   const [filter, setFilter] = createSignal("");
-  const [sort, setSort] = createSignal(spec.sort);
-  const [display, setDisplay] = createSignal(spec.display.join(" "));
+  const [sort, setSort] = createSignal(props.initialSort);
+  const [display, setDisplay] = createSignal(props.initialDisplay);
   /** Which of the two builders is open below the search box, if either. */
   const [section, setSection] = createSignal<"sort" | "display" | null>(null);
 
@@ -107,15 +79,14 @@ function PickerModal(props: {
     const mine = ++token;
     setLoading(true);
     try {
-      const rows = await runRecordQuery(
+      const rows = await props.runQuery(
         recordPickerQuery(
-          props.field.table,
-          [props.field.keyColumn],
+          props.table,
+          [props.keyColumn],
           filter(),
           sort(),
           display(),
         ),
-        props.schemaJson,
       );
       if (token !== mine) return;
       setResults(rows);
@@ -158,40 +129,19 @@ function PickerModal(props: {
       : [row[0]];
   };
 
-  /** Puts the user back on the field they came from, once the modal is gone.
-   * Deferred a tick, since the field's row only regains its focusable label as
-   * this modal unmounts. */
-  const restoreFocus = () =>
-    untrack(() => {
-      const model = props.model;
-      queueMicrotask(() => model.focusItem(itemId));
-    });
-
-  /** Close without touching the field — the X, the scrim, Escape. */
-  const dismiss = () => {
-    props.model.closePicker();
-    restoreFocus();
-  };
-
-  /** Choose a record: the field points at it, and its preview is already
-   * loaded, so the embedded record appears the moment the modal does not. */
+  /** Choose a record: its preview is already loaded, so whatever replaces this
+   * modal appears the moment the modal does not. */
   const choose = (row: readonly (string | null)[]) => {
     const key = row[0];
     if (key == null) return;
-    props.model.pickRecord(props.recordId, props.field, key, cells(row));
-    restoreFocus();
+    props.onPick(key, cells(row));
   };
 
   /** Nothing here to link to: scaffold a new record instead, carrying whatever
    * was searched for into its first text field. */
   const enterNewRecord = () => {
     const seed = filter().trim();
-    props.model.closePicker();
-    props.model.addLinkedRecord(
-      props.recordId,
-      props.field,
-      seed === "" ? undefined : seed,
-    );
+    props.onCreate?.(seed === "" ? undefined : seed);
   };
 
   /** The keys the search box gives up to the list below it, without giving up
@@ -291,15 +241,15 @@ function PickerModal(props: {
     setSection((open) => (open === which ? null : which));
 
   return (
-    <Modal onClose={dismiss} width="560px">
+    <Modal onClose={props.onCancel} width="560px">
       <div class="flex items-center gap-2">
         <h2 class="text-ink min-w-0 flex-1 truncate text-base font-semibold">
-          Pick {props.field.table}
+          Pick {props.table}
         </h2>
         <IconButton
           icon={Icons.Close}
           label="Close record picker"
-          onClick={dismiss}
+          onClick={props.onCancel}
         />
       </div>
 
@@ -309,7 +259,7 @@ function PickerModal(props: {
             singleLine
             ref={(el) => (searchEl = el)}
             value={filter()}
-            hint={`Filter ${props.field.table}`}
+            hint={`Filter ${props.table}`}
             onInput={setFilter}
             onClear={() => setFilter("")}
             onKeyDown={onKeyDown}
@@ -379,13 +329,15 @@ function PickerModal(props: {
             {results().length === 1 ? "result" : "results"}
           </Show>
         </span>
-        <button
-          type="button"
-          class="text-ink hover:bg-hover border-edge rounded-md border px-3 py-1.5 text-sm"
-          onClick={enterNewRecord}
-        >
-          New record
-        </button>
+        <Show when={props.onCreate}>
+          <button
+            type="button"
+            class="text-ink hover:bg-hover border-edge rounded-md border px-3 py-1.5 text-sm"
+            onClick={enterNewRecord}
+          >
+            New record
+          </button>
+        </Show>
       </div>
     </Modal>
   );

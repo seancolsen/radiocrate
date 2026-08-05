@@ -3,7 +3,11 @@ import type { CommandStore } from "../../state/commands";
 import type { AppStore, RecordRef } from "../../state/store";
 import { emptyDefinition, type QueryDefinition } from "../../query/definition";
 import { emptyCountResult, lemonadeGridResult } from "../gridFixture";
-import { FIXTURE_SCHEMA_JSON, installRecordFixture } from "../recordFixture";
+import {
+  FIXTURE_SCHEMA_JSON,
+  fixtureQuery,
+  installRecordFixture,
+} from "../recordFixture";
 import { failDml } from "./mockApi";
 import {
   FILTER_DEF,
@@ -24,6 +28,7 @@ import RecordEditorPanel from "../../components/RecordEditorPanel";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import SettingsMenu from "../../components/SettingsMenu";
 import { CaptureDialog } from "../../components/ShortcutsPage";
+import RecordPicker from "../../components/RecordPicker";
 import QueryBuilder from "../../components/builder/QueryBuilder";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import { ContextMenu } from "../../components/ui/ContextMenu";
@@ -379,8 +384,26 @@ export const STORIES: Record<string, Story> = {
     1,
     'Duplicate key "title: Sorry" violates unique constraint.',
   ),
-  // The modal record picker, opened from a credit's `artist` field.
-  "record-picker/basic": recordEditor(3),
+  // The modal record picker on its own: the search box with its sort and
+  // display buttons, the results as the embedded records they're about to
+  // become, and the "New record" way out. `initialSort`/`initialDisplay` are
+  // hard-coded to what `embedSpec` picks for `artist` (see
+  // `query/embeddedRecord.test.ts`) — deriving them here would make this story
+  // about the generator rather than about the picker.
+  "record-picker/basic": {
+    render: () => (
+      <RecordPicker
+        table="artist"
+        keyColumn="id"
+        initialSort="\\\\name \\\\id"
+        initialDisplay="$name"
+        runQuery={(q) => Promise.resolve(fixtureQuery(q))}
+        onPick={() => {}}
+        onCancel={() => {}}
+        onCreate={() => {}}
+      />
+    ),
+  },
 
   // ── Embedded records ─────────────────────────────────────────────────────
   // One preview widget, from cells alone: a selected member of a multi-record
