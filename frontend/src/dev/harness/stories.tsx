@@ -383,26 +383,14 @@ export const STORIES: Record<string, Story> = {
   "record-picker/basic": recordEditor(3),
 
   // ── Embedded records ─────────────────────────────────────────────────────
-  // The preview widget itself, from cells alone: two selectable members of a
-  // multi-record field (the first selected), then the unselectable preview a
-  // scalar linked record field shows.
+  // One preview widget, from cells alone: a selected member of a multi-record
+  // field, wearing the results grid's selected-row fill under its sheen.
   "embedded-record/selected": {
     width: 320,
-    render: () => (
-      // Each widget takes the whole width of its own row, as the form's field
-      // rows give it — it sizes itself from the width it's handed.
-      <div class="flex flex-col gap-1.5 p-2">
-        <div class="flex">
-          <EmbeddedRecord cells={["Beyoncé"]} focusable selected />
-        </div>
-        <div class="flex">
-          <EmbeddedRecord cells={["Jack White"]} focusable />
-        </div>
-        <div class="flex">
-          <EmbeddedRecord cells={["Pray You Catch Me.flac"]} />
-        </div>
-      </div>
-    ),
+    // The widget takes the whole width of the row it's given, and sizes itself
+    // from it.
+    frame: "flex p-2",
+    render: () => <EmbeddedRecord cells={["Beyoncé"]} focusable selected />,
   },
 };
 

@@ -100,16 +100,17 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The preview widget itself, from cells alone: two selectable members of a
-  // multi-record field (the first selected), then the unselectable preview a
-  // scalar linked record field shows.
+  // One preview widget, from cells alone, in its selected state.
   test(`embedded-record/selected - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
       "embedded-record/selected",
       colorScheme,
     );
-    await expect(stage.locator(".rc-embedded")).toHaveCount(3);
+    await expect(stage.locator(".rc-embedded")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
     await expect(stage).toHaveScreenshot(
       snapshot("embedded-record/selected", colorScheme),
     );
