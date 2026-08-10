@@ -310,6 +310,92 @@ test("selecting another row rebuilds the form on that record", async ({
   await expect(title("Pray You Catch Me")).toBeHidden();
 });
 
+// ── Several records at once ─────────────────────────────────────────────────
+//
+// Widening the result-row selection puts the editor on every record it covers.
+// It's the same form: what the records agree on is editable as ever and the edit
+// lands on all of them, what they disagree on reads "(varied)", and their child
+// records wait for bulk modification proper.
+
+/** Widens the row selection to rows 0…`through`, the sidebar following it. */
+async function extendSelectionTo(page: Page, through: number) {
+  await page
+    .locator("canvas")
+    .click({ position: { x: 200, y: rowY(through) }, modifiers: ["Shift"] });
+}
+
+test("widening the selection puts the editor on every record it covers", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page); // track-1
+  const editor = editorPanel(page);
+  await expect(
+    editor.getByText("Pray You Catch Me", { exact: true }),
+  ).toBeVisible();
+
+  await extendSelectionTo(page, 1); // track-1 and track-2
+  await expect(editor.getByRole("heading")).toHaveText("Edit 2 track records");
+
+  // The titles differ, so there is no title to show — or to edit.
+  await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
+  await expect(formItem(editor, "r:title")).toBeVisible();
+  await expect(editor.getByText("(varied)").first()).toBeVisible();
+  await formItem(editor, "r:title").dblclick();
+  await expect(editor.getByRole("textbox")).toBeHidden();
+
+  // Child records are not editable across records yet, so a multi-record field
+  // says so in place of the ways into it.
+  await expect(
+    editor.getByText("Bulk modification not yet supported").first(),
+  ).toBeVisible();
+  await expect(editor.getByRole("button", { name: "Add credit" })).toBeHidden();
+  await expect(
+    editor.getByRole("button", { name: "Expand credit" }),
+  ).toBeHidden();
+
+  // Narrowing the selection back to one row is the single-record form again.
+  await page.locator("canvas").click({ position: { x: 200, y: rowY(1) } });
+  await expect(editor.getByRole("heading")).toHaveText("Edit track");
+  await expect(editor.getByText("Hold Up", { exact: true })).toBeVisible();
+});
+
+test("editing a field the records share writes every one of them", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 1);
+
+  // Both tracks are on disc 1, so that field has a value to edit — and the
+  // edit is made to both of them.
+  await editor.getByText("1", { exact: true }).first().click();
+  await editor.getByRole("textbox").fill("2");
+  await page.keyboard.press("Escape");
+  await expect(star(editor, "disc_number")).toBeVisible();
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-1" },
+      values: { disc_number: "2" },
+    },
+    {
+      operation: "update",
+      id: "op2",
+      table: "track",
+      where: { id: "track-2" },
+      values: { disc_number: "2" },
+    },
+  ]);
+});
+
 test("a NULL field offers a pencil, which activates an empty input", async ({
   page,
 }) => {

@@ -8,10 +8,10 @@
 // rows the keys `track-1` … `track-5`, which is what the ids below are.
 //
 // The fake query runner interprets only the shapes `query/recordForm.ts` and
-// `query/embeddedRecord.ts` generate — `col:="value"` conditions, `$col` /
-// `$link.col` / `$#table` display expressions, `\\col` / `\\col \d` sorting —
-// rather than being a SQL engine. If the generators learn a new shape, this
-// learns it too.
+// `query/embeddedRecord.ts` generate — `col:="value"` conditions, `[{…} {…}]`
+// alternatives, `$col` / `$link.col` / `$#table` display expressions, `\\col` /
+// `\\col \d` sorting — rather than being a SQL engine. If the generators learn a
+// new shape, this learns it too.
 
 import { addInferredLinks } from "../query/schema";
 import { setRecordQueryRunner } from "../query/recordData";
@@ -196,6 +196,22 @@ function parseConditions(filter: string): Condition[] {
   return conditions;
 }
 
+/** A filter as alternatives, each a set of conditions AND-ed together: one
+ * group for the ordinary filter, and one per `{…}` when `keyConditions` writes
+ * out several records' keys inside `[…]`. A row satisfies the filter when it
+ * satisfies any group. */
+function parseFilter(filter: string): Condition[][] {
+  if (!filter.trim().startsWith("[")) return [parseConditions(filter)];
+  const groups = [...filter.matchAll(/\{([^}]*)\}/g)].map((m) =>
+    parseConditions(m[1]),
+  );
+  // `[…]` around bare conditions (rather than `{…}` groups) is one alternative
+  // per condition — the shape a single-column key takes.
+  return groups.length > 0
+    ? groups
+    : parseConditions(filter).map((condition) => [condition]);
+}
+
 /** Whether one row satisfies one condition. */
 function matches(row: Row, condition: Condition): boolean {
   const cell = row[condition.column];
@@ -236,9 +252,11 @@ function parseSort(sort: string): { path: string; descending: boolean }[] {
 /** Answers one record editor query out of the fixture rows — a mock of the
  * query API a story can hand a component directly, with no runner install. */
 export function fixtureQuery(q: RecordQuery): (string | null)[][] {
-  const conditions = parseConditions(q.filter);
+  const groups = parseFilter(q.filter);
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
-    conditions.every((condition) => matches(row, condition)),
+    groups.some((conditions) =>
+      conditions.every((condition) => matches(row, condition)),
+    ),
   );
   const terms = parseSort(q.sort);
   rows.sort((a, b) => {

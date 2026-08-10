@@ -21,6 +21,12 @@ export interface KeyPart {
   value: string;
 }
 
+/** One record's identity, whole. The form deals in *sets* of these — the record
+ * editor is always on some number of records, one being the ordinary case — and
+ * every key in such a set names the same columns in the same order, since they
+ * are all records of the same table. */
+export type RecordKey = readonly KeyPart[];
+
 /** The value category a column's data falls into — what picks a field label's
  * icon and color, and whether the value gets the expandable-text treatment.
  * Coarser than the SQL type on purpose: the form only distinguishes what it
@@ -200,11 +206,46 @@ export function quoteValue(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-/** Querydown conditions matching exactly the record `key` identifies. `:=` is
+/** Querydown conditions matching exactly the records `keys` identifies. `:=` is
  * the exact-equality operator — plain `:` would compile to a substring match on
- * a text column. */
-export function keyConditions(key: readonly KeyPart[]): string {
-  return key.map((p) => `${p.column}:=${quoteValue(p.value)}`).join("\n");
+ * a text column.
+ *
+ * The columns of one key are AND-ed, as newline-separated conditions always
+ * are. Several keys are OR-ed: `[…]` encloses alternatives, and each key's
+ * conditions go in a `{…}` group of their own so that a composite key stays one
+ * alternative rather than dissolving into the OR.
+ *
+ * ```
+ * [
+ *   {
+ *     track:="t1"
+ *     artist:="a1"
+ *   }
+ *   {
+ *     track:="t2"
+ *     artist:="a2"
+ *   }
+ * ]
+ * ```
+ */
+export function keyConditions(keys: readonly RecordKey[]): string {
+  const conditions = (key: RecordKey) =>
+    key.map((p) => `${p.column}:=${quoteValue(p.value)}`);
+  // One record needs no alternatives, and reads better without them.
+  if (keys.length <= 1) return conditions(keys[0] ?? []).join("\n");
+  const groups = keys.map(
+    (key) =>
+      `  {\n${conditions(key)
+        .map((c) => `    ${c}`)
+        .join("\n")}\n  }`,
+  );
+  return `[\n${groups.join("\n")}\n]`;
+}
+
+/** A record's key values as one string, so a row of {@link recordDataQuery} can
+ * be matched back to the record it belongs to. */
+export function keySignature(values: readonly (string | null)[]): string {
+  return JSON.stringify(values);
 }
 
 /** The display expression loading one field: the column's value, or — for a
@@ -214,21 +255,29 @@ function displayExpr(field: FormField): string {
   return field.kind === "multiRecord" ? `$#${field.table}` : `$${field.column}`;
 }
 
-/** The query loading one record's own data: every intrinsic field's value plus
- * every referencing field's record count, for the single record `key`
- * identifies. Nested data is left to expansion.
+/** The query loading the data behind one node of the form: every intrinsic
+ * field's value plus every referencing field's record count, for each of the
+ * records `keys` identifies. Nested data is left to expansion.
  *
- * The result's columns are positional — one per entry of `fields`, in order. */
+ * One query answers for every record — the rows come back in no particular
+ * order, so the key columns are displayed ahead of the fields and each row is
+ * matched to its record by them ({@link keySignature}). A key column that is a
+ * field too is therefore displayed twice, which costs a duplicated column in the
+ * SQL and keeps the offsets uniform.
+ *
+ * The result's columns are positional: the key columns first, then one per entry
+ * of `fields`, in order. */
 export function recordDataQuery(
   table: string,
   fields: readonly FormField[],
-  key: readonly KeyPart[],
+  keys: readonly RecordKey[],
 ): RecordQuery {
+  const keyColumns = keys[0]?.map((p) => `$${p.column}`) ?? [];
   return {
     base: table,
-    filter: keyConditions(key),
+    filter: keyConditions(keys),
     sort: "",
-    display: fields.map(displayExpr).join(" "),
+    display: [...keyColumns, ...fields.map(displayExpr)].join(" "),
   };
 }
 

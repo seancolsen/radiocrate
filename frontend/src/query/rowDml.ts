@@ -42,7 +42,7 @@ import { compileSavedQuery } from "./compile";
 import type { QueryDefinition } from "./definition";
 import { analyzeColumnSources, recordKeyColumns } from "./lineage";
 import { querydownReady } from "./querydown";
-import { keyConditions, type KeyPart } from "./recordForm";
+import { keyConditions, type RecordKey } from "./recordForm";
 import { parseSchemaTables } from "./schema";
 
 /** A record a result row identifies: the table, plus the key values that row
@@ -50,7 +50,7 @@ import { parseSchemaTables } from "./schema";
  * straight in. */
 export interface RowRecord {
   table: string;
-  key: readonly KeyPart[];
+  key: RecordKey;
 }
 
 /** Where a re-read row's values live: `table`'s row `row` — what
@@ -78,20 +78,21 @@ export interface RowContext {
   records: readonly RowRecord[];
 }
 
-/** What a row-context DML request produced: the API's answer, and where the row
+/** What a row-context DML request produced: the API's answer, and where each row
  * now reads from. */
 export interface RowDmlOutcome {
   /** Per-operation returned rows, exactly as the API gave them. */
   result: DmlResult;
-  /** The refreshed row's location, or `undefined` when it couldn't be read back
-   * — no row context, a query that can't be narrowed *and* whose re-run no
-   * longer carries the row, or a failure along the way. The write still
-   * happened. */
-  row: RowLocation | undefined;
+  /** Where each row now reads from, index-aligned to the contexts asked for.
+   * An entry is `undefined` when that row couldn't be read back — a query that
+   * can't be narrowed *and* whose re-run no longer carries the row, or a failure
+   * along the way. The write still happened. */
+  rows: readonly (RowLocation | undefined)[];
 }
 
-/** Runs `operations` as one DML request, then re-reads the row it was made
- * against.
+/** Runs `operations` as one DML request, then re-reads the rows it was made
+ * against — one context per row, since a write made from a multi-row selection
+ * leaves every one of those rows out of date.
  *
  * A refresh that fails is reported and swallowed: the write has already landed,
  * and losing the redisplay must not read to the caller as the save having
@@ -99,18 +100,20 @@ export interface RowDmlOutcome {
  */
 export async function runRowDml(
   operations: DmlOperation[],
-  context: RowContext | undefined,
+  contexts: readonly RowContext[],
 ): Promise<RowDmlOutcome> {
   const result = await dml({ operations });
-  let row: RowLocation | undefined;
-  if (context) {
-    try {
-      row = await refreshRow(context);
-    } catch (err) {
-      console.error("result row refresh failed", err);
-    }
-  }
-  return { result, row };
+  const rows = await Promise.all(
+    contexts.map(async (context) => {
+      try {
+        return await refreshRow(context);
+      } catch (err) {
+        console.error("result row refresh failed", err);
+        return undefined;
+      }
+    }),
+  );
+  return { result, rows };
 }
 
 /** Re-reads one row: through the narrowed query when the definition can be
@@ -144,7 +147,7 @@ export function narrowedDefinition(
   if (!record || record.key.length === 0) return undefined;
   return {
     base: def.base,
-    filter: { custom: keyConditions(record.key), presets: [] },
+    filter: { custom: keyConditions([record.key]), presets: [] },
     sort: { custom: "" },
     display: def.display,
   };

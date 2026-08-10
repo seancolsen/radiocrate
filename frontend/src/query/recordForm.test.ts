@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildFormFields,
   keyConditions,
+  keySignature,
   quoteValue,
   recordDataQuery,
   valueTypeOf,
@@ -157,21 +158,75 @@ describe("Querydown generation", () => {
   it("matches a record on every column of its key, exactly", () => {
     expect(
       keyConditions([
-        { column: "track", value: "t1" },
-        { column: "artist", value: "a1" },
+        [
+          { column: "track", value: "t1" },
+          { column: "artist", value: "a1" },
+        ],
       ]),
     ).toBe(`track:="t1"\nartist:="a1"`);
+  });
+
+  it("matches several records as alternatives, each key a group of its own", () => {
+    expect(
+      keyConditions([
+        [{ column: "id", value: "t1" }],
+        [{ column: "id", value: "t2" }],
+      ]),
+    ).toBe(`[\n  {\n    id:="t1"\n  }\n  {\n    id:="t2"\n  }\n]`);
+    // A composite key stays one alternative: its columns are AND-ed inside the
+    // group, and the groups are OR-ed.
+    expect(
+      keyConditions([
+        [
+          { column: "track", value: "t1" },
+          { column: "artist", value: "a1" },
+        ],
+        [
+          { column: "track", value: "t2" },
+          { column: "artist", value: "a2" },
+        ],
+      ]),
+    ).toBe(
+      `[\n  {\n    track:="t1"\n    artist:="a1"\n  }\n` +
+        `  {\n    track:="t2"\n    artist:="a2"\n  }\n]`,
+    );
   });
 
   it("loads a record's values and its related-record counts in one query", () => {
     const fields = buildFormFields(TABLES, "track");
     expect(
-      recordDataQuery("track", fields, [{ column: "id", value: "t1" }]),
+      recordDataQuery("track", fields, [[{ column: "id", value: "t1" }]]),
     ).toEqual({
       base: "track",
       filter: `id:="t1"`,
       sort: "",
-      display: "$id $title $album $track_number $#credit $#play",
+      // The key column leads, so a row can be matched back to its record; that
+      // it's a field too just displays it twice.
+      display: "$id $id $title $album $track_number $#credit $#play",
     });
+  });
+
+  it("loads every record the form is on in one query", () => {
+    const fields = buildFormFields(TABLES, "credit", ["track"]);
+    const query = recordDataQuery("credit", fields, [
+      [
+        { column: "track", value: "t1" },
+        { column: "artist", value: "a1" },
+      ],
+      [
+        { column: "track", value: "t2" },
+        { column: "artist", value: "a2" },
+      ],
+    ]);
+    expect(query.display).toBe("$track $artist $artist $ord $role");
+    expect(query.filter).toContain(`track:="t2"`);
+  });
+
+  it("signs a key the same way whichever side of the query it comes from", () => {
+    expect(keySignature(["t1", "a1"])).toBe(keySignature(["t1", "a1"]));
+    expect(keySignature(["t1", "a1"])).not.toBe(keySignature(["t1", "a2"]));
+    // A NULL cell is not the empty string, and a key isn't run together.
+    expect(keySignature([null])).not.toBe(keySignature([""]));
+    expect(keySignature(["a", "b"])).not.toBe(keySignature(["ab"]));
   });
 });

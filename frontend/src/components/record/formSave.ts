@@ -23,11 +23,17 @@
 // deleted record whose children were never loaded is sent on its own, and the
 // server rejects it as a dangling reference. That error lands in the form like
 // any other.
+//
+// A node standing for several records (the editor on a multi-row selection)
+// needs no rule of its own: an operation names one record, so the node yields
+// one per record it holds — each with its own `where` and its own changed
+// columns, which for an edit made across all of them is the same column with the
+// same value. Everything above still holds, record by record.
 
 import type { DmlOperation, JsonValue } from "api-client";
 import type {
-  KeyPart,
   PrimitiveField,
+  RecordKey,
   ScalarLinkField,
 } from "../../query/recordForm";
 import { listId, ROOT_ID, scalarChildId } from "./formIds";
@@ -40,12 +46,20 @@ export interface FormTree {
   list: (id: string) => ListNode | undefined;
 }
 
+/** Where one operation's returned row belongs: the node it was planned from,
+ * and which of that node's records it wrote — a node standing for several
+ * records produces one operation each. */
+export interface SaveTarget {
+  recordId: string;
+  index: number;
+}
+
 /** A request to save the form, and what the answer means for it. */
 export interface SavePlan {
   operations: DmlOperation[];
-  /** Operation id → the record node that operation writes, so the row it
-   * returns can be folded back into the right node. */
-  saved: ReadonlyMap<string, string>;
+  /** Operation id → the record that operation writes, so the row it returns can
+   * be folded back into the right place. */
+  saved: ReadonlyMap<string, SaveTarget>;
   /** The records being created — the ones that become real, with a key and a
    * preview of their own, once the request succeeds. */
   created: readonly string[];
@@ -54,7 +68,7 @@ export interface SavePlan {
 }
 
 /** A record's `where` clause: the columns that identify it, as loaded. */
-function keyObject(key: readonly KeyPart[]): Record<string, JsonValue> {
+function keyObject(key: RecordKey): Record<string, JsonValue> {
   return Object.fromEntries(key.map((part) => [part.column, part.value]));
 }
 
@@ -92,7 +106,7 @@ function dependents(tree: FormTree, recordId: string, node: RecordNode) {
  * an empty operation list when they've changed nothing. */
 export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
   const operations: DmlOperation[] = [];
-  const saved = new Map<string, string>();
+  const saved = new Map<string, SaveTarget>();
   const created: string[] = [];
   const deleted: string[] = [];
   let seq = 0;
@@ -105,15 +119,19 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
    * database, so it needs no operation at all. */
   const planDelete = (recordId: string) => {
     const node = tree.record(recordId);
-    if (!node || node.isNew || node.key.length === 0) return;
+    if (!node || node.isNew) return;
+    const keys = node.keys.filter((key) => key.length > 0);
+    if (keys.length === 0) return;
     for (const child of dependents(tree, recordId, node)) planDelete(child);
     deleted.push(recordId);
-    operations.push({
-      operation: "delete",
-      id: nextOpId(),
-      table: node.table,
-      where: keyObject(node.key),
-    });
+    for (const key of keys) {
+      operations.push({
+        operation: "delete",
+        id: nextOpId(),
+        table: node.table,
+        where: keyObject(key),
+      });
+    }
   };
 
   /** Walks the live tree for records the user has removed from a multi-record
@@ -160,53 +178,67 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
       if (opId !== undefined) links[field.column] = { id: opId };
     }
 
-    const values: Record<string, JsonValue> = {};
-    for (const field of node.fields) {
-      if (field.kind === "multiRecord") continue;
-      const value = columnValue(field, node.values[field.column]);
-      if (node.isNew) {
-        // A new record sends what it has; the database supplies the rest.
-        if (value !== null) values[field.column] = value;
-      } else if (node.values[field.column] !== node.original[field.column]) {
-        values[field.column] = value;
+    // What each record of the node has to write: its own changed columns,
+    // against its own baseline. A record being created sends everything it has
+    // instead — the database supplies the rest.
+    const values = node.keys.map((_, index) => {
+      const changed: Record<string, JsonValue> = {};
+      for (const field of node.fields) {
+        if (field.kind === "multiRecord") continue;
+        const current = node.values[field.column]?.[index] ?? null;
+        const value = columnValue(field, current);
+        if (node.isNew) {
+          if (value !== null) changed[field.column] = value;
+        } else if (current !== (node.original[field.column]?.[index] ?? null)) {
+          changed[field.column] = value;
+        }
       }
-    }
-    Object.assign(values, links);
-    if (node.isNew && context) values[context.column] = context.value;
+      // A record the form is creating for a link is created once, and every
+      // record of the node comes to point at it.
+      Object.assign(changed, links);
+      if (node.isNew && context) changed[context.column] = context.value;
+      return changed;
+    });
 
     let opId: string | undefined;
     if (node.isNew) {
+      // A record is only ever created singly, whatever the form around it holds.
       opId = nextOpId();
       operations.push({
         operation: "insert",
         id: opId,
         table: node.table,
-        values,
+        values: values[0] ?? {},
       });
-      saved.set(opId, recordId);
+      saved.set(opId, { recordId, index: 0 });
       created.push(recordId);
-    } else if (Object.keys(values).length > 0) {
-      const id = nextOpId();
-      operations.push({
-        operation: "update",
-        id,
-        table: node.table,
-        where: keyObject(node.key),
-        values,
+    } else {
+      node.keys.forEach((key, index) => {
+        if (Object.keys(values[index]).length === 0) return;
+        const id = nextOpId();
+        operations.push({
+          operation: "update",
+          id,
+          table: node.table,
+          where: keyObject(key),
+          values: values[index],
+        });
+        saved.set(id, { recordId, index });
       });
-      saved.set(id, recordId);
     }
 
     // The records that point back at this one go after it, so a new child can
     // carry the id this operation is about to produce. Every inferred link
     // points at `<table>.id`, so that — not this record's key, which may be
-    // composite — is what a child carries.
+    // composite — is what a child carries. A node holding several records has
+    // no children to plan: they can only be opened on one record at a time
+    // (`beyondBulk`), which is why one id is the whole story here.
     for (const field of node.fields) {
       if (field.kind !== "multiRecord") continue;
       const list = tree.list(listId(recordId, field.key));
       if (!list) continue;
       const parent: JsonValue =
-        opId === undefined ? (node.values["id"] ?? null) : { id: opId };
+        opId === undefined ? (node.values["id"]?.[0] ?? null) : { id: opId };
       for (const child of list.childIds) {
         planRecord(child, { column: field.column, value: parent });
       }

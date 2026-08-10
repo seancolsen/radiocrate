@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { planSave, type FormTree } from "./formSave";
 import { listId, ROOT_ID, scalarChildId } from "./formIds";
 import type { ListNode, RecordNode } from "./formModel";
-import { buildFormFields, type KeyPart } from "../../query/recordForm";
+import { buildFormFields, type RecordKey } from "../../query/recordForm";
+import type { ColumnValues } from "./formValues";
 import type { SchemaTable } from "../../query/schema";
 
 // The save planner over a hand-built form tree: the same shapes the model puts
@@ -51,24 +52,54 @@ const TABLES: SchemaTable[] = [
   },
 ];
 
+/** A node's values as it holds them: one entry per record, which for the nodes
+ * below is one apiece unless the test says otherwise. */
+const perRecord = (
+  values: Record<string, string | null>,
+  records = 1,
+): Record<string, ColumnValues> =>
+  Object.fromEntries(
+    Object.entries(values).map(([column, value]) => [
+      column,
+      Array.from({ length: records }, () => value),
+    ]),
+  );
+
 /** A record as the form holds one it loaded: values and baseline in step. */
 function loaded(
   table: string,
-  key: readonly KeyPart[],
+  key: RecordKey,
   values: Record<string, string | null>,
   hidden: readonly string[] = [],
 ): RecordNode {
   return {
     table,
-    key,
+    keys: [key],
     hidden,
     fields: buildFormFields(TABLES, table, hidden),
     status: "loaded",
     error: null,
-    values: { ...values },
-    original: { ...values },
+    values: perRecord(values),
+    original: perRecord(values),
     counts: {},
     isNew: false,
+  };
+}
+
+/** Several records as one node holds them — the editor opened on a multi-row
+ * selection. They agree on `values`, which is what makes those columns editable
+ * across all of them. */
+function loadedAll(
+  table: string,
+  keys: readonly RecordKey[],
+  values: Record<string, string | null>,
+): RecordNode {
+  const node = loaded(table, keys[0] ?? [], values);
+  return {
+    ...node,
+    keys,
+    values: perRecord(values, keys.length),
+    original: perRecord(values, keys.length),
   };
 }
 
@@ -82,13 +113,16 @@ function created(
   return { ...loaded(table, [], values, hidden), original: {}, isNew: true };
 }
 
-/** The same record after an edit — what the user changed, against the baseline
- * the load left behind. */
+/** The same node after an edit — what the user changed, in every record it
+ * stands for, against the baseline the load left behind. */
 function edited(
   node: RecordNode,
   changes: Record<string, string | null>,
 ): RecordNode {
-  return { ...node, values: { ...node.values, ...changes } };
+  return {
+    ...node,
+    values: { ...node.values, ...perRecord(changes, node.keys.length) },
+  };
 }
 
 function list(childIds: string[], removed: string[] = []): ListNode {
@@ -140,7 +174,67 @@ describe("planSave", () => {
         values: { title: "Renamed" },
       },
     ]);
-    expect(plan.saved.get("op1")).toBe(ROOT_ID);
+    expect(plan.saved.get("op1")).toEqual({ recordId: ROOT_ID, index: 0 });
+  });
+
+  it("updates each record of a multi-record form in its own operation", () => {
+    const node = loadedAll(
+      "track",
+      [
+        [{ column: "id", value: "track-1" }],
+        [{ column: "id", value: "track-2" }],
+      ],
+      { title: "Sorry", genre: "R&B" },
+    );
+    const plan = planSave(tree({ [ROOT_ID]: edited(node, { genre: "Pop" }) }));
+    expect(plan.operations).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "track",
+        where: { id: "track-1" },
+        values: { genre: "Pop" },
+      },
+      {
+        operation: "update",
+        id: "op2",
+        table: "track",
+        where: { id: "track-2" },
+        values: { genre: "Pop" },
+      },
+    ]);
+    // Each answer goes back to the record its operation was for.
+    expect(plan.saved.get("op2")).toEqual({ recordId: ROOT_ID, index: 1 });
+  });
+
+  it("writes only the records an edit actually changed", () => {
+    // A save is per record against its own baseline: the record that already
+    // held what the form now holds has nothing to write.
+    const node = loadedAll(
+      "track",
+      [
+        [{ column: "id", value: "track-1" }],
+        [{ column: "id", value: "track-2" }],
+      ],
+      { title: "Sorry" },
+    );
+    const plan = planSave(
+      tree({
+        [ROOT_ID]: {
+          ...node,
+          values: { ...node.values, title: ["Sorry", "Renamed"] },
+        },
+      }),
+    );
+    expect(plan.operations).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "track",
+        where: { id: "track-2" },
+        values: { title: "Renamed" },
+      },
+    ]);
   });
 
   it("reads an emptied field as NULL — unless the column can't hold one", () => {

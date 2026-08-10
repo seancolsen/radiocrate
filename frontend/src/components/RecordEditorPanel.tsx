@@ -1,4 +1,4 @@
-import { createMemo, For, Show, type Component } from "solid-js";
+import { createMemo, Show, type Component } from "solid-js";
 import {
   RECORD_SIDEBAR_MIN_WIDTH,
   useAppState,
@@ -18,10 +18,10 @@ import { formFor, recordIdentity } from "./record/formStash";
 // the now-playing bar alone.
 //
 // The panel itself is the frame — heading, close/reset/save buttons, resize
-// divider — and the dynamic-form work happens below it in `record/`. A
-// multi-row selection is the exception it handles on its own: it lists the
-// records it covers and says bulk modification isn't supported, rather than
-// building a form for them.
+// divider — and the dynamic-form work happens below it in `record/`. A multi-row
+// selection is no exception here: the same form is built for every record the
+// selection covers, and what differs about editing several at once is settled
+// field by field, well below this (see `record/formValues.ts`).
 
 /** Least width left to the results while dragging the divider, so the pane the
  * editor was opened *from* can't be squeezed away entirely. */
@@ -29,11 +29,11 @@ const MIN_RESULTS_WIDTH = 160;
 /** Keyboard resize step (Arrow keys on the divider). */
 const RESIZE_STEP = 16;
 
-/** A record's identity as a string — table plus key — for comparing two
- * `RecordRef`s without caring which object carries them. The same string keys
- * the record's stashed form, so "the same record" means one thing throughout. */
-function identity(record: RecordRef | undefined): string {
-  return record ? recordIdentity(record.table, record.key) : "";
+/** The records' identities as strings — table plus key each — for comparing two
+ * selections without caring which objects carry them. The same strings key the
+ * stashed form, so "the same records" means one thing throughout. */
+function identities(records: readonly RecordRef[]): string[] {
+  return records.map((record) => recordIdentity(record.table, record.key));
 }
 
 /** One labelled button of the panel's toolbar: the icon and the word, since
@@ -64,8 +64,8 @@ function ToolbarButton(props: {
 
 /** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
  * `target.records` holds more than one entry when the result-row selection it
- * tracks widens to multiple rows (bulk modification isn't supported yet — see
- * the body below). */
+ * tracks widens to multiple rows; the form below handles that as a matter of
+ * course. */
 export default function RecordEditorPanel(props: {
   tabId: string;
   target: RecordEditorTarget;
@@ -124,34 +124,26 @@ export default function RecordEditorPanel(props: {
   };
 
   const records = () => props.target.records;
-  const isBulk = () => records().length > 1;
 
-  /** The one record the form is for. Held behind a memo that compares records by
+  /** The records the form is for. Held behind a memo that compares them by
    * identity-in-the-database rather than by object identity, so the resyncing
    * the sidebar does as the selection moves only yields a new value when it has
-   * genuinely landed on a different record — and only then is the form (and its
+   * genuinely landed on different records — and only then is the form (and its
    * load) rebuilt underneath the user. */
-  const formRecord = createMemo(
-    () => (isBulk() ? undefined : records()[0]),
-    undefined,
-    {
-      equals: (a, b) => identity(a) === identity(b),
-    },
-  );
+  const formRecords = createMemo(records, undefined, {
+    equals: (a, b) => identities(a).join(" ") === identities(b).join(" "),
+  });
 
   const heading = () =>
-    isBulk()
+    records().length > 1
       ? `Edit ${records().length} ${props.target.table} records`
       : `Edit ${props.target.table}`;
 
   /** The form the toolbar acts on. It belongs to the tab rather than to this
-   * component (see `formStash.ts`), so the panel finds it by the same identity
+   * component (see `formStash.ts`), so the panel finds it by the same identities
    * the form below registers itself under — reactively, since the form mounts
    * within the same render this reads it in. */
-  const model = () => {
-    const record = formRecord();
-    return record ? formFor(props.tabId, identity(record)) : undefined;
-  };
+  const model = () => formFor(props.tabId, identities(formRecords()));
 
   return (
     <aside
@@ -232,52 +224,26 @@ export default function RecordEditorPanel(props: {
       </Show>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
-        {/* Bulk: the records the selection covers, listed by key, with no form —
-            editing them together is separate UI, still to come. */}
-        <Show when={isBulk()}>
-          <For each={records()}>
-            {(record) => (
-              <div class="border-edge flex flex-col gap-0.5 border-b py-1 last:border-b-0">
-                <For each={record.key}>
-                  {(part) => (
-                    <div class="flex flex-col gap-0.5 py-0.5">
-                      <span class="text-ink-weak text-[11px]">
-                        {part.column}
-                      </span>
-                      <span class="text-ink font-mono text-xs break-all">
-                        {part.value}
-                      </span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            )}
-          </For>
-          <p class="text-ink-weak mt-2 text-xs italic">
-            Bulk modification not yet supported
-          </p>
-        </Show>
-
-        {/* One record: the form. Keyed on the record, so re-pointing the sidebar
-            builds a fresh form (and a fresh load) rather than mutating this one.
-            It needs the schema — the form's whole structure comes from
-            introspection — which by this point has long since loaded, since
-            running the query the row came from needed it too. */}
+        {/* The form. Keyed on the records, so re-pointing the sidebar builds a
+            fresh form (and a fresh load) rather than mutating this one. It needs
+            the schema — the form's whole structure comes from introspection —
+            which by this point has long since loaded, since running the query
+            the rows came from needed it too. */}
         <Show when={store.schemaJson()}>
           {(schemaJson) => (
-            <Show when={formRecord()} keyed>
-              {(record) => (
+            <Show when={formRecords()} keyed>
+              {(forRecords) => (
                 <RecordForm
                   tabId={props.tabId}
                   tables={store.schemaTables()}
                   schemaJson={schemaJson()}
-                  table={record.table}
-                  recordKey={record.key}
-                  // The save is a write *from* a result row, so it goes through
-                  // the store: what it changed is read back into the row the
+                  table={props.target.table}
+                  recordKeys={forRecords.map((record) => record.key)}
+                  // The save is a write *from* result rows, so it goes through
+                  // the store: what it changed is read back into the rows the
                   // editor was opened on (see `query/rowDml.ts`).
                   runDml={(operations) =>
-                    store.runRecordDml(props.tabId, record, operations)
+                    store.runRecordDml(props.tabId, forRecords, operations)
                   }
                 />
               )}

@@ -23,8 +23,8 @@ import {
   keyConditions,
   quoteValue,
   valueTypeOf,
-  type KeyPart,
   type MultiRecordField,
+  type RecordKey,
   type RecordQuery,
 } from "./recordForm";
 
@@ -215,12 +215,12 @@ export function embedSpec(
  * The result's columns are positional — one per entry of `spec.display`. */
 export function embeddedRecordQuery(
   table: string,
-  key: readonly KeyPart[],
+  key: RecordKey,
   spec: EmbedSpec,
 ): RecordQuery {
   return {
     base: table,
-    filter: keyConditions(key),
+    filter: keyConditions([key]),
     sort: "",
     display: spec.display.join(" "),
   };

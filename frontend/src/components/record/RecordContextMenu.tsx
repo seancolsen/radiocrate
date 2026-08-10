@@ -2,7 +2,7 @@ import { For, Show, type Component } from "solid-js";
 import { ContextMenu } from "../ui/ContextMenu";
 import { MenuItem } from "../ui/Menu";
 import { Icons } from "../../icons";
-import type { RecordFormModel } from "./formModel";
+import { isShared, type RecordFormModel } from "./formModel";
 
 // The form's context menus — one component for all of them, because only one is
 // ever open and the model already knows what it was raised on.
@@ -11,6 +11,10 @@ import type { RecordFormModel } from "./formModel";
 // what its *kind* can do, an embedded record offers what can be done to the
 // record it previews. Every action here is ephemeral, like every other form
 // modification — nothing reaches the database until the form is saved.
+//
+// An entry the form can't carry out across several records at once is shown
+// grayed rather than dropped, so the menu says the same things wherever it's
+// raised and the gap is visibly the feature's, not the field's.
 
 /** One row of the menu. */
 interface Entry {
@@ -44,9 +48,14 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
       ?.fields.find((f) => f.key === fieldKey);
     if (!field) return [];
 
+    /** Whether this field is one the form won't modify while it's on several
+     * records — every entry that would change it is grayed out. */
+    const blocked = model.isBulkBlocked(recordId, fieldKey);
+
     const clear: Entry = {
       icon: Icons.Clear,
       label: "Clear",
+      disabled: blocked,
       run: () => model.clearField(recordId, field),
     };
 
@@ -70,12 +79,14 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
         {
           icon: Icons.Add,
           label: "New record",
+          disabled: blocked,
           run: () => model.addChild(recordId, field),
         },
         {
           icon: Icons.Delete,
           danger: true,
           label: "Delete all records",
+          disabled: blocked,
           run: () => model.clearField(recordId, field),
         },
       ];
@@ -85,20 +96,25 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
         {
           icon: Icons.Query,
           label: "Pick a record",
+          disabled: blocked,
           run: () => model.openPicker(recordId, field.key),
         },
         {
           icon: Icons.Add,
           label: "Enter a new record",
+          disabled: blocked,
           run: () => model.addLinkedRecord(recordId, field),
         },
         clear,
       ];
     }
+    // A value the records disagree on is no one value to put on the clipboard.
+    const value = model.value(recordId, field.column);
     const copy: Entry = {
       icon: Icons.Duplicate,
       label: "Copy",
-      run: () => copyValue(model.record(recordId)?.values[field.column] ?? ""),
+      disabled: !isShared(value),
+      run: () => copyValue(isShared(value) ? (value ?? "") : ""),
     };
     // A primary key is issued by the database, not the user — nothing here
     // offers to change it, only to read it.
@@ -107,6 +123,7 @@ export default function RecordContextMenu(props: { model: RecordFormModel }) {
       {
         icon: Icons.Edit,
         label: "Edit",
+        disabled: blocked,
         run: () => model.beginEdit(recordId, field.key),
       },
       clear,

@@ -98,10 +98,12 @@ const trackRecord = (n: number): RecordRef => ({
   key: [{ column: "id", value: `track-${n}` }],
 });
 
-/** A record-editor story: the panel alone, on `track-<n>`, over the canned
- * schema and record data (`recordFixture.ts`) that stand in for a backend.
- * `saveFails` makes the next save come back refused, with that message. */
-function recordEditor(n: number, saveFails?: string): Story {
+/** A record-editor story: the panel alone, on the tracks `ns` names, over the
+ * canned schema and record data (`recordFixture.ts`) that stand in for a
+ * backend. More than one track is the bulk case — the same form, on every record
+ * the result-row selection covers. `saveFails` makes the next save come back
+ * refused, with that message. */
+function recordEditor(ns: readonly number[], saveFails?: string): Story {
   return {
     width: 340,
     height: 640,
@@ -115,7 +117,7 @@ function recordEditor(n: number, saveFails?: string): Story {
     render: () => (
       <RecordEditorPanel
         tabId={LEMONADE.id}
-        target={{ table: "track", records: [trackRecord(n)] }}
+        target={{ table: "track", records: ns.map(trackRecord) }}
       />
     ),
   };
@@ -370,20 +372,26 @@ export const STORIES: Record<string, Story> = {
   // ── The record editor ────────────────────────────────────────────────────
   // As the form lands: every field of `track`, values and counts loaded,
   // everything collapsed.
-  "record-editor/items-collapsed": recordEditor(1),
+  "record-editor/items-collapsed": recordEditor([1]),
   // …and opened out (the test does the opening): a long text field expanded
   // below its label, a multi-record field listing its records, and one of those
   // expanded into its own form.
-  "record-editor/items-expanded": recordEditor(3),
+  "record-editor/items-expanded": recordEditor([3]),
   // Mid-edit: an edited field and a record being created under `credit`, each
   // starred.
-  "record-editor/modified": recordEditor(3),
+  "record-editor/modified": recordEditor([3]),
   // A save the database refused: what it said, above a form still holding the
   // change it couldn't write.
   "record-editor/save-error": recordEditor(
-    1,
+    [1],
     'Duplicate key "title: Sorry" violates unique constraint.',
   ),
+  // Two records at once: the fields they agree on (`disc_number`) editable as
+  // ever, the ones they don't reading "(varied)", the `credit` count they
+  // happen to share still shown beside the message that says child records
+  // aren't editable in bulk yet, and the `play` count they don't share varied
+  // like any other value.
+  "record-editor/bulk": recordEditor([3, 5]),
   // The modal record picker on its own: the search box with its sort and
   // display buttons, the results as the embedded records they're about to
   // become, and the "New record" way out. `initialSort`/`initialDisplay` are

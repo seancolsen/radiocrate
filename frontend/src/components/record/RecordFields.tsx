@@ -10,14 +10,17 @@ import {
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
-import FieldValue, { type EditExit } from "./FieldValue";
+import FieldValue, { VariedValue, type EditExit } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
 import {
   fieldItemId,
+  isShared,
   listId,
   scalarChildId,
+  VARIED,
   type RecordFormModel,
   type RecordNode,
+  type SharedValue,
 } from "./formModel";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
@@ -37,6 +40,12 @@ import type { FormField, MultiRecordField } from "../../query/recordForm";
 // multi-record field (its embedded record). Each registers what it can do with
 // the model when it mounts, so a keyboard command — which knows an item only by
 // id — can expand, collapse or delete it.
+//
+// A row renders the same whether the form is on one record or several: what it
+// shows is what those records agree on, which is a value like any other. The two
+// places the count matters are here in `FieldRow` — a field the records disagree
+// on shows "(varied)" in place of its value, and a multi-record field says bulk
+// modification of child records isn't supported yet.
 
 /** All of one record's fields, dimmed under the loading wash while its data is
  * in flight. */
@@ -83,21 +92,38 @@ function FieldRow(props: {
   const itemId = untrack(() => fieldItemId(props.recordId, props.field.key));
   const expanded = () => props.model.isExpanded(itemId);
 
-  /** The record count behind a multi-record field, once loaded. */
-  const count = (): number | undefined =>
+  /** Whether the form is on several records, which is what a multi-record field
+   * has no bulk modification for yet. */
+  const bulkBlocked = () =>
+    props.model.isBulkBlocked(props.recordId, props.field.key);
+
+  /** The record count behind a multi-record field: the number its records
+   * share, `VARIED` when they hold different numbers, `undefined` before it
+   * lands (or for any other kind of field). */
+  const relatedCount = () =>
     props.field.kind === "multiRecord"
-      ? props.node.counts[props.field.key]
+      ? props.model.count(props.recordId, props.field.key)
       : undefined;
-  /** The column value behind any other field: `undefined` until loaded. */
-  const value = (): string | null | undefined =>
+  /** That count when there's a number to put in the badge. */
+  const count = (): number | undefined => {
+    const shared = relatedCount();
+    return isShared(shared) ? shared : undefined;
+  };
+  const variedCount = () => relatedCount() === VARIED;
+
+  /** The column value behind any other field: `undefined` until loaded,
+   * `VARIED` when the records disagree. */
+  const value = (): SharedValue =>
     props.field.kind === "multiRecord"
       ? undefined
-      : props.node.values[props.field.column];
+      : props.model.value(props.recordId, props.field.column);
 
   const expandable = () => {
     if (props.field.kind === "multiRecord") {
       // A field with no records has nothing to open; one whose table has no
-      // record identity at all can be counted but not listed.
+      // record identity at all can be counted but not listed; and one on
+      // several records can't be listed yet either.
+      if (bulkBlocked()) return false;
       return (count() ?? 0) > 0 && props.field.keyColumns.length > 0;
     }
     if (props.field.kind === "scalarLink") return linked();
@@ -274,6 +300,11 @@ function FieldRow(props: {
             {count()}
           </span>
         </Show>
+        {/* Records that hold different numbers of related records say so the
+            same way a field they disagree on does. */}
+        <Show when={variedCount()}>
+          <VariedValue />
+        </Show>
 
         {/* The one way into a multi-record field that doesn't need a record to
             already be there: add one. Like the expansion toggle beside it, it's
@@ -282,7 +313,8 @@ function FieldRow(props: {
         <Show
           when={
             props.field.kind === "multiRecord" &&
-            props.field.keyColumns.length > 0
+            props.field.keyColumns.length > 0 &&
+            !bulkBlocked()
               ? props.field
               : undefined
           }
@@ -296,6 +328,17 @@ function FieldRow(props: {
               onClick={() => props.model.addChild(props.recordId, field())}
             />
           )}
+        </Show>
+
+        {/* What a multi-record field offers while the form is on several
+            records: nothing yet. The records under it belong to one record
+            each, and editing them together is separate work still to come. */}
+        <Show when={props.field.kind === "multiRecord" && bulkBlocked()}>
+          {/* Smaller than a value, since it's about the form rather than about
+              the data — and it has a sidebar's width to fit into. */}
+          <span class="text-ink-weak min-w-0 flex-1 truncate text-xs italic">
+            Bulk modification not yet supported
+          </span>
         </Show>
 
         {/* A scalar linked record field shows the record it points at, rather
@@ -399,7 +442,7 @@ function FieldValueSlot(props: {
   model: RecordFormModel;
   recordId: string;
   field: FormField;
-  value: string | null | undefined;
+  value: SharedValue;
   expanded: boolean;
   onBeginEdit: () => void;
   onCommit: (text: string, exit: EditExit) => void;
@@ -513,8 +556,9 @@ function ChildRow(props: {
     if (isNew()) return "new record";
     const preview = cells().filter(Boolean).join(" ");
     if (preview) return preview;
-    const node = props.model.record(props.recordId);
-    return node ? node.key.map((p) => p.value).join(" ") : "";
+    // A record within a multi-record field is always exactly one record.
+    const key = props.model.record(props.recordId)?.keys[0];
+    return key ? key.map((part) => part.value).join(" ") : "";
   };
 
   /** The records a menu raised on this one acts on: the whole selection when

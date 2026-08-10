@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
+import { VARIED, type SharedValue } from "./formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
 /** Where focus goes when an activated field leaves edit mode: back to this
@@ -110,11 +111,20 @@ function ValueInput(props: {
   );
 }
 
-/** The value half of a form row, in whichever of its three states applies:
+/** What a field shows when the records the form is on don't agree on it. It's
+ * read-only for now: there's no one value to edit from, and typing into it would
+ * flatten differences the user can't see. */
+export function VariedValue() {
+  return <span class="text-ink-weak text-sm/5 italic">(varied)</span>;
+}
+
+/** The value half of a form row, in whichever of its four states applies:
  *
  *  - **unknown** — nothing has loaded for this field yet, so nothing renders
  *    (not even the pencil): the form shows its labels while the data is on its
  *    way, and only the key values it already had.
+ *  - **varied** — the records the form is on hold different values here, so
+ *    there is no value to show: "(varied)" stands in for it.
  *  - **empty** — NULL or the empty string, so there's nothing to click: a pencil
  *    button activates an empty input instead.
  *  - **filled** — the value, on one line (newlines become spaces, overflow
@@ -125,8 +135,9 @@ function ValueInput(props: {
  * what decides whether the row gets an expansion toggle at all. */
 export default function FieldValue(props: {
   field: PrimitiveField | ScalarLinkField;
-  /** `undefined` until loaded; `null` for NULL. */
-  value: string | null | undefined;
+  /** `undefined` until loaded; `null` for a NULL the records share; `VARIED`
+   * for a column they differ on. */
+  value: SharedValue;
   editing: boolean;
   /** Whether entering edit mode should select the value whole — see
    * `ValueInput`. Only meaningful while `editing` is true. */
@@ -139,13 +150,16 @@ export default function FieldValue(props: {
   onOverflow?: (overflowing: boolean) => void;
 }) {
   const known = () => props.value !== undefined;
+  /** The value as text — meaningful once the records are known to agree on it,
+   * which every state below "varied" is. */
+  const text = () => (typeof props.value === "string" ? props.value : "");
   const empty = () => props.value == null || props.value === "";
   /** A primary key: issued by the database, not the user, so nothing here
    * activates an editor for it. */
   const readOnly = () =>
     props.field.kind === "primitive" && props.field.readOnly;
   /** The collapsed rendering of a value: one line, newlines flattened away. */
-  const oneLine = () => (props.value ?? "").replace(/\s*\r?\n\s*/g, " ");
+  const oneLine = () => text().replace(/\s*\r?\n\s*/g, " ");
   const multiline = () =>
     props.field.kind === "primitive" && props.field.valueType === "text";
   /** A UUID reads better small, light and monospaced — it's an identifier to
@@ -160,7 +174,7 @@ export default function FieldValue(props: {
   const watchOverflow = (el: HTMLElement) => {
     const check = () =>
       props.onOverflow?.(
-        el.scrollWidth > el.clientWidth + 1 || /\r?\n/.test(props.value ?? ""),
+        el.scrollWidth > el.clientWidth + 1 || /\r?\n/.test(text()),
       );
     const observer = new ResizeObserver(check);
     observer.observe(el);
@@ -172,9 +186,13 @@ export default function FieldValue(props: {
     <Switch>
       {/* Nothing loaded for this field yet — no value, no pencil. */}
       <Match when={!known()}>{null}</Match>
+      {/* The records disagree: nothing to show, and nothing to edit yet. */}
+      <Match when={props.value === VARIED}>
+        <VariedValue />
+      </Match>
       <Match when={props.editing}>
         <ValueInput
-          initial={props.value ?? ""}
+          initial={text()}
           multiline={multiline()}
           selectAll={props.editingSelectAll}
           onInput={(text) => props.onInput(text)}
@@ -201,7 +219,7 @@ export default function FieldValue(props: {
           onClick={() => !readOnly() && props.onBeginEdit()}
           onContextMenu={(e) => props.onContextMenu(e)}
         >
-          {props.value}
+          {text()}
         </span>
       </Match>
       <Match when={true}>

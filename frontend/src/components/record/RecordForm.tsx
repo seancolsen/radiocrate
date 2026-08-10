@@ -7,18 +7,20 @@ import FieldRecordPicker from "./FieldRecordPicker";
 import RecordContextMenu from "./RecordContextMenu";
 import RecordNodeView from "./RecordFields";
 import type { SchemaTable } from "../../query/schema";
-import type { KeyPart } from "../../query/recordForm";
+import type { RecordKey } from "../../query/recordForm";
 
-/** The record editor form for one record: the whole field tree, built from
- * introspection and filled in as its data arrives.
+/** The record editor form for the records it's opened on: the whole field tree,
+ * built from introspection and filled in as its data arrives. One record is the
+ * ordinary case; a wider result-row selection makes it several, and the form is
+ * the same form — a field its records agree on is edited across all of them (see
+ * `formValues.ts`).
  *
- * One instance belongs to one record — a different record means a different
+ * One instance belongs to one set of records — a different set means a different
  * instance (the panel keys it) rather than this one being repointed. What it
- * does *not* own is the record's state: unsaved changes belong to the tab, not
- * to the sidebar that happens to be showing them, so the model comes from the
- * stash and goes back to it when the user selects another row (see
- * `formStash.ts`). Coming back to a record picks up exactly where they left it,
- * expansion and edits and all.
+ * does *not* own is their state: unsaved changes belong to the tab, not to the
+ * sidebar that happens to be showing them, so the model comes from the stash and
+ * goes back to it when the user selects another row (see `formStash.ts`). Coming
+ * back picks up exactly where they left it, expansion and edits and all.
  *
  * This is also where the form meets the rest of the app: it registers itself so
  * the selection commands can find it while it holds focus, and it watches for
@@ -30,23 +32,27 @@ export default function RecordForm(props: {
   tables: readonly SchemaTable[];
   schemaJson: string;
   table: string;
-  recordKey: readonly KeyPart[];
+  /** The records being edited, by key — one per result row the selection
+   * covers. */
+  recordKeys: readonly RecordKey[];
   /** How this form's save reaches the database — the panel hands down one that
-   * refreshes the result row the record is being edited from. */
+   * refreshes the result rows the records are being edited from. */
   runDml: (operations: DmlOperation[]) => Promise<DmlResult>;
 }) {
-  // These props are this instance's subject, fixed for its life — a different
-  // record means a different instance — so they're read once, untracked.
-  const identity = untrack(() => recordIdentity(props.table, props.recordKey));
+  // These props are this instance's subject, fixed for its life — different
+  // records mean a different instance — so they're read once, untracked.
+  const identities = untrack(() =>
+    props.recordKeys.map((key) => recordIdentity(props.table, key)),
+  );
   const model = untrack(() => {
     const opts = {
       tables: props.tables,
       table: props.table,
-      key: props.recordKey,
+      keys: props.recordKeys,
       schemaJson: props.schemaJson,
       runDml: (operations: DmlOperation[]) => props.runDml(operations),
     };
-    return stashedForm(props.tabId, identity, () => createRecordForm(opts));
+    return stashedForm(props.tabId, identities, () => createRecordForm(opts));
   });
 
   const handle = { model };
@@ -59,9 +65,9 @@ export default function RecordForm(props: {
     model.noteBlur();
     model.closeMenu();
     model.closePicker();
-    // Only unsaved *changes* are worth keeping — a record the user merely looked
-    // at is dropped rather than held for the life of the tab.
-    releaseUnmodified(props.tabId, identity);
+    // Only unsaved *changes* are worth keeping — records the user merely looked
+    // at are dropped rather than held for the life of the tab.
+    releaseUnmodified(props.tabId, identities);
   });
 
   // Anywhere but a selectable embedded record — another part of the form, the

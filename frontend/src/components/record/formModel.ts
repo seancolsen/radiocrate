@@ -13,6 +13,14 @@
 // see `formIds.ts` — which makes every update a single-key write and makes a
 // node's identity stable across collapse/expand.
 //
+// A node stands for however many records the form is on: one, ordinarily, and
+// as many as the result-row selection holds when the user has widened it. That
+// number is *not* a branch in the shape of anything here — a node keeps one
+// value per field per record and one load covers them all — it only surfaces
+// where a field's records turn out to disagree (`formValues.ts`), and at the few
+// modifications the form won't yet make to several records at once
+// (`beyondBulk`).
+//
 // Loading is lazy and idempotent: expanding an item fetches its data the first
 // time only, and collapsing keeps it. Each fetch is guarded by a token so a
 // superseded load (expand, collapse, expand again) can't overwrite a newer one.
@@ -38,12 +46,21 @@ import {
 } from "../../query/schema";
 import {
   buildFormFields,
+  keySignature,
   recordDataQuery,
   type FormField,
-  type KeyPart,
   type MultiRecordField,
+  type RecordKey,
   type ScalarLinkField,
 } from "../../query/recordForm";
+import {
+  isShared,
+  shared,
+  VARIED,
+  type ColumnValues,
+  type SharedValue,
+  type Varied,
+} from "./formValues";
 import {
   childRecordsQuery,
   embeddedRecordQuery,
@@ -63,35 +80,42 @@ import {
 } from "./formIds";
 import { planSave, type SavePlan } from "./formSave";
 
-// The ids are the model's own vocabulary, so callers reach them through it.
+// The ids and the shared-value vocabulary are the model's own, so callers reach
+// them through it.
 export { fieldItemId, listId, ROOT_ID, scalarChildId } from "./formIds";
+export { isShared, VARIED, type SharedValue } from "./formValues";
 
 /** Where a node is in its load cycle. `unloaded` means "known to exist, nothing
  * fetched yet" — a child record listed under a multi-record field before it's
  * been expanded. */
 export type LoadStatus = "unloaded" | "loading" | "loaded" | "error";
 
-/** One record's form: its identity, its fields, and whatever has been loaded
- * into them. */
+/** One form node: the records it stands for, its fields, and whatever has been
+ * loaded into them. Every per-record map below is index-aligned to
+ * {@link RecordNode.keys}. */
 export interface RecordNode {
   table: string;
-  /** The column/value pairs identifying this record. */
-  key: readonly KeyPart[];
+  /** The records this node is the form for, by key. The root holds as many as
+   * the result-row selection does; every node reached by expanding a field holds
+   * exactly one. A record the form is *creating* is one record with no key
+   * yet — `[[]]`, not `[]`. */
+  keys: readonly RecordKey[];
   /** Columns hidden as this record's contextual filter (see `buildFormFields`). */
   hidden: readonly string[];
   fields: readonly FormField[];
   status: LoadStatus;
   error: string | null;
-  /** Column → current value. Seeded with the key, which is known before any
-   * fetch — the id renders while the rest of the form is still loading. */
-  values: Record<string, string | null>;
-  /** Column → the value the database last gave us, which is what makes an edit
+  /** Column → its current value in each record. Seeded with the key columns,
+   * which are known before any fetch — the ids render while the rest of the form
+   * is still loading. */
+  values: Record<string, ColumnValues>;
+  /** Column → the values the database last gave us, which is what makes an edit
    * detectable: a column whose `values` entry has drifted from its `original` is
    * modified, and that's what the red star is drawn from. Written only by a load
    * or a save — never by an edit. */
-  original: Record<string, string | null>;
-  /** Referencing field key (`#credit`) → count of related records. */
-  counts: Record<string, number>;
+  original: Record<string, ColumnValues>;
+  /** Referencing field key (`#credit`) → count of related records, per record. */
+  counts: Record<string, readonly number[]>;
   /** Whether this record is being *created* by the form rather than edited: it
    * has no key, nothing to load, and counts as modified in its entirety. */
   isNew: boolean;
@@ -227,11 +251,16 @@ function dropped<T>(): T {
   return undefined as unknown as T;
 }
 
-/** The reactive form for one record. Created per record the sidebar points at
- * (re-pointing it builds a new one), and it starts loading immediately. */
+/** The reactive form for the records the sidebar points at (re-pointing it
+ * builds a new one), which starts loading immediately. */
 export interface RecordFormModel {
   /** A record node by id — `undefined` before it exists (nothing expanded yet). */
   record: (id: string) => RecordNode | undefined;
+  /** What one field of a node shows: the value its records share, `VARIED` when
+   * they don't share one, `undefined` before it loads. */
+  value: (recordId: string, column: string) => SharedValue;
+  /** Likewise for a multi-record field's count of related records. */
+  count: (recordId: string, fieldKey: string) => number | Varied | undefined;
   /** A child list by id, likewise. */
   list: (id: string) => ListNode | undefined;
   /** An embedded record's preview by id, likewise. */
@@ -274,6 +303,12 @@ export interface RecordFormModel {
   /** Whether a scalar linked record field has a record to show: one it points
    * at, or a new one the user is entering into it. */
   hasLinkedRecord: (recordId: string, field: ScalarLinkField) => boolean;
+  /** Whether a field is out of reach for as long as the form is on more than one
+   * record: a multi-record field, whose child records bulk modification doesn't
+   * reach yet, or a scalar field the records disagree on, which has no one value
+   * to edit from. Always false on a single record. Every modification asks this
+   * first; the context menu asks it to gray its entries out. */
+  isBulkBlocked: (recordId: string, fieldKey: string) => boolean;
 
   /** The form's root element, set once it's rendered — how the model reaches the
    * DOM to move focus. */
@@ -402,7 +437,9 @@ export interface RecordFormModel {
 export function createRecordForm(opts: {
   tables: readonly SchemaTable[];
   table: string;
-  key: readonly KeyPart[];
+  /** The records being edited — one, ordinarily; as many as the result-row
+   * selection holds when the user has widened it. */
+  keys: readonly RecordKey[];
   schemaJson: string;
   /** How the save reaches the database. The plain DML call by default; the query
    * page passes one that carries the result row the record is being edited from,
@@ -457,26 +494,34 @@ export function createRecordForm(opts: {
 
   /** Seeds `values` with the key columns — the part of a record we know without
    * asking the backend, and the only thing rendered while its load is in
-   * flight. */
-  const seedValues = (key: readonly KeyPart[]): Record<string, string | null> =>
-    Object.fromEntries(key.map((p) => [p.column, p.value]));
+   * flight. Every key names the same columns in the same order (they identify
+   * records of one table), so the first one gives the column list. */
+  const seedValues = (
+    keys: readonly RecordKey[],
+  ): Record<string, ColumnValues> =>
+    Object.fromEntries(
+      (keys[0] ?? []).map((part, at) => [
+        part.column,
+        keys.map((key) => key[at]?.value ?? null),
+      ]),
+    );
 
   const addRecord = (
     id: string,
     table: string,
-    key: readonly KeyPart[],
+    keys: readonly RecordKey[],
     hidden: readonly string[],
     status: LoadStatus,
   ) => {
     setState("records", id, {
       table,
-      key,
+      keys,
       hidden,
       fields: buildFormFields(opts.tables, table, hidden),
       status,
       error: null,
-      values: seedValues(key),
-      original: seedValues(key),
+      values: seedValues(keys),
+      original: seedValues(keys),
       counts: {},
       isNew: false,
     });
@@ -496,15 +541,17 @@ export function createRecordForm(opts: {
     hidden: readonly string[],
   ) => {
     const fields = buildFormFields(opts.tables, table, hidden);
-    const values: Record<string, string | null> = {};
-    const counts: Record<string, number> = {};
+    const values: Record<string, ColumnValues> = {};
+    const counts: Record<string, readonly number[]> = {};
     for (const field of fields) {
-      if (field.kind === "multiRecord") counts[field.key] = 0;
-      else values[field.column] = null;
+      // One record, so one entry per column — a record is only ever created
+      // singly, however many the form around it is editing.
+      if (field.kind === "multiRecord") counts[field.key] = [0];
+      else values[field.column] = [null];
     }
     setState("records", id, {
       table,
-      key: [],
+      keys: [[]],
       hidden,
       fields,
       status: "loaded",
@@ -515,6 +562,59 @@ export function createRecordForm(opts: {
       isNew: true,
     });
   };
+
+  // ── Values, across the records a node stands for ───────────────────────────
+
+  /** What one field shows: the value every record of the node holds, or
+   * {@link VARIED} when they differ (see `formValues.ts`). */
+  const sharedValue = (recordId: string, column: string): SharedValue =>
+    shared(state.records[recordId]?.values[column]);
+
+  /** Writes one value into a column of *every* record a node stands for — which
+   * is what every edit does, the form only ever offering to edit a column whose
+   * records already agree. */
+  const setColumn = (
+    recordId: string,
+    column: string,
+    value: string | null,
+  ) => {
+    setState(
+      "records",
+      recordId,
+      produce((n) => {
+        n.values[column] = n.keys.map(() => value);
+      }),
+    );
+  };
+
+  /** Likewise for a multi-record field's related-record count, which the form
+   * keeps in step with the records it holds under that field. */
+  const setCount = (recordId: string, fieldKey: string, count: number) => {
+    setState(
+      "records",
+      recordId,
+      produce((n) => {
+        n.counts[fieldKey] = n.keys.map(() => count);
+      }),
+    );
+  };
+
+  /** Whether a field is beyond what the form will do to several records at once:
+   * a multi-record field, whose child records bulk modification doesn't reach
+   * yet, or a scalar field the records disagree on, which shows "(varied)" and
+   * has no one value to edit from. False for a single record, which can neither
+   * disagree with itself nor be a bulk anything — this is the whole of the
+   * form's behavioral difference between one record and many. */
+  const beyondBulk = (recordId: string, field: FormField): boolean => {
+    const node = state.records[recordId];
+    if (!node || node.keys.length <= 1) return false;
+    if (field.kind === "multiRecord") return true;
+    return sharedValue(recordId, field.column) === VARIED;
+  };
+
+  /** A node's field by key. */
+  const fieldOf = (recordId: string, fieldKey: string): FormField | undefined =>
+    state.records[recordId]?.fields.find((f) => f.key === fieldKey);
 
   /** The first field of a record the user can type into — where the caret goes
    * when a new record is scaffolded. Skips the table's primary key, which the
@@ -546,7 +646,7 @@ export function createRecordForm(opts: {
     const field = firstEditableField(recordId, seed !== undefined);
     if (!field) return;
     if (seed !== undefined && field.kind === "primitive") {
-      setState("records", recordId, "values", field.column, seed);
+      setColumn(recordId, field.column, seed);
     }
     setState("editing", fieldItemId(recordId, field.key));
   };
@@ -566,7 +666,7 @@ export function createRecordForm(opts: {
   const loadEmbed = async (
     id: string,
     table: string,
-    key: readonly KeyPart[],
+    key: RecordKey,
     contextColumn?: string,
   ) => {
     const keyCells = key.map((p) => p.value);
@@ -594,23 +694,31 @@ export function createRecordForm(opts: {
 
   /** Kicks off the preview of every scalar linked record field of a record whose
    * own data has just landed — the ids they point at are known now, and the spec
-   * has these load on their own rather than waiting for an expansion. */
+   * has these load on their own rather than waiting for an expansion. A field
+   * whose records point at *different* records has no one preview to show. */
   const loadScalarEmbeds = (recordId: string) => {
     const node = state.records[recordId];
     if (!node) return;
     for (const field of node.fields) {
       if (field.kind !== "scalarLink") continue;
-      const value = node.values[field.column];
-      if (value == null || value === "") continue;
+      const value = sharedValue(recordId, field.column);
+      if (!isShared(value) || value == null || value === "") continue;
       const id = scalarChildId(recordId, field.key);
       if (state.embeds[id]) continue;
       void loadEmbed(id, field.table, [{ column: field.keyColumn, value }]);
     }
   };
 
-  /** Loads one record's own data — every field's value, every referencing
-   * field's count — and folds it in positionally (the query's display columns
-   * are generated from `fields`, in order). */
+  /** Loads a node's own data — every field's value, every referencing field's
+   * count, for every record it stands for — in one query, and folds it in
+   * positionally (the query's display columns are the node's key columns, then
+   * one per field, in order).
+   *
+   * The rows come back in the database's own order, so each is matched to its
+   * record by the key columns the query carries for exactly that purpose. A
+   * record with no row is one that isn't in the database any more, which is a
+   * form that can't be trusted to edit anything — so it's reported rather than
+   * quietly left out. */
   const loadRecord = async (id: string) => {
     const node = state.records[id];
     if (!node || node.status === "loading") return;
@@ -618,20 +726,30 @@ export function createRecordForm(opts: {
       setState("records", id, "status", "loaded");
       return;
     }
+    const keys = node.keys;
+    const keyWidth = keys[0]?.length ?? 0;
     const token = ++tokenSeq;
     tokens.set(id, token);
     setState("records", id, { status: "loading", error: null });
     try {
       const rows = await runRecordQuery(
-        recordDataQuery(node.table, node.fields, node.key),
+        recordDataQuery(node.table, node.fields, keys),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
-      const row = rows[0];
-      if (!row) {
+      const byKey = new Map(
+        rows.map((row) => [keySignature(row.slice(0, keyWidth)), row]),
+      );
+      const matched = keys.map((key) =>
+        byKey.get(keySignature(key.map((part) => part.value))),
+      );
+      if (matched.some((row) => row === undefined)) {
         setState("records", id, {
           status: "error",
-          error: "This record no longer exists.",
+          error:
+            keys.length === 1
+              ? "This record no longer exists."
+              : "Some of these records no longer exist.",
         });
         return;
       }
@@ -640,12 +758,12 @@ export function createRecordForm(opts: {
         id,
         produce((n) => {
           n.fields.forEach((field, i) => {
-            const cell = row[i] ?? null;
+            const cells = matched.map((row) => row?.[keyWidth + i] ?? null);
             if (field.kind === "multiRecord") {
-              n.counts[field.key] = Number(cell ?? 0) || 0;
+              n.counts[field.key] = cells.map((c) => Number(c ?? 0) || 0);
             } else {
-              n.values[field.column] = cell;
-              n.original[field.column] = cell;
+              n.values[field.column] = cells;
+              n.original[field.column] = [...cells];
             }
           });
           n.status = "loaded";
@@ -687,7 +805,7 @@ export function createRecordForm(opts: {
         // The column tying every child to this parent is the same for all of
         // them — hidden inside the child's own form (spec: "Progressive
         // expansion").
-        addRecord(child, field.table, key, [field.column], "unloaded");
+        addRecord(child, field.table, [key], [field.column], "unloaded");
         const cells = row.slice(field.keyColumns.length);
         setState("embeds", child, {
           status: "loaded",
@@ -711,16 +829,18 @@ export function createRecordForm(opts: {
     }
   };
 
-  /** Creates and loads the record behind a scalar linked record field, once. */
+  /** Creates and loads the record behind a scalar linked record field, once. The
+   * records the form is on have to agree on which one that is, which is what
+   * `beyondBulk` guards at every way in. */
   const ensureScalarChild = (recordId: string, field: ScalarLinkField) => {
     const id = scalarChildId(recordId, field.key);
     if (state.records[id]) return;
-    const value = state.records[recordId]?.values[field.column];
-    if (value == null || value === "") return;
+    const value = sharedValue(recordId, field.column);
+    if (!isShared(value) || value == null || value === "") return;
     addRecord(
       id,
       field.table,
-      [{ column: field.keyColumn, value }],
+      [[{ column: field.keyColumn, value }]],
       [],
       "unloaded",
     );
@@ -736,11 +856,13 @@ export function createRecordForm(opts: {
     // key, which may be composite — is the value the children carry. A record
     // with no id of its own (one the form is creating) has nothing to fetch, but
     // still gets a list: records can be added to it.
-    const parentValue = node?.values["id"] ?? "";
+    const parent = sharedValue(recordId, "id");
+    const parentValue = isShared(parent) ? (parent ?? "") : "";
+    const expected = shared(node?.counts[field.key]);
     setState("lists", id, {
       status: parentValue === "" ? "loaded" : "unloaded",
       error: null,
-      expected: node?.counts[field.key] ?? 0,
+      expected: isShared(expected) ? expected : 0,
       childIds: [],
       removed: [],
       dirty: false,
@@ -775,7 +897,7 @@ export function createRecordForm(opts: {
           value: row[i] ?? "",
         }));
         const child = deletedChildId(id, index);
-        addRecord(child, field.table, key, [field.column], "unloaded");
+        addRecord(child, field.table, [key], [field.column], "unloaded");
         return child;
       });
       setState("lists", id, "removed", (prev) => [...prev, ...ids]);
@@ -790,7 +912,11 @@ export function createRecordForm(opts: {
   const deletable = (childRecordIds: readonly string[]): string[] =>
     childRecordIds.filter((child) => {
       const node = state.records[child];
-      return node !== undefined && !node.isNew && node.key.length > 0;
+      return (
+        node !== undefined &&
+        !node.isNew &&
+        node.keys.some((key) => key.length > 0)
+      );
     });
 
   /** Drops records from a multi-record field — in the form only, until it's
@@ -814,7 +940,7 @@ export function createRecordForm(opts: {
       removed: [...list.removed, ...deletable(childRecordIds)],
       dirty: true,
     });
-    setState("records", recordId, "counts", field.key, remaining.length);
+    setCount(recordId, field.key, remaining.length);
     deselect(childRecordIds);
   };
 
@@ -837,6 +963,15 @@ export function createRecordForm(opts: {
   // `RecordFields.tsx` suppresses those directly, since a record still being
   // filled in to insert it has nothing of its own to compare against yet.
 
+  /** Whether one column has drifted from its baseline in any of the records the
+   * node stands for. */
+  const columnModified = (node: RecordNode, column: string): boolean => {
+    const values = node.values[column];
+    const original = node.original[column];
+    if (!values) return false;
+    return values.some((value, i) => value !== original?.[i]);
+  };
+
   const fieldModified = (recordId: string, field: FormField): boolean => {
     const node = state.records[recordId];
     if (!node) return false;
@@ -845,7 +980,7 @@ export function createRecordForm(opts: {
       if (!list) return false;
       return list.dirty || list.childIds.some(recordModified);
     }
-    if (node.values[field.column] !== node.original[field.column]) return true;
+    if (columnModified(node, field.column)) return true;
     if (field.kind !== "scalarLink") return false;
     return recordModified(scalarChildId(recordId, field.key));
   };
@@ -872,24 +1007,27 @@ export function createRecordForm(opts: {
     return String(value);
   };
 
-  /** The key of a record the database has just issued one for. */
-  const keyOf = (node: RecordNode): KeyPart[] => {
+  /** The key of a record the database has just issued one for. A record is only
+   * ever created singly, so this reads the one record the node holds. */
+  const keyOf = (node: RecordNode): RecordKey => {
     const table = opts.tables.find((t) => t.name === node.table);
     const columns = table ? identifyingColumns(table) : [];
     return columns.map((column) => ({
       column,
-      value: node.values[column] ?? "",
+      value: node.values[column]?.[0] ?? "",
     }));
   };
 
-  /** Folds one saved record's returned row back into its node. What the user
-   * typed stays as they typed it: the row is the same value in the database's
-   * own spelling (a timestamp as a count of microseconds, say), and swapping
-   * that in would read as the save having changed what they wrote. Everything
-   * the form *didn't* have — the id of a record just created, a column the
-   * database defaulted — is taken from the row. */
+  /** Folds one saved record's returned row back into its node, at the record the
+   * operation was for. What the user typed stays as they typed it: the row is
+   * the same value in the database's own spelling (a timestamp as a count of
+   * microseconds, say), and swapping that in would read as the save having
+   * changed what they wrote. Everything the form *didn't* have — the id of a
+   * record just created, a column the database defaulted — is taken from the
+   * row. */
   const applyRow = (
     recordId: string,
+    index: number,
     row: Record<string, unknown> | undefined,
   ) =>
     setState(
@@ -897,29 +1035,35 @@ export function createRecordForm(opts: {
       recordId,
       produce((n) => {
         for (const [column, value] of Object.entries(row ?? {})) {
-          const current = n.values[column];
-          if (current == null || current === "")
-            n.values[column] = cellText(value);
+          const current = n.values[column]?.[index];
+          if (current == null || current === "") {
+            const values = [...(n.values[column] ?? n.keys.map(() => null))];
+            values[index] = cellText(value);
+            n.values[column] = values;
+          }
         }
         // Saved is the new baseline: nothing in this record is modified now.
         for (const column of Object.keys(n.values)) {
-          n.original[column] = n.values[column];
+          n.original[column] = [...n.values[column]];
         }
         if (n.isNew) {
           n.isNew = false;
-          n.key = keyOf(n);
+          n.keys = [keyOf(n)];
         }
       }),
     );
 
   const applySave = (plan: SavePlan, result: DmlResult) => {
-    for (const [opId, recordId] of plan.saved) applyRow(recordId, result[opId]);
+    for (const [opId, target] of plan.saved) {
+      applyRow(target.recordId, target.index, result[opId]);
+    }
     // A record that was being created has never had a preview — it rendered as
     // "New". Now that it has a key, it can have one.
     for (const recordId of plan.created) {
       const node = state.records[recordId];
-      if (node && node.key.length > 0) {
-        void loadEmbed(recordId, node.table, node.key, node.hidden[0]);
+      const key = node?.keys[0];
+      if (node && key && key.length > 0) {
+        void loadEmbed(recordId, node.table, key, node.hidden[0]);
       }
     }
     // A deleted record leaves nothing behind — not its node, not the preview
@@ -998,13 +1142,16 @@ export function createRecordForm(opts: {
         ? [state.focused]
         : [];
 
-  // The root record exists from the start — its key is known — and its data is
-  // fetched right away, under the loading wash.
-  addRecord(ROOT_ID, opts.table, opts.key, [], "unloaded");
+  // The root exists from the start — the keys of the records it's on are
+  // known — and its data is fetched right away, under the loading wash.
+  addRecord(ROOT_ID, opts.table, opts.keys, [], "unloaded");
   untrack(() => void loadRecord(ROOT_ID));
 
   const model: RecordFormModel = {
     record: (id) => state.records[id],
+    value: sharedValue,
+    count: (recordId, fieldKey) =>
+      shared(state.records[recordId]?.counts[fieldKey]),
     list: (id) => state.lists[id],
     embed: (id) => state.embeds[id],
     isExpanded: (itemId) => state.expanded[itemId] === true,
@@ -1022,17 +1169,20 @@ export function createRecordForm(opts: {
     previewSpec: specFor,
 
     isFieldModified: (recordId, fieldKey) => {
-      const field = state.records[recordId]?.fields.find(
-        (f) => f.key === fieldKey,
-      );
+      const field = fieldOf(recordId, fieldKey);
       return field !== undefined && fieldModified(recordId, field);
     },
     isRecordModified: recordModified,
     isModified: () => recordModified(ROOT_ID),
     hasLinkedRecord: (recordId, field) => {
-      const value = state.records[recordId]?.values[field.column];
-      if (value != null && value !== "") return true;
+      // Records pointing at *different* records have none to show between them.
+      const value = sharedValue(recordId, field.column);
+      if (isShared(value) && value != null && value !== "") return true;
       return state.records[scalarChildId(recordId, field.key)]?.isNew === true;
+    },
+    isBulkBlocked: (recordId, fieldKey) => {
+      const field = fieldOf(recordId, fieldKey);
+      return field !== undefined && beyondBulk(recordId, field);
     },
 
     setRoot: (el) => (root = el),
@@ -1041,6 +1191,10 @@ export function createRecordForm(opts: {
       const itemId = fieldItemId(recordId, field.key);
       const next = open ?? state.expanded[itemId] !== true;
       if (next === (state.expanded[itemId] === true)) return;
+      // There's nothing under a field the form can't reach across the records
+      // it's on — no one linked record, no one list of children — so it doesn't
+      // open. (Closing one always works, whatever it holds.)
+      if (next && beyondBulk(recordId, field)) return;
       setExpandedItem(itemId, next);
       if (!next) return;
       if (field.kind === "scalarLink") ensureScalarChild(recordId, field);
@@ -1067,25 +1221,20 @@ export function createRecordForm(opts: {
     beginEdit: (recordId, fieldKey, opts) => {
       // A primary key is issued by the database, never typed by the user —
       // the one field kind this can't open an editor on.
-      const field = state.records[recordId]?.fields.find(
-        (f) => f.key === fieldKey,
-      );
+      const field = fieldOf(recordId, fieldKey);
       if (field?.kind === "primitive" && field.readOnly) return;
+      // A field the records disagree on has no value to start the edit from;
+      // it shows "(varied)" and stays as it is.
+      if (field && beyondBulk(recordId, field)) return;
       // Adding a timestamp starts from now, rather than blank — a blank one is
       // no more likely to be right than the moment the user opened it, and is
       // more keystrokes away from it.
       if (
         field?.kind === "primitive" &&
         field.valueType === "timestamp" &&
-        (state.records[recordId]?.values[field.column] ?? null) === null
+        (sharedValue(recordId, field.column) ?? null) === null
       ) {
-        setState(
-          "records",
-          recordId,
-          "values",
-          field.column,
-          formatCurrentTimestamp(),
-        );
+        setColumn(recordId, field.column, formatCurrentTimestamp());
       }
       setState({
         editing: fieldItemId(recordId, fieldKey),
@@ -1097,8 +1246,7 @@ export function createRecordForm(opts: {
       if (id === null) return;
       items.get(id)?.beginEdit?.(selectAll);
     },
-    editValue: (recordId, column, value) =>
-      setState("records", recordId, "values", column, value),
+    editValue: (recordId, column, value) => setColumn(recordId, column, value),
     commitEdit: (recordId, column, value) => {
       const field = state.records[recordId]?.fields.find(
         (f) => f.kind !== "multiRecord" && f.column === column,
@@ -1107,10 +1255,8 @@ export function createRecordForm(opts: {
         field?.kind === "primitive" &&
         field.valueType === "text" &&
         !field.nullable;
-      setState(
-        "records",
+      setColumn(
         recordId,
-        "values",
         column,
         value === "" && !nonNullableText ? null : value,
       );
@@ -1159,7 +1305,7 @@ export function createRecordForm(opts: {
         saving: false,
         saveError: null,
       });
-      addRecord(ROOT_ID, opts.table, opts.key, [], "unloaded");
+      addRecord(ROOT_ID, opts.table, opts.keys, [], "unloaded");
       void loadRecord(ROOT_ID);
     },
 
@@ -1223,14 +1369,16 @@ export function createRecordForm(opts: {
 
     clearField: (recordId, field) => {
       const itemId = fieldItemId(recordId, field.key);
+      // Clearing is a modification like any other, so a field the form can't
+      // reach across the records it's on isn't cleared either.
+      if (beyondBulk(recordId, field)) return;
       if (field.kind === "multiRecord") {
         const id = listId(recordId, field.key);
         const list = state.lists[id];
         const children = list?.childIds ?? [];
-        const had =
-          children.length > 0 ||
-          (state.records[recordId]?.counts[field.key] ?? 0) > 0;
-        setState("records", recordId, "counts", field.key, 0);
+        const count = shared(state.records[recordId]?.counts[field.key]);
+        const had = children.length > 0 || (isShared(count) ? count : 0) > 0;
+        setCount(recordId, field.key, 0);
         deselect(children);
         // The deletion is recorded whether or not the list was ever opened: an
         // unopened one is replaced by an empty, *loaded* list, so the records it
@@ -1249,7 +1397,8 @@ export function createRecordForm(opts: {
           // Clearing a field the user never opened deletes records the form has
           // never seen, so it fetches their keys now — the one thing a save
           // can't work out for itself later.
-          const parentValue = state.records[recordId]?.values["id"] ?? "";
+          const parent = sharedValue(recordId, "id");
+          const parentValue = isShared(parent) ? (parent ?? "") : "";
           if (list?.status !== "loaded" && parentValue !== "") {
             const pending = loadRemovedChildren(id, field, parentValue);
             pendingRemovals.add(pending);
@@ -1257,7 +1406,7 @@ export function createRecordForm(opts: {
           }
         }
       } else {
-        setState("records", recordId, "values", field.column, null);
+        setColumn(recordId, field.column, null);
         if (field.kind === "scalarLink") {
           // The record it pointed at is no longer this field's: its preview and
           // any sub-form the user opened go with the link.
@@ -1273,6 +1422,9 @@ export function createRecordForm(opts: {
     removeChildren,
 
     addChild: (recordId, field) => {
+      // A record can only be filed under one parent, so this waits on bulk
+      // modification like everything else under a multi-record field.
+      if (beyondBulk(recordId, field)) return;
       setState("expanded", fieldItemId(recordId, field.key), true);
       ensureList(recordId, field);
       const id = listId(recordId, field.key);
@@ -1285,22 +1437,18 @@ export function createRecordForm(opts: {
         expected: list.expected + 1,
         dirty: true,
       });
-      setState(
-        "records",
-        recordId,
-        "counts",
-        field.key,
-        (count) => (count ?? 0) + 1,
-      );
+      const count = shared(state.records[recordId]?.counts[field.key]);
+      setCount(recordId, field.key, (isShared(count) ? count : 0) + 1);
       setState("expanded", child, true);
       activateNewRecord(child);
     },
     addLinkedRecord: (recordId, field, seed) => {
+      if (beyondBulk(recordId, field)) return;
       const id = scalarChildId(recordId, field.key);
       // Whatever the field pointed at before, it points at this new record now.
       setState("embeds", id, dropped());
       setState("records", id, dropped());
-      setState("records", recordId, "values", field.column, null);
+      setColumn(recordId, field.column, null);
       addNewRecord(id, field.table, []);
       setState("expanded", fieldItemId(recordId, field.key), true);
       activateNewRecord(id, seed);
@@ -1310,6 +1458,8 @@ export function createRecordForm(opts: {
     closeMenu: () => setState("menu", null),
 
     openPicker: (recordId, fieldKey) => {
+      const field = fieldOf(recordId, fieldKey);
+      if (field && beyondBulk(recordId, field)) return;
       // The picker is often reached *from* the field's context menu, and takes
       // the keyboard from it.
       setState("menu", null);
@@ -1326,7 +1476,8 @@ export function createRecordForm(opts: {
       setState("records", id, dropped());
       setState("expanded", fieldItemId(recordId, field.key), false);
       tokens.set(id, ++tokenSeq);
-      setState("records", recordId, "values", field.column, keyValue);
+      // Every record the form is on comes to point at the picked one.
+      setColumn(recordId, field.column, keyValue);
       setState("embeds", id, { status: "loaded", cells });
       setState("picker", null);
     },

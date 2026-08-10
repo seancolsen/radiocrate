@@ -185,10 +185,10 @@ export interface RecordRef {
 }
 
 /** What's open in a tab's record-editor sidebar: the table being edited and the
- * records the current result-row selection identifies for it. A single entry
- * is the ordinary case; more than one is the multi-row "bulk" case (the
- * "Dynamic updates" behavior — the sidebar stays open and resyncs to it as the
- * selection changes, rather than the form itself supporting bulk edits). */
+ * records the current result-row selection identifies for it. A single entry is
+ * the ordinary case; more than one is the multi-row "bulk" case, which the form
+ * edits as one (see `record/formValues.ts`). The sidebar stays open and resyncs
+ * to the selection as it changes (the "Dynamic updates" behavior). */
 export interface RecordEditorTarget {
   table: string;
   records: readonly RecordRef[];
@@ -540,10 +540,10 @@ export interface AppStore {
   // The record editor (a sidebar within the query page).
   /** What's open in `tabId`'s record-editor sidebar, or `null` when closed. */
   recordEditor: (tabId: string) => RecordEditorTarget | null;
-  /** Replace `tabId`'s sidebar contents with exactly these `records` of `table`;
-   * an empty list closes it. Used both to open on an arbitrary (possibly
-   * multi-row) selection and to resync the open sidebar as the selection
-   * changes underneath it. */
+  /** Replace `tabId`'s sidebar contents with these `records` of `table`, each
+   * taken once; an empty list closes it. Used both to open on an arbitrary
+   * (possibly multi-row) selection and to resync the open sidebar as the
+   * selection changes underneath it. */
   setRecordEditorRecords: (
     tabId: string,
     table: string,
@@ -552,13 +552,13 @@ export interface AppStore {
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
   /** Send the record editor's save through the DML API in the context of the
-   * result row `record` sits on: the operations run as one request, and the row
-   * is then re-read so the results show what they did (see `query/rowDml.ts`).
-   * Resolves to the API's answer — which the form folds back into itself — and
-   * rejects only when the write itself failed. */
+   * result rows `records` sit on: the operations run as one request, and those
+   * rows are then re-read so the results show what they did (see
+   * `query/rowDml.ts`). Resolves to the API's answer — which the form folds back
+   * into itself — and rejects only when the write itself failed. */
   runRecordDml: (
     tabId: string,
-    record: RecordRef,
+    records: readonly RecordRef[],
     operations: DmlOperation[],
   ) => Promise<DmlResult>;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
@@ -1172,22 +1172,36 @@ function createAppStore(): AppStore {
     setRowPatch({ tabId, row: index, seq: ++rowPatchSeq });
   };
 
-  /** Runs a DML request in the context of one result row: the write goes through
-   * the API, then the row is re-read and patched in. Rejects only when the
-   * write itself failed (a refresh that can't be done leaves the row as it was —
-   * see `query/rowDml.ts`). */
-  const runDmlForRow = async (
+  /** Runs a DML request in the context of the result rows it was made from: the
+   * write goes through the API, then each of those rows is re-read and patched
+   * in. Rejects only when the write itself failed (a refresh that can't be done
+   * leaves its row as it was — see `query/rowDml.ts`). */
+  const runDmlForRows = async (
     operations: DmlOperation[],
-    row: { tabId: string; index: number } | undefined,
+    rows: readonly { tabId: string; index: number }[],
   ): Promise<DmlResult> => {
-    // Both the context and the run token are read *before* the request: they
-    // describe the row as it is now, which is what the answer will be about.
-    const context = row ? rowContext(row.tabId, row.index) : undefined;
-    const token = row ? runTokens.get(row.tabId) : undefined;
-    const outcome = await runRowDml(operations, context);
-    if (row && outcome.row) {
-      patchRow(row.tabId, row.index, outcome.row.table, outcome.row.row, token);
-    }
+    // Both the contexts and the run tokens are read *before* the request: they
+    // describe the rows as they are now, which is what the answer will be about.
+    // A row with no context of its own is simply not refreshed.
+    const targets = rows.flatMap((row) => {
+      const context = rowContext(row.tabId, row.index);
+      return context ? [{ row, context, token: runTokens.get(row.tabId) }] : [];
+    });
+    const outcome = await runRowDml(
+      operations,
+      targets.map((target) => target.context),
+    );
+    targets.forEach((target, i) => {
+      const location = outcome.rows[i];
+      if (!location) return;
+      patchRow(
+        target.row.tabId,
+        target.row.index,
+        location.table,
+        location.row,
+        target.token,
+      );
+    });
     return outcome.result;
   };
 
@@ -1289,9 +1303,9 @@ function createAppStore(): AppStore {
         : ct?.id === trackId
           ? ct.rowIndex
           : locateRow(source, trackId);
-    void runDmlForRow(
+    void runDmlForRows(
       [playInsert(trackId)],
-      source !== null && index !== null ? { tabId: source, index } : undefined,
+      source !== null && index !== null ? [{ tabId: source, index }] : [],
     ).catch((err) => console.error("play log failed", err));
   };
 
@@ -1365,13 +1379,23 @@ function createAppStore(): AppStore {
    * it, same as `closeRecordEditor`. Delete-then-set so the entry holds a *new*
    * object rather than the previous one merged in place (same hazard
    * `setTabResult` documents): re-pointing the editor, or narrowing/widening a
-   * bulk selection, must read as a swap, not a patch. */
+   * bulk selection, must read as a swap, not a patch.
+   *
+   * Each record appears once, however many selected rows carry it: several
+   * tracks of one album identify that album over and over, and the editor is on
+   * one album, not on three copies of it. */
   const setRecordEditorRecords = (
     tabId: string,
     table: string,
     records: readonly RecordRef[],
   ) => {
-    if (records.length === 0) {
+    const distinct: RecordRef[] = [];
+    for (const record of records) {
+      if (!distinct.some((seen) => sameRecord(seen, record))) {
+        distinct.push(record);
+      }
+    }
+    if (distinct.length === 0) {
       setState("recordEditorByTab", tabId, null);
       return;
     }
@@ -1382,7 +1406,7 @@ function createAppStore(): AppStore {
           delete m[tabId];
         }),
       );
-      setState("recordEditorByTab", tabId, { table, records });
+      setState("recordEditorByTab", tabId, { table, records: distinct });
     });
   };
 
@@ -1562,11 +1586,18 @@ function createAppStore(): AppStore {
     recordEditor: (tabId) => state.recordEditorByTab[tabId] ?? null,
     setRecordEditorRecords,
     closeRecordEditor: (tabId) => setState("recordEditorByTab", tabId, null),
-    runRecordDml: (tabId, record, operations) => {
-      const index = rowForRecord(tabId, record);
-      return runDmlForRow(
+    runRecordDml: (tabId, records, operations) => {
+      // One row per record the form was editing — the same row can stand for
+      // two of them (a query joining a record to itself), and re-reading it
+      // twice would be pointless.
+      const indexes = new Set<number>();
+      for (const record of records) {
+        const index = rowForRecord(tabId, record);
+        if (index !== undefined) indexes.add(index);
+      }
+      return runDmlForRows(
         operations,
-        index === undefined ? undefined : { tabId, index },
+        [...indexes].map((index) => ({ tabId, index })),
       );
     },
     recordSidebarWidth,

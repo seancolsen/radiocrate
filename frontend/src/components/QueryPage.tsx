@@ -35,9 +35,9 @@ export default function QueryPage(props: { tabId: string }) {
 
   // Dynamic updates: while the sidebar is open, keep it pointed at the current
   // result-row selection rather than the row(s) it was opened on — selecting a
-  // different row re-points it, widening the selection switches it to the bulk
-  // ("Bulk modification not yet supported") view, and clearing the selection
-  // closes it. Opening the sidebar from nothing is *not* this effect's job
+  // different row re-points it, widening the selection puts the editor on every
+  // record it covers, and clearing the selection closes it. Opening the sidebar
+  // from nothing is *not* this effect's job
   // (the context menu and the `results.edit_selected` command do that), so the
   // current editor target is read untracked: this must only react to selection
   // (or lineage) changes, never to the writes it makes to that target itself,

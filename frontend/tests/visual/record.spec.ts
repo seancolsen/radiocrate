@@ -81,6 +81,21 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The editor on two records at once: the same form, showing what they agree
+  // on and "(varied)" where they don't, and — under the multi-record fields —
+  // the bulk modification that's still to come.
+  test(`record-editor/bulk - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "record-editor/bulk", colorScheme);
+    await expect(stage.getByRole("heading")).toHaveText("Edit 2 track records");
+    // Both records' data has landed once the counts they share have.
+    await expect(
+      stage.getByText("Bulk modification not yet supported"),
+    ).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/bulk", colorScheme),
+    );
+  });
+
   // The modal picker on its own: the search box with its sort and display
   // buttons, and the results as the embedded records they're about to become.
   // Shot through the dialog (it portals out of the stage).
