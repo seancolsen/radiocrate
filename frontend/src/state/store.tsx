@@ -540,10 +540,6 @@ export interface AppStore {
   // The record editor (a sidebar within the query page).
   /** What's open in `tabId`'s record-editor sidebar, or `null` when closed. */
   recordEditor: (tabId: string) => RecordEditorTarget | null;
-  /** Open (or re-point) `tabId`'s record-editor sidebar on a single `record` —
-   * the context menu's and the `results.edit_selected` command's single-row
-   * entry point. */
-  openRecordEditor: (tabId: string, record: RecordRef) => void;
   /** Replace `tabId`'s sidebar contents with exactly these `records` of `table`;
    * an empty list closes it. Used both to open on an arbitrary (possibly
    * multi-row) selection and to resync the open sidebar as the selection
@@ -1564,8 +1560,6 @@ function createAppStore(): AppStore {
     rowPatch,
 
     recordEditor: (tabId) => state.recordEditorByTab[tabId] ?? null,
-    openRecordEditor: (tabId, record) =>
-      setRecordEditorRecords(tabId, record.table, [record]),
     setRecordEditorRecords,
     closeRecordEditor: (tabId) => setState("recordEditorByTab", tabId, null),
     runRecordDml: (tabId, record, operations) => {

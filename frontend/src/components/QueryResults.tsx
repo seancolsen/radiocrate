@@ -6,7 +6,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { useAppState } from "../state/store";
+import { useAppState, type RecordRef } from "../state/store";
 import type { QueryResult } from "../query/result";
 import { ContextMenu } from "./ui/ContextMenu";
 import RowActionsMenu from "./RowActionsMenu";
@@ -42,11 +42,28 @@ export default function QueryResults(props: { tabId: string }) {
   const [rowMenu, setRowMenu] = createSignal<RowMenu | undefined>();
   const closeMenu = () => setRowMenu(undefined);
 
-  // The records the open menu offers to edit — one entry per table whose primary
-  // key the row carries (a track row joined to its album offers both).
-  const menuRecords = () => {
+  // The rows the open menu acts on: the right-clicked row alone, unless it's
+  // part of an existing multi-row selection — then every selected row (the
+  // bulk case; see `RecordEditorTarget`).
+  const menuRows = (): readonly number[] => {
     const menu = rowMenu();
-    return menu ? store.rowRecords(props.tabId, menu.row) : [];
+    if (!menu) return [];
+    const selection = store.rowSelection(props.tabId);
+    return selection.size > 1 && selection.has(menu.row)
+      ? [...selection]
+      : [menu.row];
+  };
+
+  // The records the open menu offers to edit — one entry per table whose primary
+  // key its rows carry (a track row joined to its album offers both).
+  const menuRecords = (): RecordRef[] => {
+    const byTable = new Map<string, RecordRef>();
+    for (const row of menuRows()) {
+      for (const record of store.rowRecords(props.tabId, row)) {
+        if (!byTable.has(record.table)) byTable.set(record.table, record);
+      }
+    }
+    return [...byTable.values()];
   };
 
   const currentResult = (): QueryResult | undefined =>
@@ -178,15 +195,20 @@ export default function QueryResults(props: { tabId: string }) {
       onRowClick: (index, mods) => store.clickRow(props.tabId, index, mods),
       onRowDoubleClick: (index) => store.doubleClickRow(props.tabId, index),
       onRowContextMenu: (index, x, y) => {
-        // The menu acts on one row. A right-click inside a multi-row selection
-        // is left alone rather than silently narrowing it (there's no bulk edit).
+        // A right-click inside an existing multi-row selection acts on the
+        // whole selection, left as-is; any other right-click selects its row
+        // alone first, so the menu's target is visible.
         const selection = store.rowSelection(props.tabId);
-        if (selection.size > 1 && selection.has(index)) return;
-        // Any other right-click selects its row alone first, so the menu's
-        // target is visible.
-        store.clickRow(props.tabId, index, { shift: false, ctrl: false });
-        // With nothing editable in this row, there's nothing to show.
-        if (store.rowRecords(props.tabId, index).length === 0) return;
+        const multi = selection.size > 1 && selection.has(index);
+        if (!multi) {
+          store.clickRow(props.tabId, index, { shift: false, ctrl: false });
+        }
+        // With nothing editable in the targeted row(s), there's nothing to show.
+        const rows = multi ? [...selection] : [index];
+        const hasRecords = rows.some(
+          (row) => store.rowRecords(props.tabId, row).length > 0,
+        );
+        if (!hasRecords) return;
         setRowMenu({ row: index, x, y });
       },
     });
@@ -241,7 +263,18 @@ export default function QueryResults(props: { tabId: string }) {
           <ContextMenu x={menu().x} y={menu().y} onClose={closeMenu}>
             <RowActionsMenu
               records={menuRecords()}
-              onEdit={(record) => store.openRecordEditor(props.tabId, record)}
+              onEdit={(record) => {
+                const records = menuRows().flatMap((row) =>
+                  store
+                    .rowRecords(props.tabId, row)
+                    .filter((r) => r.table === record.table),
+                );
+                store.setRecordEditorRecords(
+                  props.tabId,
+                  record.table,
+                  records,
+                );
+              }}
             />
           </ContextMenu>
         )}
