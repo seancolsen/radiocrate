@@ -22,6 +22,10 @@ export default defineConfig({
       ),
     },
   },
+  // The app's build id (vite.config.ts) is derived from git and changes between
+  // builds, so tests get a fixed stand-in instead — a module that reads it stays
+  // importable here, and nothing asserts against a moving value.
+  define: { __BUILD_ID__: JSON.stringify("test") },
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",

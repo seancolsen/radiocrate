@@ -68,6 +68,30 @@ pub struct Keybinding {
     pub chord: Option<String>,
 }
 
+/// The `build_id` a server reports when it embeds no frontend of its own — the
+/// standalone dev server, which serves its client from Vite instead. A client
+/// seeing this must skip the staleness comparison entirely rather than conclude
+/// it is out of date, since there is no embedded build to be out of date
+/// against. See [`AppVersion`].
+pub const DEV_BUILD_ID: &str = "dev";
+
+/// What the running server is, as reported by `app.version`.
+///
+/// `build_id` identifies the frontend build embedded in this binary (read from
+/// `build-id.txt` in the embedded assets — see `frontend/vite.config.ts`), and
+/// is the field that matters: a client compares it against the id compiled into
+/// its own bundle, and the two differ exactly when the client running is not the
+/// one this binary serves. The exception is [`DEV_BUILD_ID`], which means "don't
+/// compare". `server_version` is the binary's own version string, for display
+/// only — never for staleness decisions, since a rebuild at the same commit
+/// leaves it unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AppVersion {
+    pub build_id: String,
+    pub server_version: String,
+}
+
 /// Params for `query.delete`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -232,6 +256,12 @@ pub const METHODS: &[Method] = &[
         params: Some("DmlRequest"),
         result: "DmlResult",
     },
+    Method {
+        wire: "app.version",
+        func: "appVersion",
+        params: None,
+        result: "AppVersion",
+    },
 ];
 
 /// The `export type … = …;` declaration for every `ts-rs`-modeled wire type, in
@@ -249,6 +279,7 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", Query::decl(&cfg)),
         format!("export {}", Preset::decl(&cfg)),
         format!("export {}", Keybinding::decl(&cfg)),
+        format!("export {}", AppVersion::decl(&cfg)),
         format!("export {}", QueryDeleteParams::decl(&cfg)),
         format!("export {}", QueryRecordPlayParams::decl(&cfg)),
         format!("export {}", QueryRenameParams::decl(&cfg)),

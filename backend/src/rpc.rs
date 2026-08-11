@@ -8,8 +8,9 @@
 use std::sync::Arc;
 
 use api_schema::{
-    Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query,
-    QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams,
+    AppVersion, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams,
+    Query, QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams,
+    QueryUpdateDefinitionParams,
 };
 use axum::Json;
 use axum::extract::State;
@@ -126,6 +127,13 @@ fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, RpcE
 #[allow(clippy::too_many_lines)]
 fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
     match method {
+        // The one method here that touches no database: it answers from the
+        // strings `app_state` was built with.
+        "app.version" => serde_json::to_value(AppVersion {
+            build_id: state.build_id.clone(),
+            server_version: state.server_version.clone(),
+        })
+        .map_err(|e| e.to_string()),
         "query.list" => state.read(|conn| -> Result<Value, String> {
             let queries = list_queries(conn)?;
             serde_json::to_value(queries).map_err(|e| e.to_string())

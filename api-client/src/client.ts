@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { DmlRequest, DmlResult, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams } from "./types";
 import { rpcCall } from "./rpc";
 
 export async function queryList(): Promise<Query[]> {
@@ -59,6 +59,10 @@ export async function keybindingDelete(params: KeybindingDeleteParams): Promise<
 
 export async function dml(params: DmlRequest): Promise<DmlResult> {
   return (await rpcCall("dml", params)) as DmlResult;
+}
+
+export async function appVersion(): Promise<AppVersion> {
+  return (await rpcCall("app.version", null)) as AppVersion;
 }
 
 // --- Non-RPC transports -----------------------------------------------------

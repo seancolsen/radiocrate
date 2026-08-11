@@ -17,6 +17,13 @@ use tower_http::cors::CorsLayer;
 pub struct AppState {
     db: Mutex<Connection>,
     pub collection_path: PathBuf,
+    /// Identifies the frontend build this binary serves, reported over
+    /// `app.version` so a client can tell whether it's the one that came with
+    /// this binary. Supplied by the caller rather than read here: the embedded
+    /// assets belong to the `radiocrate` crate, not to this one.
+    pub build_id: String,
+    /// This binary's version string, for display only.
+    pub server_version: String,
 }
 
 impl AppState {
@@ -63,11 +70,18 @@ impl AppState {
     }
 }
 
-pub fn app_state(conn: Connection, collection_path: PathBuf) -> Arc<AppState> {
+pub fn app_state(
+    conn: Connection,
+    collection_path: PathBuf,
+    build_id: String,
+    server_version: String,
+) -> Arc<AppState> {
     let collection_path = std::fs::canonicalize(&collection_path).unwrap_or(collection_path);
     Arc::new(AppState {
         db: Mutex::new(conn),
         collection_path,
+        build_id,
+        server_version,
     })
 }
 
@@ -195,7 +209,19 @@ pub async fn serve(
     // in its own `main.rs`). That lets the Vite dev server proxy `/api` straight
     // here with no path rewriting, and keeps client URLs origin-relative and
     // identical across dev and prod. See `frontend/README.md`.
-    let app = Router::new().nest("/api", router(app_state(conn, collection_path)));
+    // `DEV_BUILD_ID` because this server embeds no frontend: the client it talks
+    // to is whatever the Vite dev server is serving, which is by definition
+    // current. Reporting the sentinel tells the client to skip the staleness
+    // check rather than compare against an id that can't ever match.
+    let app = Router::new().nest(
+        "/api",
+        router(app_state(
+            conn,
+            collection_path,
+            api_schema::DEV_BUILD_ID.to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        )),
+    );
     let addr = format!("0.0.0.0:{port}");
     println!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

@@ -3,6 +3,32 @@
 Implementation plan for making the installed PWA pick up a new client when the
 server binary is upgraded.
 
+## Status
+
+Phases carry a status line; update it as they land so a session starting cold
+doesn't have to reconstruct progress from `git log`.
+
+| Phase | Status |
+| ----- | ------ |
+| 1 — Build identity | done |
+| 2 — `app.version` RPC | done |
+| 3 — Update controller | not started |
+| 4 — UI | not started |
+| 5 — Escape hatch | not started |
+| 6 — Tests | not started |
+| 7 — Cache headers | done |
+| 8 — Skew guard | not started |
+
+Phases 3–8 are meant to land across two further sessions: **3 + 8 + the
+`shouldApplyNow()` unit test** in one, **4 + 5 + the two visual stories** in the
+next. They are strictly sequential — 3 needs the generated `appVersion()` client
+from phase 2, and 4 needs the signals phase 3 exports.
+
+**Read this first if you're picking up phase 3:** `bun run dev` disables the
+service worker entirely (`vite-plugin-pwa` only injects it on build), so none of
+the update behavior is observable under the dev server. Verify against `bun run
+build` + `vite preview`, or the real binary.
+
 ## The problem
 
 `registerType: "prompt"` (`frontend/vite.config.ts`) parks a new service worker
@@ -142,6 +168,25 @@ and no `Cargo.toml` is touched.
 - Pass both into `server::app_state`.
 
 Then `cargo xtask gen-api` and commit the regenerated `api-client/`.
+
+#### As built: the `dev` sentinel
+
+Two cases have no embedded frontend to compare against, and both resolve to
+`api_schema::DEV_BUILD_ID` (`"dev"`), re-exported from `backend` so `radiocrate`
+needs no `api-schema` dependency of its own:
+
+- **The standalone dev server** (`backend::server::serve`) embeds no frontend —
+  its client comes from Vite and is current by definition.
+- **A binary whose embedded `dist/` has no `build-id.txt`**, which means a
+  packaging fault rather than a stale client. It also prints a startup warning.
+
+**Phase 3 must treat `buildId === "dev"` as "skip the staleness check"**, not as
+a mismatch. Getting this wrong makes the banner permanent under `bun run dev`
+and, worse, turns a build packaging fault into an unactionable nag for end
+users. The check fails open on purpose.
+
+Also note `vitest.config.ts` defines `__BUILD_ID__` as `"test"`, so a module
+reading it stays importable from unit tests without pinning a moving value.
 
 ### Phase 3 — The update controller
 

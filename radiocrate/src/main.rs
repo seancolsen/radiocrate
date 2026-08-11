@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 #[folder = "../frontend/dist/"]
 struct Assets;
 
+/// This binary's version, for `--version` and for `app.version`. `GIT_HASH` is
+/// supplied by `build.rs`.
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
 #[derive(Parser)]
 #[command(name = "radiocrate")]
 #[command(about = "RadioCrate — manage and play your audio collection")]
-#[command(version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"))]
+#[command(version = VERSION)]
 struct Args {
     /// Path to the collection of audio files
     collection_path: String,
@@ -56,15 +60,53 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
-/// How long a browser may reuse an asset without asking.
+/// How long a browser may reuse `path` without asking.
 ///
-/// The frontend is built with stable (unhashed) file names, so nothing here can
-/// be cached immutably — a new deployment reuses every URL. `no-cache` still
-/// lets the browser keep its copy; it just has to revalidate, which costs one
-/// conditional request and usually returns 304. Repeat launches don't pay even
-/// that, because the service worker serves the shell from its own cache and
-/// only re-fetches when the build id changes.
-const CACHE_CONTROL: &str = "no-cache";
+/// Everything under `assets/` is emitted by Vite with a content hash in its file
+/// name (`index-BsXt-K9s.js`), so those URLs are immutable by construction: a
+/// changed file gets a new name and the old name is never reused. They can be
+/// cached hard and forever.
+///
+/// Everything else keeps a stable URL across builds and must be revalidated.
+/// `no-cache` still lets the browser keep its copy; it just has to ask, which
+/// costs one conditional request and usually returns 304. `sw.js` is the one
+/// that must not be gotten wrong — a browser reusing a cached service worker
+/// never learns a new one exists, which disables the whole update mechanism.
+/// See `specs/2026-08-pwa-updates/plan.md`.
+fn cache_control(path: &str) -> &'static str {
+    if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
+/// The frontend build embedded in this binary, as recorded by the frontend build
+/// in `build-id.txt` (see `frontend/vite.config.ts`). Reported over
+/// `app.version` so a running client can tell whether it came from this binary.
+///
+/// A missing file means the embedded `frontend/dist` was produced by a build
+/// that predates the build-id plugin, which is a packaging fault rather than a
+/// stale client. Falling back to the sentinel makes the check fail *open* — the
+/// client skips the comparison instead of reporting itself permanently out of
+/// date over a problem the user can't act on — and the warning puts the real
+/// fault where whoever built the binary will see it.
+fn embedded_build_id() -> String {
+    match Assets::get("build-id.txt")
+        .and_then(|file| String::from_utf8(file.data.to_vec()).ok())
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => id,
+        None => {
+            eprintln!(
+                "warning: no build-id.txt in the embedded frontend; \
+                 client update detection is disabled. Rebuild with `cargo xtask build-release`."
+            );
+            backend::DEV_BUILD_ID.to_string()
+        }
+    }
+}
 
 async fn static_handler(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
@@ -89,7 +131,7 @@ async fn static_handler(uri: Uri) -> Response {
     );
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static(CACHE_CONTROL),
+        HeaderValue::from_static(cache_control(asset_path)),
     );
     if asset_path == "sw.js" {
         // Lets the worker control the whole origin regardless of where it's
@@ -115,7 +157,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !args.no_scan {
         scanner::scan(collection_path, &conn)?;
     }
-    let state = server::app_state(conn, collection_path.to_path_buf());
+    let state = server::app_state(
+        conn,
+        collection_path.to_path_buf(),
+        embedded_build_id(),
+        VERSION.to_string(),
+    );
 
     let app = Router::new()
         .nest("/api", server::router(state))
