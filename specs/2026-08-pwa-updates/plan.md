@@ -17,17 +17,26 @@ doesn't have to reconstruct progress from `git log`.
 | 5 — Escape hatch | not started |
 | 6 — Tests | unit done (`shouldApplyNow`, `isClientStale`); visual stories pending with phase 4 |
 | 7 — Cache headers | done |
-| 8 — Skew guard | detection + non-dismissible policy done; banner wording lands with phase 4, forced-reload escalation not done (see below) |
+| 8 — Skew guard | done as recommended (detection + non-dismissible policy); banner wording lands with phase 4. The forced-reload escalation is **deferred indefinitely** — a decision, see phase 8 |
 
-Phases 3–8 are meant to land across two further sessions: **3 + 8 + the
-`shouldApplyNow()` unit test** in one, **4 + 5 + the two visual stories** in the
-next. They are strictly sequential — 3 needs the generated `appVersion()` client
-from phase 2, and 4 needs the signals phase 3 exports.
+One session of work remains: **phase 4 + phase 5 + the two visual stories**. Tests
+live with the code they cover rather than in a session of their own, so no
+session needs both the controller internals and the whole component library in
+context.
 
-**Read this first if you're picking up phase 3:** `bun run dev` disables the
-service worker entirely (`vite-plugin-pwa` only injects it on build), so none of
-the update behavior is observable under the dev server. Verify against `bun run
-build` + `vite preview`, or the real binary.
+**Read this first if you're picking up phase 4:**
+
+- `bun run dev` disables the service worker entirely (`vite-plugin-pwa` only
+  injects it on build), so none of the update behavior is observable under the
+  dev server. Verify against `bun run build` + `vite preview`, or the real
+  binary. The lifecycle *can* be driven for real without the binary — serve two
+  builds over a stub `/api/rpc` with a controllable `app.version` and drive it
+  with Chromium. A build takes ~5s and every build off a dirty tree gets a fresh
+  id, so two distinct builds are cheap.
+- The banner's two notices need **different actions** — see phase 4. Wiring
+  `applyUpdate()` to the `"stale"` notice produces a dead button.
+- Consume the controller's exported signals; don't rework it. `updateNotice()`
+  already folds in the dismissal and non-dismissibility rules.
 
 ## The problem
 
@@ -252,9 +261,21 @@ driven by Chromium.
 ### Phase 4 — UI
 
 **`frontend/src/components/UpdateBanner.tsx`** — a slim bar rendered in `Main()`
-in `App.tsx`, directly above `<NowPlaying />`, shown when `updateReady() &&
-!dismissed()`. "A new version of RadioCrate is ready." + a "Reload" button + a
-dismiss. Wording should say the reload closes open tabs, since it does.
+in `App.tsx`, directly above `<NowPlaying />`, driven by `updateNotice()` (which
+already folds in the dismissal and non-dismissibility rules — render off that one
+accessor rather than reassembling the policy in JSX). Wording should say the
+reload closes open tabs, since it does.
+
+The two notices need **different actions**, and this is the easy thing to get
+wrong:
+
+- `"ready"` — a worker is waiting. Action is `applyUpdate()`. Dismissible.
+- `"stale"` — the server has moved on from this client. Action must **not** be
+  `applyUpdate()`. `updateNotice()` returns `"stale"` whether or not a new worker
+  has reached `waiting`, and `applyUpdate()` only does anything when one has — so
+  wiring it here yields a dead button in exactly the case this notice exists to
+  catch (an SW update that is blocked, in flight, or wedged). Use a real reload:
+  phase 5's `resetAppData()`, or at minimum `location.reload()`. Not dismissible.
 
 **`frontend/src/components/AboutModal.tsx`** — built on the existing
 `ui/Modal.tsx`. Shows server version, server build id, client build id, a
@@ -351,15 +372,39 @@ a mismatch, `updateNotice()` returns `"stale"` ahead of `"ready"`, and
 accessor is automatically the persistent one. Only the *wording* is left, and it
 belongs to the banner.
 
-The forced-reload escalation is **not** implemented, and needs a decision before
-it can be: it wants one place where every failed RPC is seen, and there isn't
-one. `rpcCall` lives in the generated `api-client` (`// @generated … DO NOT
-EDIT`), and store call sites each `.catch(console.error)` on their own. Adding a
-failure hook therefore means changing the codegen in `api-schema` — a Rust change
-and a `cargo xtask gen-api` run, which is out of scope for a frontend-only
-session. A failure hook on the generated client would be independently useful
-(there is no error UI anywhere yet), so this is worth doing properly rather than
-by patching `window.fetch` from the update controller.
+The forced-reload escalation is **not implemented, and is deferred
+indefinitely** — a decision, not an omission to come back and close out.
+
+It wants one place where every failed RPC is seen, and there isn't one. `rpcCall`
+is emitted by the client generator (`rpc_ts()` in **`xtask/src/gen_api.rs`** —
+not `api-schema`, which holds only the wire types and the `METHODS` registry),
+and it carries a `// @generated … DO NOT EDIT` banner; store call sites each
+`.catch(console.error)` on their own. So a failure hook means editing the
+generator and re-running `cargo xtask gen-api`. Patching `window.fetch` from the
+update controller would reach the same place by the wrong route and should not be
+done.
+
+Why deferred rather than scheduled: the escalation was always the optional half
+of this phase. The advisory behavior above is what phase 8 recommended and it is
+in place — a non-dismissible banner, plus auto-apply resolving the mismatch at
+the next cold start. The escalation only adds value in the narrow window where a
+stale client is actively erroring *and* the user ignores a banner they can't
+dismiss.
+
+A failure hook on the generated client is independently worth having — there is
+no error UI anywhere in the app yet — so it should be motivated by that, not
+built as a subroutine of the PWA work. If it ever happens, two things ride along
+with it: this escalation, and emitting `DEV_BUILD_ID` from the generator (see
+below).
+
+#### Follow-up: `DEV_BUILD_ID` is hand-duplicated
+
+`frontend/src/state/updatePolicy.ts` declares `DEV_BUILD_ID = "dev"` as a TS
+literal mirroring `api_schema::DEV_BUILD_ID`. One commented line, and the value
+will never plausibly change — but this repo's whole client story is "generated
+from Rust so it can't drift", so it is a deliberate exception rather than a
+pattern to copy. Fold it into the generator if anything else ever opens
+`gen_api.rs`.
 
 ## Order of work
 
@@ -368,22 +413,30 @@ without something reporting it). Phase 3 is the behavioral fix and is where the
 value is — after it, the core case works with no UI at all. Phases 4–5 are the
 user-facing surface. Phases 6–8 are hardening and can land independently.
 
-Suggested commits:
+Commits, as they actually landed and are planned:
 
-1. Build id emitted by Vite, read by the server, exposed as `app.version` (1+2).
-2. Update controller: real `onNeedRefresh`, idle policy, foreground checks (3).
-3. Banner, About modal, settings entry, command (4).
-4. Reload-fresh-copy escape hatch (5).
-5. Tests + stories (6).
-6. Cache headers and the stale comment (7).
-7. Skew guard (8).
+1. ✅ `596e528` — this plan.
+2. ✅ `1125304` — build id emitted by Vite, read by the server, exposed as
+   `app.version`; cache headers (1 + 2 + 7).
+3. ✅ `8136e2a` — update controller: real `onNeedRefresh`, idle policy,
+   foreground checks, skew detection, policy unit tests (3 + 8 + part of 6).
+4. ⬜ Banner, About modal, settings entry, command, escape hatch, visual stories
+   (4 + 5 + the rest of 6).
 
 ## Validation
 
 No `Cargo.toml` changes are planned, so per `CLAUDE.md` cargo is cheap here:
 `cargo check`, `cargo clippy`, `cargo fmt`, and `cargo test -p backend`. If the
 plan drifts into touching `backend/Cargo.toml` or the workspace root, stop and
-hand the build back.
+hand the build back. The remaining work (phases 4 and 5) is frontend-only and
+should need no cargo at all.
+
+**Not verified by anything above:** the `radiocrate` release binary's own read of
+the embedded build id (`embedded_build_id`) and the new cache headers, since
+`CLAUDE.md` rules out `cargo build`. Both compile and lint clean. Confirm them
+out of a real `cargo xtask build-release` — `curl -I` an `/assets/` URL for
+`immutable` and `/sw.js` for `no-cache`, and check the About panel shows matching
+ids once phase 4 exists.
 
 Frontend, from `frontend/`: `bun run typecheck`, `bun run lint`, `bun run
 format:check`, `bun run test:unit`, `bun run test:visual`.
