@@ -1,4 +1,4 @@
-import type { DmlResult } from "api-client";
+import type { AppVersion, DmlResult } from "api-client";
 import { PRESETS_FIXTURE, QUERIES_FIXTURE } from "../fixtures";
 
 // The harness's stand-in backend: a `fetch` patch answering the two endpoints
@@ -15,6 +15,13 @@ interface DmlOp {
   where?: Record<string, unknown>;
   values?: Record<string, unknown>;
 }
+
+/** The build the stub server claims to be — a fixed answer for `app.version`,
+ * matching the ids the About story pins (`stories.tsx`). */
+export const STUB_VERSION: AppVersion = {
+  buildId: "9f21c0e",
+  serverVersion: "0.4.2 (9f21c0e)",
+};
 
 /** How the stub answers a `dml` call for the story being rendered: by echoing
  * the write back as the database would, or by failing with this message. */
@@ -49,6 +56,10 @@ function rpcResult(method: string, params: unknown): unknown {
     // No persisted overrides, so every command shows its built-in default.
     case "keybinding.list":
       return [];
+    // Constant, never the real `__BUILD_ID__`: a story that showed the build
+    // this checkout happens to be would rewrite its baseline on every commit.
+    case "app.version":
+      return STUB_VERSION;
     case "dml": {
       if (dmlError !== null) throw new Error(dmlError);
       return echoDml((params as { operations: DmlOp[] }).operations);

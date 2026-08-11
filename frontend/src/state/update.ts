@@ -128,6 +128,38 @@ export async function checkForUpdate(): Promise<void> {
   }
 }
 
+/** The escape hatch: throw away the service worker and every cache it holds,
+ * then reload from the network. What to reach for when a client is stuck on an
+ * old build and the ordinary update path hasn't shifted it — a worker that never
+ * reaches `waiting`, a precache the SW keeps serving. It is also the `"stale"`
+ * banner's action, since that notice can fire with nothing for
+ * {@link applyUpdate} to apply.
+ *
+ * `localStorage` is deliberately left alone: theme, sidebar and audio prefs are
+ * never the problem, and losing them would make this feel destructive. Nothing
+ * on the server and no user data is touched — which is why it's called "Reload
+ * fresh copy" everywhere it's offered. Open tabs do close, because any reload
+ * closes them (they're persisted nowhere).
+ *
+ * Both teardown steps are best-effort: a browser with no service worker, or one
+ * refusing cache access, should still get the reload. */
+export async function resetAppData(): Promise<void> {
+  try {
+    const registrations =
+      (await navigator.serviceWorker?.getRegistrations()) ?? [];
+    await Promise.all(registrations.map((reg) => reg.unregister()));
+  } catch (err) {
+    console.warn("failed to unregister service workers", err);
+  }
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  } catch (err) {
+    console.warn("failed to clear caches", err);
+  }
+  location.reload();
+}
+
 /** The session snapshot the apply policy reads, taken from the app store and the
  * record-editor form stash. */
 function sessionFor(store: AppStore): SessionState {
@@ -178,7 +210,13 @@ export function initUpdates(store: AppStore): void {
   // for a day learns about a server upgrade the moment it is resumed.
   document.addEventListener("visibilitychange", onVisibilityChange);
 
+  // The debug seam. Both actions are reachable from the UI now (the update bar
+  // and the About panel), but a wedged client is exactly the case where the UI
+  // may be the old one — and this is callable from a remote-debugging console
+  // attached to an installed Android PWA, where there is no other way in.
   (
-    window as unknown as { radiocrate: { applyUpdate: () => void } }
-  ).radiocrate = { applyUpdate };
+    window as unknown as {
+      radiocrate: { applyUpdate: () => void; resetAppData: () => void };
+    }
+  ).radiocrate = { applyUpdate, resetAppData: () => void resetAppData() };
 }

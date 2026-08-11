@@ -69,6 +69,11 @@ export default function SettingsMenu(): JSX.Element {
         label="Keyboard shortcuts"
         onClick={() => store.openShortcutsTab()}
       />
+      <MenuItem
+        icon={Icons.About}
+        label="About RadioCrate"
+        onClick={() => store.openAbout()}
+      />
     </>
   );
 }

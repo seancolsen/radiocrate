@@ -243,6 +243,8 @@ export interface AppState {
   renaming: { id: string; buffer: string } | null;
   /** The query pending delete confirmation (modal), when open. */
   pendingDelete: { id: string; name: string; unsaved: boolean } | null;
+  /** Whether the About dialog (versions + the update actions) is open. */
+  aboutOpen: boolean;
   /** The track in the now-playing bar (null when nothing is loaded). */
   currentTrack: CurrentTrack | null;
   /** Transport state for that track. */
@@ -686,6 +688,10 @@ export interface AppStore {
   confirmPresetSave: (tabId: string) => void;
   openViewSql: (tabId: string) => void;
   closeViewSql: () => void;
+  /** Open the About dialog — the Settings menu's entry and the
+   * `app.check_for_updates` command's action. */
+  openAbout: () => void;
+  closeAbout: () => void;
 }
 
 function createAppStore(): AppStore {
@@ -711,6 +717,7 @@ function createAppStore(): AppStore {
     viewSql: null,
     renaming: null,
     pendingDelete: null,
+    aboutOpen: false,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
   });
@@ -1973,6 +1980,8 @@ function createAppStore(): AppStore {
       }
     },
     closeViewSql: () => setState("viewSql", null),
+    openAbout: () => setState("aboutOpen", true),
+    closeAbout: () => setState("aboutOpen", false),
   };
 }
 

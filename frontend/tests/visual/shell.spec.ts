@@ -3,7 +3,8 @@ import { SCHEMES, openStory, snapshot } from "./harness";
 
 // The app's furniture, each piece on its own: the left sidebar in both of its
 // layouts, the explorer that fills it, the settings menu and its rebind dialog,
-// the now-playing bar and its menu, and the command palette.
+// the client-update bar and the About dialog, the now-playing bar and its menu,
+// and the command palette.
 
 for (const colorScheme of SCHEMES) {
   // Wide enough for a persistent column beside the content.
@@ -69,6 +70,28 @@ for (const colorScheme of SCHEMES) {
     await expect(dialog).toHaveScreenshot(
       snapshot("settings/keyboard-shortcuts/modal-assign", colorScheme),
     );
+  });
+
+  // The client-update bar in both of its notices: the dismissible "ready" one
+  // over the persistent "stale" one.
+  test(`update/banner - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "update/banner", colorScheme);
+    await expect(
+      page.getByRole("button", { name: "Reload", exact: true }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("update/banner", colorScheme),
+    );
+  });
+
+  // The About dialog on a mismatched pair of build ids, so the "didn't come
+  // from the server that's running" verdict shows. Shot through the dialog: it
+  // portals out of the stage.
+  test(`about/modal - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "about/modal", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/didn’t come from the server/)).toBeVisible();
+    await expect(dialog).toHaveScreenshot(snapshot("about/modal", colorScheme));
   });
 
   // The now-playing bar: title + artists on the left, play/pause and the

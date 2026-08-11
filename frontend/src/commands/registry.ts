@@ -26,6 +26,7 @@ import { chordOf, type Chord } from "./chord";
 export type CommandId =
   | "palette.open"
   | "shortcuts.configure"
+  | "app.check_for_updates"
   | "explorer.toggle"
   | "playback.toggle_play"
   | "playback.next_track"
@@ -97,6 +98,15 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     // rebind everything doesn't need to claim a chord itself.
     id: "shortcuts.configure",
     title: "Commands: Configure keyboard shortcuts",
+    when: "always",
+    defaultChord: null,
+  },
+  {
+    // Ships unbound: checking for a new client is a once-in-a-while action, and
+    // it opens the About panel rather than acting invisibly — the check's result
+    // (the two build ids, and whether they agree) is the point.
+    id: "app.check_for_updates",
+    title: "App: Check for updates",
     when: "always",
     defaultChord: null,
   },

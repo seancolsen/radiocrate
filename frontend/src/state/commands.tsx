@@ -283,6 +283,11 @@ function createCommandStore(store: AppStore): CommandStore {
       case "shortcuts.configure":
         store.openShortcutsTab();
         break;
+      // The About panel runs a check as it opens, so this is the check *and*
+      // somewhere to see its answer.
+      case "app.check_for_updates":
+        store.openAbout();
+        break;
       case "explorer.toggle":
         store.toggleSidebar();
         break;
@@ -404,6 +409,7 @@ function createCommandStore(store: AppStore): CommandStore {
     store.state.viewSql !== null ||
     store.state.presetSave !== null ||
     store.state.renaming !== null ||
+    store.state.aboutOpen ||
     recordPickerOpen() ||
     anyMenuOpen();
 

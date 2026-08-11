@@ -8,7 +8,7 @@ import {
   fixtureQuery,
   installRecordFixture,
 } from "../recordFixture";
-import { failDml } from "./mockApi";
+import { failDml, STUB_VERSION } from "./mockApi";
 import {
   FILTER_DEF,
   FULL_DEF,
@@ -17,6 +17,7 @@ import {
   VETTED_PRESET_ID,
 } from "../fixtures";
 
+import { AboutDialog } from "../../components/AboutModal";
 import CommandPalette from "../../components/CommandPalette";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
@@ -27,6 +28,7 @@ import QueryToolbar from "../../components/QueryToolbar";
 import RecordEditorPanel from "../../components/RecordEditorPanel";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import SettingsMenu from "../../components/SettingsMenu";
+import { UpdateBar } from "../../components/UpdateBanner";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import RecordPicker from "../../components/RecordPicker";
 import QueryBuilder from "../../components/builder/QueryBuilder";
@@ -185,7 +187,9 @@ export const STORIES: Record<string, Story> = {
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
     width: 200,
-    height: 300,
+    // Tall enough to clear the menu's bottom edge (its last row is "About
+    // RadioCrate"), so the snapshot isn't cropping the panel.
+    height: 330,
     render: () => (
       <Menu defaultOpen width="180px" trigger={() => null}>
         <SettingsMenu />
@@ -204,6 +208,39 @@ export const STORIES: Record<string, Story> = {
         onUnbind={() => {}}
         onReset={() => {}}
         onCancel={() => {}}
+      />
+    ),
+  },
+
+  // ── Client updates ───────────────────────────────────────────────────────
+  // Both notices at once, since the bar is the same component either way and
+  // the difference is entirely wording: "ready" (a downloaded update waiting,
+  // dismissible) above "stale" (the server has moved on from this client — the
+  // stronger, non-dismissible warning, whose button is the fresh-copy reload).
+  // Rendered from props rather than from the update controller, which needs a
+  // service worker the harness deliberately doesn't have.
+  "update/banner": {
+    width: 720,
+    frame: "flex flex-col gap-2",
+    render: () => (
+      <>
+        <UpdateBar notice="ready" onReload={() => {}} onDismiss={() => {}} />
+        <UpdateBar notice="stale" onReload={() => {}} onDismiss={() => {}} />
+      </>
+    ),
+  },
+  // The About dialog on a *mismatched* pair of build ids — the state it exists
+  // to explain. Both ids are pinned here (the client's by prop, the server's by
+  // `STUB_VERSION`) rather than read from `__BUILD_ID__`, so the baseline
+  // doesn't churn with every commit.
+  "about/modal": {
+    render: () => (
+      <AboutDialog
+        clientBuildId="3c7ae10"
+        version={STUB_VERSION}
+        onCheck={() => {}}
+        onReloadFresh={() => {}}
+        onClose={() => {}}
       />
     ),
   },

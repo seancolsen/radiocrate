@@ -13,30 +13,18 @@ doesn't have to reconstruct progress from `git log`.
 | 1 — Build identity | done |
 | 2 — `app.version` RPC | done |
 | 3 — Update controller | done |
-| 4 — UI | not started |
-| 5 — Escape hatch | not started |
-| 6 — Tests | unit done (`shouldApplyNow`, `isClientStale`); visual stories pending with phase 4 |
+| 4 — UI | done |
+| 5 — Escape hatch | done |
+| 6 — Tests | done — unit (`shouldApplyNow`, `isClientStale`) + the two visual stories. Manual SW verification still outstanding (see Validation) |
 | 7 — Cache headers | done |
 | 8 — Skew guard | done as recommended (detection + non-dismissible policy); banner wording lands with phase 4. The forced-reload escalation is **deferred indefinitely** — a decision, see phase 8 |
 
-One session of work remains: **phase 4 + phase 5 + the two visual stories**. Tests
-live with the code they cover rather than in a session of their own, so no
-session needs both the controller internals and the whole component library in
-context.
-
-**Read this first if you're picking up phase 4:**
-
-- `bun run dev` disables the service worker entirely (`vite-plugin-pwa` only
-  injects it on build), so none of the update behavior is observable under the
-  dev server. Verify against `bun run build` + `vite preview`, or the real
-  binary. The lifecycle *can* be driven for real without the binary — serve two
-  builds over a stub `/api/rpc` with a controllable `app.version` and drive it
-  with Chromium. A build takes ~5s and every build off a dirty tree gets a fresh
-  id, so two distinct builds are cheap.
-- The banner's two notices need **different actions** — see phase 4. Wiring
-  `applyUpdate()` to the `"stale"` notice produces a dead button.
-- Consume the controller's exported signals; don't rework it. `updateNotice()`
-  already folds in the dismissal and non-dismissibility rules.
+Every phase has landed. What is left is not code but confirmation: the manual
+service-worker run-through under "Validation" below, against a real
+`cargo xtask build-release` binary — `bun run dev` disables the service worker
+entirely (`vite-plugin-pwa` only injects it on build), so none of the update
+behavior is observable under the dev server, and no automated test in this repo
+covers it.
 
 ## The problem
 
@@ -288,6 +276,31 @@ after the separator, alongside "Keyboard shortcuts".
 **`frontend/src/commands/registry.ts`** — an `app.check_for_updates` command so
 it's palette-reachable. No default chord.
 
+#### As built
+
+Both components are split in two: a presentational half taking everything it
+shows as props (`UpdateBar`, `AboutDialog`), and a default export wiring that to
+the controller. The split is what lets the visual stories pin the build ids and
+render either notice without a service worker — the same shape `CaptureDialog`
+already uses in `ShortcutsPage.tsx`.
+
+- **The banner** shows both notices as designed. `"ready"` → `applyUpdate()`,
+  dismissible; `"stale"` → `resetAppData()`, not dismissible, and its button says
+  "Reload fresh copy" (it *is* the escape hatch). Neither confirms: the bar
+  states that reloading closes open tabs, and the user pressed a button that says
+  Reload.
+- **The About dialog** is an app-wide overlay in `App.tsx`, opened through
+  `store.state.aboutOpen` (`openAbout` / `closeAbout`, alongside the other
+  modals' state, and added to the shortcut-suppression list in `commands.tsx`).
+  It runs `checkForUpdate()` on open, so what's on screen is a current answer,
+  and disables its "Check for updates" button while one is in flight. Its verdict
+  line has four states, not two: no answer yet, a `dev` server (unanswerable, not
+  "fine"), stale, and up to date.
+- **`app.check_for_updates`** opens the About panel rather than checking
+  invisibly — the check's *answer* is the point, and a command whose only effect
+  is a network call the user can't see would look broken. Unbound by default.
+- **The settings entry** is "About RadioCrate", after "Keyboard shortcuts".
+
 ### Phase 5 — Escape hatch
 
 `resetAppData()` in the update controller:
@@ -302,6 +315,16 @@ losing them makes the action feel destructive.
 Name it **"Reload fresh copy"**, not "Reset app data". It touches nothing on the
 server and no user data; the name should say so, or nobody will dare press it.
 Put a short confirm in front of it noting that open tabs will close.
+
+#### As built
+
+As described, with both teardown steps best-effort (a browser with no service
+worker, or one refusing cache access, still gets the reload). The confirm is an
+inline swap of the About panel's button row, not a second modal over the first.
+
+It also joins `applyUpdate` on the `window.radiocrate` debug seam: a wedged
+client is exactly the case where the UI on screen may be the old one, and a
+console attached to an installed Android PWA is otherwise the only way in.
 
 ### Phase 6 — Tests
 
@@ -322,6 +345,23 @@ otherwise every commit rewrites both baselines.
 **Not covered by automated tests:** the service worker lifecycle itself. Testing
 real SW activation in CI is disproportionate to the value. It's verified by hand
 (below).
+
+#### As built
+
+Both stories render the presentational half of their component (see phase 4), so
+neither needs a service worker and neither reads `__BUILD_ID__`:
+
+- `update/banner` puts **both** notices on one stage, stacked — the bar is one
+  component either way and the difference is entirely wording, so one baseline
+  covers both rather than two covering one each. It is not shot over a query
+  page: that would be a whole-app snapshot, which `CLAUDE.md` warns off.
+- `about/modal` pins a client id that *doesn't* match `mockApi`'s constant
+  `app.version`, so the snapshot carries the mismatch verdict — the state the
+  panel exists to explain.
+
+Two existing baselines legitimately moved with this work, and were regenerated:
+`settings/menu` (the new "About RadioCrate" row, and a taller stage so the panel
+isn't cropped) and `settings/keyboard-shortcuts/list` (the new command's row).
 
 **Manual verification** — the thing that actually proves this works:
 
@@ -420,26 +460,30 @@ Commits, as they actually landed and are planned:
    `app.version`; cache headers (1 + 2 + 7).
 3. ✅ `8136e2a` — update controller: real `onNeedRefresh`, idle policy,
    foreground checks, skew detection, policy unit tests (3 + 8 + part of 6).
-4. ⬜ Banner, About modal, settings entry, command, escape hatch, visual stories
+4. ✅ Banner, About modal, settings entry, command, escape hatch, visual stories
    (4 + 5 + the rest of 6).
 
 ## Validation
 
-No `Cargo.toml` changes are planned, so per `CLAUDE.md` cargo is cheap here:
-`cargo check`, `cargo clippy`, `cargo fmt`, and `cargo test -p backend`. If the
-plan drifts into touching `backend/Cargo.toml` or the workspace root, stop and
-hand the build back. The remaining work (phases 4 and 5) is frontend-only and
-should need no cargo at all.
-
-**Not verified by anything above:** the `radiocrate` release binary's own read of
-the embedded build id (`embedded_build_id`) and the new cache headers, since
-`CLAUDE.md` rules out `cargo build`. Both compile and lint clean. Confirm them
-out of a real `cargo xtask build-release` — `curl -I` an `/assets/` URL for
-`immutable` and `/sw.js` for `no-cache`, and check the About panel shows matching
-ids once phase 4 exists.
+No `Cargo.toml` was changed anywhere, so per `CLAUDE.md` cargo stayed cheap:
+`cargo check`, `cargo clippy`, `cargo fmt`, and `cargo test -p backend` all ran
+clean when phases 1–3 landed. Phases 4 and 5 were frontend-only and needed no
+cargo at all.
 
 Frontend, from `frontend/`: `bun run typecheck`, `bun run lint`, `bun run
-format:check`, `bun run test:unit`, `bun run test:visual`.
+format:check`, `bun run test:unit`, `bun run test:visual` — all clean, plus a
+`bun run build` to confirm the production bundle (the only place
+`virtual:pwa-register` resolves to a real service worker) still builds.
+
+**Still to confirm by hand, out of a real `cargo xtask build-release`:**
+
+- The binary's own read of the embedded build id (`embedded_build_id`) and the
+  phase 7 cache headers — `CLAUDE.md` rules out `cargo build`, so neither has
+  ever run. `curl -I` an `/assets/` URL for `immutable` and `/sw.js` for
+  `no-cache`, and check the About panel shows matching ids.
+- The service-worker run-through below. Phase 3's controller was verified
+  against real workers driven by Chromium; the phase 4 UI over it has not been,
+  and no automated test in this repo can cover it.
 
 ## Risks and open questions
 

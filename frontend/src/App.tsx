@@ -7,6 +7,8 @@ import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
+import UpdateBanner from "./components/UpdateBanner";
+import AboutModal from "./components/AboutModal";
 
 /** The content area of the active tab: the page its kind calls for, or a blank
  * panel when no tab is open. The one place tab kinds fan out into pages — every
@@ -35,13 +37,15 @@ function TabContent() {
 }
 
 /** The main column, right of the explorer: tab bar, the active tab's content,
- * and the now-playing bar pinned to the bottom (which spans this column only —
- * the explorer keeps its own full height). */
+ * the client-update bar when there's one to show, and the now-playing bar
+ * pinned to the bottom (which spans this column only — the explorer keeps its
+ * own full height). */
 function Main() {
   return (
     <div class="flex min-w-0 flex-1 flex-col">
       <TabBar />
       <TabContent />
+      <UpdateBanner />
       <NowPlaying />
     </div>
   );
@@ -70,6 +74,7 @@ export default function App() {
 
       {/* App-wide overlays, above every panel and both layouts. */}
       <CommandPalette />
+      <AboutModal />
     </div>
   );
 }

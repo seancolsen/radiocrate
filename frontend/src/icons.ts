@@ -44,6 +44,7 @@ import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
+import About from "~icons/material-symbols/info";
 // The record editor's field-label glyphs, one per value category.
 import FieldText from "~icons/material-symbols/notes";
 import FieldNumber from "~icons/material-symbols/tag";
@@ -94,6 +95,7 @@ export const Icons = {
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
   Keyboard, // shortcuts editor: "Record keys" search toggle
+  About, // Settings footer: "About RadioCrate" (versions + update actions)
   FieldText, // record editor: a text field's label
   FieldNumber, // record editor: a numeric field's label
   FieldId, // record editor: a UUID field's label
