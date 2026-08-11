@@ -12,12 +12,12 @@ doesn't have to reconstruct progress from `git log`.
 | ----- | ------ |
 | 1 — Build identity | done |
 | 2 — `app.version` RPC | done |
-| 3 — Update controller | not started |
+| 3 — Update controller | done |
 | 4 — UI | not started |
 | 5 — Escape hatch | not started |
-| 6 — Tests | not started |
+| 6 — Tests | unit done (`shouldApplyNow`, `isClientStale`); visual stories pending with phase 4 |
 | 7 — Cache headers | done |
-| 8 — Skew guard | not started |
+| 8 — Skew guard | detection + non-dismissible policy done; banner wording lands with phase 4, forced-reload escalation not done (see below) |
 
 Phases 3–8 are meant to land across two further sessions: **3 + 8 + the
 `shouldApplyNow()` unit test** in one, **4 + 5 + the two visual stories** in the
@@ -217,6 +217,38 @@ Wiring:
 initialize it from inside `Root()` (or pass an accessor) rather than at module
 scope, so it isn't reading a store that doesn't exist yet.
 
+#### As built
+
+Two modules, not one. `frontend/src/state/update.ts` is the wiring as described;
+the two *judgements* live in `frontend/src/state/updatePolicy.ts` —
+`shouldApplyNow(session)` and `isClientStale(clientBuildId, serverBuildId)`,
+both pure. The split is what makes them unit-testable at all: `update.ts` imports
+`virtual:pwa-register`, which only exists inside a Vite build, so nothing a
+vitest file can import may live there.
+
+`shouldApplyNow` takes a `SessionState` — `{ playing, tabIds, tabUnsaved,
+recordsUnsaved }` — rather than the store, so the policy is a function of four
+facts. `update.ts` builds one from `AppStore` plus `modifiedRecords` (form
+stash).
+
+Surface, as landed: `updateReady()`, `clientStale()`, `versionInfo()`,
+`updateDismissed()`, `clientBuildId()`, `updateNotice()`, `applyUpdate()`,
+`dismissUpdate()`, `checkForUpdate()`, `initUpdates(store)`. `resetAppData()` is
+still phase 5.
+
+`updateNotice()` is the addition: `"stale" | "ready" | null`, so phase 4's banner
+renders one accessor instead of reassembling the policy (including phase 8's
+non-dismissible rule) in JSX. `dismissUpdate()` is a no-op while `clientStale()`.
+
+**Verified** against real service workers (not just unit tests): two `dist/`
+builds served over a stub `/api/rpc` with a controllable `app.version` build id,
+driven by Chromium.
+
+1. Empty session, server upgraded, reload → the client auto-applied onto the new
+   bundle (`index-xQ78rTR_.js` → `index-B014_VFL.js`). *The core case.*
+2. Same, with a tab open → the update downloaded and parked in `waiting`; the
+   page stayed on its own bundle. *The banner case, minus the banner.*
+
 ### Phase 4 — UI
 
 **`frontend/src/components/UpdateBanner.tsx`** — a slim bar rendered in `Main()`
@@ -310,6 +342,24 @@ next cold start.
 
 Escalate to a forced reload only if an RPC fails *and* the build ids differ —
 at that point the session is already broken, so there's nothing left to protect.
+
+#### As built
+
+The advisory half landed with phase 3: `checkForUpdate()` sets `clientStale()` on
+a mismatch, `updateNotice()` returns `"stale"` ahead of `"ready"`, and
+`dismissUpdate()` refuses while stale — so the banner phase 4 renders off that
+accessor is automatically the persistent one. Only the *wording* is left, and it
+belongs to the banner.
+
+The forced-reload escalation is **not** implemented, and needs a decision before
+it can be: it wants one place where every failed RPC is seen, and there isn't
+one. `rpcCall` lives in the generated `api-client` (`// @generated … DO NOT
+EDIT`), and store call sites each `.catch(console.error)` on their own. Adding a
+failure hook therefore means changing the codegen in `api-schema` — a Rust change
+and a `cargo xtask gen-api` run, which is out of scope for a frontend-only
+session. A failure hook on the generated client would be independently useful
+(there is no error UI anywhere yet), so this is worth doing properly rather than
+by patching `window.fetch` from the update controller.
 
 ## Order of work
 
