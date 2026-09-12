@@ -52,8 +52,11 @@ never rebuild it while working on the UI — leave it running.
 # From the repo root. Point it at any collection of audio files.
 # --no-scan skips the startup collection scan for a faster boot.
 cargo run -p backend -- serve /path/to/your/collection --no-scan
-# → Listening on 0.0.0.0:3000
+# → 2026-09-11T09:12:33.481-04:00 INFO  backend::server: listening addr="0.0.0.0:3000"
 ```
+
+Add `RUST_LOG=backend::server=debug` to log every HTTP request the frontend
+makes, with its status and latency. See [Logging](../DEVELOPMENT.md#logging).
 
 Use a release build if you want realistic query performance (debug DuckDB is
 ~10× slower):

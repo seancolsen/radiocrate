@@ -1,11 +1,19 @@
+use backend::log::LogArgs;
 use backend::{db, scanner, server};
 use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use tracing::error;
 
 #[derive(Parser)]
 #[command(name = "radiocrate-server")]
 #[command(about = "A tool for managing audio file collections")]
 struct Cli {
+    // Ahead of the subcommand: clap's derive loses the subcommand if a
+    // flattened `Args` is declared after it.
+    #[command(flatten)]
+    log: LogArgs,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -78,9 +86,8 @@ fn open_collection(
     Ok((collection_path, conn))
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match Cli::parse().command {
+async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
         Command::Scan(args) => {
             let (collection_path, conn) = open_collection(&args.collection)?;
             scanner::scan(collection_path, &conn)?;
@@ -94,4 +101,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let cli = Cli::parse();
+    cli.log.init();
+
+    // Reported through the logger rather than by returning `Err` from `main`,
+    // which would print a bare `Error: …` — no timestamp, no level, and a
+    // multi-line `DuckDB` message spread over as many lines as it likes.
+    match run(cli.command).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            error!(error = e.as_ref(), "fatal");
+            ExitCode::FAILURE
+        }
+    }
 }

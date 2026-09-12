@@ -5,6 +5,7 @@ pub use api_schema::DEV_BUILD_ID;
 
 pub mod db;
 pub mod dml;
+pub mod log;
 pub mod rpc;
 pub mod scanner;
 pub mod server;

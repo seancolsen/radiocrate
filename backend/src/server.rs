@@ -1,12 +1,14 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use arrow_ipc::writer::StreamWriter;
 use axum::Router;
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::{Response, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use bytes::Bytes;
@@ -14,6 +16,7 @@ use duckdb::Connection;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::CorsLayer;
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 pub struct AppState {
     db: Mutex<Connection>,
@@ -166,7 +169,41 @@ impl Drop for ChannelWriter {
     }
 }
 
+/// Logs one record per HTTP request, and puts every record a handler emits while
+/// serving it inside a `request{…}` span so it can be tied back to the request
+/// that caused it.
+///
+/// At `DEBUG`, because a music player asks for a lot of bytes and an access log
+/// at `INFO` would bury everything else; `RUST_LOG=backend::server=debug` turns
+/// it on. Server errors are logged at `WARN` regardless, since those are worth
+/// seeing without knowing in advance to ask.
+///
+/// Apply this once, at the outermost router, so the count is one record per
+/// request rather than one per nested layer.
+pub async fn log_requests(request: Request, next: Next) -> axum::response::Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    async move {
+        let started = Instant::now();
+        let response = next.run(request).await;
+        let status = response.status();
+        let elapsed_ms = started.elapsed().as_millis();
+        if status.is_server_error() {
+            warn!(status = status.as_u16(), elapsed_ms, "request failed");
+        } else {
+            debug!(status = status.as_u16(), elapsed_ms, "request");
+        }
+        response
+    }
+    .instrument(info_span!("request", %method, path))
+    .await
+}
+
 async fn query(State(state): State<Arc<AppState>>, body: String) -> Response<Body> {
+    // Kept for the error paths below; the body itself moves into the blocking
+    // task. Cheap for the queries this endpoint sees, and it is the single most
+    // useful thing to have in the log when one of them fails.
+    let sql = body.clone();
     let (tx, rx) = mpsc::channel::<io::Result<Bytes>>(8);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
 
@@ -219,16 +256,23 @@ async fn query(State(state): State<Arc<AppState>>, body: String) -> Response<Bod
                 .unwrap()
         }
         Ok(Err(msg)) => {
-            eprintln!("query: {msg}");
+            // `WARN`, not `ERROR`: a rejected query is normally someone typing
+            // SQL, not the server misbehaving. Both the query and DuckDB's
+            // reply are multi-line more often than not, which is exactly what
+            // the JSON field encoding is for.
+            warn!(sql = %sql, error = %msg, "query rejected");
             Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from(msg))
                 .unwrap()
         }
-        Err(_) => Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::from("query task panicked"))
-            .unwrap(),
+        Err(_) => {
+            error!(sql = %sql, "query task panicked");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("query task panicked"))
+                .unwrap()
+        }
     }
 }
 
@@ -246,18 +290,20 @@ pub async fn serve(
     // to is whatever the Vite dev server is serving, which is by definition
     // current. Reporting the sentinel tells the client to skip the staleness
     // check rather than compare against an id that can't ever match.
-    let app = Router::new().nest(
-        "/api",
-        router(app_state(
-            conn,
-            collection_path,
-            api_schema::DEV_BUILD_ID.to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        )),
-    );
+    let app = Router::new()
+        .nest(
+            "/api",
+            router(app_state(
+                conn,
+                collection_path,
+                api_schema::DEV_BUILD_ID.to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            )),
+        )
+        .layer(axum::middleware::from_fn(log_requests));
     let addr = format!("0.0.0.0:{port}");
-    println!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    info!(addr, "listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

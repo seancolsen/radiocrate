@@ -3,6 +3,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTagKey, Tag, Value};
 use symphonia::core::probe::{Hint, ProbeResult};
+use tracing::warn;
 
 use super::types::{TrackArtistMetadata, TrackMetadata};
 
@@ -175,9 +176,10 @@ fn probe_file(file_path: &Path) -> Option<(ProbeResult, f64)> {
     let duration_secs = match duration_secs {
         Some(secs) if (0.0..=MAX_PLAUSIBLE_DURATION_SECS).contains(&secs) => secs,
         Some(secs) => {
-            eprintln!(
-                "Warning: implausible duration ({secs}s) for {}, recording as unknown",
-                file_path.display()
+            warn!(
+                path = %file_path.display(),
+                duration_secs = secs,
+                "implausible duration; recording as unknown"
             );
             0.0
         }
@@ -195,10 +197,7 @@ pub fn get_duration(file_path: &Path) -> f64 {
     if let Ok(d) = result {
         d
     } else {
-        eprintln!(
-            "Warning: panic while probing {}, skipping duration",
-            file_path.display()
-        );
+        warn!(path = %file_path.display(), "panic while probing; skipping duration");
         0.0
     }
 }
@@ -242,10 +241,7 @@ pub fn get_track_metadata(file_path: &Path) -> Option<(TrackMetadata, f64)> {
     if let Ok(inner) = result {
         inner
     } else {
-        eprintln!(
-            "Warning: panic while reading {}, skipping",
-            file_path.display()
-        );
+        warn!(path = %file_path.display(), "panic while reading metadata; skipping file");
         None
     }
 }

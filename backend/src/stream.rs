@@ -24,6 +24,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
+use tracing::{error, warn};
 
 use crate::server::AppState;
 
@@ -80,34 +81,33 @@ fn resolve_path(collection_path: &Path, relative: &str) -> PathBuf {
 }
 
 fn lookup_track(state: &AppState, track_id: &str) -> Result<TrackFile, StatusCode> {
-    let (relative, format) = state.read(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT f.path, f.format::VARCHAR \
-                 FROM track t JOIN file f ON t.file = f.id \
-                 WHERE t.id = TRY_CAST(? AS UUID)",
-            )
-            .map_err(|e| {
-                eprintln!("stream: prepare failed: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    // Every step here fails the same way — a broken database, not a missing
+    // track — so they share one error type and one log site, which is also the
+    // one place that knows the track id worth recording.
+    let row = state.read(|conn| -> Result<Option<(String, String)>, duckdb::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT f.path, f.format::VARCHAR \
+             FROM track t JOIN file f ON t.file = f.id \
+             WHERE t.id = TRY_CAST(? AS UUID)",
+        )?;
 
-        let mut rows = stmt
-            .query_map([track_id], |row| {
-                let relative: String = row.get(0)?;
-                let format: String = row.get(1)?;
-                Ok((relative, format))
-            })
-            .map_err(|e| {
-                eprintln!("stream: query_map failed: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+        let mut rows = stmt.query_map([track_id], |row| {
+            let relative: String = row.get(0)?;
+            let format: String = row.get(1)?;
+            Ok((relative, format))
+        })?;
 
-        rows.next().ok_or(StatusCode::NOT_FOUND)?.map_err(|e| {
-            eprintln!("stream: row decode failed: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
-    })?;
+        rows.next().transpose()
+    });
+
+    let (relative, format) = match row {
+        Ok(Some(found)) => found,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(e) => {
+            error!(track_id, error = %e, "track lookup failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
 
     Ok(TrackFile {
         path: resolve_path(&state.collection_path, &relative),
@@ -130,6 +130,10 @@ pub async fn stream_track(
     };
 
     if !track.path.exists() {
+        // The database and the collection disagree — the file moved or was
+        // deleted without a rescan. A 404 tells the client; only the log says
+        // which file, which is what makes it fixable.
+        warn!(track_id, path = %track.path.display(), "track file missing on disk");
         return (StatusCode::NOT_FOUND, "file not found on disk").into_response();
     }
 
@@ -149,10 +153,7 @@ async fn passthrough_response(track: &TrackFile, request: Request) -> Response {
     let mut response = match result {
         Ok(resp) => resp.into_response(),
         Err(err) => {
-            eprintln!(
-                "stream: ServeFile failed for {}: {err}",
-                track.path.display()
-            );
+            error!(path = %track.path.display(), error = %err, "serving file failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("read failed: {err}"),
@@ -183,8 +184,14 @@ async fn transcode_response(track: &TrackFile, start: f64) -> Response {
             let body = Body::from_stream(stream);
             ([(header::CONTENT_TYPE, "audio/ogg")], body).into_response()
         }
-        Ok(Err(msg)) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "transcode task panicked").into_response(),
+        Ok(Err(msg)) => {
+            error!(path = %track.path.display(), error = %msg, "transcode setup failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+        }
+        Err(_) => {
+            error!(path = %track.path.display(), "transcode task panicked");
+            (StatusCode::INTERNAL_SERVER_ERROR, "transcode task panicked").into_response()
+        }
     }
 }
 
@@ -204,7 +211,9 @@ fn run_transcode_pipeline(
         if let Some(ready) = ready_tx {
             let _ = ready.send(Err(e.to_string()));
         } else {
-            eprintln!("transcode streaming error: {e}");
+            // The response headers are long gone by now, so the client just
+            // sees a truncated stream; the log is the only record of why.
+            error!(path = %file_path.display(), error = %e, "transcode stream failed");
         }
     }
 }

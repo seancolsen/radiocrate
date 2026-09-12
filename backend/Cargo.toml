@@ -39,4 +39,16 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+tracing = "0.1"
+# Default features off to skip the `tracing-log` bridge and the `time` crate:
+# nothing here logs through the `log` facade, and timestamps come from `jiff`,
+# which is already a dependency. `fmt` brings the subscriber this crate's
+# `log` module plugs its own event/field formatters into; `ansi` the optional
+# color; `env-filter` the `RUST_LOG` directives.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "std",
+] }
 uuid = { version = "1", features = ["v4"] }

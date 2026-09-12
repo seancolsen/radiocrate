@@ -102,6 +102,55 @@ Notes specific to the dev container:
 
 - Bump the Rust version by editing the `FROM rust:1.91-bookworm` line in the `Dockerfile` to match a new host toolchain.
 
+## Logging
+
+Both server binaries (`radiocrate-server` and `radiocrate`) log to **stderr**,
+one record per line:
+
+```text
+2026-09-11T09:12:33.481-04:00 INFO  backend::scanner: scan complete elapsed_ms=814
+2026-09-11T09:12:41.006-04:00 WARN  backend::server: request{method="POST" path="/api/query"}: query rejected sql="SELEC * FROM track" error="Parser Error: syntax error at or near \"SELEC\"\nLINE 1: SELEC * FROM track\n        ^"
+```
+
+A record is a timestamp, a level, the emitting module, a fixed message, and
+then the variable parts as `key=value` fields. **Every record is exactly one
+line**: string values are JSON-encoded, so a four-line DuckDB error arrives as
+one `error="…\n…"` field rather than as four log lines, three of which have no
+timestamp. That's what makes the output safe to hand to `journald`, `docker
+logs`, or a file, and it means `grep` sees whole records.
+
+### Controlling it
+
+| | |
+| --- | --- |
+| `--log-level <error\|warn\|info\|debug\|trace>` | Lowest level to log. Default `info`. |
+| `--color <auto\|always\|never>` | Default `auto`: color only when stderr is a terminal and `NO_COLOR` is unset, so a redirected or piped log is plain text. |
+| `RUST_LOG` | Per-module override, e.g. `RUST_LOG=info,backend::server=debug`. Takes precedence over `--log-level`. |
+
+`RUST_LOG=backend::server=debug` turns on the per-request access log
+(method, path, status, latency). It's off by default because streaming audio
+generates a lot of requests; server errors are logged at `WARN` either way.
+
+### Adding log statements
+
+Put the constant part in the message and the variable part in fields:
+
+```rust
+use tracing::{debug, error, info, warn};
+
+warn!(path = %file.display(), error = %e, "could not read tags");
+```
+
+Use `%` (Display) for anything stringy — errors, `Path::display()`, ids.
+`&str`/`String` fields need no sigil, and numbers and booleans are written
+unquoted so they stay parseable as numbers. Avoid `error!("failed: {e}")`:
+interpolating into the message defeats both the escaping and the field
+structure. The module path is recorded automatically, so messages don't need a
+`"scanner: "` prefix of their own.
+
+[`backend/src/log.rs`](backend/src/log.rs) has the formatter and the fuller
+version of these rules.
+
 ## Cross-compiling for the Raspberry Pi (home-lab deployment)
 
 The production binary (`radiocrate`) can be cross-compiled from an x86

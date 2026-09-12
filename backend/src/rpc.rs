@@ -17,6 +17,7 @@ use axum::extract::State;
 use duckdb::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{error, warn};
 
 use crate::server::AppState;
 
@@ -80,6 +81,8 @@ pub(crate) async fn rpc(
     Json(req): Json<RpcRequest>,
 ) -> Json<RpcResponse> {
     let id = req.id.clone();
+    // Kept for the logging below; `req` itself moves into the blocking task.
+    let method = req.method.clone();
     let outcome =
         tokio::task::spawn_blocking(move || dispatch(&state, &req.method, req.params)).await;
 
@@ -90,26 +93,41 @@ pub(crate) async fn rpc(
             error: None,
             id,
         }),
-        Ok(Err(err)) => Json(RpcResponse {
-            jsonrpc: "2.0",
-            result: None,
-            error: Some(RpcError {
-                code: err.code,
-                message: err.message,
-                data: err.data,
-            }),
-            id,
-        }),
-        Err(_) => Json(RpcResponse {
-            jsonrpc: "2.0",
-            result: None,
-            error: Some(RpcError {
-                code: -32603,
-                message: "rpc task panicked".to_string(),
-                data: None,
-            }),
-            id,
-        }),
+        Ok(Err(err)) => {
+            // The client is told, but only over the wire — without this the
+            // server side of a failed save leaves no trace at all. `WARN`
+            // because the common causes (an unknown method, params that don't
+            // deserialize, a constraint violation) are the client's problem.
+            warn!(
+                method,
+                code = err.code,
+                error = %err.message,
+                "rpc method failed"
+            );
+            Json(RpcResponse {
+                jsonrpc: "2.0",
+                result: None,
+                error: Some(RpcError {
+                    code: err.code,
+                    message: err.message,
+                    data: err.data,
+                }),
+                id,
+            })
+        }
+        Err(_) => {
+            error!(method, "rpc task panicked");
+            Json(RpcResponse {
+                jsonrpc: "2.0",
+                result: None,
+                error: Some(RpcError {
+                    code: -32603,
+                    message: "rpc task panicked".to_string(),
+                    data: None,
+                }),
+                id,
+            })
+        }
     }
 }
 

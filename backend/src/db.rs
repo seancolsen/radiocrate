@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use tracing::{debug, info};
+
 /// Re-exported so a binary can name the type `get_db` hands back without taking
 /// its own dependency on `duckdb`.
 pub use duckdb::Connection;
@@ -64,7 +66,7 @@ fn run_migration(conn: &mut Connection, migration: &Migration) -> Result<(), duc
     tx.execute_batch(migration.sql)?;
     tx.execute("UPDATE meta.version SET value = ?", [migration.version])?;
     tx.commit()?;
-    println!("Migration {:04} applied.", migration.version);
+    info!(version = migration.version, "applied migration");
     Ok(())
 }
 
@@ -72,6 +74,7 @@ pub fn get_db(db_path: &Path) -> Result<Connection, Box<dyn std::error::Error>> 
     let mut conn = Connection::open(db_path)?;
     init_db_version_metadata(&conn)?;
     let current_version = get_current_version(&conn)?;
+    debug!(path = %db_path.display(), version = current_version, "opened database");
     let pending_migrations = MIGRATIONS
         .iter()
         .filter(|m| m.version > current_version)

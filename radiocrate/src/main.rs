@@ -1,10 +1,13 @@
 use axum::Router;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
+use backend::log::LogArgs;
 use backend::{db, scanner, server};
 use clap::{Args, Parser, Subcommand};
 use rust_embed::Embed;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use tracing::{error, info, warn};
 
 #[derive(Embed)]
 #[folder = "../frontend/dist/"]
@@ -19,6 +22,11 @@ const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"),
 #[command(about = "RadioCrate — manage and play your audio collection")]
 #[command(version = VERSION)]
 struct Cli {
+    // Ahead of the subcommand: clap's derive loses the subcommand if a
+    // flattened `Args` is declared after it.
+    #[command(flatten)]
+    log: LogArgs,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -141,9 +149,9 @@ fn embedded_build_id() -> String {
     {
         Some(id) => id,
         None => {
-            eprintln!(
-                "warning: no build-id.txt in the embedded frontend; \
-                 client update detection is disabled. Rebuild with `cargo xtask build-release`."
+            warn!(
+                "no build-id.txt in the embedded frontend; client update \
+                 detection is disabled. Rebuild with `cargo xtask build-release`."
             );
             backend::DEV_BUILD_ID.to_string()
         }
@@ -203,18 +211,20 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .nest("/api", server::router(state))
-        .fallback(static_handler);
+        .fallback(static_handler)
+        // Outermost, so each request is logged once — the static fallback
+        // included, which is where a broken PWA deploy shows up.
+        .layer(axum::middleware::from_fn(server::log_requests));
 
     let addr = format!("0.0.0.0:{}", args.port);
-    println!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    info!(addr, version = VERSION, "listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match Cli::parse().command {
+async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
         Command::Scan(args) => {
             let (collection_path, conn) = open_collection(&args.collection)?;
             scanner::scan(collection_path, &conn)?;
@@ -222,4 +232,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Serve(args) => serve(args).await?,
     }
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let cli = Cli::parse();
+    cli.log.init();
+
+    // Reported through the logger rather than by returning `Err` from `main`,
+    // which would print a bare `Error: …` — no timestamp, no level, and a
+    // multi-line `DuckDB` message spread over as many lines as it likes.
+    match run(cli.command).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            error!(error = e.as_ref(), "fatal");
+            ExitCode::FAILURE
+        }
+    }
 }
