@@ -14,7 +14,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 0 — Toolchain and dual tree | done |
 | 1 — App store | done |
 | 2 — Satellite stores, bindings, React harness | done |
-| 3 — UI primitives and shell chrome | not started |
+| 3 — UI primitives and shell chrome | done |
 | 4 — Tabs, playback bar, palette, shortcuts editor | not started |
 | 5 — Query toolbar and builders | not started |
 | 6 — Results grid and app assembly | not started |
@@ -1071,6 +1071,122 @@ both `OpenedRow` here and `TabHandle` in stage 4 use), `CollapseHeader`, `Explor
   StrictMode still focuses its first row, and doesn't restore focus when it
   shouldn't.
 - Portal wrapper difference (see **Risks**).
+
+#### As built
+
+**What landed**
+
+- **`app/icons.tsx`** (see Departures for the extension): every icon from
+  `icons.ts`, each imported with `?raw` (stage 0's fallback) and wrapped by a
+  small `svgIcon(raw)` helper that regexes the `viewBox` and inner markup out
+  of unplugin-icons' compiled string and re-attaches them to a real `<svg>`,
+  spreading the caller's own props (`className`, `aria-label`, …) last — the
+  same thing the Solid compiler's generated component does. `IconComponent =
+  (props: SVGProps<SVGSVGElement>) => JSX.Element` is the shared type every
+  primitive below takes for an `icon` prop.
+- **`app/components/ui/`:** `cx.ts` (a new file — the "few lines, no
+  dependency" `classList` stand-in the plan's mapping table calls for),
+  `Checkbox.tsx`, `IconButton.tsx` (`forwardRef`, per the plan), `Menu.tsx`
+  (`Menu`/`MenuPanel`/`MenuItem`/`MenuToggleItem`/`MenuSubmenu`/`MenuHeading`/
+  `MenuNote`/`MenuSeparator`), `ContextMenu.tsx`, `Modal.tsx`,
+  `SidebarLeft.tsx`, `SplitButton.tsx`, `LoadingRegion.tsx`, and
+  `useMenuKeyboard.ts` (the hook the plan's stage-2 as-built note anticipated:
+  a stable per-instance `symbol` from `useState(() => Symbol("menu"))`, wired
+  to `stores.menus.actions.openMenu`/`closeMenu`, with `selectAnyMenuOpen`
+  already consumed by `stores/commands.ts` since stage 2).
+- **`app/gestures/useSwipeToClose.ts`:** the drag-with-friction hook, state
+  (`offset`, `dragging`) in `useState`, everything else (`startX`, `velocity`,
+  `active`, …) in refs exactly as the Solid version kept them as closure
+  locals.
+- **`app/components/tabKind.ts`:** `tabIcon(kind: TabKind)`, now importing
+  `TabKind` from `../stores/app` instead of the Solid store.
+- **`app/components/`:** `CollapseHeader.tsx`, `Explorer.tsx`, `OpenedRow.tsx`,
+  `QueryRow.tsx`, `SettingsMenu.tsx`, `SettingsFooter.tsx`, `SettingModal.tsx`
+  (+ `SettingDialog`), `AboutModal.tsx` (+ `AboutDialog`), `UpdateBanner.tsx`
+  (+ `UpdateBar`) — each reading the app/update stores through `useApp`/
+  `useUpdate` and narrow selectors, and calling actions via
+  `useAppActions`/`useUpdateActions`.
+- **`app/dev/harness/stories.tsx`:** the 7 stories this stage owns
+  (`sidebar-left/{open-persistent,open-ephemeral}`, `explorer/basic`,
+  `settings/{menu,prelude}`, `update/banner`, `about/modal`), plus the `Lorem`
+  filler component, ported line-for-line from the Solid catalogue.
+- **Gate: all green.** `typecheck`, `lint`, `format:check`, `test:unit` (221
+  tests), Solid visual (135/135), and React visual for this stage's 7 stories
+  × 2 color schemes (14/14) — matched the existing baselines on the first
+  run, no `__screenshots__` file touched.
+
+**Departures from the plan**
+
+- **`icons.ts` → `icons.tsx`.** The file needs JSX (`svgIcon`'s returned
+  component), and a `.ts` file can't parse it — `tsgo` fails outright. Not
+  mentioned in the plan or stage 0's spike write-up because that spike never
+  got as far as writing the file.
+- **Custom "extend my classes" props are named `className`, not `class`.**
+  Two components had a prop that was just a Solid `class` attribute one level
+  removed from the DOM — `Menu`'s wrapper-extending prop and
+  `LoadingRegion`'s. Solid's version literally named the prop `class`; this
+  port renames both to `className` for idiomatic React (a custom prop, so no
+  JSX attribute is involved either way — this is a pure naming choice, not a
+  behavior change). **Later stages porting a component with a same-shaped
+  prop should follow this convention**, not the Solid source's literal name.
+- **Two React-hooks-lint rules (both `error` in this repo's
+  `reactHooks.configs.flat.recommended`) blocked literal ports and forced a
+  small, now-reusable idiom each:**
+  - **`react-hooks/refs` forbids writing `ref.current = x` in the render
+    body**, even for the extremely common "always call the latest closure"
+    pattern (`useMenuKeyboard`'s `getContainer`/`onClose`,
+    `useSwipeToClose`'s `onClose`/`getWidth`). Fix: sync each such ref from
+    its own `useEffect([value])` instead of assigning inline during render.
+    The ref's `useRef(initialValue)` call already seeds the correct value for
+    the first render, so this loses nothing. **Any later stage that wants a
+    ref holding "the latest X, readable from an imperative callback" should
+    use this shape from the start.**
+  - **`react-hooks/set-state-in-effect` forbids a mount effect that
+    synchronously calls something that calls `setState`** — `AboutModalBody`'s
+    port of `onMount(() => void check())` tripped it, because `check()`
+    calls `setChecking(true)` as its first line. Fix: seed the state with
+    `useState(true)` (the mount effect *starts* in the "checking" state, so
+    it never needs to set it) and have the mount effect call the update
+    action directly, setting `checking` back to `false` only inside a
+    `.finally()` callback — which runs later, not synchronously inside the
+    effect body, so the rule doesn't see it. The `check()` helper (used by
+    the manual "Check for updates" button, an event handler where the rule
+    doesn't apply) is unchanged. **The same shape applies to any future
+    "kick off an async load on mount, track a loading flag" port** (stage 2's
+    harness readiness gating hit a related but distinct rule the same way).
+  - Both were caught by `bun run lint`, not by hand — the rule names above are
+    worth grepping for if a later stage's lint output is confusing.
+  - `useMenuKeyboard`'s per-instance id used `useState(() => Symbol("menu"))`
+    rather than the stage-2 as-built note's literal suggestion of
+    `useRef(() => Symbol())` — `useRef` doesn't lazily invoke a function
+    argument (it would store the function itself), so `useState`'s lazy
+    initializer is the correct primitive for "compute once, keep forever."
+- **`OpenedRow`'s unsaved-star subscription is its own component
+  (`OpenedTabRow` in `Explorer.tsx`)**, not inlined into `Explorer`'s list
+  rendering. This isn't in the Solid source (`<For>` gave every row its own
+  scope for free) but follows state-management rule 2 directly: without it,
+  every tab's unsaved flag would be read in `Explorer`'s own render scope,
+  and any tab's draft edit would re-render the whole list.
+
+**Nothing left undone** — every file and story in the stage's scope landed.
+
+**For the next stages**
+
+- **Stage 4's `TabHandle`** is the other consumer of `tabIcon` — no changes
+  needed there, just an import.
+- **Stage 4 (`NowPlaying`'s overflow menu, `CommandPalette`,
+  `ShortcutsPage`'s capture dialog) will each raise a `Menu`/`ContextMenu`/
+  `Modal`**, so they inherit `useMenuKeyboard` and the portal/lint idioms above
+  for free — no new plumbing, just usage.
+- **Any new "extend my classes" custom prop should be named `className`**,
+  matching this stage's `Menu`/`LoadingRegion`, not the Solid source's
+  `class`.
+- **The two react-hooks-lint idioms above (ref-sync-via-effect,
+  seed-then-mount-effect for an async loading flag) will very likely recur** —
+  `ShortcutsPage`'s capture state (stage 4), the builder's `builderFocus`
+  consumer (stage 5), and the record editor's item handles (stages 8–9) all
+  read "the latest something" from an imperative callback the way
+  `useMenuKeyboard` does.
 
 ### Stage 4 — Tabs, playback bar, palette, shortcuts editor
 
