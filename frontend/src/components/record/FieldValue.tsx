@@ -9,7 +9,7 @@ import {
 } from "solid-js";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
-import { VARIED, type SharedValue } from "./formValues";
+import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
 /** Where focus goes when an activated field leaves edit mode: back to this

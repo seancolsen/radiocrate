@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { appUrl } from "./harness";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
@@ -44,7 +45,7 @@ const option = (page: Page, name: string | RegExp) =>
 
 test("the open shortcut toggles the palette", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade");
+  await page.goto(appUrl("/?tabs=Lemonade"));
   await expect(palette(page)).toBeHidden();
 
   await page.keyboard.press("Control+Shift+P");
@@ -65,7 +66,7 @@ test("the open shortcut toggles the palette", async ({ page }) => {
 
 test("running a command from the palette", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade");
+  await page.goto(appUrl("/?tabs=Lemonade"));
   const sidebar = page.getByRole("complementary").first();
   await expect(sidebar).toBeHidden();
 
@@ -84,7 +85,7 @@ test("running a command from the palette", async ({ page }) => {
 
 test("a bound chord fires its command", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade");
+  await page.goto(appUrl("/?tabs=Lemonade"));
   const sidebar = page.getByRole("complementary").first();
   await expect(sidebar).toBeHidden();
   await page.keyboard.press("Control+b");
@@ -95,7 +96,7 @@ test("a bound chord fires its command", async ({ page }) => {
 
 test("arrow keys move the result-row selection", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
+  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&expose=1"));
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
 
   const selection = async () =>
@@ -125,7 +126,7 @@ test("the focus commands open a builder section and take the caret", async ({
   page,
 }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade&grid=lemonade");
+  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade"));
   const filter = page.getByPlaceholder("Filter").first();
   await expect(filter).toBeHidden();
 
@@ -144,7 +145,7 @@ test("the focus commands open a builder section and take the caret", async ({
 
 test("the tab commands cycle, move and close tabs", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade,Deep%20Cuts,Workout%20Mix&expose=1");
+  await page.goto(appUrl("/?tabs=Lemonade,Deep%20Cuts,Workout%20Mix&expose=1"));
   const state = async () =>
     await page.evaluate(() => {
       const store = (window as unknown as AppWindow).__appStore;
@@ -178,7 +179,9 @@ test("the tab commands cycle, move and close tabs", async ({ page }) => {
 test("a text field keeps its own plain keys", async ({ page }) => {
   await mockRpc(page);
   // Open the filter builder, whose textarea is a plain-key consumer.
-  await page.goto("/?tabs=Lemonade&grid=lemonade&section=filter&expose=1");
+  await page.goto(
+    appUrl("/?tabs=Lemonade&grid=lemonade&section=filter&expose=1"),
+  );
   const input = page.getByPlaceholder("Filter").first();
   await input.click();
   await page.keyboard.press("ArrowDown");
@@ -201,7 +204,7 @@ test("a shortcut row's context menu removes and resets its binding", async ({
   page,
 }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade&shortcuts=1");
+  await page.goto(appUrl("/?tabs=Lemonade&shortcuts=1"));
   const row = page.getByRole("button", {
     name: /Explorer: Toggle explorer sidebar/,
   });
@@ -236,7 +239,7 @@ test("the Settings menu opens the shortcuts editor as a singleton tab", async ({
   page,
 }) => {
   await mockRpc(page);
-  await page.goto("/?sidebar=open&tabs=Lemonade&expose=1");
+  await page.goto(appUrl("/?sidebar=open&tabs=Lemonade&expose=1"));
   const editor = page.getByTestId("shortcuts-page");
   const queryPage = page.getByTestId("query-toolbar");
   await expect(editor).toBeHidden();
@@ -282,7 +285,7 @@ test("query commands stand down on the shortcuts tab, tab commands don't", async
   page,
 }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade&grid=lemonade&shortcuts=1&expose=1");
+  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&shortcuts=1&expose=1"));
   const editor = page.getByTestId("shortcuts-page");
   await expect(editor).toBeVisible();
 
@@ -303,7 +306,7 @@ test("query commands stand down on the shortcuts tab, tab commands don't", async
 
 test("the shortcuts editor's handle takes no rename", async ({ page }) => {
   await mockRpc(page);
-  await page.goto("/?tabs=Lemonade&shortcuts=1");
+  await page.goto(appUrl("/?tabs=Lemonade&shortcuts=1"));
   const handle = page.locator("[data-tab-id]").filter({ hasText: "Keyboard" });
   await handle.dblclick();
   // A query handle would have swapped its name for a text field; this one can't
@@ -331,7 +334,7 @@ test("the shortcuts editor rebinds a command", async ({ page }) => {
       }),
     });
   });
-  await page.goto("/?tabs=Lemonade&shortcuts=1");
+  await page.goto(appUrl("/?tabs=Lemonade&shortcuts=1"));
 
   // The row shows the built-in default, then the capture dialog takes a chord.
   const row = page.getByRole("button", {

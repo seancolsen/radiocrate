@@ -29,7 +29,13 @@
 // the safe window: while audio is playing.
 
 import { trackStreamUrl } from "api-client";
-import type { AudioQualityPref } from "../state/store";
+
+/** The audio-streaming quality preference: "higher" streams the source file
+ * as-is; "lower" asks the backend to transcode lossless sources down to Opus
+ * (lossy sources stream unchanged either way). Persisted by the app store,
+ * defaulting to "higher". Defined here, beside its one consumer, so the engine
+ * imports nothing from either frontend's store. */
+export type AudioQualityPref = "higher" | "lower";
 
 /** Maps the persisted quality preference to the backend's `quality` query
  * param: "higher" streams the source as-is (the param is omitted, matching

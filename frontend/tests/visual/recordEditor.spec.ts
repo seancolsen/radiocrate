@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { appUrl } from "./harness";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
@@ -52,7 +53,7 @@ const slow = (ms: number) => `${SEEDED}&recordDelay=${ms}`;
 async function openGrid(page: Page, url = SEEDED) {
   await mockRpc(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(url);
+  await page.goto(appUrl(url));
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
 }
 

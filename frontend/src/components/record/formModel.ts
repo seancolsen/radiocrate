@@ -60,7 +60,7 @@ import {
   type ColumnValues,
   type SharedValue,
   type Varied,
-} from "./formValues";
+} from "../../record/formValues";
 import {
   childRecordsQuery,
   embeddedRecordQuery,
@@ -68,7 +68,11 @@ import {
   type EmbedSpec,
 } from "../../query/embeddedRecord";
 import { runRecordQuery } from "../../query/recordData";
-import { focusAdjacentItem, focusItem, itemElement } from "./formNav";
+import {
+  focusAdjacentItem,
+  focusItem,
+  itemElement,
+} from "../../record/formNav";
 import {
   childId,
   deletedChildId,
@@ -77,13 +81,18 @@ import {
   newChildId,
   ROOT_ID,
   scalarChildId,
-} from "./formIds";
-import { planSave, type SavePlan } from "./formSave";
+} from "../../record/formIds";
+import { planSave, type SavePlan } from "../../record/formSave";
 
 // The ids and the shared-value vocabulary are the model's own, so callers reach
 // them through it.
-export { fieldItemId, listId, ROOT_ID, scalarChildId } from "./formIds";
-export { isShared, VARIED, type SharedValue } from "./formValues";
+export {
+  fieldItemId,
+  listId,
+  ROOT_ID,
+  scalarChildId,
+} from "../../record/formIds";
+export { isShared, VARIED, type SharedValue } from "../../record/formValues";
 
 /** Where a node is in its load cycle. `unloaded` means "known to exist, nothing
  * fetched yet" — a child record listed under a multi-record field before it's

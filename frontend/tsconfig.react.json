@@ -1,0 +1,30 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [
+      "vite/client",
+      "vite-plugin-pwa/client",
+      "unplugin-icons/types/raw"
+    ]
+  },
+  "include": [
+    "src/app",
+    "src/api",
+    "src/audio",
+    "src/commands",
+    "src/grid",
+    "src/query",
+    "src/record",
+    "src/state/settings.ts",
+    "src/state/settings.test.ts",
+    "src/state/updatePolicy.ts",
+    "src/state/updatePolicy.test.ts",
+    "src/dev/fixtures.ts",
+    "src/dev/gridFixture.ts",
+    "src/dev/recordFixture.ts",
+    "src/dev/harness/mockApi.ts",
+    "src/globals.d.ts",
+    "../api-client/src"
+  ]
+}

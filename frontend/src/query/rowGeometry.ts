@@ -2,7 +2,7 @@
 // `fieldLayout.ts`, decide where a row's cells sit and how tall the row is.
 //
 // Two things draw rows and must agree on these: the results grid, painted to a
-// canvas (`components/canvasGrid.ts`), and the record editor's embedded record
+// canvas (`grid/canvasGrid.ts`), and the record editor's embedded record
 // widget, built from DOM nodes (`components/record/EmbeddedRecord.tsx`). Logical
 // px == CSS px in both.
 

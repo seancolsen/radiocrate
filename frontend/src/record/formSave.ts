@@ -35,9 +35,9 @@ import type {
   PrimitiveField,
   RecordKey,
   ScalarLinkField,
-} from "../../query/recordForm";
+} from "../query/recordForm";
 import { listId, ROOT_ID, scalarChildId } from "./formIds";
-import type { ListNode, RecordNode } from "./formModel";
+import type { ListNode, RecordNode } from "../components/record/formModel";
 
 /** The slice of the form's state the planner reads: nodes by id, however they
  * happen to be stored. */

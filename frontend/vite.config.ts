@@ -3,6 +3,8 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import devtools from "solid-devtools/vite";
 import solid from "vite-plugin-solid";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import Icons from "unplugin-icons/vite";
@@ -69,16 +71,50 @@ function buildIdFile(): Plugin {
   };
 }
 
+/**
+ * The React port (`src/app/`), built alongside the Solid app until the cutover
+ * (see `specs/2026-09-react-migration/plan.md`). Each framework's transforms
+ * are scoped to its own tree; the shared framework-free modules have no JSX, so
+ * neither touches them in any way that matters.
+ */
+const REACT_TREE = /\/src\/app\//;
+
+/** Keeps a Solid-only plugin's `transform` off the React tree. */
+function outsideReactTree(plugin: Plugin): Plugin {
+  const transform = plugin.transform;
+  if (typeof transform !== "function") return plugin;
+  return {
+    ...plugin,
+    transform(code, id, options) {
+      if (REACT_TREE.test(id)) return;
+      return transform.call(this, code, id, options);
+    },
+  };
+}
+
+/** React Compiler (auto-memoization), for the React tree only. */
+const reactCompiler = reactCompilerPreset();
+reactCompiler.rolldown.filter = {
+  ...reactCompiler.rolldown.filter,
+  id: { include: ["**/src/app/**"] },
+};
+
 export default defineConfig({
   plugins: [
     // Must come before `solid()`. `autoname` labels components in the
     // Solid DevTools browser extension. This plugin is a dev-only no-op in
-    // production builds.
-    devtools({ autoname: true }),
-    solid(),
+    // production builds. Its babel pass visits every script, so it's kept off
+    // the React tree.
+    outsideReactTree(devtools({ autoname: true }) as Plugin),
+    solid({ exclude: [REACT_TREE] }),
+    react({ include: /\/src\/app\/.*\.[tj]sx?$/ }),
+    babel({ presets: [reactCompiler] }),
     tailwindcss(), // Tailwind v4 — no PostCSS/config file needed
     // Build-time icon inlining: each `~icons/*` import becomes a Solid SVG
     // component filled with `currentColor`. No runtime font fetch (CSP/offline safe).
+    // The compiler is global, so the React tree imports `~icons/*?raw` (an SVG
+    // string, which `raw` overrides per import) until the cutover switches this
+    // to `compiler: "jsx", jsx: "react"`.
     Icons({ compiler: "solid" }),
     buildIdFile(),
     VitePWA({

@@ -31,7 +31,7 @@ import {
 } from "api-client";
 import { runSql, runSqlScalar } from "../api/query";
 import { fetchTrackMetadata, playInsert } from "../api/track";
-import { AudioEngine } from "../audio/engine";
+import { AudioEngine, type AudioQualityPref } from "../audio/engine";
 import {
   addInferredLinks,
   INTROSPECTION_SQL,
@@ -340,11 +340,8 @@ function applyThemeToDocument(pref: ThemePref): void {
   if (meta) meta.content = isDark(pref) ? THEME_COLOR.dark : THEME_COLOR.light;
 }
 
-/** The audio-streaming quality preference: "higher" streams the source file
- * as-is; "lower" asks the backend to transcode lossless sources down to Opus
- * (lossy sources stream unchanged either way). Persisted, defaulting to
- * "higher". */
-export type AudioQualityPref = "higher" | "lower";
+/** The audio-streaming quality preference (defined beside the engine). */
+export type { AudioQualityPref };
 
 const AUDIO_QUALITY_KEY = "audioQuality";
 

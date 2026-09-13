@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { appUrl } from "./harness";
 import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
 
 /** Fulfill the RPC route from fixtures (no backend), like the other specs. */
@@ -35,7 +36,7 @@ test("query grid repaints when the result is replaced (no resize)", async ({
   await mockRpc(page);
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
+  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&expose=1"));
   await page.evaluate(() => document.fonts.ready);
 
   const canvas = page.locator("canvas");
@@ -80,7 +81,7 @@ test("query grid repaints a single rewritten row, keeping the selection", async 
   await mockRpc(page);
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
+  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&expose=1"));
   await page.evaluate(() => document.fonts.ready);
 
   const canvas = page.locator("canvas");

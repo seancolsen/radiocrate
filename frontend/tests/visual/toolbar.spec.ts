@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { appUrl } from "./harness";
 import {
   ALBUM_SORT_PRESET_ID,
   FILTER_DEF,
@@ -48,7 +49,7 @@ const def = (d: unknown) => encodeURIComponent(JSON.stringify(d));
 async function openQueryPage(page: Page, query: string) {
   await mockRpc(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(`/?sidebar=open&tabs=Lemonade&${query}`);
+  await page.goto(appUrl(`/?sidebar=open&tabs=Lemonade&${query}`));
   await expect(page.getByTestId("query-toolbar")).toBeVisible();
 }
 

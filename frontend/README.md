@@ -124,17 +124,21 @@ http://localhost:5173/?tabs=Lemonade&grid=lemonade&records=track,album&recordFix
 
 Run from `frontend/`:
 
-| Command                      | What it does                                    |
-| ---------------------------- | ----------------------------------------------- |
-| `bun run dev`                | Vite dev server with HMR (this doc)             |
-| `bun run build`              | Production build → `frontend/dist`              |
-| `bun run preview`            | Serve the built `dist` locally                  |
-| `bun run typecheck`          | `tsgo --noEmit`                                 |
-| `bun run lint`               | ESLint + `eslint-plugin-solid`                  |
-| `bun run format` / `:check`  | Prettier write / check                          |
-| `bun run test:unit`          | Vitest unit tests                               |
-| `bun run test:visual`        | Playwright whole-app screenshots (light + dark) |
-| `bun run test:visual:update` | Regenerate the visual baselines                 |
+| Command                      | What it does                                                        |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `bun run dev`                | Vite dev server with HMR (this doc)                                 |
+| `bun run build`              | Production build → `frontend/dist`                                  |
+| `bun run preview`            | Serve the built `dist` locally                                      |
+| `bun run typecheck`          | `tsgo --noEmit` over the Solid and React tsconfigs                  |
+| `bun run lint`               | ESLint + `eslint-plugin-solid` / `react-hooks`                      |
+| `bun run format` / `:check`  | Prettier write / check                                              |
+| `bun run test:unit`          | Vitest unit tests                                                   |
+| `bun run test:visual`        | Playwright screenshots (light + dark), `solid` and `react` projects |
+| `bun run test:visual:update` | Regenerate the visual baselines                                     |
+
+While the React port is in progress (`specs/2026-09-react-migration/plan.md`),
+the React app lives under `src/app/` beside the Solid one, served in dev from
+`/react-harness.html`. Only `index.html` (Solid) reaches the production build.
 
 For the full production build (frontend + embedded binary), use
 `cargo xtask build-release` from the repo root. See the top-level

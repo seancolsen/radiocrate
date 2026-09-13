@@ -10,7 +10,7 @@ import { useAppState, type RecordRef } from "../state/store";
 import type { QueryResult } from "../query/result";
 import { ContextMenu } from "./ui/ContextMenu";
 import RowActionsMenu from "./RowActionsMenu";
-import { CanvasGrid } from "./canvasGrid";
+import { CanvasGrid } from "../grid/canvasGrid";
 import { modifiedRecords, recordIdentity } from "./record/formStash";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).

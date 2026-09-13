@@ -4,7 +4,7 @@ import IconButton from "./ui/IconButton";
 import LoadingRegion from "./ui/LoadingRegion";
 import CustomInput from "./builder/CustomInput";
 import { Icons } from "../icons";
-import { CanvasGrid } from "./canvasGrid";
+import { CanvasGrid } from "../grid/canvasGrid";
 import { recordPickerQuery } from "../query/embeddedRecord";
 import type { RecordQuery } from "../query/recordForm";
 import type { RecordRows } from "../query/recordData";

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { planSave, type FormTree } from "./formSave";
 import { listId, ROOT_ID, scalarChildId } from "./formIds";
-import type { ListNode, RecordNode } from "./formModel";
-import { buildFormFields, type RecordKey } from "../../query/recordForm";
+import type { ListNode, RecordNode } from "../components/record/formModel";
+import { buildFormFields, type RecordKey } from "../query/recordForm";
 import type { ColumnValues } from "./formValues";
-import type { SchemaTable } from "../../query/schema";
+import type { SchemaTable } from "../query/schema";
 
 // The save planner over a hand-built form tree: the same shapes the model puts
 // together as the user opens the form, without the store, the DOM or a backend.
