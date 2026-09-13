@@ -1,12 +1,18 @@
 import type { JSX } from "react";
+import type { CurrentTrack, PlaybackState } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
 import { SETTINGS } from "../../../state/settings";
 import { QUERIES_FIXTURE } from "../../../dev/fixtures";
 import { STUB_VERSION } from "../../../dev/harness/mockApi";
+import { lemonadeGridResult } from "../../../dev/gridFixture";
 
 import { AboutDialog } from "../../components/AboutModal";
 import { SettingDialog } from "../../components/SettingModal";
+import CommandPalette from "../../components/CommandPalette";
 import Explorer from "../../components/Explorer";
+import NowPlaying from "../../components/NowPlaying";
+import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
+import { CaptureDialog } from "../../components/ShortcutsPage";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { Menu } from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
@@ -53,6 +59,27 @@ function openLemonade(stores: Stores): string {
     definition: "",
   });
   return LEMONADE.id;
+}
+
+/** Opens "Lemonade" and seeds a playing track — the now-playing bar's stories'
+ * shared setup. `rowIndex: null` leaves the track deliberately unlocated in
+ * the results, which is what disables "Locate" in `now-playing/menu`. */
+function seedPlayback(stores: Stores): void {
+  const id = openLemonade(stores);
+  const track: CurrentTrack = {
+    sourceTabId: id,
+    id: "seeded-track",
+    rowIndex: null,
+    title: "Uncatena",
+    artists: ["Sylvan Esso", "Nick Sanborn"],
+  };
+  const playback: PlaybackState = {
+    playing: true,
+    position: 74,
+    duration: 255,
+    hasNext: true,
+  };
+  stores.app.actions.seedNowPlaying(track, playback);
 }
 
 /** Filler for the stories about a component's own layout rather than about
@@ -146,6 +173,55 @@ export const STORIES: Record<string, Story> = {
         onClose={() => {}}
       />
     ),
+  },
+  // The rebind dialog holding a chord another command already owns, so the
+  // "currently bound to" warning shows too (⌘/Ctrl+S is "Tabs: Save active
+  // tab").
+  "settings/keyboard-shortcuts/modal-assign": {
+    render: () => (
+      <CaptureDialog
+        cmd="explorer.toggle"
+        pending={{ mod: true, ctrl: false, shift: false, alt: false, key: "S" }}
+        onAssign={() => {}}
+        onUnbind={() => {}}
+        onReset={() => {}}
+        onCancel={() => {}}
+      />
+    ),
+  },
+
+  // ── The now-playing bar ──────────────────────────────────────────────────
+  "now-playing/playing": {
+    width: 1280,
+    frame: "flex flex-col",
+    setup: (stores) => seedPlayback(stores),
+    render: () => <NowPlaying />,
+  },
+  // Its overflow menu on its own. "Locate" is disabled: the seeded track is
+  // deliberately left unlocated in the results (see `seedPlayback`).
+  "now-playing/menu": {
+    width: 160,
+    height: 120,
+    setup: (stores) => seedPlayback(stores),
+    render: () => (
+      <Menu defaultOpen width="130px" trigger={() => null}>
+        <PlaybackActionsMenu />
+      </Menu>
+    ),
+  },
+
+  // ── The command palette ──────────────────────────────────────────────────
+  // Filtered by a typed query, which also drops the non-matching commands.
+  // Which commands are *available* comes from the store, so the story opens a
+  // query tab with results the way the palette's `When` predicates expect.
+  "command-palette/filtered": {
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      stores.app.actions.setResults(id, lemonadeGridResult().result);
+      stores.commands.actions.togglePalette();
+      stores.commands.actions.setPaletteQuery("tab");
+    },
+    render: () => <CommandPalette />,
   },
 
   // ── Client update + About ────────────────────────────────────────────────

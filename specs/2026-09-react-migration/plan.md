@@ -15,7 +15,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 1 — App store | done |
 | 2 — Satellite stores, bindings, React harness | done |
 | 3 — UI primitives and shell chrome | done |
-| 4 — Tabs, playback bar, palette, shortcuts editor | not started |
+| 4 — Tabs, playback bar, palette, shortcuts editor | done |
 | 5 — Query toolbar and builders | not started |
 | 6 — Results grid and app assembly | not started |
 | 7 — Record form model | not started |
@@ -1206,6 +1206,123 @@ both `OpenedRow` here and `TabHandle` in stage 4 use), `CollapseHeader`, `Explor
 - `useTabDragReorder` keeps `pointermove` / `pointerup` listeners on `window`
   with mutable locals. Keep those in refs, and keep `draggingId` / `translate`
   in `useState`.
+
+#### As built
+
+**What landed**
+
+- **`app/gestures/useTabDragReorder.ts`:** ported from `gestures/useTabDragReorder.ts`.
+  `handleEl`/`currentId`/`pointerId`/`startX`/`grabWithinHandle`/`started` — the
+  Solid version's plain closure locals — are `useRef`s here rather than bare
+  `let`s, because the hook body re-runs on every render (Solid's component body
+  ran once); `useSwipeToClose` (stage 3) established the same shape. `getContainer`
+  is read through a ref synced from its own effect (rule: never write `ref.current`
+  in the render body), same idiom as `useSwipeToClose`'s `getWidth`/`onClose`.
+  `reorderTab` comes straight from `useAppActions()` with no ref-sync, since
+  actions are stable (state management rule 1).
+- **`app/components/TabHandle.tsx`:** a presentational port, `icon` typed as
+  `IconComponent` in place of Solid's `Component<{ class?: string }>`. The
+  rename `<input>` (Solid: `ref={(el) => queueMicrotask(...)}`) became a small
+  `RenameInput` sub-component with its own `useLayoutEffect(() => { focus();
+  select(); }, [])` — mounted fresh each time `renaming` turns on, same as the
+  Solid `<Show>` branch was.
+- **`app/components/TabBar.tsx`:** the bar itself, plus a `WiredTabHandle` that
+  reads `selectIsUnsaved`/`renaming` narrowly per tab (the stage-3 `OpenedTabRow`
+  pattern) so one tab's draft edit doesn't re-render every handle.
+- **`app/components/NowPlaying.tsx`** and **`PlaybackActionsMenu.tsx`:** ported
+  directly onto `useApp`/`useAppActions`; `NowPlaying` returns `null` instead of
+  Solid's `<Show when={track()}>`.
+- **`app/components/CommandPalette.tsx`:** `PaletteRow`/`PaletteDialog`/default
+  export, ported onto `useCommands`/`useCommandActions` plus narrow `useApp`/
+  `useForms` reads. `context`, `available` and `paletteItems` follow the plan's
+  mapping table (`useMemo` over subscribed inputs, not a store selection) — see
+  Departures for how `context` is assembled without calling
+  `selectCommandContext` directly.
+- **`app/components/ShortcutsPage.tsx`:** `CaptureDialog` (exported, as in
+  Solid), `RecordBox`, `ShortcutsRow` and `RowContextMenu` split out to keep
+  `binding`/`overridden` subscriptions narrow to one command each, and the
+  default-export page wiring them together. The record-mode row filter reads
+  `overrides` via `useCommands` and calls `bindingFor` directly rather than
+  through `selectBinding`, since it needs to test many commands against one
+  chord in a loop, not one command against the live state.
+- **`app/dev/harness/stories.tsx`:** the 4 stories this stage owns, plus a
+  `seedPlayback` helper (ported from the Solid catalogue's helper of the same
+  name) that both `now-playing/*` stories share.
+- **Gate: all green.** `typecheck`, `lint`, `format:check`, `test:unit` (221
+  tests, unchanged — this stage added no store logic, so no new unit tests),
+  Solid visual (135/135), and React visual for `shell.spec.ts` — this stage's 4
+  stories plus every earlier React story living in that same spec file (11
+  stories × 2 color schemes = 22/22) — matched the existing baselines, no
+  `__screenshots__` file changed.
+
+**Departures from the plan**
+
+- **`useTabDragReorder`'s mutable drag state is `useRef`, not bare closure
+  locals** — not actually a departure from the plan's own hazard note ("keep
+  those in refs"), but worth stating plainly since the Solid source (which the
+  plan says to keep reading as the spec) uses plain `let`s, and a literal port
+  of that specific detail would silently break: `onMove`/`onUp` would close
+  over a stale copy of each field after any re-render triggered mid-drag by
+  `setDraggingId`/`setTranslate`.
+- **`CommandPalette`'s `PaletteRow` uses `forwardRef` instead of a custom
+  `rowRef` prop.** A first draft threaded a `rowRef: (el) => void` prop through
+  to the row's `ref=`, mirroring how other components here pass callbacks as
+  plain props — but React Compiler's `react-hooks/refs` lint rule flagged the
+  whole row body as an unsafe ref access once a ref-setting function reached
+  `ref=` through an arbitrary prop name. Fixed with `forwardRef<HTMLDivElement,
+  {...}>`, the same pattern `ui/IconButton.tsx` (stage 3) already uses. **Any
+  future component that hands a parent a DOM node to keep (a list that scrolls
+  one of its own rows into view, e.g.) should use `forwardRef` from the start,**
+  not a custom ref-shaped prop.
+- **`CommandPalette`'s `context` is assembled from five individually-subscribed
+  primitive booleans, not by calling `selectCommandContext(app, forms)`
+  directly.** `selectCommandContext` takes whole `AppState`/`FormsState`
+  snapshots, and calling it from inside a `useApp`/`useForms` selector would
+  mean subscribing to (or reading) full state objects — exactly what rule 3
+  forbids. Each input (`activeTabId !== null`, `queryTabActive`,
+  `resultsAvailable`, `trackLoaded`, `recordFormFocused`) is its own narrow,
+  primitive-returning selector, then `useMemo`'d into the same shape
+  `selectCommandContext` builds. This duplicates ~5 lines of that function's
+  body; the alternative (widening `selectCommandContext` to accept pre-computed
+  fields) would have meant reshaping a stage-2 selector two stages later for a
+  single caller, so the small duplication was judged cheaper.
+- **A typographic-quote mismatch caused one visual-test failure, caught and
+  fixed before landing.** The Solid source's "Currently bound to
+  “…”" uses curly quotes (U+201C/U+201D); a first pass typed plain `"` and the
+  `settings/keyboard-shortcuts/modal-assign - dark` snapshot came back 2 pixels
+  off (different glyph). Fixed by copying the literal characters rather than
+  retyping them. Worth a reminder for later stages: diff literal punctuation in
+  copy against the Solid source, not just JSX structure — the visual gate
+  catches it, but only after a wasted run.
+
+**Nothing left undone** — every file and story in the stage's scope landed.
+
+**For the next stages**
+
+- **The `ShortcutsPage` unmount hazard (`stopCapturingKeys` under StrictMode)
+  was reasoned through, not exercised by an automated spec.** No behavioral
+  spec drives `ShortcutsPage` under the React project yet — `palette.spec.ts`
+  (which does, via `shortcuts-page` interactions) drives the assembled app
+  through `react.html`/seed, which doesn't exist until stage 6. By inspection:
+  StrictMode's synthetic unmount/remount happens immediately after initial
+  mount, before a user could possibly have opened a capture dialog, so the
+  extra `stopCapturingKeys()` call it triggers is a no-op against already-empty
+  state. Stage 6 (or whichever stage first un-skips `palette.spec.ts` for
+  `react`) should treat this as confirmed-by-reasoning rather than verified,
+  and watch that spec's capture-dialog tests closely on their first run.
+- **Stage 5's builders (`FilterBuilder`, `SingleBuilder`, `FullBuilder`) are
+  the next consumers of a `Menu`/`ContextMenu`/portal, same as this stage's
+  `NowPlaying`'s menu and `ShortcutsPage`'s row menu** — no new plumbing, just
+  usage, continuing the pattern stage 3's as-built note predicted.
+- **`bindingFor` (from `commands/keymap.ts`) is now imported directly by a
+  component** (`ShortcutsPage`'s record-mode filter), alongside the store's own
+  `selectBinding`/`selectOverridden`/`selectCommandForChord`. Both are
+  legitimate: the selectors read one command's *live* state, `bindingFor` is
+  the underlying pure function for scanning many commands against a
+  provided `overrides` snapshot in a loop. Later stages filtering/ranking
+  across many commands at once should reach for the same split rather than
+  calling a per-command selector in a loop (which would subscribe to the
+  store once per call).
 
 ### Stage 5 — Query toolbar and builders
 
