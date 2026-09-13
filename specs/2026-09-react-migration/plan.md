@@ -11,7 +11,7 @@ starts cold doesn't have to work out progress from `git log`.
 
 | Stage | Status |
 | ----- | ------ |
-| 0 — Toolchain and dual tree | in progress: all work landed; blocked on a `playback.spec` failure that predates the port (see As built) |
+| 0 — Toolchain and dual tree | done |
 | 1 — App store | not started |
 | 2 — Satellite stores, bindings, React harness | not started |
 | 3 — UI primitives and shell chrome | not started |
@@ -685,10 +685,9 @@ server.
 - **Passing:** typecheck, lint, format:check, test:unit (184 tests) and `bun run build`.
 - **React parity:** there are no stories in this stage. The `react` project lists 135 tests.
 - **Screenshots:** no file under `__screenshots__` changed.
-- **Solid visual: 134 passed, 1 failed.** The failing test is `playback.spec.ts` › "double-click plays a row's track, and `ended` advances to the next". It expects `track-b` and gets an audio src of `/api/tracks/track-c/stream`.
-  - **This failure predates the port.** It fails the same way on a clean checkout of 6c577b7.
-  - Likely cause: a697620 rewrote `engine.ts` around a second, preloading `<audio>` element and didn't update the spec. The spec's `audioSrc` still reads the first `<audio>` in the DOM.
-  - Fixing it is outside the port's scope, so it waits on your decision. Until then the status stays `in progress`.
+- **Solid visual: 135 of 135 passed.**
+  - The first run failed on one test, `playback.spec.ts` › "double-click plays a row's track, and `ended` advances to the next". It already failed before the port: a697620 added a second, standby `<audio>` element, and the spec still read the first one in the DOM.
+  - The spec was fixed on `main` (74aa299), and `react-port` was rebased onto it. The fix is in the shared spec, so both Playwright projects get it and nothing needs porting into `src/app/`.
 
 ### Stage 1 — App store
 
@@ -999,10 +998,6 @@ Candidates noticed during the port, not part of it:
   noted the same gap.
 - Persisting open tabs, which the PWA plan names as its top follow-up. With
   Zustand this is a subscription to a storage adapter.
-- `playback.spec.ts`'s `ended`-advance test predates the port and has failed
-  since the two-element audio engine (a697620). `audioSrc` reads the first
-  `<audio>`, which is now the preloaded one. Fix it on `main` (or confirm the
-  engine's behavior), then carry the fix into `src/app/`.
 - solid-devtools' `autoname` runs babel over pre-bundled dependencies in dev.
   For `react-dom` it prints a "deoptimised styling" note. The
   `outsideReactTree()` wrapper in `vite.config.ts` could skip `/node_modules/`
