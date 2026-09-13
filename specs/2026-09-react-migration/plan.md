@@ -12,7 +12,7 @@ starts cold doesn't have to work out progress from `git log`.
 | Stage | Status |
 | ----- | ------ |
 | 0 — Toolchain and dual tree | done |
-| 1 — App store | not started |
+| 1 — App store | done |
 | 2 — Satellite stores, bindings, React harness | not started |
 | 3 — UI primitives and shell chrome | not started |
 | 4 — Tabs, playback bar, palette, shortcuts editor | not started |
@@ -724,6 +724,135 @@ UI, and unit tests cover the behaviors that matter.
   - A debounced edit fires one run.
 
 **Done when:** the gate passes. No React components exist yet.
+
+#### As built
+
+**What landed**
+
+- `src/app/stores/env.ts`: the `AppEnv` seam (state management rule 7). Narrower
+  than "inject `localStorage`/`matchMedia`/`document`" — `storage` is
+  `Pick<Storage, "getItem"|"setItem"|"removeItem">`, and DOM writes go through
+  one `setDocumentTheme(attr, themeColor)` callback rather than exposing
+  `document` itself, so a store test (running in vitest's `node` environment,
+  no DOM at all) can pass a plain object and assert on calls to it.
+  `browserEnv()` is the production implementation.
+- `src/app/stores/app/state.ts`: `AppState` and every type `state/store.tsx`
+  defined (`Tab`/`QueryTab`/`ShortcutsTab`, `CurrentTrack`, `PlaybackState`,
+  `RowReveal`/`RowPatch`/`BuilderFocus`, `RecordRef`/`RecordEditorTarget`,
+  `PresetEdit`/`PresetSave`), plus `initialState(env)`. The three Solid
+  `createResource`s became `ResourceState<T>` fields (`queries`, `schema`, and
+  a `presetsStatus` alongside the existing mutable `presets` array); every loose
+  signal (`audioQuality`, `recordSidebarWidth`, `settingOverrides`) is an
+  ordinary field. `schema: { status, json, tables }` is written by one action
+  (`setSchemaJson` / `loadSchema`) so `tables` never needs its own memo.
+- `src/app/stores/app/persistence.ts` and `theme.ts`: the `stored*`/`persist*`
+  helpers and `applyThemeToDocument`, each taking `env: AppEnv`. `theme.ts` adds
+  `watchSystemTheme(env, currentTheme)`, which installs and returns the cleanup
+  for the "system" `matchMedia` listener — `store.tsx`'s inline `onCleanup` had
+  no direct equivalent once the listener moved out of a component.
+- `src/app/stores/app/selectors.ts`: every read accessor from the old
+  `AppStore` interface, as pure `(state, ...) => value` functions, plus the
+  internal helpers (`sameRecord`, `selectRowForRecord`, `selectRowContext`,
+  `selectPlaylistAround`, `selectLocateRow`, `selectTrackIdAt`,
+  `selectEffectivePresets`, `selectPrelude`) that `runQuery`, `playRow` and the
+  DML path use internally. Each doc comment notes when a selector allocates a
+  fresh array/object, per rule 2.
+- `src/app/stores/app/actions.ts`: every write method, plus four new boot
+  actions (`loadQueries`, `loadPresets`, `loadSchema`, `loadSettings`) that
+  replace the three `createResource`s and the bare `settingList().then(...)`.
+  `refetchQueries` now calls `loadQueries` + `loadPresets`. The non-reactive
+  closures (`rowClickAnchor`, `rowSelectionLead`, `runTokens`, `runTimers`, the
+  `AudioEngine`) are unchanged from `store.tsx`, just living in
+  `createAppActions`'s closure instead of `createAppStore`'s.
+- `src/app/stores/app/vanillaStore.ts` + `index.ts`: `createAppVanillaStore(env)`
+  builds the Zustand store (`subscribeWithSelector(immer(() => initialState(env)))`);
+  `createAppStore(env = browserEnv())` wires it to `createAppActions` and
+  returns `{ store, actions, dispose }` — the plan's sketch had one function
+  doing both; splitting them was purely to give `actions.ts` a nameable store
+  type (`AppVanillaStore`) to receive as a parameter without a circular import.
+- **Immer compatibility** (`immer.test.ts`), checked before anything else:
+  - A `QueryResult` assigned into state stays the exact same reference and is
+    never frozen — confirmed by mutating it with `patchRow` afterward and
+    reading the patched value back. Immer's `isDraftable` returns `false` for a
+    class instance with no `[immerable]` marker, and its `deepFreeze` skips
+    non-draftable values, so this needed no special handling.
+  - `selectionByTab`'s `Set<number>`s are documented and tested as **opaque**:
+    every write replaces the whole `Set` (already how `store.tsx` did it —
+    `clickRow`/`moveRowSelection` build a new `Set` and assign it). No
+    `enableMapSet()` plugin is enabled.
+  - `compileSavedQuery`/`definitionToStored`/`rebasedDefinition` not mutating
+    their input was confirmed by inspection (each only reads its `def`
+    argument) rather than a new test — `query/definition.test.ts` already
+    covers these functions and needed no change.
+- **Unit tests** (`actions.test.ts`, on top of `immer.test.ts`): every behavior
+  the plan listed — `closeTab`'s per-tab cleanup and neighbor selection,
+  `clickRow`/`moveRowSelection`'s anchor/lead handling, a new result clearing
+  selection/lineage/`currentTrack.rowIndex`, a superseded run token losing a
+  race against its own (stale) lineage analysis, `setRecordEditorRecords`
+  deduping and closing on empty, `saveSetting` deleting on a default value, and
+  a debounced edit firing exactly one run. The run-pipeline tests
+  (`querydownReady`/`compileSavedQuery`/`runSql`/`buildResultFromArrow`/
+  `analyzeColumnSources`) are exercised through `vi.mock`, per rule 7.
+
+**Departures from the plan**
+
+- **`closeTab`'s neighbor selection isn't "prefer the left neighbor."**
+  `store.tsx`'s existing comment says that, but `s.tabs[idx] ?? s.tabs[idx - 1]`
+  after `splice(idx, 1)` actually prefers the tab that slides into the closed
+  one's index — its *right* neighbor — falling back to the new-last tab only
+  when there was none (i.e. the closed tab was rightmost). Verified with a
+  throwaway Node repro before writing the test. This is existing, shipped
+  behavior (and matches ordinary browser tab-close UX), not something this
+  stage changed — the comment is carried over unedited since the mechanism
+  didn't change, but the unit test asserts the real behavior, not the comment.
+- **Fixed a stage-0 ESLint bug that blocked the plan's own imports.** The
+  `src/app/stores/**` rule's `no-restricted-imports` put bare `"zustand"` (and
+  `"zustand/shallow"`, `"zustand/traditional"`) in a `patterns.group`, which
+  ESLint matches gitignore-style — a bare name matches every subpath too, so it
+  silently blocked `zustand/vanilla`, `zustand/middleware` and
+  `zustand/middleware/immer`, exactly the entry points stage 0's own as-built
+  note says stores should use. Moved those four exact-match names to `paths`
+  (which doesn't do prefix matching) and kept only genuine wildcards
+  (`zustand/react/*`, plus the existing framework globs) in `patterns.group`.
+  No behavior change intended — `zustand`/`zustand/react`/`zustand/shallow`/
+  `zustand/traditional` are still barred from `src/app/stores/**` outside
+  `react.tsx`.
+- **`castDraft` at four call sites.** Immer's `Draft<T>` mapped type can't
+  express a `readonly T[]` field (`T extends any[]` is false for a readonly
+  array, so it falls through to the object-mapping branch instead of the
+  array one). `QueryResult.columns`, `LineageMapping.records`,
+  `RecordKeyColumns.keyColumns`/`keyIndices` and `RecordRef.key` are all
+  `readonly` arrays in the framework-free `query/` types (left unchanged, per
+  the plan's non-goals), so assigning any of them into a draft needs
+  `castDraft()` from `immer` as a type-only escape hatch. Nothing at these
+  sites is ever mutated *through* the draft (each is a wholesale replacement),
+  so this is exactly what `castDraft` is for — not a workaround for a real
+  runtime hazard.
+
+**Nothing left undone** — the full app store, all actions, all selectors, and
+every unit test the plan asked for are in.
+
+**For the next stages**
+
+- **The `castDraft` pattern will recur.** Stage 7's `FormState` (per
+  `formModel.ts`) and anything the record editor stages store that comes from
+  the framework-free `record`/`query` types likely has the same `readonly`
+  arrays. Reach for `castDraft` there too rather than re-deriving this.
+- **`AppEnv` lives in `src/app/stores/env.ts`, shared (not per-store).** Stage
+  2's `commands`/`update`/`forms`/`menus` stores should take the same `AppEnv`
+  rather than inventing their own — `update.ts`'s `virtual:pwa-register`
+  wiring in particular will want the same injection seam.
+- **`ResourceState<T>` and the `queries`/`schema` field shapes are new types**
+  (not named in the plan) — stage 2's `createStores()` boot sequence should
+  call `loadQueries()`/`loadPresets()`/`loadSchema()`/`loadSettings()` and can
+  rely on `.status` to gate rendering exactly like the old `Resource.state`
+  did.
+- **`selectQueryTab`/`selectTab`/etc. take a plain `AppState` snapshot**, not a
+  live reference — unlike Solid's store proxies, holding onto a selector's
+  result across an `await` is stale. `runQuery` already re-selects the tab
+  after its first `await` for this reason (store rule 4); the same care is
+  needed in `resyncRecordEditors` and the forms store's `runRecordDml` callers
+  in later stages.
 
 ### Stage 2 — Satellite stores, bindings, React harness
 

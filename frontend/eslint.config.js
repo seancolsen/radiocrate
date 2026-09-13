@@ -27,6 +27,9 @@ const SHARED = [
 
 const FRAMEWORKS = ["solid-js", "solid-js/*", "react", "react/*", "react-dom"];
 
+const STORES_REACT_MESSAGE =
+  "Stores never import React; bindings live in stores/react.tsx.";
+
 export default tseslint.config(
   // `vendor/` holds the wasm-pack-generated querydown-js binding (a build
   // artifact, gitignored) — never lint it.
@@ -63,25 +66,28 @@ export default tseslint.config(
     // Stores are plain vanilla Zustand, so code outside React (the audio
     // engine, the keydown pass, Playwright) can use them and plain vitest can
     // test them. `react.tsx` is the one binding file.
+    //
+    // The zustand entry points are listed under `paths` (exact match) rather
+    // than folded into the `patterns` group below: a bare name in a `group`
+    // glob matches gitignore-style, so it would also catch every subpath
+    // (`zustand/vanilla`, `zustand/middleware`, …) — exactly the entry points
+    // stores are supposed to use.
     files: ["src/app/stores/**"],
     ignores: ["src/app/stores/react.tsx"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
+          paths: [
+            { name: "zustand", message: STORES_REACT_MESSAGE },
+            { name: "zustand/react", message: STORES_REACT_MESSAGE },
+            { name: "zustand/shallow", message: STORES_REACT_MESSAGE },
+            { name: "zustand/traditional", message: STORES_REACT_MESSAGE },
+          ],
           patterns: [
             {
-              group: [
-                ...FRAMEWORKS,
-                "react-dom/*",
-                "zustand",
-                "zustand/react",
-                "zustand/react/*",
-                "zustand/shallow",
-                "zustand/traditional",
-              ],
-              message:
-                "Stores never import React; bindings live in stores/react.tsx.",
+              group: [...FRAMEWORKS, "react-dom/*", "zustand/react/*"],
+              message: STORES_REACT_MESSAGE,
             },
           ],
         },
