@@ -13,7 +13,7 @@ starts cold doesn't have to work out progress from `git log`.
 | ----- | ------ |
 | 0 — Toolchain and dual tree | done |
 | 1 — App store | done |
-| 2 — Satellite stores, bindings, React harness | not started |
+| 2 — Satellite stores, bindings, React harness | done |
 | 3 — UI primitives and shell chrome | not started |
 | 4 — Tabs, playback bar, palette, shortcuts editor | not started |
 | 5 — Query toolbar and builders | not started |
@@ -885,6 +885,169 @@ fresh bundle.
 
 **Done when:** the gate passes, and the React harness reports "Unknown story"
 with an empty list over a live bundle.
+
+#### As built
+
+**What landed**
+
+- **`stores/commands.ts`:** `CommandsState` (`overrides`, `mru`, palette
+  fields, shortcuts-editor fields) over a Zustand+Immer vanilla store;
+  `CommandsActions` with every method `state/commands.tsx` had
+  (`setBinding`/`resetBinding`, `run`, the palette actions, the
+  shortcuts-editor actions) plus `loadKeymap` (the boot load replacing the
+  Solid `onMount`) and `handleKeyDown` (the global keydown pass's body, as an
+  action rather than an installed listener — `createStores()` does the
+  `addEventListener`). `selectCommandContext(app, forms)`,
+  `selectAvailableCommands(context)`, `selectPaletteItems`,
+  `selectClampedPaletteIndex` are pure functions per the mapping table; the
+  keydown pass and `movePaletteIndex` call them with a fresh `getState()`
+  each time (rule 4), and stage 4's palette will call them the same way from
+  a `useMemo`. `createCommandsStore(app, forms, menus)` takes the three
+  bundles it reads, per the topology diagram.
+- **`stores/update.ts`:** `UpdateState` (`ready`, `stale`, `version`,
+  `dismissed`) over a plain Zustand store (no Immer — four flat fields need
+  none); `selectUpdateNotice` ported unchanged in behavior.
+  `createUpdateStore(app, forms)` binds the apply-policy's session snapshot
+  at construction instead of waiting for a later `initUpdates(store)` call,
+  which removes the Solid module's nullable `session` guard entirely (see
+  Departures). `initUpdates`/`checkForUpdate`/`applyUpdate`/`dismissUpdate`/
+  `resetAppData` are the same bodies as `state/update.ts`, moved into the
+  factory's closure. `state/updatePolicy.ts` is untouched, per the plan.
+- **`stores/forms.ts`:** `FormsState` (`entries: FormEntry[]`), folding
+  `formStash.ts` and `formRegistry.ts` into one store as the plan describes.
+  `FormsActions`: `stashedForm`, `mount`/`unmount` (replacing
+  `registerForm`/`unregisterForm`'s list with a per-entry count, StrictMode-
+  safe by construction), `releaseUnmodified`, `prune`. Selectors:
+  `selectFormFor`, `selectFocusedForm`, `selectRecordPickerOpen`,
+  `selectModifiedRecords` — every one a plain function of `FormsState` alone
+  (no per-form subscriptions needed anywhere else, per the plan). Summary
+  mirroring subscribes to each stashed model's own store and writes the
+  mirrored `summary` back only when it changed (`zustand/vanilla/shallow`).
+- **`stores/menus.ts`:** `MenusState { open: ReadonlySet<symbol> }`,
+  `openMenu`/`closeMenu` (idempotent adds/deletes) and `selectAnyMenuOpen`,
+  replacing `menuKeyboard.ts`'s `openCount` counter with a set keyed by a
+  per-hook-instance symbol (stage 3 supplies the hook).
+- **`stores/createStores.ts`:** builds all five stores in dependency order,
+  runs the boot loads (`loadQueries`/`loadPresets`/`loadSchema`/
+  `loadSettings`/`commands.loadKeymap`), wires the two cross-store
+  subscriptions (`forms.actions.prune` on the tab-id list,
+  `app.actions.resyncRecordEditors` on `[selectionByTab, lineageByTab]`, both
+  with a `shallow` equality function), and installs the single capture-phase
+  `keydown` listener that calls `commands.actions.handleKeyDown`. Does *not*
+  call `update.actions.initUpdates()` — that's `main.tsx`'s job from stage 6,
+  exactly like the Solid app registers the service worker from `Root()`
+  rather than from store construction (an explicit stage-6 hazard the plan
+  already calls out).
+- **`stores/react.tsx`:** `StoresProvider`/`useStores`, plus `useApp`/
+  `useAppActions`, `useCommands`/`useCommandActions`, `useForms`/
+  `useFormState`, `useUpdate`, matching the plan's list — plus
+  `useFormsActions` and `useUpdateActions`, two small, obvious additions in
+  the same pattern (later stages need them: the record editor for the
+  former, `UpdateBanner`/`AboutModal` for the latter).
+- **`app/dev/harness/main.tsx`:** replaces the stage-0 placeholder. Installs
+  the shared `mockApi`, reads `?story=`, and renders the named story once
+  `queries`/`presets` are ready (or immediately, for a story with no
+  `setup`) — see Departures for how the readiness gating differs from a
+  literal port. Unknown stories render the same "Unknown story… Known
+  stories:" listing as the Solid harness.
+- **`app/dev/harness/stories.tsx`:** the `Story` type (`setup(stores)` in
+  place of `setup(store, commands)`) and an empty `STORIES` map — nothing to
+  catalogue yet.
+- **`app/dev/seed.ts`:** `applySeed(stores)` ported from `dev/seed.ts`
+  line-for-line (same URL params, same behavior), with the "wait for
+  `queries` to resolve" `createEffect` replaced by an `app.store.subscribe`
+  that unsubscribes itself once it has run. The `__appStore` compat facade
+  exposes exactly the names `grep -n "__appStore" tests/visual` turned up:
+  `state` (a getter), `rowSelection`, `queryTab`, `recordSidebarWidth`,
+  `setResults`, `setResultRow`, `clickRow`.
+- **A small stage-1 extension:** `app/stores/app/actions.ts` gained
+  `resyncRecordEditors` (declared on `AppActions`, implemented next to
+  `setRecordEditorRecords`). It wasn't part of stage 1's scope (it ports
+  `QueryPage`'s "Dynamic updates" effect, not anything in `store.tsx`), but
+  `createStores()` — stage 2's deliverable — is where the plan's own sketch
+  calls `app.actions.resyncRecordEditors()`, so it had to exist now. Loops
+  over every tab in `recordEditorByTab` (today's version is scoped to one
+  `props.tabId` by the component it lives in); reads `get()` once at the
+  top instead of `untrack`, since it isn't itself a subscription input.
+- **Unit tests**, all passing: `commands.test.ts` (tabs.save_all saves only
+  unsaved tabs; selection commands route to a focused stub form and fall
+  through to row selection when none is focused; MRU excludes
+  `palette.open`; palette index clamps then wraps), `update.test.ts`
+  (`selectUpdateNotice` precedence: null/ready/stale, dismissal only
+  suppressing "ready"), `forms.test.ts` (stash identity and reuse,
+  mount/unmount-gated `focusedForm`/`recordPickerOpen`, modified records
+  regardless of mount, `releaseUnmodified` and `prune` disposing correctly),
+  `menus.test.ts` (open/close and StrictMode-replay idempotence), plus two
+  new `resyncRecordEditors` cases added to `actions.test.ts`.
+
+**Departures from the plan**
+
+- **`AppEnv` was not extended for `update.ts`.** Stage 1's "for next stages"
+  note suggested threading `registerSW` and friends through the shared
+  `AppEnv`. This stage keeps them as direct calls (`registerSW`,
+  `navigator.serviceWorker`, `caches`, `location.reload`,
+  `document.visibilitychange`), same as the Solid module — state management
+  rule 7 only names `localStorage`/`matchMedia`/the theme DOM writes as
+  things that must be injected, and the one behavior stage 2 had to make
+  testable (`selectUpdateNotice`) is already a pure function needing no env
+  at all. Injecting the service-worker surface now would add real API shape
+  with no test depending on it. Revisit if a later stage needs to unit-test
+  the wiring itself (as opposed to the pure policy, which already is).
+- **`createUpdateStore(app, forms)` binds its session inputs at
+  construction**, not at `initUpdates()` time. The Solid module's `session`
+  closure variable was nullable because `sessionFor` needed a store that
+  didn't exist until a provider had rendered; here `app`/`forms` are
+  ordinary constructor arguments, so the guard (and its "has `initUpdates`
+  run yet" implication) simply isn't needed.
+- **`RecordFormModel` in `forms.ts` is a deliberately small stand-in**, not
+  the interface the plan sketches for stage 7. It has exactly six members:
+  `store: StoreApi<unknown>`, `getSummary()`, `dispose()`, plus the three
+  methods `stores/commands.ts`'s `execute()` calls on a focused form
+  (`focusAdjacent`, `expandSelection`, `deleteSelection`) — today's
+  `formModel.ts`'s real `RecordFormModel` has around forty. Stage 7 replaces
+  this type wholesale (real `FormState` in place of `unknown`, every actual
+  method); nothing here should be treated as the final shape.
+- **The harness's readiness gating doesn't use a `ready` React state set
+  from an effect.** A literal port (a `useState` flipped to `true` inside
+  the `useEffect` that calls `story.setup(stores)`) trips
+  `react-hooks/set-state-in-effect`, part of the `recommended` config stage
+  0 turned on. Instead, `dataReady` is computed straight from the store
+  subscription (`useApp`), and a `useLayoutEffect` guarded by a plain
+  `useRef` (not state) calls `story.setup(stores)` exactly once. Because a
+  layout effect runs — and any state updates it triggers get flushed —
+  before the browser paints, the store writes `setup()` makes (and the
+  re-renders they cause in the subscribed story tree) never produce a
+  visible flash of pre-setup content; confirmed by hand against both
+  harnesses (`/react-harness.html?story=nope` and the Solid
+  `/harness.html?story=nope`), which log the same single benign
+  "introspection query failed" console error and nothing else.
+
+**Nothing left undone** for this stage's own scope.
+
+**For the next stages**
+
+- **Stage 3's `ui/useMenuKeyboard.ts`** should get a stable per-instance
+  `symbol` (e.g. `useRef(() => Symbol())`, called once) and call
+  `stores.menus.actions.openMenu`/`closeMenu` with it from mount/cleanup;
+  read `selectAnyMenuOpen(menus.store.getState())` wherever `anyMenuOpen()`
+  is read today.
+- **Stage 7's `RecordFormModel`** must satisfy (a superset of) the interim
+  interface in `forms.ts` — keep the member names (`store`, `getSummary`,
+  `dispose`, `focusAdjacent`, `expandSelection`, `deleteSelection`) so
+  `forms.ts` and `commands.ts` don't need to change, and widen `store` from
+  `StoreApi<unknown>` to `StoreApi<FormState>`. `getSummary()` should derive
+  `{ focused, selecting, pickerOpen, modified }` from the model's own
+  current state, mirroring what `formRegistry.ts`/`formStash.ts` read today
+  (`focused()`, `selection()`, `picker()`, `isModified()`).
+- **`main.tsx` (stage 6) must call `stores.update.actions.initUpdates()`
+  once** — `createStores()` deliberately doesn't, so nothing registers a
+  service worker under the harness or in any store unit test.
+- **The "Unknown story" / empty-list behavior was verified by hand**
+  (a throwaway Playwright script against the dev server), not by an
+  automated spec — there's no story yet to anchor a regression test to.
+  Stage 3 is the first stage that populates `STORIES`; a real "unknown
+  story" spec can be added there or left as a manual check, at that stage's
+  discretion.
 
 ### Stage 3 — UI primitives and shell chrome
 

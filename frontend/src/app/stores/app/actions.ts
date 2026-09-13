@@ -67,11 +67,13 @@ import {
   selectQueryTab,
   selectRowContext,
   selectRowForRecord,
+  selectRowRecords,
   selectTab,
   selectTrackIdAt,
   sameRecord,
 } from "./selectors";
 import {
+  EMPTY_SELECTION,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
   type AppState,
@@ -216,6 +218,13 @@ export interface AppActions {
   ) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
+  /** The "Dynamic updates" cross-store wiring, installed once by
+   * `createStores()`'s subscription on `selectionByTab`/`lineageByTab` (state
+   * management: "Cross-store wiring"). For every tab with an open record
+   * editor, re-points it at the tab's current result-row selection — ported
+   * from `QueryPage`'s per-tab effect, generalized to loop over every tab since
+   * this has no component to key off. */
+  resyncRecordEditors: () => void;
   /** Send the record editor's save through the DML API in the context of the
    * result rows `records` sit on: the operations run as one request, and those
    * rows are then re-read so the results show what they did (see
@@ -821,6 +830,42 @@ export function createAppActions(
     });
   };
 
+  /** Dynamic updates: while a tab's sidebar is open, keep it pointed at the
+   * tab's current result-row selection rather than the row(s) it was opened
+   * on — selecting a different row re-points it, widening the selection puts
+   * the editor on every record it covers, and clearing the selection closes
+   * it. Opening the sidebar from nothing is *not* this action's job (the
+   * context menu and the `results.edit_selected` command do that).
+   *
+   * Ported from `QueryPage`'s per-tab effect, which read the current editor
+   * target `untrack`ed so the effect would react only to the selection (or
+   * lineage), never to the write it makes to that target itself — otherwise
+   * it would loop. Here that's simply reading `get()` once at the top: this
+   * function isn't a subscription input (`createStores()` calls it from a
+   * listener, not a selector), so there's nothing for the loop to form
+   * through. */
+  const resyncRecordEditors = () => {
+    const s = get();
+    for (const [tabId, current] of Object.entries(s.recordEditorByTab)) {
+      if (!current) continue;
+      const selection = s.selectionByTab[tabId] ?? EMPTY_SELECTION;
+      if (selection.size === 0) {
+        set((draft) => {
+          draft.recordEditorByTab[tabId] = null;
+        });
+        continue;
+      }
+      const records = [...selection]
+        .sort((a, b) => a - b)
+        .flatMap((index) =>
+          selectRowRecords(s, tabId, index).filter(
+            (r) => r.table === current.table,
+          ),
+        );
+      setRecordEditorRecords(tabId, current.table, records);
+    }
+  };
+
   const actions: AppActions = {
     loadQueries: async () => {
       set((s) => {
@@ -1082,6 +1127,7 @@ export function createAppActions(
       set((s) => {
         s.recordEditorByTab[tabId] = null;
       }),
+    resyncRecordEditors,
     runRecordDml: (tabId, records, operations) => {
       // One row per record the form was editing — the same row can stand for
       // two of them (a query joining a record to itself), and re-reading it

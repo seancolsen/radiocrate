@@ -202,6 +202,47 @@ describe("setRecordEditorRecords", () => {
   });
 });
 
+describe("resyncRecordEditors", () => {
+  it("re-points an open editor at a widened selection, and closes it once the selection empties", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults(
+      "a",
+      buildResultFromStringRows([["1"], ["2"], ["3"]]),
+      { records: [{ table: "track", keyColumns: ["id"], keyIndices: [0] }] },
+    );
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.setRecordEditorRecords("a", "track", [
+      { table: "track", key: [{ column: "id", value: "1" }] },
+    ]);
+
+    // Widen the selection to rows 0 and 1 — the editor should pick up row 1's
+    // record too.
+    bundle.actions.clickRow("a", 1, { shift: true, ctrl: false });
+    bundle.actions.resyncRecordEditors();
+    expect(bundle.store.getState().recordEditorByTab["a"]?.records).toEqual([
+      { table: "track", key: [{ column: "id", value: "1" }] },
+      { table: "track", key: [{ column: "id", value: "2" }] },
+    ]);
+
+    // Empty the selection (two Ctrl-clicks toggle both selected rows off) —
+    // the editor should close.
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: true });
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: true });
+    bundle.actions.resyncRecordEditors();
+    expect(bundle.store.getState().recordEditorByTab["a"]).toBeNull();
+  });
+
+  it("leaves tabs with no open editor alone", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults("a", buildResultFromStringRows([["1"], ["2"]]));
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    expect(() => bundle.actions.resyncRecordEditors()).not.toThrow();
+    expect(bundle.store.getState().recordEditorByTab["a"]).toBeUndefined();
+  });
+});
+
 describe("toggleFilterPreset", () => {
   it("collapses the expanded preset when it's the one just removed", () => {
     const bundle = createAppStore(fakeEnv());
