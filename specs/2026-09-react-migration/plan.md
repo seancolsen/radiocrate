@@ -16,7 +16,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 2 — Satellite stores, bindings, React harness | done |
 | 3 — UI primitives and shell chrome | done |
 | 4 — Tabs, playback bar, palette, shortcuts editor | done |
-| 5 — Query toolbar and builders | not started |
+| 5 — Query toolbar and builders | done |
 | 6 — Results grid and app assembly | not started |
 | 7 — Record form model | not started |
 | 8 — Record editor: read path | not started |
@@ -1343,6 +1343,135 @@ preset-expanded-narrow, modified-preset}`, `sort-builder/shuffle`.
   and `FullBuilder` each do this today. Keep one shared hook.
 - Builder text inputs are controlled by `live` definition fields and write
   through `editLiveDebounced`. Verify there's no caret jump mid-string.
+
+#### As built
+
+**What landed**
+
+- **`app/components/builder/useBuilderFocus.ts`** (new — not a port of any one
+  Solid file, per the hazard note above): `useBuilderFocus(tabId, section, ref)`
+  reads `builderFocus` via `useApp`, and in a `useLayoutEffect` (the request must
+  be consumed only once the target field exists — this also covers the "fires on
+  mount" case the Solid effects relied on) focuses `ref.current` and calls
+  `clearBuilderFocus` when the request names this tab and (if given) this
+  section. `section: undefined` skips the section check, which is what
+  `FullBuilder` needs (a full-mode query has one editor, no sections to match).
+  `FilterBuilder`, `SingleBuilder` and `FullBuilder` each call it once instead of
+  carrying their own `createEffect`.
+- **`app/components/builder/CustomInput.tsx`:** a `forwardRef<HTMLTextAreaElement
+  | HTMLInputElement, …>` in place of Solid's `ref` callback prop (see
+  Departures) — the ref forwards to whichever host element `singleLine` picks,
+  so a builder's `useBuilderFocus` ref can focus it directly.
+- **`app/components/builder/{PresetTab,PresetEditor,SectionOptionsMenu,
+  FilterBuilder,SingleBuilder,FullBuilder,QueryBuilder}.tsx`:** ported onto
+  `useApp`/`useAppActions` and the existing stage-1 selectors
+  (`selectQueryTab`, `selectExpandedPreset`, `selectPresetName`,
+  `selectPresetsFor`, `selectPresetDirty`, `selectPresetEdit`,
+  `selectBuilderSection`, `selectIsFullQuery`). `FilterBuilder` splits out a
+  `FilterPresetTab` sub-component (narrowly subscribed to one preset's name and
+  expanded state) for its preset-tab row list, following the `OpenedTabRow` /
+  `WiredTabHandle` per-row pattern from stages 3–4, so expanding one preset
+  doesn't re-render the others. `PresetEditor` ports its `onMount` seed and its
+  `ResizeObserver`-driven checkbox-wrap as `useEffect`s (see Departures for the
+  mount-once seed).
+- **`app/components/{BaseSubmenu,PageActionsMenu,DeleteConfirmModal,
+  PresetSaveModal,ViewSqlModal,QueryToolbar}.tsx`:** ported the same way.
+  `DeleteConfirmModal` and `ViewSqlModal` return `null` when nothing is
+  pending, matching `SettingModal`'s established "the store decides whether
+  anything mounts" shape rather than an inline `Show`. `PresetSaveModal` splits
+  into an outer conditional wrapper and a `PresetSaveModalBody` that owns the
+  autofocus `useLayoutEffect` — see Departures for why the split is load-bearing
+  here, not just a style choice. `QueryToolbar` ports its `ResizeObserver`-driven
+  compact-width tracking as local `useState`/`useEffect`, the first `ResizeObserver`
+  usage in the React tree (no shared hook existed to reuse; `PresetEditor`'s is
+  the second, independent instance of the same shape).
+- **`app/dev/harness/stories.tsx`:** added `openWithDefinition` and
+  `expandedVettedPreset` (ported from the Solid catalogue), plus this stage's 9
+  stories (`query-builder/{collapsed,filter-open,filter-open-narrow,querydown,
+  actions-menu}`, `filter-builder/{preset-expanded,preset-expanded-narrow,
+  modified-preset}`, `sort-builder/shuffle`), in the same order and with the
+  same `setup`/`render` bodies as the Solid catalogue, translated to
+  `stores.app.actions.*`.
+- **Gate: all green.** `typecheck`, `lint`, `format:check`, `test:unit` (221
+  tests, unchanged — this stage added no store logic, so no new unit tests, same
+  as stage 4), Solid visual (135/135), and React visual for this stage's 9
+  stories × 2 color schemes plus every earlier React story (`query.spec.ts`'s
+  9 new tests + `shell.spec.ts`'s 11 existing ones × 2 = 43/43) — matched the
+  existing baselines on the first run (one unrelated flake — see Departures —
+  reran green in isolation), no `__screenshots__` file changed.
+
+**Departures from the plan**
+
+- **`CustomInput`'s Solid `ref` callback prop became a `forwardRef`, not a
+  literal port.** The Solid source names the prop `ref` and calls
+  `props.ref?.(el)` from the host element's own `ref=`; porting that shape
+  directly (a plain prop that flows into a JSX `ref=`) is exactly the pattern
+  stage 4's as-built note flagged — `react-hooks/refs` treats a ref-setter
+  reached through an arbitrary prop name as unsafe, and the note already
+  recommended `forwardRef` for any future component that hands a caller a DOM
+  node. Since the ref can point at either a `<textarea>` or an `<input>`
+  (`singleLine`), forwarding it directly (`ref={ref}`) doesn't type-check
+  against either element's own setter (a `MutableRefObject<A|B>` isn't
+  assignable to one typed for `A` alone) — fixed with a small local
+  `assignRef<T>(ref, el)` helper that dispatches on whether `ref` is a function
+  or an object, rather than an `as` cast. **Any later stage porting a Solid
+  `ref?: (el) => void` prop should reach for the same `forwardRef` +
+  `assignRef` shape**, not the literal callback-prop port.
+- **`PresetSaveModal` needed the `SettingModal` split for a reason beyond
+  style.** A first draft put the autofocus `useLayoutEffect(() => {…}, [])`
+  directly in `PresetSaveModal`, guarded by the same `if (!save) return null`
+  early return `DeleteConfirmModal`/`ViewSqlModal` use. That's wrong: since
+  `PresetSaveModal` itself is always mounted (`QueryToolbar` renders it
+  unconditionally), its own mount-effect fires exactly once, on the *first*
+  render — typically while `save` is still `null` — and never again when a
+  save later becomes pending, so the field would never actually focus. Split
+  into a `PresetSaveModalBody` that mounts only while `save` is truthy (the
+  same shape `SettingModal`/`SettingModalBody` already established) so the
+  autofocus effect's mount coincides with the dialog actually appearing.
+  **A conditionally-rendered dialog with its own mount-time behavior (autofocus,
+  a one-time seed) always needs this split** — an early return inside the same
+  component that owns the effect doesn't remount it.
+- **`PresetEditor`'s mount-once preset-edit seed keeps the Solid `onMount`'s
+  exact semantics, including its edge case.** Like the Solid version, this
+  component isn't recreated when the caller switches which preset is expanded
+  (`FilterBuilder`/`SingleBuilder` toggle `presetId` in place rather than
+  keying a new instance), so the seed effect — `useEffect(() => { if (!edit)
+  beginPresetEdit(id) }, [])` — only ever runs for the preset that was expanded
+  when this instance first mounted; switching directly from one expanded
+  preset to another without ever rendering "nothing expanded" in between still
+  relies on `patchPresetEdit`'s own lazy `beginPresetEdit` fallback to seed the
+  second preset (unchanged from Solid). Not exercised by any story or spec
+  either here or in Solid — ported as-is rather than fixed, per "port, don't
+  redesign." The effect needed an `eslint-disable-next-line
+  react-hooks/exhaustive-deps` (documented inline) since the whole point is
+  that it must *not* re-run when `edit` changes.
+- **One React-visual flake, not a regression:** `sidebar-left/open-persistent -
+  light` (a stage-3 story, untouched here) timed out once against a cold dev
+  server on the first full-batch run and passed immediately on its own and on a
+  full rerun. Noted per the plan's "visual snapshot failures are real" rule —
+  checked by rerunning rather than assumed away.
+
+**Nothing left undone** — every file and story in the stage's scope landed.
+
+**For the next stages**
+
+- **Two `ResizeObserver`-driven local-state hooks now exist with no shared
+  abstraction** (`QueryToolbar`'s compact-width tracking, `PresetEditor`'s
+  checkbox-wrap tracking) — both the same six-line shape (`useState` +
+  `useRef` + `useEffect` that observes and disconnects). If a third caller
+  needs one, that's the signal to extract a `useElementWidth(ref)` hook rather
+  than copying the shape a third time; stage 6's `QueryResults` (the
+  `ResizeObserver` the plan's own sketch already calls out) is a likely
+  candidate, though its subscription-driven canvas is a different enough shape
+  that it may not fit the same hook.
+- **The `assignRef` helper in `CustomInput.tsx` is local to that file.** If a
+  later stage needs a `forwardRef` spanning more than one possible host-element
+  type again, either import it from there or lift it into `ui/` — it isn't
+  specific to `CustomInput`.
+- **Stage 6's `QueryPage` is the first real caller of `QueryToolbar`.** Nothing
+  here depends on `QueryPage` existing (the harness stories render
+  `QueryToolbar` standalone, exactly as the Solid stories do), so there's
+  nothing this stage needs to hand off beyond the components themselves.
 
 ### Stage 6 — Results grid and app assembly
 

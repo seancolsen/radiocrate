@@ -2,16 +2,30 @@ import type { JSX } from "react";
 import type { CurrentTrack, PlaybackState } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
 import { SETTINGS } from "../../../state/settings";
-import { QUERIES_FIXTURE } from "../../../dev/fixtures";
+import {
+  FILTER_DEF,
+  FULL_DEF,
+  QUERIES_FIXTURE,
+  SHUFFLE_DEF,
+  VETTED_PRESET_ID,
+} from "../../../dev/fixtures";
 import { STUB_VERSION } from "../../../dev/harness/mockApi";
-import { lemonadeGridResult } from "../../../dev/gridFixture";
+import { emptyCountResult, lemonadeGridResult } from "../../../dev/gridFixture";
+import { FIXTURE_SCHEMA_JSON } from "../../../dev/recordFixture";
+import {
+  emptyDefinition,
+  type QueryDefinition,
+} from "../../../query/definition";
 
 import { AboutDialog } from "../../components/AboutModal";
 import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
+import PageActionsMenu from "../../components/PageActionsMenu";
 import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
+import QueryBuilder from "../../components/builder/QueryBuilder";
+import QueryToolbar from "../../components/QueryToolbar";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { Menu } from "../../components/ui/Menu";
@@ -59,6 +73,31 @@ function openLemonade(stores: Stores): string {
     definition: "",
   });
   return LEMONADE.id;
+}
+
+/** Opens "Lemonade" carrying `def` as its working query. Unless it's `saved`,
+ * the tab reads as having unsaved changes (an empty baseline), which is what
+ * puts the Save button in the toolbar. */
+function openWithDefinition(
+  stores: Stores,
+  def: QueryDefinition,
+  saved = false,
+): string {
+  const id = openLemonade(stores);
+  stores.app.actions.setTabDefinitions(
+    id,
+    saved ? def : emptyDefinition(),
+    def,
+  );
+  return id;
+}
+
+/** The filter builder with the "vetted" preset's inline editor open. */
+function expandedVettedPreset(stores: Stores): string {
+  const id = openWithDefinition(stores, FILTER_DEF);
+  stores.app.actions.toggleBuilderSection(id, "filter");
+  stores.app.actions.toggleExpandPreset(id, VETTED_PRESET_ID);
+  return id;
 }
 
 /** Opens "Lemonade" and seeds a playing track — the now-playing bar's stories'
@@ -251,5 +290,102 @@ export const STORIES: Record<string, Story> = {
         onClose={() => {}}
       />
     ),
+  },
+
+  // ── The query toolbar ────────────────────────────────────────────────────
+  // Saved (clean) query, no builder open: no Save button, the section toggles
+  // inactive, "12 results" at the far right.
+  "query-builder/collapsed": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF, true);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // Filter section open + unsaved: the Save button, the active split button
+  // with its ⋮, and the builder line below it.
+  "query-builder/filter-open": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleBuilderSection(id, "filter");
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // Compact (≤ 500px): the section buttons drop their labels and the
+  // run/filter separator is hidden.
+  "query-builder/filter-open-narrow": {
+    width: 460,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleBuilderSection(id, "filter");
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // Full-Querydown mode: the three section toggles collapse into one
+  // "Querydown" toggle (no ⋮ — there are no sections to configure) over the
+  // whole-query editor.
+  "query-builder/querydown": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FULL_DEF, true);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleFullEditor(id);
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // The wrench menu, with its Base submenu open (the test opens it): the
+  // schema's tables as an exclusive choice over the "Full Querydown" escape
+  // hatch.
+  "query-builder/actions-menu": {
+    width: 440,
+    height: 300,
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      openWithDefinition(stores, FILTER_DEF, true);
+    },
+    render: () => (
+      <Menu defaultOpen width="210px" trigger={() => null}>
+        <PageActionsMenu tabId={LEMONADE.id} />
+      </Menu>
+    ),
+  },
+
+  // ── The builders, without the toolbar above them ─────────────────────────
+  // Preset expanded, no unsaved edits: the inline editor (name + apply-by-
+  // default + definition), no star/revert/save.
+  "filter-builder/preset-expanded": {
+    width: 1280,
+    setup: expandedVettedPreset,
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // Narrow: the "Apply by default" checkbox wraps onto its own line below the
+  // name row.
+  "filter-builder/preset-expanded-narrow": {
+    width: 560,
+    setup: expandedVettedPreset,
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // The same preset made dirty by toggling "Apply by default" on: red ✱ plus
+  // revert and save appear, and the checkbox is checked.
+  "filter-builder/modified-preset": {
+    width: 1280,
+    setup: (stores) => {
+      expandedVettedPreset(stores);
+      stores.app.actions.patchPresetEdit(VETTED_PRESET_ID, { isDefault: true });
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // Sort built-in: the Shuffle preset tab beside its Reshuffle button.
+  "sort-builder/shuffle": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, SHUFFLE_DEF);
+      stores.app.actions.toggleBuilderSection(id, "sort");
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
 };
