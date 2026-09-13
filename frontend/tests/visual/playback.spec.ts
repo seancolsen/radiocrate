@@ -61,10 +61,26 @@ async function mockBackend(page: Page): Promise<string[]> {
   return streamed;
 }
 
-/** The `src` of the app's (single, hidden) audio element. */
+// The engine keeps two hidden audio elements — the active player and a standby
+// pre-buffering the next track — and swaps their roles at every boundary, so
+// "the" audio element is whichever one is currently playing.
+
+/** The `src` of the active (playing) audio element, or "" when none plays. */
 async function audioSrc(page: Page): Promise<string> {
-  return page.evaluate(
-    () => document.querySelector("audio")?.getAttribute("src") ?? "",
+  return page.evaluate(() => {
+    const active = [...document.querySelectorAll("audio")].filter(
+      (el) => !el.paused,
+    );
+    return active.length === 1 ? (active[0].getAttribute("src") ?? "") : "";
+  });
+}
+
+/** Fires `ended` on the active audio element, as if its track ran out. */
+async function endActiveTrack(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    [...document.querySelectorAll("audio")]
+      .find((el) => !el.paused)
+      ?.dispatchEvent(new Event("ended")),
   );
 }
 
@@ -84,24 +100,21 @@ test("double-click plays a row's track, and `ended` advances to the next", async
   // The bar appears and the first row's track is being streamed.
   await expect(page.getByTestId("now-playing")).toBeVisible();
   await expect.poll(() => audioSrc(page)).toContain("track-a");
+  // The next track is fetched while the first still plays, so the boundary
+  // needs no network.
+  await expect.poll(() => streamed).toContain("track-b");
 
   // The track ends: the audio layer advances on its own, with no UI involvement.
-  await page.evaluate(() =>
-    document.querySelector("audio")?.dispatchEvent(new Event("ended")),
-  );
+  await endActiveTrack(page);
   await expect.poll(() => audioSrc(page)).toContain("track-b");
 
   // And again, to the last queued row.
-  await page.evaluate(() =>
-    document.querySelector("audio")?.dispatchEvent(new Event("ended")),
-  );
+  await endActiveTrack(page);
   await expect.poll(() => audioSrc(page)).toContain("track-c");
-  expect(streamed).toEqual(["track-a", "track-b", "track-c"]);
+  expect([...new Set(streamed)]).toEqual(["track-a", "track-b", "track-c"]);
 
   // The queue is now dry: ending the last track clears the bar.
-  await page.evaluate(() =>
-    document.querySelector("audio")?.dispatchEvent(new Event("ended")),
-  );
+  await endActiveTrack(page);
   await expect(page.getByTestId("now-playing")).toBeHidden();
 });
 
