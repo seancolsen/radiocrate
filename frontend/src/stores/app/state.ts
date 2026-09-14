@@ -177,6 +177,52 @@ export interface SchemaState {
   tables: readonly SchemaTable[];
 }
 
+/** Everything a query tab's page holds beyond the tab itself: its results and
+ * how the user is looking at them. */
+export interface QueryPageState {
+  /** The decoded, render-ready result (absent until a run lands). */
+  result?: QueryResult;
+  /** The result-row selection: a set of row indexes (absent = none). Replaced
+   * wholesale on every change so subscribers observe a new reference; cleared
+   * when the result changes. Treated as opaque by Immer: a `Set` is always
+   * swapped in whole, never mutated through a draft, so no `enableMapSet()`
+   * plugin is needed. */
+  selection?: ReadonlySet<number>;
+  /** The lineage mapping: which output column (if any) carries `track.id`
+   * (drives double-click-to-play) and which tables the rows carry a full
+   * primary key for (drives the results context menu's "Edit {table}"
+   * entries). A positional mapping into `result`, not a snapshot of row data —
+   * absent while the analysis hasn't landed (or found nothing), same as an
+   * empty mapping. */
+  lineage?: LineageMapping;
+  /** The record(s) open in the record-editor sidebar (`null` when it's closed).
+   * Per tab — the sidebar belongs to the query page, so switching tabs
+   * switches editors. */
+  recordEditor: RecordEditorTarget | null;
+  /** Whether a run is in flight. */
+  running: boolean;
+  /** The open builder section (null = builder closed). */
+  builderSection: Section | null;
+  /** Whether the whole-query Querydown editor is open. Kept apart from
+   * `builderSection` because it belongs to the other mode: a full-mode query
+   * has no sections to open, and a query converted back to sections finds its
+   * section state where it left it. */
+  fullEditorOpen: boolean;
+  /** The expanded preset id (null = none expanded). */
+  expandedPreset: string | null;
+}
+
+/** A page with nothing in it yet — what a tab's first page write starts from. */
+export function emptyPage(): QueryPageState {
+  return {
+    recordEditor: null,
+    running: false,
+    builderSection: null,
+    fullEditorOpen: false,
+    expandedPreset: null,
+  };
+}
+
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
   theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
@@ -185,36 +231,9 @@ export interface AppState {
   queryFilter: string; // "Filter" input text in the Queries section
   openedCollapsed: boolean; // "Opened" section disclosure
   queriesCollapsed: boolean; // "Queries" section disclosure
-  /** Per-tab decoded, render-ready results, keyed by tab id. */
-  resultsByTab: Record<string, QueryResult>;
-  /** Per-tab result-row selection: a set of row indexes. Replaced wholesale on
-   * every change so subscribers observe a new reference; cleared when the
-   * tab's result changes. Treated as opaque by Immer (see the app store's doc
-   * comment): a `Set` is always swapped in whole, never mutated through a
-   * draft, so no `enableMapSet()` plugin is needed. */
-  selectionByTab: Record<string, ReadonlySet<number>>;
-  /** Per-tab lineage mapping: which output column (if any) carries `track.id`
-   * (drives double-click-to-play) and which tables the rows carry a full
-   * primary key for (drives the results context menu's "Edit {table}"
-   * entries). A positional mapping into the tab's `QueryResult`, not a
-   * snapshot of row data — absent for a tab whose analysis hasn't landed (or
-   * found nothing), same as an empty mapping. */
-  lineageByTab: Record<string, LineageMapping>;
-  /** The record(s) open in each tab's record-editor sidebar (`null`/absent when
-   * the sidebar is closed). Per-tab — the sidebar belongs to the query page, so
-   * switching tabs switches editors. */
-  recordEditorByTab: Record<string, RecordEditorTarget | null>;
-  /** Whether a run is in flight, keyed by tab id (errors are console-only). */
-  runningByTab: Record<string, boolean>;
-  /** The open builder section per tab (null = builder closed). */
-  builderSectionByTab: Record<string, Section | null>;
-  /** Whether the whole-query Querydown editor is open, per tab. Kept apart from
-   * `builderSectionByTab` because it belongs to the other mode: a full-mode
-   * query has no sections to open, and a query converted back to sections finds
-   * its section state where it left it. */
-  fullEditorByTab: Record<string, boolean>;
-  /** The expanded preset id per tab (null = none expanded). */
-  expandedPresetByTab: Record<string, string | null>;
+  /** Each query tab's page state, keyed by tab id. An entry is created by the
+   * first write for its tab and dropped whole when the tab closes. */
+  pages: Record<string, QueryPageState>;
   /** Whether the initial `preset.list` load has landed. */
   presetsStatus: ResourceStatus;
   /** Saved query-section presets — a mutable copy of `preset.list` so local
@@ -274,14 +293,7 @@ export function initialState(env: AppEnv): AppState {
     queryFilter: "",
     openedCollapsed: false,
     queriesCollapsed: false,
-    resultsByTab: {},
-    selectionByTab: {},
-    lineageByTab: {},
-    recordEditorByTab: {},
-    runningByTab: {},
-    builderSectionByTab: {},
-    fullEditorByTab: {},
-    expandedPresetByTab: {},
+    pages: {},
     presetsStatus: "loading",
     presets: [],
     presetEdits: {},

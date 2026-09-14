@@ -55,12 +55,12 @@ export const selectCanRevert = (s: AppState, tabId: string): boolean => {
 export const selectResultCount = (
   s: AppState,
   tabId: string,
-): number | undefined => s.resultsByTab[tabId]?.rowCount;
+): number | undefined => s.pages[tabId]?.result?.rowCount;
 
 export const selectRowSelection = (
   s: AppState,
   tabId: string,
-): ReadonlySet<number> => s.selectionByTab[tabId] ?? EMPTY_SELECTION;
+): ReadonlySet<number> => s.pages[tabId]?.selection ?? EMPTY_SELECTION;
 
 /** The records result row `index` identifies — one per table whose primary key
  * the row carries in full, in result-column order. Empty when the lineage
@@ -71,8 +71,8 @@ export function selectRowRecords(
   tabId: string,
   index: number,
 ): RecordRef[] {
-  const result = s.resultsByTab[tabId];
-  const targets = s.lineageByTab[tabId]?.records ?? [];
+  const result = s.pages[tabId]?.result;
+  const targets = s.pages[tabId]?.lineage?.records ?? [];
   if (!result) return [];
   const records: RecordRef[] = [];
   for (const target of targets) {
@@ -94,12 +94,12 @@ export function selectRowRecords(
 export const selectRecordEditor = (
   s: AppState,
   tabId: string,
-): RecordEditorTarget | null => s.recordEditorByTab[tabId] ?? null;
+): RecordEditorTarget | null => s.pages[tabId]?.recordEditor ?? null;
 
 export const selectBuilderSection = (
   s: AppState,
   tabId: string,
-): Section | null => s.builderSectionByTab[tabId] ?? null;
+): Section | null => s.pages[tabId]?.builderSection ?? null;
 
 /** Whether a tab's working query is one hand-written Querydown query rather
  * than the four builder sections. */
@@ -107,12 +107,12 @@ export const selectIsFullQuery = (s: AppState, tabId: string): boolean =>
   selectQueryTab(s, tabId)?.live.full != null;
 
 export const selectFullEditorOpen = (s: AppState, tabId: string): boolean =>
-  s.fullEditorByTab[tabId] ?? false;
+  s.pages[tabId]?.fullEditorOpen ?? false;
 
 export const selectExpandedPreset = (
   s: AppState,
   tabId: string,
-): string | null => s.expandedPresetByTab[tabId] ?? null;
+): string | null => s.pages[tabId]?.expandedPreset ?? null;
 
 export const selectPresetName = (s: AppState, id: string): string =>
   s.presets.find((p) => p.id === id)?.name ?? "(missing preset)";
@@ -198,8 +198,8 @@ export function selectTrackIdAt(
   tabId: string,
   index: number,
 ): string | undefined {
-  const result = s.resultsByTab[tabId];
-  const col = s.lineageByTab[tabId]?.trackIdColumn;
+  const result = s.pages[tabId]?.result;
+  const col = s.pages[tabId]?.lineage?.trackIdColumn;
   if (!result || col === undefined) return undefined;
   const id = result.keyText(index, col);
   return id === "" ? undefined : id;
@@ -214,8 +214,8 @@ export function selectPlaylistAround(
   tabId: string,
   index: number,
 ): { preceding: string[]; upcoming: string[] } {
-  const result = s.resultsByTab[tabId];
-  const col = s.lineageByTab[tabId]?.trackIdColumn;
+  const result = s.pages[tabId]?.result;
+  const col = s.pages[tabId]?.lineage?.trackIdColumn;
   if (!result || col === undefined) return { preceding: [], upcoming: [] };
   const preceding: string[] = [];
   for (let i = 0; i < Math.min(index, result.rowCount); i++) {
@@ -238,8 +238,8 @@ export function selectLocateRow(
   tabId: string,
   id: string,
 ): number | null {
-  const result = s.resultsByTab[tabId];
-  const col = s.lineageByTab[tabId]?.trackIdColumn;
+  const result = s.pages[tabId]?.result;
+  const col = s.pages[tabId]?.lineage?.trackIdColumn;
   if (!result || col === undefined) return null;
   const limit = Math.min(result.rowCount, 1000);
   for (let i = 0; i < limit; i++)
@@ -260,10 +260,10 @@ export function selectRowForRecord(
 ): number | undefined {
   const identifies = (row: number) =>
     selectRowRecords(s, tabId, row).some((r) => sameRecord(r, record));
-  for (const row of s.selectionByTab[tabId] ?? []) {
+  for (const row of s.pages[tabId]?.selection ?? []) {
     if (identifies(row)) return row;
   }
-  const limit = Math.min(s.resultsByTab[tabId]?.rowCount ?? 0, 1000);
+  const limit = Math.min(s.pages[tabId]?.result?.rowCount ?? 0, 1000);
   for (let row = 0; row < limit; row++) if (identifies(row)) return row;
   return undefined;
 }

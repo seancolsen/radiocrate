@@ -115,7 +115,7 @@ function subscribeModifiedRows(
     { equalityFn: shallow, fireImmediately: true },
   );
   const offApp = stores.app.store.subscribe(
-    (s) => [s.resultsByTab[tabId], s.lineageByTab[tabId]] as const,
+    (s) => [s.pages[tabId]?.result, s.pages[tabId]?.lineage] as const,
     recompute,
     { equalityFn: shallow },
   );
@@ -207,7 +207,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     // backgrounded, so it isn't a wakeup a battery report notices either.
     let ticker: ReturnType<typeof setInterval> | undefined;
     const syncTicker = () => {
-      const result = store.getState().resultsByTab[tabId];
+      const result = store.getState().pages[tabId]?.result;
       const hasRelativeTime = (result?.visible ?? []).some(
         (c) => c.meta.formatter?.type === "relativeTime",
       );
@@ -227,7 +227,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       // highlighted. The ticker re-arms here too: whether a `relativeTime`
       // column is on screen is a property of the result.
       store.subscribe(
-        (s) => s.resultsByTab[tabId],
+        (s) => s.pages[tabId]?.result,
         (result) => {
           grid.setResult(result);
           syncTicker();

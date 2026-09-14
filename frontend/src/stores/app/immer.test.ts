@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as arrow from "apache-arrow";
 import { castDraft } from "immer";
 import { buildResultFromStringRows } from "../../query/result";
+import { emptyPage } from "./state";
 import { createAppVanillaStore } from "./vanillaStore";
 import { fakeEnv } from "./testEnv";
 
@@ -18,13 +19,13 @@ describe("Immer compatibility", () => {
     ]);
 
     store.setState((s) => {
-      s.resultsByTab["t1"] = castDraft(result);
+      s.pages["t1"] = castDraft({ ...emptyPage(), result });
     });
 
     // The same instance, not a drafted/cloned copy — QueryResult has no
     // `[immerable]` marker, so Immer neither drafts nor deep-freezes it (see
     // `actions.ts`'s `setTabResult` doc comment).
-    expect(store.getState().resultsByTab["t1"]).toBe(result);
+    expect(store.getState().pages["t1"]?.result).toBe(result);
 
     // `patchRow` mutates the instance's private `patches` map in place. If
     // autoFreeze had touched it, this would throw.
@@ -41,20 +42,22 @@ describe("Immer compatibility", () => {
     const first = new Set([1, 2, 3]);
 
     store.setState((s) => {
-      s.selectionByTab["t1"] = first;
+      s.pages["t1"] = castDraft({ ...emptyPage(), selection: first });
     });
-    expect(store.getState().selectionByTab["t1"]).toBe(first);
-    expect([...store.getState().selectionByTab["t1"]]).toEqual([1, 2, 3]);
+    expect(store.getState().pages["t1"]?.selection).toBe(first);
+    expect([...(store.getState().pages["t1"]?.selection ?? [])]).toEqual([
+      1, 2, 3,
+    ]);
 
-    // No `enableMapSet()` is called anywhere in the store (see the app
-    // state's doc comment on `selectionByTab`) — writes always swap in a
-    // fresh `Set` rather than mutating the stored one, exactly like every
-    // other action in `actions.ts` (`clickRow`, `moveRowSelection`, …).
+    // No `enableMapSet()` is called anywhere in the store (see the doc comment
+    // on `QueryPageState.selection`) — writes always swap in a fresh `Set`
+    // rather than mutating the stored one, exactly like every other action in
+    // `actions.ts` (`clickRow`, `moveRowSelection`, …).
     const second = new Set([4]);
     store.setState((s) => {
-      s.selectionByTab["t1"] = second;
+      s.pages["t1"].selection = second;
     });
-    expect(store.getState().selectionByTab["t1"]).toBe(second);
+    expect(store.getState().pages["t1"]?.selection).toBe(second);
     expect(first.has(1)).toBe(true); // the old Set is untouched, just orphaned
   });
 });

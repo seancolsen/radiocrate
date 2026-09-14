@@ -66,7 +66,7 @@ describe("closeTab", () => {
     bundle = createAppStore(fakeEnv());
   });
 
-  it("clears every per-tab map and selects a remaining neighbor", () => {
+  it("drops the tab's page and selects a remaining neighbor", () => {
     openQueryTab(bundle, "a");
     openQueryTab(bundle, "b");
     openQueryTab(bundle, "c");
@@ -84,12 +84,8 @@ describe("closeTab", () => {
 
     const s = bundle.store.getState();
     expect(s.tabs.map((t) => t.id)).toEqual(["a", "c"]);
-    expect(s.resultsByTab["b"]).toBeUndefined();
-    expect(s.selectionByTab["b"]).toBeUndefined();
-    expect(s.lineageByTab["b"]).toBeUndefined();
-    expect(s.recordEditorByTab["b"]).toBeUndefined();
-    expect(s.builderSectionByTab["b"]).toBeUndefined();
-    expect(s.fullEditorByTab["b"]).toBeUndefined();
+    expect(s.pages["b"]).toBeUndefined();
+    expect(s.pages["a"]).toBeUndefined(); // never written, so never created
     // Closing a middle tab moves the splice's gap to the tab that was to its
     // right ("c" slides into "b"'s old index) — the same neighbor a plain
     // array splice always produces, and what `closeTab`'s fallback chain
@@ -120,32 +116,34 @@ describe("clickRow / moveRowSelection", () => {
   it("extends a shift-click range from the anchor", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 3, { shift: true, ctrl: false });
-    expect([...bundle.store.getState().selectionByTab["a"]].sort()).toEqual([
-      1, 2, 3,
-    ]);
+    expect(
+      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+    ).toEqual([1, 2, 3]);
   });
 
   it("re-anchors on a plain click, so a later shift-click grows from there", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 4, { shift: true, ctrl: false });
-    expect([...bundle.store.getState().selectionByTab["a"]].sort()).toEqual([
-      3, 4,
-    ]);
+    expect(
+      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+    ).toEqual([3, 4]);
   });
 
   it("extends from the click lead on Shift+Arrow, not the anchor alone", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.moveRowSelection("a", true, true); // Shift+Down from row 1
-    expect([...bundle.store.getState().selectionByTab["a"]].sort()).toEqual([
-      1, 2,
-    ]);
+    expect(
+      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+    ).toEqual([1, 2]);
   });
 
   it("moves the lead without extending on a plain arrow key", () => {
     bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
     bundle.actions.moveRowSelection("a", false, false); // Up, no shift
-    expect([...bundle.store.getState().selectionByTab["a"]]).toEqual([1]);
+    expect([...(bundle.store.getState().pages["a"]?.selection ?? [])]).toEqual([
+      1,
+    ]);
   });
 });
 
@@ -168,8 +166,8 @@ describe("setResults", () => {
     );
 
     const s = bundle.store.getState();
-    expect(s.selectionByTab["a"]).toBeUndefined();
-    expect(s.lineageByTab["a"]).toBeUndefined();
+    expect(s.pages["a"]?.selection).toBeUndefined();
+    expect(s.pages["a"]?.lineage).toBeUndefined();
     expect(s.currentTrack?.rowIndex).toBeNull();
     // The rest of the now-playing bar survives — only the row pointer is
     // invalidated (it's re-located once lineage analysis lands).
@@ -187,7 +185,7 @@ describe("setRecordEditorRecords", () => {
       { table: "track", key: [{ column: "id", value: "2" }] },
     ]);
     expect(
-      bundle.store.getState().recordEditorByTab["a"]?.records,
+      bundle.store.getState().pages["a"]?.recordEditor?.records,
     ).toHaveLength(2);
   });
 
@@ -198,7 +196,7 @@ describe("setRecordEditorRecords", () => {
       { table: "track", key: [{ column: "id", value: "1" }] },
     ]);
     bundle.actions.setRecordEditorRecords("a", "track", []);
-    expect(bundle.store.getState().recordEditorByTab["a"]).toBeNull();
+    expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
   });
 });
 
@@ -220,7 +218,7 @@ describe("resyncRecordEditors", () => {
     // record too.
     bundle.actions.clickRow("a", 1, { shift: true, ctrl: false });
     bundle.actions.resyncRecordEditors();
-    expect(bundle.store.getState().recordEditorByTab["a"]?.records).toEqual([
+    expect(bundle.store.getState().pages["a"]?.recordEditor?.records).toEqual([
       { table: "track", key: [{ column: "id", value: "1" }] },
       { table: "track", key: [{ column: "id", value: "2" }] },
     ]);
@@ -230,7 +228,7 @@ describe("resyncRecordEditors", () => {
     bundle.actions.clickRow("a", 0, { shift: false, ctrl: true });
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: true });
     bundle.actions.resyncRecordEditors();
-    expect(bundle.store.getState().recordEditorByTab["a"]).toBeNull();
+    expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
   });
 
   it("leaves tabs with no open editor alone", () => {
@@ -239,7 +237,7 @@ describe("resyncRecordEditors", () => {
     bundle.actions.setResults("a", buildResultFromStringRows([["1"], ["2"]]));
     bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
     expect(() => bundle.actions.resyncRecordEditors()).not.toThrow();
-    expect(bundle.store.getState().recordEditorByTab["a"]).toBeUndefined();
+    expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
   });
 });
 
@@ -261,11 +259,11 @@ describe("toggleFilterPreset", () => {
     });
     bundle.actions.toggleFilterPreset("a", "p1"); // add it
     bundle.actions.toggleExpandPreset("a", "p1"); // expand it
-    expect(bundle.store.getState().expandedPresetByTab["a"]).toBe("p1");
+    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBe("p1");
 
     bundle.actions.toggleFilterPreset("a", "p1"); // remove it again
 
-    expect(bundle.store.getState().expandedPresetByTab["a"]).toBeNull();
+    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBeNull();
   });
 
   it("leaves a different preset's expansion alone", () => {
@@ -274,7 +272,7 @@ describe("toggleFilterPreset", () => {
     bundle.actions.toggleExpandPreset("a", "other");
     bundle.actions.toggleFilterPreset("a", "p1");
     bundle.actions.toggleFilterPreset("a", "p1");
-    expect(bundle.store.getState().expandedPresetByTab["a"]).toBe("other");
+    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBe("other");
   });
 });
 
@@ -289,9 +287,9 @@ describe("saveSetting", () => {
       key: "querydown_prelude",
       value: "custom prelude",
     });
-    // Re-run is triggered synchronously: `runQuery` flips `runningByTab` to
-    // `true` before its async body ever awaits anything.
-    expect(bundle.store.getState().runningByTab["a"]).toBe(true);
+    // Re-run is triggered synchronously: `runQuery` flips the page's `running`
+    // to `true` before its async body ever awaits anything.
+    expect(bundle.store.getState().pages["a"]?.running).toBe(true);
   });
 
   it("stores a value equal to the default as a deletion, not a setSet", () => {
@@ -356,12 +354,14 @@ describe("a superseded run token", () => {
     // Run 2's analysis lands first.
     resolvers[1](2);
     await vi.waitFor(() =>
-      expect(bundle.store.getState().lineageByTab["a"]?.trackIdColumn).toBe(2),
+      expect(bundle.store.getState().pages["a"]?.lineage?.trackIdColumn).toBe(
+        2,
+      ),
     );
 
     // Run 1's (stale) analysis lands after — it must not win the race.
     resolvers[0](1);
     await new Promise((r) => setTimeout(r, 0));
-    expect(bundle.store.getState().lineageByTab["a"]?.trackIdColumn).toBe(2);
+    expect(bundle.store.getState().pages["a"]?.lineage?.trackIdColumn).toBe(2);
   });
 });

@@ -1,5 +1,5 @@
 import * as arrow from "apache-arrow";
-import { castDraft } from "immer";
+import { castDraft, type Draft } from "immer";
 import {
   presetAdd,
   presetList,
@@ -76,6 +76,7 @@ import {
   EMPTY_SELECTION,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
+  emptyPage,
   type AppState,
   type CurrentTrack,
   type PresetEdit,
@@ -219,11 +220,10 @@ export interface AppActions {
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
   /** The "Dynamic updates" cross-store wiring, installed once by
-   * `createStores()`'s subscription on `selectionByTab`/`lineageByTab` (state
-   * management: "Cross-store wiring"). For every tab with an open record
-   * editor, re-points it at the tab's current result-row selection — ported
-   * from `QueryPage`'s per-tab effect, generalized to loop over every tab since
-   * this has no component to key off. */
+   * `createStores()`'s subscription on every page's selection and lineage
+   * (state management: "Cross-store wiring"). For every tab with an open record
+   * editor, re-points it at the tab's current result-row selection. It loops
+   * over every tab because it has no component to key off. */
   resyncRecordEditors: () => void;
   /** Send the record editor's save through the DML API in the context of the
    * result rows `records` sit on: the operations run as one request, and those
@@ -362,7 +362,7 @@ export function createAppActions(
 
   // Per-tab selection anchor: the fixed end a Shift-click range grows from (and
   // that a plain/Ctrl click re-plants). Non-reactive — only the resulting
-  // `selectionByTab` set drives the paint.
+  // page `selection` set drives the paint.
   const rowClickAnchor = new Map<string, number>();
 
   // Per-tab selection lead: the moving end — the row an arrow-key step counts
@@ -411,6 +411,12 @@ export function createAppActions(
     });
   };
 
+  /** The draft of `tabId`'s page, created empty by the first write to it. Only
+   * for writes: a read goes through `s.pages[tabId]?.…`, which never creates
+   * one. */
+  const pageDraft = (s: Draft<AppState>, tabId: string) =>
+    (s.pages[tabId] ??= castDraft(emptyPage()));
+
   /** Installs a tab's decoded result, forcing a fresh object reference.
    *
    * `QueryResult` is a class, so assigning one at a store leaf always swaps the
@@ -425,11 +431,12 @@ export function createAppActions(
       // types has somewhere. Nothing here is ever mutated *through* the
       // draft — each is a wholesale replacement — so there's nothing for
       // Immer to actually draft at runtime.
-      s.resultsByTab[tabId] = castDraft(result);
+      const page = pageDraft(s, tabId);
+      page.result = castDraft(result);
       // New rows invalidate the old selection and any prior lineage mapping (the
       // latter is repopulated asynchronously by `analyzeLineage`).
-      delete s.selectionByTab[tabId];
-      delete s.lineageByTab[tabId];
+      delete page.selection;
+      delete page.lineage;
       // The playing track's row belonged to the rows just replaced; it's
       // re-located once the new mapping lands (see `analyzeLineage`).
       if (s.currentTrack?.sourceTabId === tabId) s.currentTrack.rowIndex = null;
@@ -470,7 +477,7 @@ export function createAppActions(
       : [];
 
     set((s) => {
-      s.lineageByTab[tabId] = castDraft({
+      pageDraft(s, tabId).lineage = castDraft({
         trackIdColumn: playable ? trackCol : undefined,
         records,
       });
@@ -497,7 +504,7 @@ export function createAppActions(
     const token = ++runTokenSeq;
     runTokens.set(tabId, token);
     set((s) => {
-      s.runningByTab[tabId] = true;
+      pageDraft(s, tabId).running = true;
     });
     void (async () => {
       try {
@@ -527,7 +534,10 @@ export function createAppActions(
         console.error("query run failed", err);
       } finally {
         set((s) => {
-          s.runningByTab[tabId] = false;
+          // Not `pageDraft`: a tab closed mid-run took its page with it, and
+          // a finished run shouldn't bring it back.
+          const page = s.pages[tabId];
+          if (page) page.running = false;
         });
       }
     })();
@@ -566,21 +576,13 @@ export function createAppActions(
 
   /** Closes the tab `id`, dropping its cached state and selecting a neighbor.
    * Standalone (not just an object method) so backend actions like delete can
-   * reuse it. Kind-agnostic: the per-tab maps it clears are query-only, and
-   * dropping keys a settings tab never had is a no-op. */
+   * reuse it. Kind-agnostic: a settings tab simply has no page to drop. */
   const closeTab = (id: string) => {
     set((s) => {
       const idx = s.tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
       s.tabs.splice(idx, 1);
-      delete s.resultsByTab[id];
-      delete s.selectionByTab[id];
-      delete s.lineageByTab[id];
-      delete s.recordEditorByTab[id];
-      delete s.runningByTab[id];
-      delete s.builderSectionByTab[id];
-      delete s.fullEditorByTab[id];
-      delete s.expandedPresetByTab[id];
+      delete s.pages[id];
       if (s.activeTabId === id) {
         // Select the neighbor (prefer the one to the left), or clear.
         const next = s.tabs[idx] ?? s.tabs[idx - 1];
@@ -629,7 +631,7 @@ export function createAppActions(
     token: number | undefined,
   ) => {
     if (runTokens.get(tabId) !== token) return;
-    const result = get().resultsByTab[tabId];
+    const result = get().pages[tabId]?.result;
     if (!result || index < 0 || index >= result.rowCount) return;
     if (!result.patchRow(index, table, from)) return;
     set((s) => {
@@ -822,7 +824,7 @@ export function createAppActions(
       }
     }
     set((s) => {
-      s.recordEditorByTab[tabId] =
+      pageDraft(s, tabId).recordEditor =
         distinct.length === 0 ? null : castDraft({ table, records: distinct });
     });
   };
@@ -841,12 +843,13 @@ export function createAppActions(
    * through. */
   const resyncRecordEditors = () => {
     const s = get();
-    for (const [tabId, current] of Object.entries(s.recordEditorByTab)) {
+    for (const [tabId, page] of Object.entries(s.pages)) {
+      const current = page.recordEditor;
       if (!current) continue;
-      const selection = s.selectionByTab[tabId] ?? EMPTY_SELECTION;
+      const selection = page.selection ?? EMPTY_SELECTION;
       if (selection.size === 0) {
         set((draft) => {
-          draft.recordEditorByTab[tabId] = null;
+          pageDraft(draft, tabId).recordEditor = null;
         });
         continue;
       }
@@ -1020,12 +1023,12 @@ export function createAppActions(
       setTabResult(tabId, result);
       if (lineage) {
         set((s) => {
-          s.lineageByTab[tabId] = castDraft(lineage);
+          pageDraft(s, tabId).lineage = castDraft(lineage);
         });
       }
     },
     setResultRow: (tabId, index, values) => {
-      const result = get().resultsByTab[tabId];
+      const result = get().pages[tabId]?.result;
       if (!result) return;
       // A one-row table built by type-inferring each raw value, exactly the
       // shape a real re-read hands `QueryResult.patchRow` (see
@@ -1052,7 +1055,7 @@ export function createAppActions(
     },
 
     clickRow: (tabId, index, mods) => {
-      const prev = get().selectionByTab[tabId];
+      const prev = get().pages[tabId]?.selection;
       let next: Set<number>;
       if (mods.shift) {
         // Grow a range from the anchor (or this row, with nothing anchored yet).
@@ -1077,13 +1080,13 @@ export function createAppActions(
       // step counts from.
       rowSelectionLead.set(tabId, index);
       set((s) => {
-        s.selectionByTab[tabId] = next;
+        pageDraft(s, tabId).selection = next;
       });
     },
     // Only track-based rows carry an id; on any other row this does nothing.
     doubleClickRow: (tabId, index) => playRow(tabId, index),
     moveRowSelection: (tabId, forward, extend) => {
-      const len = get().resultsByTab[tabId]?.rowCount ?? 0;
+      const len = get().pages[tabId]?.result?.rowCount ?? 0;
       if (len === 0) return;
       const last = len - 1;
       // Step from the current lead (or the anchor); with nothing selected yet,
@@ -1112,7 +1115,7 @@ export function createAppActions(
       }
       rowSelectionLead.set(tabId, target);
       set((s) => {
-        s.selectionByTab[tabId] = next;
+        pageDraft(s, tabId).selection = next;
         s.rowReveal = { tabId, row: target, seq: ++revealSeq };
       });
     },
@@ -1120,7 +1123,8 @@ export function createAppActions(
     setRecordEditorRecords,
     closeRecordEditor: (tabId) =>
       set((s) => {
-        s.recordEditorByTab[tabId] = null;
+        const page = s.pages[tabId];
+        if (page) page.recordEditor = null;
       }),
     resyncRecordEditors,
     runRecordDml: (tabId, records, operations) => {
@@ -1175,7 +1179,7 @@ export function createAppActions(
       }
       set((s) => {
         s.activeTabId = source;
-        s.selectionByTab[source] = new Set([ct.rowIndex!]);
+        pageDraft(s, source).selection = new Set([ct.rowIndex!]);
         s.rowReveal = { tabId: source, row: ct.rowIndex!, seq: ++revealSeq };
       });
     },
@@ -1320,28 +1324,28 @@ export function createAppActions(
 
     toggleBuilderSection: (tabId, section) => {
       set((s) => {
-        const open = s.builderSectionByTab[tabId] ?? null;
+        const open = s.pages[tabId]?.builderSection ?? null;
         // Any section toggle (open, close, switch) discards the ephemeral
         // expansion; in-progress edits live in `presetEdits` and survive.
-        s.expandedPresetByTab[tabId] = null;
-        s.builderSectionByTab[tabId] = open === section ? null : section;
+        pageDraft(s, tabId).expandedPreset = null;
+        pageDraft(s, tabId).builderSection = open === section ? null : section;
       });
     },
     focusBuilderSection: (tabId, section) => {
       set((s) => {
-        s.expandedPresetByTab[tabId] = null;
+        pageDraft(s, tabId).expandedPreset = null;
       });
       // A full-mode query has no sections: the `query.focus_*` commands open the
       // one editor it does have, rather than doing nothing at all.
       if (selectQueryTab(get(), tabId)?.live.full != null) {
         set((s) => {
-          s.fullEditorByTab[tabId] = true;
+          pageDraft(s, tabId).fullEditorOpen = true;
           s.builderFocus = { tabId, section, seq: ++builderFocusSeq };
         });
         return;
       }
       set((s) => {
-        s.builderSectionByTab[tabId] = section;
+        pageDraft(s, tabId).builderSection = section;
         s.builderFocus = { tabId, section, seq: ++builderFocusSeq };
       });
     },
@@ -1351,12 +1355,12 @@ export function createAppActions(
       }),
     toggleFullEditor: (tabId) =>
       set((s) => {
-        s.fullEditorByTab[tabId] = !s.fullEditorByTab[tabId];
+        pageDraft(s, tabId).fullEditorOpen = !s.pages[tabId]?.fullEditorOpen;
       }),
     toggleExpandPreset: (tabId, presetId) => {
       set((s) => {
-        const cur = s.expandedPresetByTab[tabId] ?? null;
-        s.expandedPresetByTab[tabId] = cur === presetId ? null : presetId;
+        const cur = s.pages[tabId]?.expandedPreset ?? null;
+        pageDraft(s, tabId).expandedPreset = cur === presetId ? null : presetId;
       });
     },
 
@@ -1377,8 +1381,8 @@ export function createAppActions(
         x.live = rebased;
       });
       set((s) => {
-        s.expandedPresetByTab[tabId] = null;
-        s.fullEditorByTab[tabId] = false;
+        pageDraft(s, tabId).expandedPreset = null;
+        pageDraft(s, tabId).fullEditorOpen = false;
       });
       runQuery(tabId);
     },
@@ -1388,13 +1392,13 @@ export function createAppActions(
       // Show the editor either way — for an already-full query that's all the
       // menu entry can still do.
       set((s) => {
-        s.fullEditorByTab[tabId] = true;
+        pageDraft(s, tabId).fullEditorOpen = true;
       });
       if (t.live.full != null) return;
       const full = toFullQuery(t.live, selectEffectivePresets(get()));
       set((s) => {
-        s.expandedPresetByTab[tabId] = null;
-        s.builderSectionByTab[tabId] = null;
+        pageDraft(s, tabId).expandedPreset = null;
+        pageDraft(s, tabId).builderSection = null;
       });
       editLive(tabId, (def) => {
         def.full = full;
@@ -1423,10 +1427,10 @@ export function createAppActions(
       // Collapse the expansion if the now-removed preset was expanded.
       if (
         !selectQueryTab(get(), tabId)?.live.filter.presets.includes(presetId) &&
-        get().expandedPresetByTab[tabId] === presetId
+        get().pages[tabId]?.expandedPreset === presetId
       ) {
         set((s) => {
-          s.expandedPresetByTab[tabId] = null;
+          pageDraft(s, tabId).expandedPreset = null;
         });
       }
     },
@@ -1435,7 +1439,7 @@ export function createAppActions(
         def[section] = content;
       });
       set((s) => {
-        s.expandedPresetByTab[tabId] = null;
+        pageDraft(s, tabId).expandedPreset = null;
       });
     },
     setSectionCustomText: (tabId, section, text) =>
@@ -1454,7 +1458,7 @@ export function createAppActions(
         x.live = saved;
       });
       set((s) => {
-        s.expandedPresetByTab[tabId] = null;
+        pageDraft(s, tabId).expandedPreset = null;
       });
       runQuery(tabId);
     },

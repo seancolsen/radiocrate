@@ -62,9 +62,12 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   // "Dynamic updates": keep every open record editor pointed at its tab's
   // current selection. `resyncRecordEditors` reads the editor targets
   // through `get()` rather than taking them as a subscription input, so the
-  // writes it makes here can't feed back into this same subscription.
+  // writes it makes here can't feed back into this same subscription. The
+  // input is every page's selection and lineage side by side, not `pages`
+  // itself: the editor target lives in the same page object, so watching the
+  // object would re-fire on the resync's own write.
   const unsubscribeResync = app.store.subscribe(
-    (s) => [s.selectionByTab, s.lineageByTab] as const,
+    (s) => Object.values(s.pages).flatMap((p) => [p.selection, p.lineage]),
     () => {
       app.actions.resyncRecordEditors();
     },
