@@ -11,19 +11,22 @@ import {
 } from "./forms";
 
 /** A stub `RecordFormModel`: just enough to exercise the stash/registry
- * mechanics (stage 7 supplies the real thing). Its "state" is nothing more
- * than the summary itself, so tests can drive it by calling `setSummary`. */
+ * mechanics, which only ever touch `store` (to subscribe), `getSummary` and
+ * `dispose` — hence the cast over the rest of the real model's surface
+ * (`recordForm/model.test.ts` covers a real model in the stash). Its "state"
+ * is nothing more than the summary itself, so tests can drive it by calling
+ * `setSummary`. */
 function stubModel(initial: RecordFormSummary) {
   const store = createStore<RecordFormSummary>()(() => initial);
   const dispose = vi.fn();
-  const model: RecordFormModel = {
+  const model = {
     store,
     getSummary: () => store.getState(),
     dispose,
     focusAdjacent: vi.fn(() => false),
     expandSelection: vi.fn(),
     deleteSelection: vi.fn(),
-  };
+  } as unknown as RecordFormModel;
   return {
     model,
     dispose,

@@ -29,20 +29,21 @@ const IDLE_SUMMARY: RecordFormSummary = {
 };
 
 /** A stubbed, focused-and-mounted record form: enough for the selection
- * commands to route to it. */
+ * commands to route to it. Cast, since the commands only reach a form through
+ * these members — not the rest of the real model's surface. */
 function mountFocusedForm(forms: FormsStoreBundle, tabId: string) {
   const summaryStore = createStore<RecordFormSummary>()(() => ({
     ...IDLE_SUMMARY,
     focused: true,
   }));
-  const model: RecordFormModel = {
+  const model = {
     store: summaryStore,
     getSummary: () => summaryStore.getState(),
     dispose: vi.fn(),
     focusAdjacent: vi.fn(() => true),
     expandSelection: vi.fn(),
     deleteSelection: vi.fn(),
-  };
+  } as unknown as RecordFormModel;
   forms.actions.stashedForm(tabId, ["r1"], () => model);
   forms.actions.mount(tabId, ["r1"]);
   return model;

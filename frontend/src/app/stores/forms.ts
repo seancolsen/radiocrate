@@ -1,7 +1,10 @@
-import { createStore, type StoreApi } from "zustand/vanilla";
+import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { shallow } from "zustand/vanilla/shallow";
 import type { RecordKey } from "../../query/recordForm";
+import type { RecordFormModel } from "./recordForm";
+
+export type { RecordFormModel } from "./recordForm";
 
 // The record editor's unsaved work, kept per record for as long as its tab is
 // open — and which of those forms the keyboard is currently aimed at.
@@ -29,11 +32,11 @@ import type { RecordKey } from "../../query/recordForm";
 // effect, so the count still nets out to "is at least one instance of this
 // form currently on screen".
 //
-// This stage only holds the entry mechanics: which model is stashed under
-// which (tabId, identities), how many components currently have it mounted,
-// and a mirrored `summary` of it. `RecordFormModel` — what `stage 7` actually
-// builds — is defined here only as far as this store and `stores/commands.ts`
-// need it; stage 7 is expected to grow it substantially.
+// The store holds the entry mechanics — which model is stashed under which
+// (tabId, identities), how many components currently have it mounted, and a
+// mirrored `summary` of it. The model itself is `stores/recordForm/`; this
+// store and `stores/commands.ts` only reach it through `store`, `getSummary`,
+// `dispose` and the three selection commands.
 
 /** The pieces of a mounted form's state that matter *outside* the form
  * itself: whether it holds the keyboard's focus or a selection, whether its
@@ -47,36 +50,6 @@ export interface RecordFormSummary {
   selecting: boolean;
   pickerOpen: boolean;
   modified: boolean;
-}
-
-/** The record-form model's contract, as far as this stage and
- * `stores/commands.ts` need it. Stage 7 replaces this with the full interface
- * (today's `components/record/formModel.ts`'s `RecordFormModel`, ported) —
- * everything below still applies to it, since the forms store and the command
- * dispatch table only ever reach the model through these members. */
-export interface RecordFormModel {
-  /** The model's own vanilla store — what the forms store subscribes to in
-   * order to keep `summary` current, and what `stores/react.tsx`'s
-   * `useFormState` reads from. Typed as `StoreApi<unknown>` for now; stage 7
-   * replaces this whole interface with the real one (`FormState` in place of
-   * `unknown`, plus every method `formModel.ts` defines today). */
-  store: StoreApi<unknown>;
-  /** A snapshot of {@link RecordFormSummary}, read fresh on every call (the
-   * model computes it from its own current state). */
-  getSummary: () => RecordFormSummary;
-  /** Tear down whatever the model started (subscriptions, timers) — called
-   * once, when its stash entry is actually dropped (`releaseUnmodified` or a
-   * closed tab's `prune`), never on an ordinary unmount. */
-  dispose: () => void;
-  /** Move focus to the item before/after the one currently focused — the
-   * `results.select_next` / `results.select_previous` commands' target once a
-   * form has the keyboard (`stores/commands.ts`). */
-  focusAdjacent: (forward: boolean) => boolean;
-  /** "Selection: Expand/Collapse nested items" over the form's selection (or
-   * its focused item, when nothing is selected). */
-  expandSelection: (open: boolean) => void;
-  /** "Selection: Delete", likewise. */
-  deleteSelection: () => void;
 }
 
 /** One stashed form: which records of which tab it's on, the model itself,

@@ -18,7 +18,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 4 — Tabs, playback bar, palette, shortcuts editor | done |
 | 5 — Query toolbar and builders | done |
 | 6 — Results grid and app assembly | done |
-| 7 — Record form model | not started |
+| 7 — Record form model | done |
 | 8 — Record editor: read path | not started |
 | 9 — Record editor: editing and picker | not started |
 | 10 — Cutover | not started |
@@ -1655,6 +1655,75 @@ selectors) and connects it to the forms store. No UI yet.
   - A modified summary propagates to `modifiedRecords(tabId)`.
 - `formSave.test.ts` already covers the planning half and must stay green,
   unchanged.
+
+#### As built
+
+**What landed**
+
+- **`app/stores/recordForm/`** (barrel `index.ts`):
+  - `state.ts`: `FormState` (exported, shape unchanged), the node types, `MenuTarget`/`FormMenu`/`PickerTarget`, `ItemHandle` and `initialFormState()`. It imports neither zustand nor immer (see Departures).
+  - `selectors.ts`: every Solid read accessor as a pure function of `FormState`. `selectRecordModified`/`selectFieldModified` share one memo per snapshot (`WeakMap<FormState, Map>`). `selectFormSummary` builds the forms store's mirrored summary.
+  - `model.ts`: `createRecordForm(opts)` over a `subscribeWithSelector(immer(…))` store. Every Solid action is ported, with `dropped()` → `delete`, `untrack` → `get()`, and a `get()` after every write or `await`.
+  - Construction only computes the initial state, root node included. `start()` runs the root load at most once, and `reset()` reloads it.
+  - `dispose()` clears the load tokens, the item registry and the root element.
+  - Like the Solid model, the index re-exports `ROOT_ID`/`fieldItemId`/`listId`/`scalarChildId` and `isShared`/`VARIED`/`SharedValue`.
+- **`stores/forms.ts`:** the stage-2 stand-in `RecordFormModel` is gone. The real one is imported (and re-exported) from `./recordForm`, so summary mirroring runs on real models. `react.tsx`'s `useFormState` selector now takes `FormState`.
+- **Unit tests (`recordForm/model.test.ts`, 11)**, against a mocked `runRecordQuery` and an injected `runDml`, over a `track` + `credit` schema:
+  - Construction doesn't load, and a double `start()` loads once.
+  - A field loads the first time it opens and not after.
+  - A superseded root load loses.
+  - Varied values block edit/clear/expand, the agreed field edits across every record, and nothing is blocked on one record.
+  - `clearField` on an unopened list fetches the keys to delete, and `save` waits for them.
+  - `applySave` rebaselines, drops the deleted node and its embed, keys the created record and clears list flags.
+  - A failed save keeps the changes and reports the error.
+  - `reset`.
+  - An edit inside a collapsed field stars it.
+  - A modified summary reaches `selectModifiedRecords`, and focus reaches `selectFocusedForm`.
+
+**Departures from the plan**
+
+- **The actions sit on the model itself, not under `model.actions`.** Stage 2's note asked to keep `store`, `getSummary`, `dispose`, `focusAdjacent`, `expandSelection` and `deleteSelection` as top-level members, so that `forms.ts` and `commands.ts` stay unchanged. `RecordFormModel extends RecordFormActions` with `store`/`start`/`getSummary`/`dispose` does that, and it keeps stage 8/9 call sites (`model.toggleField(…)`) the same as Solid's. The actions are stable because the model is.
+- **Selector names use the React tree's `select*` prefix:**
+  - The plan's names map as `sharedValue` → `selectSharedValue`, `count` → `selectCount`, `isExpanded` → `selectIsExpanded`, `isSelected` → `selectIsSelected`, `hasLinkedRecord` → `selectHasLinkedRecord`, `isBulkBlocked` → `selectIsBulkBlocked`.
+  - `model.record`/`list`/`embed`/`isModified` became `selectRecord`/`selectList`/`selectEmbed`/`selectFormModified`.
+  - `selectFieldOf` and `selectBeyondBulk` are exported too, because the actions use them.
+- **`record/formSave.ts` and `formSave.test.ts` changed by one import line each.** Their `ListNode`/`RecordNode` types now come from `app/stores/recordForm/state.ts`, which stage 0's note required. The test's body is unchanged and green. `state.ts` is framework-free so the Solid tsconfig can compile it through this import. The Solid model keeps its own, structurally identical copies until the cutover.
+- **The stub models in `forms.test.ts`/`commands.test.ts` are cast** (`as unknown as RecordFormModel`). The stash and the commands only touch six members, so implementing forty in a stub would add nothing.
+- **Node patches merge only into a node that exists.** Solid's path setters (`setState("lists", id, {…})`) would create a *partial* node at an absent id. That happens when `reset()` lands before an older child-list load resolves, and `planSave` would then crash on the partial list's missing `removed`. `patchRecord`/`patchList` skip absent nodes instead. Nothing else about writes changed.
+- **Three small write-count changes, none of them behavioral:**
+  - `loadChildren`/`loadRemovedChildren` write all their child nodes in one `set`, not one per child. Each write re-runs the summary's modified check, so per-child writes would cost O(n²).
+  - `deselect` skips writing when nothing was selected.
+  - `setRoot` accepts `undefined`, for a React ref's cleanup.
+
+**Nothing left undone** in the stage's own scope.
+
+**For the next stages**
+
+- **StrictMode hazard for stage 8's `RecordForm`: `releaseUnmodified` in an effect cleanup.**
+  - A literal port calls `forms.actions.releaseUnmodified` from the mount effect's cleanup.
+  - StrictMode's mount → cleanup → mount would drop an unmodified model from the stash *and dispose it*. The remount would then hold a model that is no longer stashed, so `mount` is a no-op and nothing is mirrored.
+  - Worse, `dispose()` clears the load tokens, so the root load that `start()` began never lands (root stuck on `loading`), and `start()` won't run again.
+  - Suggested fix: defer the release (for example, a microtask that releases only if the entry's `mounted` is still 0). Alternatively, re-stash and restart on setup. Decide in stage 8 and test it.
+- **Wiring for `RecordForm`:**
+  - Get the model with `useState(() => forms.actions.stashedForm(tabId, identities, () => createRecordForm({ tables, table, keys, schemaJson, runDml: (ops) => app.actions.runRecordDml(tabId, records, ops) })))`.
+  - Identities come from `recordIdentity` in `stores/forms.ts`.
+  - The effect calls `forms.actions.mount(…)` and `model.start()`, and its cleanup calls `unmount`, `noteBlur`, `closeMenu` and `closePicker`, plus the release per the hazard above.
+  - `setRoot(el)` goes in a ref callback or layout effect.
+- **Reads** are `useFormState(model, (s) => selectX(s, …))`. Every selector except `selectFormSummary` returns a primitive or an existing reference, so no `useShallow` is needed.
+- **`ItemHandle` closures must read `model.store.getState()`** (see its doc comment), never values captured from the render that registered them.
+- **`QueryResults`' ✱ rows need nothing more.** Once `RecordForm` stashes a real model, `selectModifiedRecords` reports it. The forms-store half is unit-tested here.
+
+**Gate**
+
+All green:
+
+- `typecheck` (both projects), `lint` and `format:check`.
+- `test:unit`: 232 tests, 11 of them new.
+- Solid visual: **135/135**.
+- React visual: **70 passed, 65 skipped**. The skips are the stage-9 `solidOnly` record specs, unchanged. This stage has no stories, so this re-ran every earlier React story and spec.
+- No `__screenshots__` file changed.
+- `bun run build` output still has no React in it.
+- Watch out: running Prettier over `specs/` re-wraps this whole file (it's outside `frontend/`'s format scope). Don't.
 
 ### Stage 8 — Record editor: read path
 
