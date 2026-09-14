@@ -4,7 +4,8 @@ import { SCHEMES, openStory, snapshot } from "./harness";
 // The app's furniture, each piece on its own: the left sidebar in both of its
 // layouts, the explorer that fills it, the settings menu with the prelude and
 // rebind dialogs it raises,
-// the client-update bar and the About dialog, the now-playing bar and its menu,
+// the client-update and failed-RPC bars and the About dialog, the now-playing bar
+// and its menu,
 // and the command palette.
 
 for (const colorScheme of SCHEMES) {
@@ -95,6 +96,13 @@ for (const colorScheme of SCHEMES) {
     await expect(stage).toHaveScreenshot(
       snapshot("update/banner", colorScheme),
     );
+  });
+
+  // The failed-RPC bar: a first failure over a repeated one.
+  test(`error/banner - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "error/banner", colorScheme);
+    await expect(stage.getByRole("alert")).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(snapshot("error/banner", colorScheme));
   });
 
   // The About dialog on a mismatched pair of build ids, so the "didn't come

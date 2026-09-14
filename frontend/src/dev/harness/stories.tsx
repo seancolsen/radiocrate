@@ -33,6 +33,7 @@ import RecordPicker from "../../components/RecordPicker";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import { CaptureDialog } from "../../components/ShortcutsPage";
+import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ContextMenu } from "../../components/ui/ContextMenu";
 import { Menu } from "../../components/ui/Menu";
@@ -311,6 +312,32 @@ export const STORIES: Record<string, Story> = {
       <>
         <UpdateBar notice="ready" onReload={() => {}} onDismiss={() => {}} />
         <UpdateBar notice="stale" onReload={() => {}} onDismiss={() => {}} />
+      </>
+    ),
+  },
+  // The failed-RPC bar: a first failure over one that has repeated, which
+  // counts up instead of stacking.
+  "error/banner": {
+    width: 720,
+    frame: "flex flex-col gap-2",
+    render: () => (
+      <>
+        <RpcErrorBar
+          notice={{
+            method: "query.rename",
+            message: "500 database is locked",
+            count: 1,
+          }}
+          onDismiss={() => {}}
+        />
+        <RpcErrorBar
+          notice={{
+            method: "setting.set",
+            message: "Failed to fetch",
+            count: 3,
+          }}
+          onDismiss={() => {}}
+        />
       </>
     ),
   },

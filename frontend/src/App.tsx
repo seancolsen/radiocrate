@@ -8,6 +8,7 @@ import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
+import RpcErrorBanner from "./components/RpcErrorBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import AboutModal from "./components/AboutModal";
 import SettingModal from "./components/SettingModal";
@@ -34,14 +35,15 @@ function TabContent(): JSX.Element | null {
 }
 
 /** The main column, right of the explorer: tab bar, the active tab's content,
- * the client-update bar when there's one to show, and the now-playing bar
- * pinned to the bottom (which spans this column only — the explorer keeps its
- * own full height). */
+ * the failed-RPC and client-update bars when there's one to show, and the
+ * now-playing bar pinned to the bottom (which spans this column only — the
+ * explorer keeps its own full height). */
 function Main(): JSX.Element {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <TabBar />
       <TabContent />
+      <RpcErrorBanner />
       <UpdateBanner />
       <NowPlaying />
     </div>

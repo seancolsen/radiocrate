@@ -61,3 +61,35 @@ for (const colorScheme of SCHEMES) {
     );
   });
 }
+
+// A failed RPC call reaches the error bar through the generated client's
+// failure hook, whichever action made it, and the bar dismisses. `setting.list`
+// is a boot load, so the failure needs no interaction to trigger.
+test("a failed RPC call shows the error bar, which dismisses", async ({
+  page,
+}) => {
+  await page.route("**/api/rpc", async (route) => {
+    const body = route.request().postDataJSON() as {
+      method: string;
+      id: number;
+    };
+    const envelope =
+      body.method === "setting.list"
+        ? { error: { code: -32000, message: "database is locked" } }
+        : { result: body.method === "query.list" ? QUERIES_FIXTURE : [] };
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ jsonrpc: "2.0", ...envelope, id: body.id }),
+    });
+  });
+  await page.route("**/api/query", (route) =>
+    route.fulfill({ status: 200, contentType: "text/plain", body: "" }),
+  );
+  await page.goto("/");
+
+  const bar = page.getByTestId("rpc-error-banner");
+  await expect(bar).toContainText("Loading settings failed.");
+  await expect(bar).toContainText("database is locked");
+  await bar.getByRole("button", { name: "Dismiss" }).click();
+  await expect(bar).toBeHidden();
+});

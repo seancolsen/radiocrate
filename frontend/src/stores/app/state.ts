@@ -177,6 +177,14 @@ export interface SchemaState {
   tables: readonly SchemaTable[];
 }
 
+/** A failed RPC call, as the error bar shows it: which method failed, with what
+ * message, and how many times in a row that same failure has happened. */
+export interface RpcErrorNotice {
+  method: string;
+  message: string;
+  count: number;
+}
+
 /** Everything a query tab's page holds beyond the tab itself: its results and
  * how the user is looking at them. */
 export interface QueryPageState {
@@ -253,6 +261,9 @@ export interface AppState {
   aboutOpen: boolean;
   /** The setting whose editor dialog is open (null when none is). */
   settingEditor: SettingKey | null;
+  /** The failed RPC call the error bar shows (null when there's none, or it was
+   * dismissed). */
+  rpcError: RpcErrorNotice | null;
   /** The track in the now-playing bar (null when nothing is loaded). */
   currentTrack: CurrentTrack | null;
   /** Transport state for that track. */
@@ -303,6 +314,7 @@ export function initialState(env: AppEnv): AppState {
     pendingDelete: null,
     aboutOpen: false,
     settingEditor: null,
+    rpcError: null,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
     queries: { status: "loading", data: [] },

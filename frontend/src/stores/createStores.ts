@@ -1,3 +1,4 @@
+import { onRpcFailure } from "api-client";
 import { shallow } from "zustand/vanilla/shallow";
 import { browserEnv, type AppEnv } from "./env";
 import { createAppStore, type AppStoreBundle } from "./app";
@@ -74,6 +75,11 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     { equalityFn: shallow },
   );
 
+  // Every failed RPC call, whichever action made it, lands in the error bar.
+  const unsubscribeRpcFailures = onRpcFailure(({ method, error }) => {
+    app.actions.reportRpcFailure(method, error);
+  });
+
   // The global shortcut pass. Capture phase, so a chord is claimed before a
   // focused widget acts on it.
   const onKeyDown = (e: KeyboardEvent) => commands.actions.handleKeyDown(e);
@@ -82,6 +88,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   function dispose() {
     unsubscribePrune();
     unsubscribeResync();
+    unsubscribeRpcFailures();
     document.removeEventListener("keydown", onKeyDown, true);
     app.dispose();
   }

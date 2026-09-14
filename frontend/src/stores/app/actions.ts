@@ -126,6 +126,11 @@ function oneRowListVector(items: readonly string[]): arrow.Vector {
  * keystroke. */
 const RUN_DEBOUNCE_MS = 300;
 
+/** RPC methods whose failures never reach the error bar. `app.version` is the
+ * update controller's background poll, which handles its own failures: a server
+ * that's briefly unreachable shouldn't raise a bar. */
+const UNREPORTED_METHODS: ReadonlySet<string> = new Set(["app.version"]);
+
 /** Every write method the app store exposes. Reads live in `selectors.ts`
  * instead (state management rule 1): actions are stable references, so a
  * component can put them in an effect's dependency array without churn. */
@@ -342,6 +347,13 @@ export interface AppActions {
   /** Open a setting's editor dialog (the Settings menu's entries). */
   openSetting: (key: SettingKey) => void;
   closeSetting: () => void;
+  /** Records a failed RPC call for the error bar. `createStores()` feeds every
+   * failure the generated client sees (`onRpcFailure`) through here. A repeat of
+   * the failure already showing counts up rather than replacing it, and methods
+   * in {@link UNREPORTED_METHODS} are ignored. */
+  reportRpcFailure: (method: string, error: unknown) => void;
+  /** Hide the error bar. */
+  dismissRpcError: () => void;
 }
 
 /** Builds the write half of the app store: every action closes over the
@@ -1606,6 +1618,22 @@ export function createAppActions(
     closeSetting: () =>
       set((s) => {
         s.settingEditor = null;
+      }),
+
+    reportRpcFailure: (method, error) => {
+      if (UNREPORTED_METHODS.has(method)) return;
+      const message = error instanceof Error ? error.message : String(error);
+      set((s) => {
+        const current = s.rpcError;
+        s.rpcError =
+          current?.method === method && current.message === message
+            ? { method, message, count: current.count + 1 }
+            : { method, message, count: 1 };
+      });
+    },
+    dismissRpcError: () =>
+      set((s) => {
+        s.rpcError = null;
       }),
   };
 

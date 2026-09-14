@@ -17,6 +17,31 @@ interface RpcEnvelope {
 
 let nextId = 1;
 
+/** A call to `/api/rpc` that failed: which method, and what it threw. */
+export interface RpcFailure {
+  method: string;
+  error: unknown;
+}
+
+const failureListeners = new Set<(failure: RpcFailure) => void>();
+
+/**
+ * Subscribes to every failed RPC call: the one place a failure is seen, whatever
+ * its call site then does with it, so an app can surface failures without every
+ * caller reporting its own. A listener runs after the call has failed and before
+ * its promise rejects, so the caller still gets the error. A request intercepted
+ * for sign-in (see {@link AuthRedirectError}) isn't reported: the browser is
+ * already on its way to sign in. Returns the function that unsubscribes.
+ */
+export function onRpcFailure(
+  listener: (failure: RpcFailure) => void,
+): () => void {
+  failureListeners.add(listener);
+  return () => {
+    failureListeners.delete(listener);
+  };
+}
+
 /**
  * Where to send the browser to renew a session the proxy in front of us has
  * expired: a path under `/api`, which the service worker is configured never to
@@ -71,12 +96,25 @@ export function handleAuthRedirect(res: Response, url: string): void {
  * is already camelCase (the server renames via serde), so callers can cast the
  * result to the generated type directly. Same-origin in production; in dev Vite
  * proxies `/api` to the backend. Throws on a transport error, an RPC `error`, or
- * an intercepted request (see {@link handleAuthRedirect}).
+ * an intercepted request (see {@link handleAuthRedirect}). Every failure but an
+ * intercepted request is reported to {@link onRpcFailure}'s listeners first.
  */
 export async function rpcCall(
   method: string,
   params: unknown = null,
 ): Promise<unknown> {
+  try {
+    return await send(method, params);
+  } catch (error) {
+    if (!(error instanceof AuthRedirectError)) {
+      for (const listener of failureListeners) listener({ method, error });
+    }
+    throw error;
+  }
+}
+
+/** The request itself, for {@link rpcCall}. */
+async function send(method: string, params: unknown): Promise<unknown> {
   const res = await fetch("/api/rpc", {
     method: "POST",
     headers: { "content-type": "application/json" },
