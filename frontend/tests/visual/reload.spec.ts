@@ -1,5 +1,4 @@
 import { test, expect, type Page } from "@playwright/test";
-import { appUrl } from "./harness";
 import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
 
 /** Fulfill the RPC route from fixtures (no backend), like the other specs. */
@@ -26,17 +25,19 @@ async function mockRpc(page: Page) {
 }
 
 // Regression test for the "canvas doesn't refresh when a query reloads" bug:
-// Solid shallow-merges an object set at a store leaf, so replacing a tab's
-// result mutated it in place without changing the reference the QueryResults
-// effect tracks — the grid only repainted when a resize forced a draw. This
-// asserts the canvas actually repaints on a result *replace*, with no resize.
+// the SolidJS store this app used to have shallow-merged an object set at a
+// store leaf, so replacing a tab's result mutated it in place without changing
+// the reference the QueryResults effect tracked — the grid only repainted when a
+// resize forced a draw. `QueryResults` now subscribes to the result's identity,
+// and this asserts the canvas actually repaints on a result *replace*, with no
+// resize.
 test("query grid repaints when the result is replaced (no resize)", async ({
   page,
 }) => {
   await mockRpc(page);
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&expose=1"));
+  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
   await page.evaluate(() => document.fonts.ready);
 
   const canvas = page.locator("canvas");
@@ -49,7 +50,7 @@ test("query grid repaints when the result is replaced (no resize)", async ({
   // result → the grid's "empty" rendering), WITHOUT resizing the window.
   // `QueryResult` is a class (private fields), so the seed seam hands the page
   // a real-instance builder (`__emptyResult`) rather than a bare object literal
-  // — see `dev/seed.ts`.
+  // — see `src/app/dev/seed.ts`.
   await page.evaluate(() => {
     const w = window as unknown as {
       __appStore: {
@@ -81,7 +82,7 @@ test("query grid repaints a single rewritten row, keeping the selection", async 
   await mockRpc(page);
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(appUrl("/?tabs=Lemonade&grid=lemonade&expose=1"));
+  await page.goto("/?tabs=Lemonade&grid=lemonade&expose=1");
   await page.evaluate(() => document.fonts.ready);
 
   const canvas = page.locator("canvas");

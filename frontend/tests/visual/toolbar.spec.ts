@@ -1,16 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
-import { appUrl } from "./harness";
 import {
   ALBUM_SORT_PRESET_ID,
   FILTER_DEF,
   PRESETS_FIXTURE,
   QUERIES_FIXTURE,
 } from "../../src/dev/fixtures";
-import type { AppStore } from "../../src/state/store";
+import type { AppCompatFacade } from "../../src/app/dev/seed";
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
-  __appStore: AppStore;
+  __appStore: AppCompatFacade;
 }
 
 // The query toolbar's behaviors — the ones that only exist with the whole page
@@ -49,7 +48,7 @@ const def = (d: unknown) => encodeURIComponent(JSON.stringify(d));
 async function openQueryPage(page: Page, query: string) {
   await mockRpc(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(appUrl(`/?sidebar=open&tabs=Lemonade&${query}`));
+  await page.goto(`/?sidebar=open&tabs=Lemonade&${query}`);
   await expect(page.getByTestId("query-toolbar")).toBeVisible();
 }
 

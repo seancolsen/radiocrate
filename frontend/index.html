@@ -197,7 +197,7 @@
       // background. Mirrors the app's stored-preference read, and points the
       // `theme-color` meta above at whichever surface wins — a stored override
       // or, absent one, the system preference. `applyThemeToDocument` in
-      // `state/store.tsx` keeps both in step from here on.
+      // `src/app/stores/app/theme.ts` keeps both in step from here on.
       (function () {
         var pref = null;
         try {
@@ -219,6 +219,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/app/main.tsx"></script>
   </body>
 </html>

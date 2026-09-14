@@ -21,7 +21,7 @@ import {
 } from "../stores/app";
 import type { Stores } from "../stores/createStores";
 
-// Prod-safe seeding seam, ported from `dev/seed.ts`. Reads URL params on
+// Prod-safe seeding seam. Reads URL params on
 // startup and applies them to the app store, so Playwright (and manual dev)
 // can reach a deterministic state of the *whole app* without a backend write
 // path for session state (open tabs live only here).
@@ -56,11 +56,13 @@ import type { Stores } from "../stores/createStores";
 // A no-op when the params are absent, so it never affects production.
 
 /** The subset of the app store's surface `window.__appStore` exposes, under
- * the Solid names `tests/visual/*.spec.ts` already call — a compat facade so
- * those specs keep driving both apps unchanged until the cutover (state
- * management: "dev and test seams"). Collected with
- * `grep -n "__appStore" tests/visual`. */
-interface AppCompatFacade {
+ * the names the SolidJS app's store used — a compat facade that let
+ * `tests/visual/*.spec.ts` drive both apps unchanged during the React port,
+ * and was kept at the cutover rather than moving the specs onto the native
+ * store API (see `specs/2026-09-react-migration/plan.md`, "dev and test
+ * seams"). The specs type `window.__appStore` with this interface; widen it
+ * here when a spec needs more. */
+export interface AppCompatFacade {
   readonly state: AppState;
   rowSelection: (tabId: string) => ReadonlySet<number>;
   queryTab: (tabId: string) => QueryTab | undefined;

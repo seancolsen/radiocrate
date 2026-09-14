@@ -6,15 +6,15 @@ import { StoresProvider, useApp, useStores } from "../../stores/react";
 import { STORIES } from "./stories";
 import "../../../app.css";
 
-// The React port's visual-test harness, ported from `dev/harness/main.tsx` —
-// served at `/react-harness.html?story=<id>`. It mounts exactly one
-// component — the story named by the URL — on a stage sized by that story,
-// over a stubbed backend. No app frame, no router, no service worker:
-// whatever ends up in the screenshot belongs to the component under test.
+// The visual-test harness, served at `/harness.html?story=<id>`. It mounts
+// exactly one component — the story named by the URL — on a stage sized by
+// that story, over a stubbed backend. No app frame, no router, no service
+// worker: whatever ends up in the screenshot belongs to the component under
+// test.
 //
-// Dev-only by construction: `vite build` takes `index.html` (and, from stage
-// 6, `react.html`) as its inputs, so neither this page nor anything it
-// reaches is in the production bundle.
+// Dev-only by construction: `vite build` takes `index.html` as its only
+// input, so neither this page nor anything it reaches is in the production
+// bundle.
 
 installMockApi();
 

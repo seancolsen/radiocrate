@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
-import { SCHEMES, appUrl, snapshot } from "./harness";
+import { SCHEMES, snapshot } from "./harness";
 
 // The two snapshots that are about the app as a whole rather than about any one
 // component: the frame with nothing open, and a settings page filling a tab.
@@ -32,7 +32,7 @@ for (const colorScheme of SCHEMES) {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(appUrl("/"));
+    await page.goto("/");
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot(
       snapshot("app/everything-closed", colorScheme),
@@ -50,7 +50,7 @@ for (const colorScheme of SCHEMES) {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(appUrl("/?shortcuts=1"));
+    await page.goto("/?shortcuts=1");
     await expect(
       page.getByRole("heading", { name: "Keyboard Shortcuts" }),
     ).toBeVisible();

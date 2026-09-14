@@ -6,8 +6,7 @@ import { StoresProvider } from "./stores/react";
 import { applySeed } from "./dev/seed";
 import "../app.css";
 
-// The React port's entry, ported from `src/main.tsx` and served at
-// `/react.html` until the cutover makes it `index.html`'s.
+// The app's entry, loaded by `index.html`.
 //
 // Everything that isn't rendering happens *before* the root mounts, out of
 // React's way: the store bundle is built once, the URL-param seed is applied to

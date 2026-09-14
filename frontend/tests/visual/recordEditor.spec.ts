@@ -1,7 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { appUrl } from "./harness";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
-import type { AppStore } from "../../src/state/store";
+import type { AppCompatFacade } from "../../src/app/dev/seed";
 
 // The record-editor entry path and everything the form does, behaviorally:
 // right-click a result row → a DOM context menu offering one "Edit {table}" per
@@ -15,7 +14,7 @@ import type { AppStore } from "../../src/state/store";
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
-  __appStore: AppStore;
+  __appStore: AppCompatFacade;
 }
 
 async function mockRpc(page: Page) {
@@ -53,7 +52,7 @@ const slow = (ms: number) => `${SEEDED}&recordDelay=${ms}`;
 async function openGrid(page: Page, url = SEEDED) {
   await mockRpc(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(appUrl(url));
+  await page.goto(url);
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
 }
 

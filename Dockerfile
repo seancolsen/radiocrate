@@ -1,7 +1,7 @@
 # Development/testing container for RadioCrate.
 #
 # Gives an isolated environment with the full toolchain (Rust workspace, the
-# SolidJS frontend's Bun/Vite/Playwright tooling, and the wasm target used by
+# React frontend's Bun/Vite/Playwright tooling, and the wasm target used by
 # track-lineage) plus Claude Code, so the agent can run commands with full
 # permissions without touching the host system.
 #
@@ -17,7 +17,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 
 # System packages + Node.js 20 (for Claude Code and Playwright's CLI; the
-# SolidJS frontend itself runs on Bun, installed further below).
+# frontend itself runs on Bun, installed further below).
 #
 # ffmpeg is here for sample-data/audio/generator, which synthesizes speech to
 # WAV and shells out to ffmpeg to convert it. The realistic generator next to it
@@ -44,7 +44,7 @@ RUN rustup component add clippy rustfmt \
 # Claude Code CLI.
 RUN npm install -g @anthropic-ai/claude-code
 
-# Bun — the package manager and runtime for the SolidJS frontend (frontend/).
+# Bun — the package manager and runtime for the frontend (frontend/).
 # `cargo xtask build-release` shells out to `bun install` + `bun run build`, and
 # the frontend's dev/lint/typecheck/format/test scripts all run through Bun.
 # Installed to a shared prefix (rather than a user's ~/.bun) and symlinked onto

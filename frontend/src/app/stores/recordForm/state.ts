@@ -14,7 +14,7 @@
 // a node's identity stable across collapse/expand.
 //
 // Framework-free on purpose (no zustand, no immer): `record/formSave.ts`, a
-// shared module the Solid tree also compiles, reads these node types.
+// framework-free module, reads these node types.
 
 import type { FormField, RecordKey } from "../../../query/recordForm";
 import type { ColumnValues } from "../../../record/formValues";

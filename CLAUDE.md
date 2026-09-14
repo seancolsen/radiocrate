@@ -27,28 +27,29 @@ you're working on.
 
 ### The production frontend (`frontend/`) is pure JS — cargo rules don't apply
 
-The production frontend in `frontend/` is a **SolidJS SPA with no `Cargo.toml`**,
+The production frontend in `frontend/` is a **React SPA with no `Cargo.toml`**,
 built with [Bun](https://bun.sh)/Vite. The cargo build-cost rules above don't
 apply to it — run its checks freely from `frontend/`:
 
 - `bun run typecheck` (tsgo `--noEmit`)
-- `bun run lint` (ESLint + `eslint-plugin-solid`)
+- `bun run lint` (ESLint + `eslint-plugin-react-hooks`, React Compiler rules included)
 - `bun run format:check` (Prettier)
+- `bun run test:unit` (Vitest)
 - `bun run build` (Vite → `frontend/dist`)
 - `bun run test:visual` (Playwright component screenshots, light + dark)
 
 ### Writing visual snapshot tests
 
 Snapshots render **one component at a time**, through the component harness at
-`frontend/src/dev/harness/`. To add one:
+`frontend/src/app/dev/harness/`. To add one:
 
-1. Add a story to `src/dev/harness/stories.tsx` — the component, the props or
-   store state it's about, and the size of the stage it sits on. The harness
+1. Add a story to `src/app/dev/harness/stories.tsx` — the component, the props
+   or store state it's about, and the size of the stage it sits on. The harness
    serves it at `/harness.html?story=<id>` over a stubbed backend
-   (`mockApi.ts`), so a story needs no route mocking.
+   (`src/dev/harness/mockApi.ts`), so a story needs no route mocking.
 2. Add a test to the matching spec (`shell` / `query` / `record`) that calls
    `openStory(page, id, colorScheme)` and shoots the returned stage — or the
-   dialog/menu, for a component that renders through a Portal.
+   dialog/menu, for a component that renders through a portal.
 
 Baselines live under `tests/visual/__screenshots__/<light|dark>/<story>.png`, so
 the story id *is* the snapshot path. Keep it hierarchical
@@ -61,32 +62,80 @@ stand-in backend, that's a sign it wants an end-to-end test against a real one
 instead — don't force it into a snapshot.
 
 Behavioral (non-screenshot) Playwright specs still drive the assembled app
-through the URL-param seam in `src/dev/seed.ts`.
+through the URL-param seam in `src/app/dev/seed.ts` (`?expose=1` puts a store
+facade on `window.__appStore`).
 
-## Writing SolidJS (not React)
+## Writing React
 
-The `frontend/` app is **SolidJS**. Its JSX resembles React but the semantics
-differ — violate these and reactivity silently breaks:
+The `frontend/` app is **React 19** under `StrictMode`, with the React Compiler
+enabled for `src/app/`. State lives in **vanilla Zustand stores with Immer**
+(`src/app/stores/`), built once outside React by `createStores()` and handed down
+by `<StoresProvider>`. The design is in
+`specs/2026-09-react-migration/plan.md` ("State management"); these are its
+rules.
 
-- **Components run once.** The function body is setup, not a render loop; don't
-  put per-update logic in it or expect it to re-run.
-- **Never destructure `props`** (or a store) — that reads the value once and
-  loses reactivity. Access `props.foo` at the point of use; reach for
-  `splitProps` / `mergeProps` when you must split or default props.
-- **Signals are getter functions:** read them as `count()`, not `count`.
-- **No dependency arrays.** `createEffect` / `createMemo` auto-track the signals
-  they read. Use those plus `onMount` / `onCleanup` — never `useEffect` /
-  `useState` / `useMemo`.
-- **Use control-flow components in JSX** — `<For>`, `<Show>`, `<Switch>` /
-  `<Match>`, `<Index>` — instead of `.map()` and ternaries, so updates stay
-  keyed and fine-grained.
-- **The attribute is `class`, not `className`;** use `classList={{…}}` for
-  conditional classes. Styling is Tailwind utilities (Prettier sorts them).
-- Keep signal reads inside a tracking scope (JSX, or an effect/memo); reading a
-  signal in plain top-level code won't update.
-- Prefer Solid primitives: `createSignal`, `createStore`, `createEffect`,
-  `createMemo`, `createResource`.
+### Stores
 
-`eslint-plugin-solid` enforces several of these — `bun run lint` catches
-destructured props, uncalled signals, and lost-reactivity patterns.
+- **Actions are stable and live outside state.** Never put functions in state
+  and never select them. Get them from `useAppActions()` (and
+  `useCommandActions` / `useFormsActions` / `useUpdateActions`).
+- **A selector returns a primitive, a reference already in state, or a shared
+  constant** (`EMPTY_SELECTION`, …). A selector that builds a new array or object
+  must be wrapped in `useShallow`, or computed in the component with `useMemo`
+  over narrower selections — otherwise it re-renders on every store write.
+  Selectors are pure functions in `selectors.ts`; call them inside
+  `useApp((s) => selectX(s, …))`.
+- **Never subscribe to whole state** (`useApp((s) => s)`). When a list's rows
+  each need their own reads, give the row its own component so one row's change
+  doesn't re-render the list.
+- **Actions read `get()` after every `await`,** never a value captured before it.
+  Keep the existing run/load tokens.
+- **Gesture actions run synchronously in the event handler.** Never route "play"
+  through "set state → effect": iOS ties audio permission to the gesture's call
+  stack.
+- **`stores/` never imports React** except `stores/react.tsx` (lint-enforced),
+  and the framework-free modules (`query/`, `commands/`, `api/`, `audio/`,
+  `grid/`, `record/`, `state/`) import neither React nor a store.
+- **Environment access is injected** through `AppEnv` (`stores/env.ts`) so store
+  tests run in plain vitest with fakes.
+- Immer makes every write a new reference along its path, so "replace, don't
+  merge" is the default. `QueryResult` is a class instance and passes through
+  undrafted; selection `Set`s are replaced wholesale, never mutated. Use
+  `castDraft` when assigning a `readonly` array into a draft.
+- Cross-store rules ("when a tab closes, drop its forms") are subscriptions in
+  `createStores()`, not effects in components.
 
+### Components and effects
+
+- **Effects are for synchronizing with something outside React** (a canvas, a
+  DOM listener, an observer, focus). State → state consistency belongs in an
+  action or a `createStores()` subscription.
+- **Imperative objects are fed by `store.subscribe`, not by renders.**
+  `QueryResults` is the model: one layout effect creates the `CanvasGrid`, and a
+  tab-keyed effect subscribes it to state with `fireImmediately`.
+- **StrictMode double-invokes** renders, initializers and effects in dev. No
+  fetch, timer or subscription starts in render or a `useState` initializer;
+  every `addEventListener` / `subscribe` returns its cleanup; registrations use
+  sets or per-entry counts, never a bare `++`/`--`.
+- **Use `useLayoutEffect` when focus or measurement must happen before paint**
+  (an input focusing on mount, a width read for first layout).
+- **"Read once for this instance's life"** is a `useState(() => …)` initializer,
+  with the parent supplying a `key` so a new subject gets a new instance. A
+  conditionally shown dialog with mount-time behavior (autofocus, a one-time
+  seed) needs its own body component, not an early return.
+- **Lists use `.map` with a stable `key`** (an id, never the index when rows can
+  move).
+- **Lint idioms** (`react-hooks` recommended, React Compiler rules):
+  - Don't write `ref.current = x` in render. Sync a "latest value" ref from its
+    own `useEffect`.
+  - Don't `setState` synchronously in an effect body. Seed the state instead, or
+    set it from a later callback.
+  - A component that hands its DOM node to a caller uses `forwardRef`, not a
+    custom ref-shaped prop.
+- **`className`, not `class`.** Conditional classes go through `cx()`
+  (`components/ui/cx.ts`). Styling is Tailwind utilities (Prettier sorts them).
+  A custom "extend my classes" prop is also named `className`.
+- **Icons are components:** `<Icons.Edit className="…" />` from `src/app/icons.tsx`.
+- **Portals** are `createPortal(…, document.body)`. React focus events bubble
+  through portals, so a form that must ignore focus moving into its own portaled
+  menu listens with a native `focusout` listener.

@@ -1,10 +1,16 @@
 # RadioCrate frontend
 
-A [SolidJS](https://www.solidjs.com/) single-page app, built with
+A [React](https://react.dev/) single-page app, built with
 [Bun](https://bun.sh) + [Vite](https://vite.dev). In production it's compiled to
 static assets (`frontend/dist`) and embedded into the `radiocrate` binary, which
 serves them alongside the API under `/api`. For day-to-day UI work you don't need
 any of that — see below.
+
+The app lives under `src/app/` (components, stores, the dev seams). Beside it sit
+the framework-free modules it's built on — `query/`, `commands/`, `api/`,
+`audio/`, `grid/`, `record/`, `state/` — which import neither React nor a store.
+State is vanilla Zustand stores with Immer (`src/app/stores/`); the rules for
+writing against them are in the repo's `CLAUDE.md`.
 
 ## Decoupled development mode
 
@@ -21,7 +27,7 @@ origin-relative in dev and prod alike.
 
 ```
 browser ──▶ localhost:5173 (Vite dev server)
-              ├─ /            → SolidJS app, HMR
+              ├─ /            → React app, HMR
               └─ /api/*       → proxied to localhost:3000 (backend)
 ```
 
@@ -105,8 +111,8 @@ proxy.
 ## Seeding UI state without a backend
 
 For deterministic states (manual testing, Playwright), the app reads URL params
-on startup ([`src/dev/seed.ts`](src/dev/seed.ts)) — a no-op in production when
-absent:
+on startup ([`src/app/dev/seed.ts`](src/app/dev/seed.ts)) — a no-op in
+production when absent:
 
 ```
 http://localhost:5173/?sidebar=open&tabs=Lemonade,Deep%20Cuts
@@ -120,26 +126,24 @@ http://localhost:5173/?tabs=Lemonade&grid=lemonade&records=track,album&recordFix
                                                               # to watch it load)
 ```
 
+The component harness that the visual snapshots render through is at
+`/harness.html?story=<id>` ([`src/app/dev/harness/`](src/app/dev/harness/)).
+
 ## Other commands
 
 Run from `frontend/`:
 
-| Command                      | What it does                                                        |
-| ---------------------------- | ------------------------------------------------------------------- |
-| `bun run dev`                | Vite dev server with HMR (this doc)                                 |
-| `bun run build`              | Production build → `frontend/dist`                                  |
-| `bun run preview`            | Serve the built `dist` locally                                      |
-| `bun run typecheck`          | `tsgo --noEmit` over the Solid and React tsconfigs                  |
-| `bun run lint`               | ESLint + `eslint-plugin-solid` / `react-hooks`                      |
-| `bun run format` / `:check`  | Prettier write / check                                              |
-| `bun run test:unit`          | Vitest unit tests                                                   |
-| `bun run test:visual`        | Playwright screenshots (light + dark), `solid` and `react` projects |
-| `bun run test:visual:update` | Regenerate the visual baselines                                     |
-
-While the React port is in progress (`specs/2026-09-react-migration/plan.md`),
-the React app lives under `src/app/` beside the Solid one, served in dev from
-`/react.html` (the app) and `/react-harness.html` (its component harness). Only
-`index.html` (Solid) reaches the production build.
+| Command                      | What it does                                                |
+| ---------------------------- | ----------------------------------------------------------- |
+| `bun run dev`                | Vite dev server with HMR (this doc)                         |
+| `bun run build`              | Production build → `frontend/dist`                          |
+| `bun run preview`            | Serve the built `dist` locally                              |
+| `bun run typecheck`          | `tsgo --noEmit`                                             |
+| `bun run lint`               | ESLint + `eslint-plugin-react-hooks` (React Compiler rules) |
+| `bun run format` / `:check`  | Prettier write / check                                      |
+| `bun run test:unit`          | Vitest unit tests                                           |
+| `bun run test:visual`        | Playwright screenshots (light + dark) and behavioral specs  |
+| `bun run test:visual:update` | Regenerate the visual baselines                             |
 
 For the full production build (frontend + embedded binary), use
 `cargo xtask build-release` from the repo root. See the top-level

@@ -45,12 +45,11 @@ import SidebarLeft from "../../components/ui/SidebarLeft";
 // The visual-test harness's catalogue: one entry per snapshot, each putting a
 // single component on screen with the state or props that snapshot is about —
 // and nothing else. `tests/visual/*.spec.ts` navigate to
-// `/react-harness.html?story=<id>` and shoot the stage (or, for a component
-// that portals out of it, the dialog or menu it raised).
+// `/harness.html?story=<id>` and shoot the stage (or, for a component that
+// portals out of it, the dialog or menu it raised).
 //
-// Ported from `dev/harness/stories.tsx`. Story ids don't change across the
-// port — they're the baseline paths — and a story's `setup(store, commands)`
-// becomes `setup(stores)`, since every store now lives in one bundle.
+// Story ids are the baseline paths, so renaming one moves its baselines. A
+// story's `setup(stores)` receives the whole store bundle.
 //
 // A story is meant to read as the shortest description of what the snapshot
 // shows. When one can't — when reaching a state takes a chain of interactions

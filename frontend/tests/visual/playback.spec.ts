@@ -1,11 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { appUrl } from "./harness";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
-import type { AppStore } from "../../src/state/store";
+import type { AppCompatFacade } from "../../src/app/dev/seed";
 
 /** The store the app exposes under `?expose=1` (the same seam reload.spec uses). */
 interface AppWindow {
-  __appStore: AppStore;
+  __appStore: AppCompatFacade;
 }
 
 // Behavioral (not screenshot) coverage of the play path: double-clicking a
@@ -91,7 +90,7 @@ test("double-click plays a row's track, and `ended` advances to the next", async
   const streamed = await mockBackend(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(
-    appUrl("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b,track-c"),
+    "/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b,track-c",
   );
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
 
@@ -130,9 +129,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await mockBackend(page);
     await page.emulateMedia({ colorScheme });
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(
-      appUrl("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b"),
-    );
+    await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
     await expect(page.locator("canvas[data-rows]")).toBeVisible();
     await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
     await expect(page.getByTestId("now-playing")).toBeVisible();
@@ -181,9 +178,7 @@ test("the bar's Locate action returns to the playing track's row", async ({
   await mockBackend(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(
-    appUrl(
-      "/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&tracks=track-a,track-b&expose=1",
-    ),
+    "/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&tracks=track-a,track-b&expose=1",
   );
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
   await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
@@ -225,9 +220,7 @@ test("the bar's Locate action returns to the playing track's row", async ({
 test("the bar's Close action dismisses playback", async ({ page }) => {
   await mockBackend(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(
-    appUrl("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b"),
-  );
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
   await expect(page.locator("canvas[data-rows]")).toBeVisible();
   await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
   await expect(page.getByTestId("now-playing")).toBeVisible();

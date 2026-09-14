@@ -1,7 +1,22 @@
 {
-  "files": [],
-  "references": [
-    { "path": "./tsconfig.solid.json" },
-    { "path": "./tsconfig.react.json" }
-  ]
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "paths": {
+      "api-client": ["../api-client/src/index.ts"]
+    },
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": [
+      "vite/client",
+      "vite-plugin-pwa/client",
+      "unplugin-icons/types/react"
+    ]
+  },
+  "include": ["src", "vite.config.ts", "tests", "../api-client/src"]
 }

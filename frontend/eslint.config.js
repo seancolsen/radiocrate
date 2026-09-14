@@ -1,31 +1,24 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
-import solid from "eslint-plugin-solid/configs/typescript";
 import reactHooks from "eslint-plugin-react-hooks";
 import prettier from "eslint-config-prettier";
 
-// Until the cutover, the React port (`src/app/`) is built alongside the Solid
-// app and shares its framework-free modules in place (see
-// `specs/2026-09-react-migration/plan.md`). Each framework's rules apply to its
-// own tree only.
-const REACT_TREE = "src/app/**";
-
-/** Framework-free modules both trees import. They must stay that way, or the
- * cutover's deletion of the Solid tree would take part of the React app with
- * it. */
-const SHARED = [
+/** Framework-free modules: the domain logic the app is built on (see
+ * `specs/2026-09-react-migration/plan.md`). They stay free of React so they
+ * remain portable and testable in plain vitest. */
+const FRAMEWORK_FREE = [
   "src/api/**",
   "src/audio/**",
   "src/commands/**",
   "src/grid/**",
   "src/query/**",
   "src/record/**",
-  "src/state/{settings,updatePolicy}{,.test}.ts",
+  "src/state/**",
   "src/dev/{fixtures,gridFixture,recordFixture}.ts",
   "src/dev/harness/mockApi.ts",
 ];
 
-const FRAMEWORKS = ["solid-js", "solid-js/*", "react", "react/*", "react-dom"];
+const REACT = ["react", "react/*", "react-dom", "react-dom/*"];
 
 const STORES_REACT_MESSAGE =
   "Stores never import React; bindings live in stores/react.tsx.";
@@ -37,25 +30,19 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ...solid,
-    files: ["**/*.{ts,tsx}"],
-    ignores: [REACT_TREE],
-    languageOptions: { parser: tseslint.parser },
-  },
-  {
     ...reactHooks.configs.flat.recommended,
-    files: [`${REACT_TREE}/*.{ts,tsx}`],
+    files: ["src/**/*.{ts,tsx}"],
   },
   {
-    files: SHARED,
+    files: FRAMEWORK_FREE,
     rules: {
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              group: [...FRAMEWORKS, "react-dom/*"],
-              message: "Shared modules stay framework-free.",
+              group: REACT,
+              message: "Framework-free modules never import React.",
             },
           ],
         },
@@ -86,7 +73,7 @@ export default tseslint.config(
           ],
           patterns: [
             {
-              group: [...FRAMEWORKS, "react-dom/*", "zustand/react/*"],
+              group: [...REACT, "zustand/react/*"],
               message: STORES_REACT_MESSAGE,
             },
           ],

@@ -21,7 +21,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 7 — Record form model | done |
 | 8 — Record editor: read path | done |
 | 9 — Record editor: editing and picker | done |
-| 10 — Cutover | not started |
+| 10 — Cutover | done (manual device checks owed by the user) |
 
 ## Starting a stage (read this every session)
 
@@ -1914,6 +1914,48 @@ All green:
   - The theme and Android status bar color.
   - Record save against a real database.
 
+#### As built
+
+**What landed**
+
+- **Solid tree deleted:** everything the plan listed, plus `src/icons.ts` (the Solid icon vocabulary, which the list missed). `index.html` now loads `src/app/main.tsx` and `harness.html` loads `src/app/dev/harness/main.tsx`. `react.html` and `react-harness.html` are gone.
+- **Dependencies:**
+  - Removed `solid-js`, `solid-devtools`, `vite-plugin-solid`, `eslint-plugin-solid` and `@solidjs/testing-library`.
+  - Added `@svgr/core` and `@svgr/plugin-jsx` 8.1.0, the peers unplugin-icons' `jsx` compiler loads. `@babel/core` stays on 7.29.
+- **Icons:**
+  - The plugin is `compiler: "jsx", jsx: "react"`, and `icons.tsx` imports the generated components directly. The `?raw` + `svgIcon` fallback is gone.
+  - `IconComponent` is `ComponentType<SVGProps<SVGSVGElement>>`, and `Icons` is checked with `satisfies`.
+  - Every icon-bearing snapshot matches, so SVGR's output is pixel-identical.
+- **One of everything:**
+  - One `tsconfig.json` (`jsx: react-jsx`, `unplugin-icons/types/react`) over `src`, `tests`, `vite.config.ts` and `api-client`, and `typecheck` is `tsgo --noEmit`.
+  - One ESLint config. `react-hooks` recommended now covers `src/**`. The old `SHARED` list is `FRAMEWORK_FREE`: it bars React only, and covers all of `src/state/`, where only `settings`/`updatePolicy` remain. The stores rule is unchanged.
+  - `vite.config.ts` lost solid, solid-devtools, `outsideReactTree` and `REACT_TREE`. `react()` uses its default include, and the React Compiler filter is still `**/src/app/**`.
+  - One Playwright project. `Entries`, the per-project metadata and `appUrl` are removed, `openStory` opens `/harness.html`, and every `page.goto(appUrl(x))` is now `page.goto(x)`.
+- **`__appStore`: the compat facade stays.** `AppCompatFacade` is exported from `src/app/dev/seed.ts`, and the four specs that type-imported the Solid `AppStore` (`palette`, `playback`, `toolbar`, `recordEditor`) use it now. No spec calls the native API.
+- **Docs:**
+  - `CLAUDE.md`: the frontend description, check list and harness/seed paths are updated, and "Writing SolidJS" is replaced by "Writing React" (store rules, effects for external sync, StrictMode, keys, lint idioms, `className`/`cx`, icons, portals).
+  - `frontend/README.md`, and Solid wording in the root `README.md`, `DEVELOPMENT.md`, `Dockerfile` comments and `.gitignore` comments.
+  - Comments that named deleted files or entries: `index.html`'s theme bootstrap, `seed.ts`, both entry files, `stories.tsx`, `harness.ts`, `reload.spec.ts`, `gridFixture.ts` and `recordForm/state.ts`.
+- **Memory notes** (outside the repo): "Solid store object-merge canvas bug" is retired, because Immer removed the mechanism and `reload.spec` still guards the symptom. "Polymorphic tab kinds", "Frontend TS7/ESLint split", "Command palette port", "Query toolbar port", "DML form side panel" and "Visual snapshot failures are real" now point at the React paths and names.
+
+**Departures from the plan**
+
+- **`src/app/*` was not hoisted into `src/`.** The plan wants the hoist as its own commit, and `/port-next` allows one commit per stage. It's listed under Deferred follow-ups.
+- **The xtask help string still says "Build the Solid frontend"** (`xtask/src/main.rs`). Changing it means editing Rust and running cargo, which this port keeps out of. Deferred.
+- **Rationale comments that compare against "the Solid version" are kept** (about 30 in `src/app/`). They record why a mechanism has its shape, per "keep the doc comments". Only comments that point at deleted files or entries were changed. Deferred.
+- **`jsdom` and `@testing-library/jest-dom` look unused** (nothing imports them), but the plan didn't list them for removal, so they stay. Deferred.
+
+**Left undone:** the manual checks above, which are the user's (build with `cargo xtask build-release`, then check playback on Android/iOS, the PWA update banner and auto-apply, the theme and Android status bar, and a record save against a real database).
+
+**Gate**
+
+All green:
+
+- `typecheck`, `lint`, `format:check`.
+- `test:unit`: 233 tests, unchanged.
+- `bun run build`: one HTML file, with `sw.js` and the `workbox-window` chunk emitted, so `virtual:pwa-register` resolves.
+- Playwright: **135/135** on the single project, every story and spec. No `__screenshots__` file changed.
+
 ---
 
 ## Risks
@@ -1969,7 +2011,15 @@ Candidates noticed during the port, not part of it:
   `OneLineValue`. Stage 5 named a third caller as the point to extract a shared
   hook. They differ in details (layout vs passive effect, width vs overflow),
   so stage 8 ported them as they were.
-- solid-devtools' `autoname` runs babel over pre-bundled dependencies in dev.
-  For `react-dom` it prints a "deoptimised styling" note. The
-  `outsideReactTree()` wrapper in `vite.config.ts` could skip `/node_modules/`
-  as well.
+- Hoist `src/app/*` into `src/` (stage 10 deferred it). It's mechanical but
+  touches every import, the React Compiler filter in `vite.config.ts`, the
+  `FRAMEWORK_FREE`/stores globs in `eslint.config.js`, and the paths in
+  `CLAUDE.md`, so do it as its own commit.
+- `xtask/src/main.rs`'s `build-release` help text still says "Build the Solid
+  frontend". Changing it needs `cargo check`/`clippy`/`fmt -p xtask`.
+- About 30 comments in `src/app/` explain a mechanism by contrast with "the
+  Solid version". They're accurate history but name code that no longer exists,
+  so they could be reworded to stand alone.
+- `jsdom` and `@testing-library/jest-dom` are devDependencies nothing imports.
+- The production JS chunk (~674 kB minified) trips Vite's 500 kB warning.
+  Code-splitting the record editor or the WASM loaders would clear it.

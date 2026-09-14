@@ -7,8 +7,8 @@ A client-server app for managing and playing your personal collection of music f
 | Crate | Kind | Purpose |
 |---|---|---|
 | [`backend`](backend) | lib + bin (`radiocrate-server`) | Server logic (axum, DuckDB, scanner, audio stream). The bin is the dev API server. |
-| [`frontend`](frontend) | SolidJS SPA (not a cargo crate) | **Production frontend** — a web-native DOM app built with SolidJS + Vite + Bun. Its `dist/` output is embedded by `radiocrate`. |
-| [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the Solid frontend's `frontend/dist/`. |
+| [`frontend`](frontend) | React SPA (not a cargo crate) | **Production frontend** — a web-native DOM app built with React + Vite + Bun. Its `dist/` output is embedded by `radiocrate`. |
+| [`radiocrate`](radiocrate) | bin (`radiocrate`) | **Production single binary** — depends on the `backend` lib and embeds the frontend's `frontend/dist/`. |
 | [`xtask`](xtask) | bin | Build orchestration (`cargo xtask build-release`). |
 
 ## Development
@@ -31,7 +31,7 @@ To scan a collection into its database without serving anything, use `scan` in
 place of `serve`. It takes the collection path and `--db-path`, and exits when
 the scan finishes.
 
-### Run the new SolidJS frontend (dev)
+### Run the frontend (dev)
 
 In a separate terminal:
 
@@ -47,7 +47,7 @@ and the Playwright visual snapshots (`bun run test:visual`).
 
 ## Production build
 
-The production binary is a single executable that starts a web server, serves the API under `/api/*`, and serves the SolidJS frontend at `/`. All static assets (HTML, JS, CSS, icons, service worker, etc.) are embedded into the binary.
+The production binary is a single executable that starts a web server, serves the API under `/api/*`, and serves the React frontend at `/`. All static assets (HTML, JS, CSS, icons, service worker, etc.) are embedded into the binary.
 
 ### One-time setup
 
@@ -65,7 +65,7 @@ cargo xtask build-release
 
 This runs:
 
-1. `bun install` then `bun run build` in [frontend/](frontend) — builds the Solid app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
+1. `bun install` then `bun run build` in [frontend/](frontend) — builds the React app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
 2. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
 
 The resulting binary is at `target/release/radiocrate`.

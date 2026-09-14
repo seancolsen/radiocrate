@@ -51,9 +51,9 @@ To jump straight into Claude Code without a separate shell step:
 docker compose run --rm dev claude --dangerously-skip-permissions
 ```
 
-## Visual snapshot tests (production frontend — SolidJS)
+## Visual snapshot tests (production frontend — React)
 
-The production frontend in [`frontend/`](../frontend) is a SolidJS SPA. Its
+The production frontend in [`frontend/`](../frontend) is a React SPA. Its
 whole-app visual snapshots are [Playwright](https://playwright.dev) full-page
 screenshots, captured in **both light and dark** and committed under
 `frontend/tests/visual/__screenshots__/` as the regression baselines. Playwright
@@ -66,7 +66,7 @@ The frontend is pure JS (no `Cargo.toml`), driven by [Bun](https://bun.sh). From
 ```sh
 bun install                # first time / after dependency changes
 bun run typecheck          # tsgo --noEmit
-bun run lint               # ESLint + eslint-plugin-solid
+bun run lint               # ESLint + eslint-plugin-react-hooks
 bun run format:check       # Prettier
 bun run build              # Vite → frontend/dist (+ Workbox sw.js, manifest)
 bun run test:visual        # Playwright — compare against committed baselines
