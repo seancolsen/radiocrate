@@ -69,18 +69,12 @@ function buildIdFile(): Plugin {
   };
 }
 
-/** React Compiler (auto-memoization), for the app's own components and hooks
- * under `src/app/`. The framework-free modules beside it hold none. */
-const reactCompiler = reactCompilerPreset();
-reactCompiler.rolldown.filter = {
-  ...reactCompiler.rolldown.filter,
-  id: { include: ["**/src/app/**"] },
-};
-
 export default defineConfig({
   plugins: [
     react(),
-    babel({ presets: [reactCompiler] }),
+    // React Compiler (auto-memoization). It compiles only what it infers to be
+    // a component or hook, so the framework-free modules pass through untouched.
+    babel({ presets: [reactCompilerPreset()] }),
     tailwindcss(), // Tailwind v4 — no PostCSS/config file needed
     // Build-time icon inlining: each `~icons/*` import becomes a React SVG
     // component (through SVGR) filled with `currentColor`. No runtime font

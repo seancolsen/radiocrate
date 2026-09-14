@@ -59,8 +59,8 @@ export default tseslint.config(
     // glob matches gitignore-style, so it would also catch every subpath
     // (`zustand/vanilla`, `zustand/middleware`, …) — exactly the entry points
     // stores are supposed to use.
-    files: ["src/app/stores/**"],
-    ignores: ["src/app/stores/react.tsx"],
+    files: ["src/stores/**"],
+    ignores: ["src/stores/react.tsx"],
     rules: {
       "no-restricted-imports": [
         "error",

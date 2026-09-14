@@ -41,9 +41,9 @@ apply to it — run its checks freely from `frontend/`:
 ### Writing visual snapshot tests
 
 Snapshots render **one component at a time**, through the component harness at
-`frontend/src/app/dev/harness/`. To add one:
+`frontend/src/dev/harness/`. To add one:
 
-1. Add a story to `src/app/dev/harness/stories.tsx` — the component, the props
+1. Add a story to `src/dev/harness/stories.tsx` — the component, the props
    or store state it's about, and the size of the stage it sits on. The harness
    serves it at `/harness.html?story=<id>` over a stubbed backend
    (`src/dev/harness/mockApi.ts`), so a story needs no route mocking.
@@ -62,14 +62,14 @@ stand-in backend, that's a sign it wants an end-to-end test against a real one
 instead — don't force it into a snapshot.
 
 Behavioral (non-screenshot) Playwright specs still drive the assembled app
-through the URL-param seam in `src/app/dev/seed.ts` (`?expose=1` puts a store
+through the URL-param seam in `src/dev/seed.ts` (`?expose=1` puts a store
 facade on `window.__appStore`).
 
 ## Writing React
 
 The `frontend/` app is **React 19** under `StrictMode`, with the React Compiler
-enabled for `src/app/`. State lives in **vanilla Zustand stores with Immer**
-(`src/app/stores/`), built once outside React by `createStores()` and handed down
+enabled for `src/`. State lives in **vanilla Zustand stores with Immer**
+(`src/stores/`), built once outside React by `createStores()` and handed down
 by `<StoresProvider>`. The design is in
 `specs/2026-09-react-migration/plan.md` ("State management"); these are its
 rules.
@@ -135,7 +135,7 @@ rules.
 - **`className`, not `class`.** Conditional classes go through `cx()`
   (`components/ui/cx.ts`). Styling is Tailwind utilities (Prettier sorts them).
   A custom "extend my classes" prop is also named `className`.
-- **Icons are components:** `<Icons.Edit className="…" />` from `src/app/icons.tsx`.
+- **Icons are components:** `<Icons.Edit className="…" />` from `src/icons.tsx`.
 - **Portals** are `createPortal(…, document.body)`. React focus events bubble
   through portals, so a form that must ignore focus moving into its own portaled
   menu listens with a native `focusout` listener.

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
-import type { AppCompatFacade } from "../../src/app/dev/seed";
+import type { AppCompatFacade } from "../../src/dev/seed";
 
 // The command palette and the keyboard-shortcuts system, behaviorally: a chord
 // firing its command, the palette running one, arrow-key row selection, and the

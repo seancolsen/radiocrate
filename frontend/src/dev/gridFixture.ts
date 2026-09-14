@@ -62,7 +62,7 @@ function listColumn(rows: readonly (readonly string[])[]): arrow.Vector {
   return b.finish().toVector();
 }
 
-/** Per-row identity data `app/dev/seed.ts` can ask to have appended as extra hidden
+/** Per-row identity data `dev/seed.ts` can ask to have appended as extra hidden
  * columns, so `?tracks=`/`?records=` point the lineage mapping at a real Arrow
  * column instead of a value snapshotted outside the table (see the plan's "the
  * store keeps only what the analysis found" — the fixture has to hand it a

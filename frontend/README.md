@@ -6,10 +6,10 @@ static assets (`frontend/dist`) and embedded into the `radiocrate` binary, which
 serves them alongside the API under `/api`. For day-to-day UI work you don't need
 any of that — see below.
 
-The app lives under `src/app/` (components, stores, the dev seams). Beside it sit
+The app lives under `src/` (components, stores, the dev seams). Beside it sit
 the framework-free modules it's built on — `query/`, `commands/`, `api/`,
 `audio/`, `grid/`, `record/`, `state/` — which import neither React nor a store.
-State is vanilla Zustand stores with Immer (`src/app/stores/`); the rules for
+State is vanilla Zustand stores with Immer (`src/stores/`); the rules for
 writing against them are in the repo's `CLAUDE.md`.
 
 ## Decoupled development mode
@@ -111,7 +111,7 @@ proxy.
 ## Seeding UI state without a backend
 
 For deterministic states (manual testing, Playwright), the app reads URL params
-on startup ([`src/app/dev/seed.ts`](src/app/dev/seed.ts)) — a no-op in
+on startup ([`src/dev/seed.ts`](src/dev/seed.ts)) — a no-op in
 production when absent:
 
 ```
@@ -127,7 +127,7 @@ http://localhost:5173/?tabs=Lemonade&grid=lemonade&records=track,album&recordFix
 ```
 
 The component harness that the visual snapshots render through is at
-`/harness.html?story=<id>` ([`src/app/dev/harness/`](src/app/dev/harness/)).
+`/harness.html?story=<id>` ([`src/dev/harness/`](src/dev/harness/)).
 
 ## Other commands
 

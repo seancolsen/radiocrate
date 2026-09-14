@@ -50,7 +50,7 @@ test("query grid repaints when the result is replaced (no resize)", async ({
   // result → the grid's "empty" rendering), WITHOUT resizing the window.
   // `QueryResult` is a class (private fields), so the seed seam hands the page
   // a real-instance builder (`__emptyResult`) rather than a bare object literal
-  // — see `src/app/dev/seed.ts`.
+  // — see `src/dev/seed.ts`.
   await page.evaluate(() => {
     const w = window as unknown as {
       __appStore: {

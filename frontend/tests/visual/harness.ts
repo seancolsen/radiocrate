@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 // app level goes through here: `openStory` puts one component on screen at
 // `/harness.html?story=<id>` — no app frame, no backend — and the test shoots
 // it. What that component is showing is decided in
-// `src/app/dev/harness/stories.tsx`, so a spec here says only which story, in
+// `src/dev/harness/stories.tsx`, so a spec here says only which story, in
 // which theme, and what it waits for.
 
 export const SCHEMES = ["light", "dark"] as const;

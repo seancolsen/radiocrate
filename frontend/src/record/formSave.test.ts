@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planSave, type FormTree } from "./formSave";
 import { listId, ROOT_ID, scalarChildId } from "./formIds";
-import type { ListNode, RecordNode } from "../app/stores/recordForm/state";
+import type { ListNode, RecordNode } from "../stores/recordForm/state";
 import { buildFormFields, type RecordKey } from "../query/recordForm";
 import type { ColumnValues } from "./formValues";
 import type { SchemaTable } from "../query/schema";
