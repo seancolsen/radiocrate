@@ -160,7 +160,12 @@ export interface FormsActions {
   /** Lets go of one form unless it holds unsaved changes — what a form does
    * as it unmounts. Keeping every record the user has merely *looked* at
    * would grow with the number of rows they click through; what has to
-   * survive is the changes, and those keep their form. */
+   * survive is the changes, and those keep their form.
+   *
+   * A form something still has mounted is kept too: StrictMode's mount →
+   * cleanup → mount remounts the *same* model, which a release in between
+   * would have disposed (`RecordForm` defers its call a tick, by which time the
+   * remount has counted itself back in). */
   releaseUnmodified: (tabId: string, identities: readonly string[]) => void;
   /** Forgets (and disposes) the forms of every tab not in `liveTabIds` — a
    * closed tab's unsaved changes go with it. */
@@ -248,7 +253,7 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
     },
     releaseUnmodified(tabId, identities) {
       const entry = findEntry(store.getState().entries, tabId, identities);
-      if (!entry || entry.summary.modified) return;
+      if (!entry || entry.summary.modified || entry.mounted > 0) return;
       disposeEntry(entry);
       store.setState((s) => ({
         entries: s.entries.filter((e) => e !== entry),

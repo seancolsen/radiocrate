@@ -127,6 +127,29 @@ describe("forms store", () => {
     expect(dirty.dispose).not.toHaveBeenCalled();
   });
 
+  it("releaseUnmodified keeps a form that is still mounted (StrictMode's remount)", () => {
+    const clean = stubModel(IDLE);
+    forms.actions.stashedForm("tab-a", ["r1"], () => clean.model);
+    // mount → cleanup → mount, with the cleanup's release landing after.
+    forms.actions.mount("tab-a", ["r1"]);
+    forms.actions.unmount("tab-a", ["r1"]);
+    forms.actions.mount("tab-a", ["r1"]);
+    forms.actions.releaseUnmodified("tab-a", ["r1"]);
+
+    expect(selectFormFor(forms.store.getState(), "tab-a", ["r1"])).toBe(
+      clean.model,
+    );
+    expect(clean.dispose).not.toHaveBeenCalled();
+
+    // A real unmount lets it go.
+    forms.actions.unmount("tab-a", ["r1"]);
+    forms.actions.releaseUnmodified("tab-a", ["r1"]);
+    expect(
+      selectFormFor(forms.store.getState(), "tab-a", ["r1"]),
+    ).toBeUndefined();
+    expect(clean.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("prune drops and disposes every form of a closed tab, keeping the rest", () => {
     const closed = stubModel({ ...IDLE, modified: true }); // even a modified form goes with its tab
     const kept = stubModel(IDLE);

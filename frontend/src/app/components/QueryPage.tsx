@@ -1,8 +1,13 @@
 import { useEffect, type JSX } from "react";
-import { selectPresetsReady, selectSchemaReady } from "../stores/app";
+import {
+  selectPresetsReady,
+  selectRecordEditor,
+  selectSchemaReady,
+} from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import QueryToolbar from "./QueryToolbar";
 import QueryResults from "./QueryResults";
+import RecordEditorPanel from "./RecordEditorPanel";
 
 /** The content of an open tab: a toolbar over the results pane, with the record
  * editor as a sidebar beside them when one is open. Runs the tab's saved query
@@ -22,6 +27,7 @@ import QueryResults from "./QueryResults";
 export default function QueryPage(props: { tabId: string }): JSX.Element {
   const schemaReady = useApp(selectSchemaReady);
   const presetsReady = useApp(selectPresetsReady);
+  const recordEditor = useApp((s) => selectRecordEditor(s, props.tabId));
   const { ensureRun } = useAppActions();
 
   // Auto-run the tab once, but only once both the schema and presets have
@@ -40,10 +46,9 @@ export default function QueryPage(props: { tabId: string }): JSX.Element {
         <QueryToolbar tabId={props.tabId} />
         <QueryResults tabId={props.tabId} />
       </div>
-      {/* The record editor's sidebar, when this tab has one open: `stage 8`
-          ports `RecordEditorPanel`. Until then the page has no sidebar, which
-          is what the record-editor specs are skipped for under the `react`
-          Playwright project. */}
+      {recordEditor && (
+        <RecordEditorPanel tabId={props.tabId} target={recordEditor} />
+      )}
     </div>
   );
 }

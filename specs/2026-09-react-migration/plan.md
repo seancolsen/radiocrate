@@ -19,7 +19,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 5 — Query toolbar and builders | done |
 | 6 — Results grid and app assembly | done |
 | 7 — Record form model | done |
-| 8 — Record editor: read path | not started |
+| 8 — Record editor: read path | done |
 | 9 — Record editor: editing and picker | not started |
 | 10 — Cutover | not started |
 
@@ -1747,6 +1747,71 @@ save-error, bulk}`, `embedded-record/selected`.
   stars on its ancestors, not the whole tree. If it re-renders everything, a
   selector is returning fresh objects.
 
+#### As built
+
+**What landed**
+
+- **`app/components/record/`:**
+  - `ModifiedStar`, `ExpansionToggle`, `FieldLabel`, `EmbeddedRecord`.
+  - `FieldValue`, with `ValueInput`, `VariedValue` and a new `OneLineValue`. See Departures for why it's here.
+  - `RecordFields`: `RecordNodeView`, `FieldRow`, `FieldValueSlot`, `ChildList`, `ChildRow`, `Subtree`.
+  - `RecordForm`.
+- **`app/components/RecordEditorPanel.tsx`:**
+  - `ToolbarButton` and a `PanelHeader`.
+  - A `PanelForm` keyed on the records' identity string, standing in for `<Show keyed>`.
+  - The divider reads `recordSidebarWidth` through `getState()` at event time.
+- **`QueryPage`** renders the panel from `selectRecordEditor`.
+- **Stories:** `record-editor/{items-collapsed,items-expanded,modified,save-error,bulk}` and `embedded-record/selected`, plus the `recordEditor` helper, ported from the Solid catalogue.
+- **`record.spec.ts`:** the file-level `solidOnly` is gone. Only `record-picker/basic` is still skipped for `react`, inside an anonymous `test.describe`, so test titles don't change. `recordEditor.spec.ts` stays `solidOnly`.
+- **`stores/forms.ts`:** `releaseUnmodified` keeps an entry whose `mounted > 0`. There's a new unit test for it.
+
+**Departures from the plan**
+
+- **`FieldValue` landed here, not in stage 9.** `record-editor/modified` and `save-error` click a value, fill the textbox and press Escape, so the stage's own stories need the edit input. Stage 9 still owns what `recordEditor.spec` checks about it: Tab/Enter exits and the blur choreography.
+- **The model comes out of the stash in `PanelForm`, not in `RecordForm`.**
+  - `PanelForm` calls `useState(() => forms.actions.stashedForm(…))` and passes the model to `RecordForm`, whose props are now `{ tabId, identities, model }`.
+  - The panel's toolbar needs the same model. Stashing it inside the child while the panel subscribed to `selectFormFor` would write to that store during render, which triggers React's "Cannot update a component while rendering a different component".
+  - As a result, the header remounts when the records change.
+  - Before the schema loads, the panel renders only its header, with no Reset or Save.
+- **StrictMode release** (stage 7's hazard):
+  - `RecordForm`'s cleanup defers `releaseUnmodified` by a microtask.
+  - The store also refuses to release a mounted entry.
+  - StrictMode's remount therefore keeps its model, and a real unmount still drops it.
+- **Root element and `focusout`:**
+  - They're wired in a `useLayoutEffect` with a native listener, not React's `onBlur`. React focus events bubble through portals, and stage 9's context menu portals from inside the form.
+  - The cleanup calls `setRoot(undefined)`.
+- **Narrow selectors throughout:**
+  - `FieldRow` gets `isNew: boolean` instead of Solid's whole `node`, because the node object changes on every edit.
+  - Fallback cells use one shared `NO_CELLS` constant.
+  - `fieldExpandable()` is shared between the row's render and its `ItemHandle`. The handle reads `overflowing` from a ref synced by an effect.
+- **`EmbeddedRecord` measures its width in a `useLayoutEffect`**, so the first paint already has the real width.
+- **`RecordForm` doesn't render `RecordContextMenu` or `FieldRecordPicker` yet.** A comment marks the spot, and it no longer takes `schemaJson`, which only the picker used.
+
+**Re-render check** (the hazard above):
+- Measured with a throwaway Playwright probe: a stand-in DevTools hook that compares props and state identity per fiber. It ran on `items-expanded` with the credit list and one child's form open (15 items).
+- The first keystroke in the title re-rendered `PanelForm`/`PanelHeader`/`ToolbarButton` (Reset and Save appear), 2 `FieldRow`, the new `ModifiedStar`, and the edited value's chain.
+- The second keystroke re-rendered 1 `FieldRow` → `FieldValueSlot` → `FieldValue` → `ValueInput`, and nothing else.
+
+**Nothing left undone** in the stage's scope.
+
+**For stage 9**
+
+- **`RecordForm`:** render `RecordContextMenu` and `FieldRecordPicker` where the comment is. `PanelForm` has `schemaJson` to pass down for the picker.
+- **Specs:** remove the picker's `solidOnly` describe in `record.spec.ts` and the file-level `solidOnly` in `recordEditor.spec.ts`.
+- **`commit`'s `queueMicrotask` (focus after an edit ends)** relies on React flushing the `editing = null` re-render first. The store write schedules React's microtask before `commit` queues its own. So far only the Escape path in `record-editor/modified` exercises this. Tab through editors is untested until `recordEditor.spec` runs.
+- **`ValueInput` already focuses in a `useLayoutEffect`**, per that stage's hazard.
+
+**Gate**
+
+All green:
+
+- `typecheck`, `lint`, `format:check`.
+- `test:unit`: 233 tests, 1 of them new.
+- Solid visual: **135/135**.
+- React visual: **82 passed, 53 skipped**. That's stage 7's 70 plus this stage's 12, matched on the first run. The skips are `recordEditor.spec` and `record-picker/basic`.
+- No `__screenshots__` file changed.
+- `bun run build` output still has no React in it.
+
 ### Stage 9 — Record editor: editing and picker
 
 **Scope:** `FieldValue` (`ValueInput`, auto-grow, Enter/Tab/Esc exits),
@@ -1854,6 +1919,11 @@ Candidates noticed during the port, not part of it:
   noted the same gap.
 - Persisting open tabs, which the PWA plan names as its top follow-up. With
   Zustand this is a subscription to a storage adapter.
+- Four `ResizeObserver`-in-an-effect copies now exist in the React tree:
+  `QueryToolbar`, `PresetEditor`, `EmbeddedRecord` and `FieldValue`'s
+  `OneLineValue`. Stage 5 named a third caller as the point to extract a shared
+  hook. They differ in details (layout vs passive effect, width vs overflow),
+  so stage 8 ported them as they were.
 - solid-devtools' `autoname` runs babel over pre-bundled dependencies in dev.
   For `react-dom` it prints a "deoptimised styling" note. The
   `outsideReactTree()` wrapper in `vite.config.ts` could skip `/node_modules/`

@@ -9,9 +9,12 @@ import {
   SHUFFLE_DEF,
   VETTED_PRESET_ID,
 } from "../../../dev/fixtures";
-import { STUB_VERSION } from "../../../dev/harness/mockApi";
+import { failDml, STUB_VERSION } from "../../../dev/harness/mockApi";
 import { emptyCountResult, lemonadeGridResult } from "../../../dev/gridFixture";
-import { FIXTURE_SCHEMA_JSON } from "../../../dev/recordFixture";
+import {
+  FIXTURE_SCHEMA_JSON,
+  installRecordFixture,
+} from "../../../dev/recordFixture";
 import {
   emptyDefinition,
   type QueryDefinition,
@@ -27,7 +30,9 @@ import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
 import QueryBuilder from "../../components/builder/QueryBuilder";
 import QueryResults from "../../components/QueryResults";
 import QueryToolbar from "../../components/QueryToolbar";
+import RecordEditorPanel from "../../components/RecordEditorPanel";
 import RowActionsMenu from "../../components/RowActionsMenu";
+import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ContextMenu } from "../../components/ui/ContextMenu";
@@ -130,6 +135,31 @@ const trackRecord = (n: number): RecordRef => ({
   table: "track",
   key: [{ column: "id", value: `track-${n}` }],
 });
+
+/** A record-editor story: the panel alone, on the tracks `ns` names, over the
+ * canned schema and record data (`recordFixture.ts`) that stand in for a
+ * backend. More than one track is the bulk case — the same form, on every record
+ * the result-row selection covers. `saveFails` makes the next save come back
+ * refused, with that message. */
+function recordEditor(ns: readonly number[], saveFails?: string): Story {
+  return {
+    width: 340,
+    height: 640,
+    frame: "flex",
+    setup: (stores) => {
+      if (saveFails !== undefined) failDml(saveFails);
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      installRecordFixture(0);
+      openLemonade(stores);
+    },
+    render: () => (
+      <RecordEditorPanel
+        tabId={LEMONADE.id}
+        target={{ table: "track", records: ns.map(trackRecord) }}
+      />
+    ),
+  };
+}
 
 /** Filler for the stories about a component's own layout rather than about
  * anything it holds. */
@@ -425,5 +455,41 @@ export const STORIES: Record<string, Story> = {
         />
       </ContextMenu>
     ),
+  },
+
+  // ── The record editor ────────────────────────────────────────────────────
+  // As the form lands: every field of `track`, values and counts loaded,
+  // everything collapsed.
+  "record-editor/items-collapsed": recordEditor([1]),
+  // …and opened out (the test does the opening): a long text field expanded
+  // below its label, a multi-record field listing its records, and one of those
+  // expanded into its own form.
+  "record-editor/items-expanded": recordEditor([3]),
+  // Mid-edit: an edited field and a record being created under `credit`, each
+  // starred. On track 5, whose title is short — track 3's is the long one the
+  // expansion story is about, and this story wants a plain single-line edit.
+  "record-editor/modified": recordEditor([5]),
+  // A save the database refused: what it said, above a form still holding the
+  // change it couldn't write.
+  "record-editor/save-error": recordEditor(
+    [1],
+    'Duplicate key "title: Sorry" violates unique constraint.',
+  ),
+  // Two records at once: the fields they agree on (`disc_number`) editable as
+  // ever, the ones they don't reading "(varied)", the `credit` count they
+  // happen to share still shown beside the message that says child records
+  // aren't editable in bulk yet, and the `play` count they don't share varied
+  // like any other value.
+  "record-editor/bulk": recordEditor([3, 5]),
+
+  // ── Embedded records ─────────────────────────────────────────────────────
+  // One preview widget, from cells alone: a selected member of a multi-record
+  // field, wearing the results grid's selected-row fill under its sheen.
+  "embedded-record/selected": {
+    width: 320,
+    // The widget takes the whole width of the row it's given, and sizes itself
+    // from it.
+    frame: "flex p-2",
+    render: () => <EmbeddedRecord cells={["Beyoncé"]} focusable selected />,
   },
 };
