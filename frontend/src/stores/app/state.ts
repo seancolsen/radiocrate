@@ -10,6 +10,7 @@ import {
   storedAudioQuality,
   storedRecordSidebarWidth,
   storedSidebarOpen,
+  storedTabs,
   storedTheme,
 } from "./persistence";
 import type { ThemePref } from "./theme";
@@ -152,8 +153,8 @@ export interface RecordEditorTarget {
   records: readonly RecordRef[];
 }
 
-/** The status of a boot-time load. `"loading"` covers both "hasn't started" and "in flight" — nothing
- * in this app distinguishes them. */
+/** The status of a boot-time load. `"loading"` covers both "hasn't started" and
+ * "in flight" — nothing in this app distinguishes them. */
 export type ResourceStatus = "loading" | "ready" | "error";
 
 /** A value loaded once at boot, plus whether that load has landed. `data`
@@ -295,12 +296,33 @@ export interface AppState {
  * stable reference (no per-call allocation, no spurious re-renders). */
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 
+/** The open tabs a previous visit left (see `storedTabs`), as tabs: the
+ * shortcuts editor gets its fixed id and name back, and an active id that names
+ * no restored tab falls back to the first one. A restored query tab has no page
+ * yet; its query runs again when it's first viewed. */
+function restoredTabs(env: AppEnv): {
+  tabs: Tab[];
+  activeTabId: string | null;
+} {
+  const stored = storedTabs(env);
+  const tabs = stored.tabs.map((t): Tab =>
+    t.kind === "shortcuts"
+      ? { kind: "shortcuts", id: SHORTCUTS_TAB_ID, name: SHORTCUTS_TAB_NAME }
+      : { ...t },
+  );
+  const activeTabId = tabs.some((t) => t.id === stored.activeTabId)
+    ? stored.activeTabId
+    : (tabs[0]?.id ?? null);
+  return { tabs, activeTabId };
+}
+
 export function initialState(env: AppEnv): AppState {
+  const { tabs, activeTabId } = restoredTabs(env);
   return {
     sidebarOpen: storedSidebarOpen(env),
     theme: storedTheme(env),
-    tabs: [],
-    activeTabId: null,
+    tabs,
+    activeTabId,
     queryFilter: "",
     openedCollapsed: false,
     queriesCollapsed: false,

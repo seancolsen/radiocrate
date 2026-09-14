@@ -17,7 +17,9 @@ import type { Stores } from "../stores/createStores";
 // Prod-safe seeding seam. Reads URL params on
 // startup and applies them to the app store, so Playwright (and manual dev)
 // can reach a deterministic state of the *whole app* without a backend write
-// path for session state (open tabs live only here).
+// path for session state. Tabs a URL seeds replace any restored from an
+// earlier visit, so the state a URL describes doesn't depend on what ran
+// before it.
 //
 // This is for the tests that need the app assembled — the behaviors that only
 // exist between components, and the two snapshots of the frame itself. A test
@@ -126,6 +128,9 @@ export function applySeed(stores: Stores): void {
       ?.split(",")
       .map((n) => n.trim())
       .filter(Boolean) ?? [];
+  if (names.length > 0 || shortcuts) {
+    for (const tab of app.store.getState().tabs) app.actions.closeTab(tab.id);
+  }
   if (names.length === 0) {
     if (shortcuts) app.actions.openShortcutsTab();
     return;

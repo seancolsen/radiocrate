@@ -1,5 +1,6 @@
 import * as arrow from "apache-arrow";
 import { castDraft, type Draft } from "immer";
+import { shallow } from "zustand/vanilla/shallow";
 import {
   presetAdd,
   presetList,
@@ -56,6 +57,7 @@ import {
   persistAudioQuality,
   persistRecordSidebarWidth,
   persistSidebar,
+  persistTabs,
   persistTheme,
 } from "./persistence";
 import {
@@ -368,6 +370,15 @@ export function createAppActions(
   const set = store.setState;
 
   const stopWatchingSystemTheme = watchSystemTheme(env, () => get().theme);
+
+  // Open tabs survive a reload: every change to the tab list — a tab's unsaved
+  // edits included — or to which tab is active is written through, and
+  // `initialState` restores it.
+  const stopPersistingTabs = store.subscribe(
+    (s) => [s.tabs, s.activeTabId] as const,
+    ([tabs, activeTabId]) => persistTabs(env, tabs, activeTabId),
+    { equalityFn: shallow },
+  );
 
   // Tabs that have been auto-run once (the "have I run this tab yet" guard).
   const autoRun = new Set<string>();
@@ -1639,6 +1650,7 @@ export function createAppActions(
 
   const dispose = () => {
     stopWatchingSystemTheme();
+    stopPersistingTabs();
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();
   };

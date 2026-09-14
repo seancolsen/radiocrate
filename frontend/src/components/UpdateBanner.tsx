@@ -8,9 +8,9 @@ import IconButton from "./ui/IconButton";
  * so the visual harness can put either notice on screen without a service
  * worker. {@link UpdateBanner} is the wired version.
  *
- * Both notices say the reload closes open tabs, because it does: tabs are
- * persisted nowhere, so any reload discards them (the same fact behind
- * `shouldApplyNow`'s empty-session rule). Only `"ready"` carries a dismiss
+ * Both notices say what a reload costs: playback stops and unsaved record edits
+ * are lost — the two things `shouldApplyNow` holds an update back for. Open
+ * tabs go unmentioned because they come back. Only `"ready"` carries a dismiss
  * button — a stale client may already be talking to an API it doesn't match, so
  * that notice stays put (`dismissUpdate` refuses it anyway). */
 export function UpdateBar(props: {
@@ -34,7 +34,9 @@ export function UpdateBar(props: {
             A new version of RadioCrate is ready.
           </span>
         )}{" "}
-        <span className="text-ink-weak">Reloading closes open tabs.</span>
+        <span className="text-ink-weak">
+          Reloading stops playback and discards unsaved record edits.
+        </span>
       </div>
       <button
         type="button"

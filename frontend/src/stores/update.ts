@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { registerSW } from "virtual:pwa-register";
 import { appVersion, type AppVersion } from "api-client";
 import type { AppStoreBundle } from "./app";
-import { selectIsUnsaved } from "./app";
 import type { FormsStoreBundle } from "./forms";
 import { selectModifiedRecords } from "./forms";
 import {
@@ -109,11 +108,11 @@ export interface UpdateActions {
    * is also the `"stale"` banner's action, since that notice can fire with
    * nothing for `applyUpdate` to apply.
    *
-   * `localStorage` is deliberately left alone: theme, sidebar and audio prefs
-   * are never the problem, and losing them would make this feel destructive.
-   * Nothing on the server and no user data is touched — which is why it's
-   * called "Reload fresh copy" everywhere it's offered. Open tabs do close,
-   * because any reload closes them (they're persisted nowhere).
+   * `localStorage` is deliberately left alone: the prefs and open tabs kept
+   * there are never the problem, and losing them would make this feel
+   * destructive. Nothing on the server and no user data is touched — which is
+   * why it's called "Reload fresh copy" everywhere it's offered. Like any
+   * reload, it does stop playback and drop unsaved record edits.
    *
    * Both teardown steps are best-effort: a browser with no service worker, or
    * one refusing cache access, should still get the reload. */
@@ -134,7 +133,6 @@ function sessionFor(
   return {
     playing: app.store.getState().playback.playing,
     tabIds: app.store.getState().tabs.map((tab) => tab.id),
-    tabUnsaved: (tabId) => selectIsUnsaved(app.store.getState(), tabId),
     recordsUnsaved: (tabId) =>
       selectModifiedRecords(forms.store.getState(), tabId).length > 0,
   };

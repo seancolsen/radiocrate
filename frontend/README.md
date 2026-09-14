@@ -126,6 +126,9 @@ http://localhost:5173/?tabs=Lemonade&grid=lemonade&records=track,album&recordFix
                                                               # to watch it load)
 ```
 
+Open tabs are otherwise restored from the previous visit (they're kept in
+`localStorage`); a URL that seeds tabs replaces them.
+
 The component harness that the visual snapshots render through is at
 `/harness.html?story=<id>` ([`src/dev/harness/`](src/dev/harness/)).
 

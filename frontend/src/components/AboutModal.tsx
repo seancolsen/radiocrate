@@ -66,8 +66,8 @@ function VersionVerdict(props: {
  * "Reload fresh copy" is the escape hatch: it drops the service worker and its
  * caches and reloads. The name is deliberate — it touches nothing on the server
  * and no user data, and a name like "Reset app data" would stop anyone from
- * pressing it. It still confirms, because it closes open tabs and a click here
- * can be exploratory. */
+ * pressing it. It still confirms, because it stops playback and drops unsaved
+ * record edits, and a click here can be exploratory. */
 export function AboutDialog(props: {
   clientBuildId: string;
   version: AppVersion | undefined;
@@ -101,8 +101,8 @@ export function AboutDialog(props: {
           <p className="text-ink mt-4 text-sm">
             Download the app again from the server?{" "}
             <span className="text-ink-weak">
-              Nothing on the server changes, and no settings are lost — but open
-              tabs will close.
+              Nothing on the server changes, and no settings or open tabs are
+              lost — but playback stops and unsaved record edits are discarded.
             </span>
           </p>
           <div className="mt-3 flex flex-wrap justify-end gap-2">

@@ -1,11 +1,17 @@
 import type { AudioQualityPref } from "../../audio/engine";
+import {
+  definitionFromStored,
+  definitionToStored,
+  type QueryDefinition,
+} from "../../query/definition";
 import type { AppEnv } from "../env";
+import type { Tab } from "./state";
 import type { ThemePref } from "./theme";
 
-// Every persisted preference reads/writes through `env.storage` rather than
-// `window.localStorage` directly (state management rule 7), so store unit
-// tests can pass a fake. Each getter swallows a storage failure (private-mode
-// denial) and falls back to the default, exactly as the read does today.
+// Everything persisted — the preferences and the open tabs — reads/writes
+// through `env.storage` rather than `window.localStorage` directly (state
+// management rule 7), so store unit tests can pass a fake. Each getter swallows
+// a storage failure (private-mode denial) and falls back to the default.
 
 const SIDEBAR_KEY = "sidebarOpen";
 
@@ -100,5 +106,132 @@ export function persistRecordSidebarWidth(env: AppEnv, px: number): void {
     env.storage.setItem(RECORD_SIDEBAR_KEY, String(px));
   } catch {
     // ignore
+  }
+}
+
+/** An open tab as a previous visit left it: a query tab with both of its
+ * definitions (so unsaved edits survive), or the keyboard-shortcuts editor,
+ * which carries nothing of its own. */
+export type StoredTab =
+  | {
+      kind: "query";
+      id: string;
+      name: string;
+      saved: QueryDefinition;
+      live: QueryDefinition;
+      persisted: boolean;
+    }
+  | { kind: "shortcuts" };
+
+/** The open tabs a previous visit left, in tab-bar order, and the id of the one
+ * that was active. */
+export interface StoredTabs {
+  tabs: StoredTab[];
+  activeTabId: string | null;
+}
+
+const OPEN_TABS_KEY = "openTabs";
+/** Bump when the record's shape changes incompatibly: a record of any other
+ * version restores nothing. */
+const OPEN_TABS_VERSION = 1;
+
+/** The record as it sits in storage: definitions in their stored string form,
+ * the same encoding the backend keeps a saved query in. */
+interface OpenTabsRecord {
+  version: number;
+  activeTabId: string | null;
+  tabs: Array<
+    | {
+        kind: "query";
+        id: string;
+        name: string;
+        saved: string;
+        live: string;
+        persisted: boolean;
+      }
+    | { kind: "shortcuts" }
+  >;
+}
+
+/** The open tabs to restore. Nothing unreadable is trusted: no record, another
+ * version or a corrupt value restores nothing, and a malformed or duplicate
+ * entry is skipped. */
+export function storedTabs(env: AppEnv): StoredTabs {
+  const none: StoredTabs = { tabs: [], activeTabId: null };
+  let record: Partial<OpenTabsRecord>;
+  try {
+    const raw = env.storage.getItem(OPEN_TABS_KEY);
+    if (!raw) return none;
+    record = JSON.parse(raw) as Partial<OpenTabsRecord>;
+  } catch {
+    // Private-mode denial, or a value that isn't JSON — start empty.
+    return none;
+  }
+  if (record?.version !== OPEN_TABS_VERSION || !Array.isArray(record.tabs)) {
+    return none;
+  }
+
+  const tabs: StoredTab[] = [];
+  const ids = new Set<string>();
+  let shortcuts = false;
+  for (const entry of record.tabs as unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const t = entry as Record<string, unknown>;
+    if (t.kind === "shortcuts" && !shortcuts) {
+      shortcuts = true;
+      tabs.push({ kind: "shortcuts" });
+    } else if (
+      t.kind === "query" &&
+      typeof t.id === "string" &&
+      typeof t.name === "string" &&
+      typeof t.saved === "string" &&
+      typeof t.live === "string" &&
+      !ids.has(t.id)
+    ) {
+      ids.add(t.id);
+      tabs.push({
+        kind: "query",
+        id: t.id,
+        name: t.name,
+        saved: definitionFromStored(t.saved),
+        live: definitionFromStored(t.live),
+        persisted: t.persisted !== false,
+      });
+    }
+  }
+  const active = record.activeTabId;
+  return { tabs, activeTabId: typeof active === "string" ? active : null };
+}
+
+/** Writes the open tabs through, or clears the record once none are left. */
+export function persistTabs(
+  env: AppEnv,
+  tabs: readonly Tab[],
+  activeTabId: string | null,
+): void {
+  try {
+    if (tabs.length === 0) {
+      env.storage.removeItem(OPEN_TABS_KEY);
+      return;
+    }
+    const record: OpenTabsRecord = {
+      version: OPEN_TABS_VERSION,
+      activeTabId,
+      tabs: tabs.map((t) =>
+        t.kind === "query"
+          ? {
+              kind: "query",
+              id: t.id,
+              name: t.name,
+              saved: definitionToStored(t.saved),
+              live: definitionToStored(t.live),
+              persisted: t.persisted,
+            }
+          : { kind: "shortcuts" },
+      ),
+    };
+    env.storage.setItem(OPEN_TABS_KEY, JSON.stringify(record));
+  } catch {
+    // Denied or over quota: this session just won't come back after a reload.
   }
 }

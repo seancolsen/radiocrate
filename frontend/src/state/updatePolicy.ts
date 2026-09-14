@@ -1,6 +1,6 @@
 // The two judgements behind a PWA client update — is this client stale, and may
 // a downloaded update be applied without asking? — kept apart from the
-// service-worker wiring that acts on them (`state/update.ts`).
+// service-worker wiring that acts on them (`stores/update.ts`).
 //
 // Both are pure functions of values passed in, which is what makes them
 // testable: `update.ts` imports `virtual:pwa-register`, a module that only
@@ -31,43 +31,29 @@ export function isClientStale(
 }
 
 /** What {@link shouldApplyNow} needs to know about the session: a narrow
- * snapshot rather than the store itself, so the policy stays a pure function of
- * four facts. `update.ts` builds one of these from the app store. */
+ * snapshot rather than the stores themselves, so the policy stays a pure
+ * function of the facts that matter. `update.ts` builds one from the app and
+ * forms stores. */
 export interface SessionState {
-  /** Whether a track is playing (`store.state.playback.playing`). */
+  /** Whether a track is playing. */
   playing: boolean;
   /** The ids of every open tab, in any order. */
   tabIds: readonly string[];
-  /** Whether that tab's query has unsaved edits (`store.isUnsaved`). */
-  tabUnsaved: (tabId: string) => boolean;
   /** Whether that tab holds record-editor forms with unsaved changes
-   * (`modifiedRecords` from the record form stash). */
+   * (`selectModifiedRecords` over the forms store). */
   recordsUnsaved: (tabId: string) => boolean;
 }
 
 /** Whether a waiting update may be applied silently, right now.
  *
  * Applying means reloading the page, so this is the question "would a reload
- * cost the user anything?" — and the answer is yes for any session that has
- * *anything* going on. Playback stops, unsaved record edits and unsaved query
- * definitions are lost, and, because open tabs are persisted nowhere
- * (`localStorage` holds only prefs), even a spotless tab is discarded. So the
- * last clause is the strict one: silent application is confined to a genuinely
- * empty session.
- *
- * That is true almost exactly at cold boot, which is the moment that matters —
- * the user restarts the server, opens the app, and the pending update lands
- * before they have done anything. Every other session routes to the banner
- * instead. (Persisting open tabs would let this relax considerably; noted in the
- * plan as the follow-up.)
- *
- * The earlier clauses are then redundant with the last one today, and kept
- * deliberately: they say what the policy is protecting, and they are what
- * remains meaningful if tab persistence ever lifts the empty-session
- * requirement. */
+ * cost the user anything?" Open tabs don't: they're kept in `localStorage` —
+ * each query's working definition and never-saved duplicates included — so a
+ * reload brings them back, each re-running its query when it's next viewed.
+ * What a reload does lose is playback, which stops, and unsaved record-editor
+ * edits, which live only in memory. Either one routes the update to the banner
+ * instead. */
 export function shouldApplyNow(session: SessionState): boolean {
   if (session.playing) return false;
-  if (session.tabIds.some((id) => session.recordsUnsaved(id))) return false;
-  if (session.tabIds.some((id) => session.tabUnsaved(id))) return false;
-  return session.tabIds.length === 0;
+  return !session.tabIds.some((id) => session.recordsUnsaved(id));
 }

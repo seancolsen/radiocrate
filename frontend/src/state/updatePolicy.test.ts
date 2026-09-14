@@ -6,13 +6,12 @@ import {
   type SessionState,
 } from "./updatePolicy";
 
-/** A session with nothing going on — cold boot, the one state that permits a
- * silent update. Each case below spoils exactly one thing about it. */
+/** A session a reload costs nothing: no playback, no unsaved record edits.
+ * Each case below changes one thing about it. */
 function idleSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
     playing: false,
     tabIds: [],
-    tabUnsaved: () => false,
     recordsUnsaved: () => false,
     ...overrides,
   };
@@ -21,6 +20,14 @@ function idleSession(overrides: Partial<SessionState> = {}): SessionState {
 describe("shouldApplyNow", () => {
   it("applies in an empty, idle session (the cold-boot case)", () => {
     expect(shouldApplyNow(idleSession())).toBe(true);
+  });
+
+  // Open tabs — unsaved query edits included — are kept in localStorage and
+  // come back after the reload, so they don't hold an update back.
+  it("applies with tabs open, which a reload restores", () => {
+    expect(shouldApplyNow(idleSession({ tabIds: ["tab-1", "tab-2"] }))).toBe(
+      true,
+    );
   });
 
   it("holds off while a track is playing", () => {
@@ -35,25 +42,10 @@ describe("shouldApplyNow", () => {
     expect(shouldApplyNow(session)).toBe(false);
   });
 
-  it("holds off with an unsaved query definition", () => {
-    const session = idleSession({
-      tabIds: ["tab-1"],
-      tabUnsaved: (tabId) => tabId === "tab-1",
-    });
-    expect(shouldApplyNow(session)).toBe(false);
-  });
-
-  // The clause that's easy to leave out and the reason auto-apply isn't a
-  // hostile surprise: open tabs are persisted nowhere, so a reload discards
-  // them even when it interrupts nothing.
-  it("holds off for an open tab with nothing unsaved in it", () => {
-    expect(shouldApplyNow(idleSession({ tabIds: ["tab-1"] }))).toBe(false);
-  });
-
-  it("checks every open tab, not just one", () => {
+  it("checks every open tab for record edits, not just one", () => {
     const session = idleSession({
       tabIds: ["tab-1", "tab-2", "tab-3"],
-      tabUnsaved: (tabId) => tabId === "tab-3",
+      recordsUnsaved: (tabId) => tabId === "tab-3",
     });
     expect(shouldApplyNow(session)).toBe(false);
   });
