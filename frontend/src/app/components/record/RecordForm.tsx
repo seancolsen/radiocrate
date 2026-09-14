@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, type JSX } from "react";
 import { ROOT_ID, type RecordFormModel } from "../../stores/recordForm";
 import { useFormsActions } from "../../stores/react";
+import FieldRecordPicker from "./FieldRecordPicker";
+import RecordContextMenu from "./RecordContextMenu";
 import RecordNodeView from "./RecordFields";
 
 /** The record editor form for the records it's opened on: the whole field tree,
@@ -29,6 +31,8 @@ export default function RecordForm(props: {
   /** The `recordIdentity` of each record — the stash key the model is under. */
   identities: readonly string[];
   model: RecordFormModel;
+  /** The schema the record picker's queries compile against. */
+  schemaJson: string;
 }): JSX.Element {
   const forms = useFormsActions();
   const { tabId, identities, model } = props;
@@ -76,8 +80,8 @@ export default function RecordForm(props: {
   // The root element, handed to the model so it can move focus, and its
   // `focusout` listener. A native listener rather than React's `onBlur`:
   // React's focus events bubble through portals along the component tree, and
-  // the context menu (stage 9) is portaled from inside this form — its own
-  // focus moves must not reach here.
+  // the context menu and record picker are portaled from inside this form —
+  // their own focus moves must not reach here.
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -109,8 +113,8 @@ export default function RecordForm(props: {
   return (
     <div ref={rootRef}>
       <RecordNodeView model={model} recordId={ROOT_ID} />
-      {/* Stage 9 ports the form's context menu (`RecordContextMenu`) and its
-          modal record picker (`FieldRecordPicker`), which render here. */}
+      <RecordContextMenu model={model} />
+      <FieldRecordPicker model={model} schemaJson={props.schemaJson} />
     </div>
   );
 }

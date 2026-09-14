@@ -20,7 +20,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 6 — Results grid and app assembly | done |
 | 7 — Record form model | done |
 | 8 — Record editor: read path | done |
-| 9 — Record editor: editing and picker | not started |
+| 9 — Record editor: editing and picker | done |
 | 10 — Cutover | not started |
 
 ## Starting a stage (read this every session)
@@ -1835,6 +1835,51 @@ Expect most of the session to go on these.
 - A menu row that focuses something "after the click" runs in a microtask and
   races `useMenuKeyboard`'s restore (stage 3). `recordEditor.spec` covers this
   path.
+
+#### As built
+
+**What landed**
+
+- **`app/components/RecordPicker.tsx`:** the modal picker, ported from `components/RecordPicker.tsx`.
+  - The eight signals are `useState`. The search token and the "settled" flag are refs.
+  - The debounced search is a `useEffect([filter, sort, display])` that clears its timer on cleanup.
+  - A `latest` ref, synced from an effect, carries the props, results and `choose` to the code that runs outside render: the search after its `await`, and the grid's click callbacks.
+  - The `CanvasGrid` is created in a mount-only `useLayoutEffect` together with its resize and theme observers. `setResult` and `setSelection`/`revealRow` are layout effects keyed on `results` and `index`.
+  - The search box focuses in a layout effect.
+- **`app/components/record/RecordContextMenu.tsx`:** one menu for every target. The Solid reactive `entries()` getter became a plain `menuEntries(…)` built in render from three narrow reads: the target's field, whether it's bulk-blocked, and its shared value.
+- **`app/components/record/FieldRecordPicker.tsx`:** resolves the open picker's scalar-link field and renders a keyed `PickerAdapter`, which reads its item id and preview spec once through `useState`.
+- **`RecordForm`** renders both at its root and takes a new `schemaJson` prop, which `PanelForm` passes down.
+- **Story:** `record-picker/basic`, ported from the Solid catalogue.
+- **Specs:** `record.spec.ts` and `recordEditor.spec.ts` are back to their pre-port form, with no skips. `solidOnly` is removed from `tests/visual/harness.ts` because nothing calls it any more. Both Playwright projects now run every spec unchanged.
+
+**Departures from the plan**
+
+- **A stage-3 bug fix in `ui/useMenuKeyboard.ts`.**
+  - Under StrictMode, the layout effect's replay captured `previouslyFocused` *after* the first run had already focused the menu's first row. Closing a menu therefore "restored" focus to a detached button.
+  - The pre-menu focus is now captured once, in a ref.
+  - Nothing before this stage asserted where focus goes when a menu closes. `recordEditor.spec`'s "a field menu traps focus…" was the first, and it failed until this fix.
+- **`FieldRecordPicker` keys on the string `recordId\nfieldKey`.** Solid's `<Show keyed>` keyed on the picker object's identity, but a React key has to be a string. The two are equivalent here because the picker is modal: it always closes, unmounting the adapter, before it can be opened again.
+- **The picker calls `revealRow(index)` on mount.** In Solid the index effect's first run happened before the grid existed, so the call was skipped. It's a no-op on the empty initial result, and the snapshot matches.
+
+**Stage 8 hazards, now verified:** `commit`'s `queueMicrotask` after an edit is exercised by "Escape and Tab leave an activated field for a label" and "the + button scaffolds a new record…". The menu-row focus race is exercised by the "Edit" and "Pick a record" menu tests. All of them pass under StrictMode.
+
+**Nothing left undone** in the stage's scope.
+
+**For stage 10**
+
+- **`recordEditor.spec.ts` still type-imports `AppStore` from the Solid `src/state/store`,** for its `__appStore` typing. Grep `tests/` for any other `src/state` or `src/components` imports before deleting the Solid tree.
+- **Both projects run identical specs** with no project-specific skips, so collapsing to one Playwright project is purely a config change.
+
+**Gate**
+
+All green:
+
+- `typecheck`, `lint`, `format:check`.
+- `test:unit`: 233 tests, unchanged.
+- Solid visual: **135/135**.
+- React visual: **135/135**, with no skips. That's every story and spec, including `record-picker/basic` (both schemes) and all of `recordEditor.spec`.
+- No `__screenshots__` file changed.
+- `bun run build` output is one HTML file with no React in it.
 
 ### Stage 10 — Cutover
 

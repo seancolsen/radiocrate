@@ -13,6 +13,7 @@ import { failDml, STUB_VERSION } from "../../../dev/harness/mockApi";
 import { emptyCountResult, lemonadeGridResult } from "../../../dev/gridFixture";
 import {
   FIXTURE_SCHEMA_JSON,
+  fixtureQuery,
   installRecordFixture,
 } from "../../../dev/recordFixture";
 import {
@@ -31,6 +32,7 @@ import QueryBuilder from "../../components/builder/QueryBuilder";
 import QueryResults from "../../components/QueryResults";
 import QueryToolbar from "../../components/QueryToolbar";
 import RecordEditorPanel from "../../components/RecordEditorPanel";
+import RecordPicker from "../../components/RecordPicker";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import { CaptureDialog } from "../../components/ShortcutsPage";
@@ -481,6 +483,26 @@ export const STORIES: Record<string, Story> = {
   // aren't editable in bulk yet, and the `play` count they don't share varied
   // like any other value.
   "record-editor/bulk": recordEditor([3, 5]),
+  // The modal record picker on its own: the search box with its sort and
+  // display buttons, the results as the embedded records they're about to
+  // become, and the "New record" way out. `initialSort`/`initialDisplay` are
+  // hard-coded to what `embedSpec` picks for `artist` (see
+  // `query/embeddedRecord.test.ts`) — deriving them here would make this story
+  // about the generator rather than about the picker.
+  "record-picker/basic": {
+    render: () => (
+      <RecordPicker
+        table="artist"
+        keyColumn="id"
+        initialSort="\\\\name \\\\id"
+        initialDisplay="$name"
+        runQuery={(q) => Promise.resolve(fixtureQuery(q))}
+        onPick={() => {}}
+        onCancel={() => {}}
+        onCreate={() => {}}
+      />
+    ),
+  },
 
   // ── Embedded records ─────────────────────────────────────────────────────
   // One preview widget, from cells alone: a selected member of a multi-record

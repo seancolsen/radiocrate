@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from "@playwright/test";
-import { SCHEMES, openStory, snapshot, solidOnly } from "./harness";
+import { SCHEMES, openStory, snapshot } from "./harness";
 
 // The record editor, on its own: the panel as its form lands and opened out,
 // mid-edit and after a refused save; the modal picker it opens; and the
@@ -103,20 +103,16 @@ for (const colorScheme of SCHEMES) {
   // The modal picker on its own: the search box with its sort and display
   // buttons, and the results as the embedded records they're about to become.
   // Shot through the dialog (it portals out of the stage).
-  test.describe(() => {
-    // TODO(stage 9): the React port's record picker lands in stage 9.
-    solidOnly("TODO(stage 9): the React record picker isn't ported yet");
-    test(`record-picker/basic - ${colorScheme}`, async ({ page }) => {
-      await openStory(page, "record-picker/basic", colorScheme);
-      const picker = page.getByRole("dialog");
-      await expect(picker.getByTestId("picker-results")).toHaveAttribute(
-        "data-rows",
-        "3",
-      );
-      await expect(picker).toHaveScreenshot(
-        snapshot("record-picker/basic", colorScheme),
-      );
-    });
+  test(`record-picker/basic - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "record-picker/basic", colorScheme);
+    const picker = page.getByRole("dialog");
+    await expect(picker.getByTestId("picker-results")).toHaveAttribute(
+      "data-rows",
+      "3",
+    );
+    await expect(picker).toHaveScreenshot(
+      snapshot("record-picker/basic", colorScheme),
+    );
   });
 
   // One preview widget, from cells alone, in its selected state.

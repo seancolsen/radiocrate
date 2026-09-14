@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { appUrl, solidOnly } from "./harness";
+import { appUrl } from "./harness";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStore } from "../../src/state/store";
 
@@ -12,10 +12,6 @@ import type { AppStore } from "../../src/state/store";
 // The rows are canvas pixels, so the menu and the sidebar are the only parts a
 // locator can see; the row underneath is addressed by coordinates (rows start at
 // the canvas's top edge, ~40px tall).
-
-// TODO(stage 9): the React port's query page renders no record-editor sidebar
-// until stage 8, so there's nothing here for it to drive yet.
-solidOnly("TODO(stage 9): the React record editor isn't ported yet");
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {

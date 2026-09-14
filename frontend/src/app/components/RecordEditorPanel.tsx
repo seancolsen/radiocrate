@@ -316,6 +316,7 @@ function PanelForm(props: {
           tabId={props.tabId}
           identities={form.identities}
           model={model}
+          schemaJson={props.schemaJson}
         />
       </div>
     </>

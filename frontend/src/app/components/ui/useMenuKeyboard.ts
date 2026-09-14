@@ -50,6 +50,14 @@ export function useMenuKeyboard(
     onCloseRef.current = onClose;
   }, [onClose]);
 
+  // What held focus before the menu opened, captured by the first setup only.
+  // StrictMode's replay runs setup a second time *after* the first has focused
+  // the menu's own first row, so a second capture would record that row and
+  // closing would "restore" focus to a detached button.
+  const previouslyFocusedRef = useRef<HTMLElement | null | undefined>(
+    undefined,
+  );
+
   useLayoutEffect(() => {
     const rows = (): HTMLElement[] => {
       const el = getContainerRef.current();
@@ -70,7 +78,10 @@ export function useMenuKeyboard(
       focusAt(current === -1 ? (delta > 0 ? 0 : -1) : current + delta);
     };
 
-    const previouslyFocused = document.activeElement as HTMLElement | null;
+    if (previouslyFocusedRef.current === undefined)
+      previouslyFocusedRef.current =
+        document.activeElement as HTMLElement | null;
+    const previouslyFocused = previouslyFocusedRef.current;
     menus.actions.openMenu(id);
     focusAt(0);
 

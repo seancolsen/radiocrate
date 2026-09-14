@@ -48,20 +48,6 @@ export function appUrl(url: string): string {
   return entries().app + url.slice(1);
 }
 
-/** Marks a spec file (or a `describe` block) as running under the Solid app
- * only: every test in scope is skipped for the `react` project. The React port
- * lands a stage at a time, so a surface it hasn't reached yet has nothing to
- * drive — see `specs/2026-09-react-migration/plan.md`.
- *
- * A `beforeEach` hook rather than a file-scope `test.skip(condition, …)`: the
- * condition is the *project*, which is reachable through `test.info()` inside a
- * hook and not from module scope. */
-export function solidOnly(reason: string): void {
-  test.beforeEach(() => {
-    test.skip(test.info().project.name === "react", reason);
-  });
-}
-
 /** Where a story's baseline lives: `<theme>/<story>.png`, which
  * `snapshotPathTemplate` roots under `__screenshots__/`. */
 export function snapshot(story: string, colorScheme: ColorScheme): string[] {
