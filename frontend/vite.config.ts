@@ -115,7 +115,32 @@ export default defineConfig({
       ),
     },
   },
-  build: { outDir: "dist", target: "esnext" },
+  build: {
+    outDir: "dist",
+    target: "esnext",
+    // Two vendor chunks beside the app's own code, so no one chunk carries the
+    // whole bundle: React (with its scheduler) and Apache Arrow (with the
+    // flatbuffers and tslib it's built on). All three still load at startup —
+    // this is about chunk size and caching, not lazy loading: a release that
+    // changes only the app leaves the vendor chunks' hashes, and so the service
+    // worker's precached copies of them, as they were.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react",
+              test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            {
+              name: "arrow",
+              test: /[\\/]node_modules[\\/](apache-arrow|flatbuffers|tslib)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
   // In dev, Vite serves the app on its own port while the backend API runs on
   // :3000. Proxy /api so client code stays origin-relative in every environment.
   server: { proxy: { "/api": "http://localhost:3000" } },
