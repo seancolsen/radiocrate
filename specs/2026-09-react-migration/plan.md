@@ -17,7 +17,7 @@ starts cold doesn't have to work out progress from `git log`.
 | 3 — UI primitives and shell chrome | done |
 | 4 — Tabs, playback bar, palette, shortcuts editor | done |
 | 5 — Query toolbar and builders | done |
-| 6 — Results grid and app assembly | not started |
+| 6 — Results grid and app assembly | done |
 | 7 — Record form model | not started |
 | 8 — Record editor: read path | not started |
 | 9 — Record editor: editing and picker | not started |
@@ -1497,6 +1497,139 @@ that renders nothing** until stage 8.
 - Double-click play must reach `engine().setPlaylist` synchronously from the
   canvas event (store rule 5).
 - `initUpdates` is called once from `main.tsx`, not inside a component.
+
+#### As built
+
+**What landed**
+
+- **`app/components/RowActionsMenu.tsx`:** a presentational port; Solid's
+  `<For>` becomes `.map` with `key={record.table}` (the records are deduped by
+  table by their only caller, so the table name *is* the stable key), wrapped in
+  a fragment.
+- **`app/components/QueryResults.tsx`:** the subscription bridge from **State
+  management**, near enough to the plan's sketch. Two effects:
+  - a `useLayoutEffect([])` that creates the `CanvasGrid` and owns the
+    tab-agnostic observers (the container `ResizeObserver`, the
+    `prefers-color-scheme` listener and the `data-theme` `MutationObserver`),
+    tearing all of it down on unmount. Layout, not passive, because the
+    subscriptions below push into the grid as they install.
+  - a `useEffect([props.tabId, …])` that sets the grid's interaction callbacks
+    (so they close over the current tab) and installs six subscriptions —
+    result, selection, current row, row patch, row reveal, and the ✱ modified
+    rows — each with `fireImmediately` where the Solid effect had an equivalent
+    `onMount` catch-up call. Nothing in this component renders from store state.
+  - `subscribeModifiedRows` is the one push that spans two stores (which
+    records are modified comes from `forms`, which rows those are from `app`),
+    so it's a pair of subscriptions behind one recompute rather than a single
+    selector.
+- **`app/components/QueryPage.tsx`:** the toolbar over the results pane, and the
+  one effect the plan leaves here — the auto-run once schema and presets are
+  ready. The prune and "dynamic updates" effects were already wired in
+  `createStores()` by stage 2. The record-editor sidebar is a comment marking
+  where stage 8 puts `RecordEditorPanel`.
+- **`app/App.tsx`:** `TabContent` / `Main` / `App`. `TabContent` subscribes to
+  the active tab's **id and kind** as two primitives rather than to the tab
+  object, so editing a query doesn't re-render the page frame; the
+  `Switch`/`Match` becomes early returns, and an unknown kind renders nothing
+  (what Solid's `Switch` with no matching `Match` did).
+- **`app/main.tsx`:** builds the store bundle, applies the URL seed and calls
+  `stores.update.actions.initUpdates()` — all three at module scope, before
+  `createRoot`, so `StrictMode`'s double invocation can't reach them. The Solid
+  app could do this from `Root()` only because a Solid component body runs once.
+- **`react.html`:** a dev-only entry pointing at `src/app/main.tsx`. It carries
+  everything in `index.html` that changes a rendered pixel — the `viewport`
+  (with `viewport-fit=cover`), `color-scheme`, the single `theme-color` meta and
+  the pre-paint theme bootstrap script — and deliberately none of the
+  install-time metadata (manifest, icons, iOS launch images, standalone metas),
+  which the cutover keeps in `index.html`. `vite build` still takes
+  `index.html` as its only input: the built bundle contains zero occurrences of
+  "react", and `dist/` holds one HTML file.
+- **`app/dev/harness/stories.tsx`:** `results/basic` and
+  `result-row/context-menu`, plus the `trackRecord` helper ported from the Solid
+  catalogue (stages 8–9's record stories are its other users).
+- **Playwright:** `tests/visual/harness.ts` gains `solidOnly(reason)`, which
+  skips every test in scope for the `react` project. Applied to
+  `record.spec.ts` and `recordEditor.spec.ts` in full, with a `TODO(stage 9)`
+  reason — they are the only specs that need the record editor. Nothing else is
+  skipped: `app`, `shell`, `query`, `toolbar`, `palette`, `playback` and
+  `reload` all drive `react.html` through the seed.
+- **README:** the port paragraph now names `/react.html` as well as
+  `/react-harness.html`.
+
+**Departures from the plan**
+
+- **The row context menu captures its rows and records when it's raised**,
+  rather than deriving them from the store as it renders. Solid's `menuRows()` /
+  `menuRecords()` were reactive getters; reading them in a React render would
+  mean subscribing this component to `selectionByTab`, `resultsByTab` and
+  `lineageByTab` — exactly what the subscription bridge exists to avoid. The
+  capture is faithful because nothing can move underneath an open menu (the
+  grid is frozen and the blocking layer eats every pointer event), and
+  `onRowContextMenu` already computed the same `rows` array for its
+  "is anything editable here?" check. `RowMenu` therefore carries
+  `{ x, y, rows, records }` instead of `{ row, x, y }` — the bare `row` had no
+  other use. `onEdit` still re-reads `selectRowRecords` from `getState()` at
+  click time, as the Solid handler did.
+- **The relative-time ticker lives in the tab-keyed effect, not the
+  grid-creation effect** (which is where the plan's hazard note put it, with the
+  observers). Whether the ticker should be armed is a property of *the tab's
+  result* — it re-arms from the same subscription that pushes the result in — so
+  keeping it with the tab needs no ref to smuggle the current tab id into a
+  mount-once closure. The `visibilitychange` listener that pauses it moves with
+  it, for the same reason.
+- **The "close the menu on a tab switch" reset is in the tab effect's
+  cleanup.** `createEffect(on(() => props.tabId, closeMenu))` has no direct
+  React equivalent that lint allows: a `useEffect([tabId])` calling
+  `setRowMenu(undefined)` in its body trips
+  `react-hooks/set-state-in-effect` (the rule stages 2–3 already ran into), and
+  deriving "is this menu still mine?" during render would resurrect a menu when
+  the user switched away and back. Setting it from the cleanup — which runs
+  exactly on a tab switch, and is a no-op on unmount — passes lint and matches
+  the Solid behavior. The plan's other suggestion (`key={tabId}` on a menu host)
+  would have needed an imperative handle to let the grid's callback open it.
+- **`recordIdentity` is defined in `app/stores/forms.ts`** rather than shared
+  with the Solid `formStash.ts` it was ported from. Three lines, and it is the
+  stash's own key encoding, which that store owns; moving it into the shared
+  `src/record/` tree would have meant editing the Solid tree, which this stage
+  isn't scoped to. Stage 7/8 should import it from there.
+
+**Nothing left undone** — every file, story and spec in the stage's scope
+landed.
+
+**Gate: all green.**
+
+- `typecheck`, `lint`, `format:check`, `test:unit` (221 tests, unchanged — this
+  stage added no store logic beyond `recordIdentity`).
+- Solid visual: **135/135**.
+- React visual: **70 passed, 65 skipped** (the two record specs), first run, no
+  `__screenshots__` file changed. That includes the two app-frame snapshots
+  (`app/everything-closed`, `settings/keyboard-shortcuts/list`), both of
+  `reload.spec`'s repaint regressions, `playback.spec`'s accent-marker snapshot
+  and its double-click/Locate behaviors, and every `palette.spec` test.
+- `bun run build`: unchanged production output (one HTML file, no React).
+
+**For the next stages**
+
+- **Stage 4's open question is now answered.** `palette.spec.ts`'s
+  capture-dialog tests ("the shortcuts editor rebinds a command", "a shortcut
+  row's context menu removes and resets its binding") run green against
+  `react.html`, so `ShortcutsPage`'s `stopCapturingKeys`-under-StrictMode hazard
+  is verified, not merely reasoned about.
+- **Stage 8 has two things to wire into `QueryPage`:** render
+  `RecordEditorPanel` where the comment is (reading the target with
+  `selectRecordEditor`, keyed per the plan's `<Show keyed>` → `key={formKey}`
+  mapping), and drop the `solidOnly(...)` call from `record.spec.ts` /
+  `recordEditor.spec.ts` as each becomes drivable. `solidOnly` is in
+  `tests/visual/harness.ts`; it can also be called inside a `test.describe` to
+  skip part of a file.
+- **`QueryResults` needs no changes for the ✱ marks to start working.**
+  `subscribeModifiedRows` already reads the forms store; it reports nothing only
+  because no model is ever stashed yet. Stage 8's first mounted form should make
+  the stars appear with no edit here.
+- **`react.html` is the app page for both Playwright projects' behavioral
+  specs** (`appUrl()` in `tests/visual/harness.ts`). At the cutover, stage 10
+  moves its `<script>` into `index.html` and deletes it, and `Entries.app`
+  becomes `/` for the one remaining project.
 
 ### Stage 7 — Record form model
 

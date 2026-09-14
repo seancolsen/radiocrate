@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { shallow } from "zustand/vanilla/shallow";
+import type { RecordKey } from "../../query/recordForm";
 
 // The record editor's unsaved work, kept per record for as long as its tab is
 // open — and which of those forms the keyboard is currently aimed at.
@@ -91,6 +92,16 @@ export interface FormEntry {
 
 export interface FormsState {
   entries: readonly FormEntry[];
+}
+
+/** A record's identity as a string — table plus key — so two references to the
+ * same database row compare equal however they were assembled.
+ *
+ * Kept here rather than shared with the Solid `formStash.ts` copy it was ported
+ * from: the stash's keys are this store's own encoding, and the Solid module is
+ * deleted at the cutover. */
+export function recordIdentity(table: string, key: RecordKey): string {
+  return `${table}(${key.map((p) => `${p.column}=${p.value}`).join(",")})`;
 }
 
 /** The identities of a form's records as one comparable string — same

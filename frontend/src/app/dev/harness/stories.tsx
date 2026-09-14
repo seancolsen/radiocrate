@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import type { CurrentTrack, PlaybackState } from "../../stores/app";
+import type { CurrentTrack, PlaybackState, RecordRef } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
 import { SETTINGS } from "../../../state/settings";
 import {
@@ -25,9 +25,12 @@ import NowPlaying from "../../components/NowPlaying";
 import PageActionsMenu from "../../components/PageActionsMenu";
 import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
 import QueryBuilder from "../../components/builder/QueryBuilder";
+import QueryResults from "../../components/QueryResults";
 import QueryToolbar from "../../components/QueryToolbar";
+import RowActionsMenu from "../../components/RowActionsMenu";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import { UpdateBar } from "../../components/UpdateBanner";
+import { ContextMenu } from "../../components/ui/ContextMenu";
 import { Menu } from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
 import SidebarLeft from "../../components/ui/SidebarLeft";
@@ -120,6 +123,13 @@ function seedPlayback(stores: Stores): void {
   };
   stores.app.actions.seedNowPlaying(track, playback);
 }
+
+/** The track a record story edits: a row of the seeded grid, keyed as
+ * `?records=` keys them (row N is `track-N`). */
+const trackRecord = (n: number): RecordRef => ({
+  table: "track",
+  key: [{ column: "id", value: `track-${n}` }],
+});
 
 /** Filler for the stories about a component's own layout rather than about
  * anything it holds. */
@@ -387,5 +397,33 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.toggleBuilderSection(id, "sort");
     },
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+
+  // ── The results grid ─────────────────────────────────────────────────────
+  "results/basic": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult();
+      stores.app.actions.setResults(id, result, lineage);
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
+  // A row's context menu: one entry per table whose primary key the row
+  // carries.
+  "result-row/context-menu": {
+    render: () => (
+      <ContextMenu x={8} y={8} onClose={() => {}}>
+        <RowActionsMenu
+          records={[
+            trackRecord(1),
+            { table: "album", key: [{ column: "id", value: "album-1" }] },
+          ]}
+          onEdit={() => {}}
+        />
+      </ContextMenu>
+    ),
   },
 };

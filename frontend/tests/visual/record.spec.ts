@@ -1,9 +1,13 @@
 import { test, expect, type Locator } from "@playwright/test";
-import { SCHEMES, openStory, snapshot } from "./harness";
+import { SCHEMES, openStory, snapshot, solidOnly } from "./harness";
 
 // The record editor, on its own: the panel as its form lands and opened out,
 // mid-edit and after a refused save; the modal picker it opens; and the
 // embedded-record widget, straight from cells.
+
+// TODO(stage 9): the React port's record editor lands in stages 7–9, so none
+// of these stories exist in its harness yet.
+solidOnly("TODO(stage 9): the React record editor isn't ported yet");
 
 /** The red ✱ marking one field — or one embedded record — as modified. */
 const star = (panel: Locator, label: string) =>

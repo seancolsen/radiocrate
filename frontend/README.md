@@ -138,7 +138,8 @@ Run from `frontend/`:
 
 While the React port is in progress (`specs/2026-09-react-migration/plan.md`),
 the React app lives under `src/app/` beside the Solid one, served in dev from
-`/react-harness.html`. Only `index.html` (Solid) reaches the production build.
+`/react.html` (the app) and `/react-harness.html` (its component harness). Only
+`index.html` (Solid) reaches the production build.
 
 For the full production build (frontend + embedded binary), use
 `cargo xtask build-release` from the repo root. See the top-level
