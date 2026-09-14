@@ -113,6 +113,48 @@ fn build_querydown_js() -> Result<(), String> {
     Ok(())
 }
 
+/// The oldest Bun `build_frontend` accepts. Bun 1.2 made the text `bun.lock`
+/// the lockfile. An older Bun ignores it, resolves every dependency afresh from
+/// `package.json`'s version ranges and writes a binary `bun.lockb` instead, so
+/// the release would be built from package versions nothing was tested with.
+const MIN_BUN: (u32, u32, u32) = (1, 2, 0);
+
+/// Parses `bun --version` output (`1.3.14`, or a prerelease such as
+/// `1.3.14-canary.1+abc123`) into `(major, minor, patch)`.
+fn parse_version(output: &str) -> Option<(u32, u32, u32)> {
+    let core = output.trim().split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(|part| part.parse::<u32>().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
+/// Checks that `bun` is installed and at least [`MIN_BUN`].
+fn check_bun() -> Result<(), String> {
+    let output = Command::new("bun")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .ok_or(
+            "`bun` is required. Install with: curl -fsSL https://bun.sh/install | bash\n\
+             See https://bun.sh for other install methods.",
+        )?;
+    let reported = String::from_utf8_lossy(&output.stdout);
+    let (major, minor, patch) = MIN_BUN;
+    match parse_version(&reported) {
+        Some(version) if version >= MIN_BUN => Ok(()),
+        Some(_) => Err(format!(
+            "Bun {} is too old: {major}.{minor}.{patch} or newer is required, since older \
+             versions ignore frontend/bun.lock. Upgrade with: bun upgrade",
+            reported.trim()
+        )),
+        None => Err(format!(
+            "couldn't read a version from `bun --version` (got {:?}); \
+             Bun {major}.{minor}.{patch} or newer is required.",
+            reported.trim()
+        )),
+    }
+}
+
 /// Builds `frontend/dist`, which `radiocrate` embeds via `rust-embed`. Shared
 /// by both the native and cross-compiled release builds — only the final
 /// `cargo`/`cross` invocation differs between them.
@@ -120,14 +162,7 @@ fn build_frontend() -> Result<(), String> {
     let root = workspace_root();
     let frontend = root.join("frontend");
 
-    let bun_check = Command::new("bun").arg("--version").output();
-    if bun_check.is_err() || !bun_check.unwrap().status.success() {
-        return Err(
-            "`bun` is required. Install with: curl -fsSL https://bun.sh/install | bash\n\
-             See https://bun.sh for other install methods."
-                .into(),
-        );
-    }
+    check_bun()?;
 
     // Build + vendor the Querydown JS binding first, so the frontend's local
     // `file:` dependency on it resolves during `bun install` below.
@@ -258,4 +293,24 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MIN_BUN, parse_version};
+
+    #[test]
+    fn parses_release_and_prerelease_versions() {
+        assert_eq!(parse_version("1.3.14\n"), Some((1, 3, 14)));
+        assert_eq!(parse_version("1.3.14-canary.1+abc123"), Some((1, 3, 14)));
+        assert_eq!(parse_version("not a version"), None);
+        assert_eq!(parse_version("1.3"), None);
+    }
+
+    #[test]
+    fn rejects_bun_older_than_the_text_lockfile() {
+        assert!(parse_version("1.1.29").unwrap() < MIN_BUN);
+        assert!(parse_version("1.2.0").unwrap() >= MIN_BUN);
+        assert!(parse_version("1.10.0").unwrap() >= MIN_BUN);
+    }
 }

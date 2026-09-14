@@ -51,7 +51,9 @@ The production binary is a single executable that starts a web server, serves th
 
 ### One-time setup
 
-Install [Bun](https://bun.sh) (the frontend's package manager and runtime):
+Install [Bun](https://bun.sh) 1.2 or newer (the frontend's package manager and
+runtime). Older versions ignore `frontend/bun.lock`, so `cargo xtask` refuses
+them; run `bun upgrade` if yours is older.
 
 ```sh
 curl -fsSL https://bun.sh/install | bash
