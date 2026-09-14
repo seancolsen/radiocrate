@@ -180,8 +180,8 @@ function AboutModalBody(): JSX.Element {
   };
 
   useEffect(() => {
-    // Runs once, on mount, like the Solid version's `onMount(() => void
-    // check())`. Calls the action directly rather than through `check()`
+    // Checks once, on mount. Calls the action directly rather than through
+    // `check()`
     // (which sets `checking` back to `true` synchronously — redundant here
     // since the initializer above already did, and it would otherwise read
     // as a synchronous `setState` inside an effect body).

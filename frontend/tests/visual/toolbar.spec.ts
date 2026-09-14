@@ -5,11 +5,11 @@ import {
   PRESETS_FIXTURE,
   QUERIES_FIXTURE,
 } from "../../src/dev/fixtures";
-import type { AppCompatFacade } from "../../src/dev/seed";
+import type { AppStoreFacade } from "../../src/dev/seed";
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
-  __appStore: AppCompatFacade;
+  __appStore: AppStoreFacade;
 }
 
 // The query toolbar's behaviors — the ones that only exist with the whole page

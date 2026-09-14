@@ -69,7 +69,7 @@ for (const colorScheme of SCHEMES) {
 
   // The rebind dialog, holding a chord another command already owns — so the
   // "currently bound to" warning shows too. Shot through the dialog: it renders
-  // itself through a Portal, outside the stage.
+  // itself through a portal, outside the stage.
   test(`settings/keyboard-shortcuts/modal-assign - ${colorScheme}`, async ({
     page,
   }) => {

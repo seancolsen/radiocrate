@@ -225,8 +225,7 @@ export default function RecordEditorPanel(props: {
 }
 
 /** The panel below its divider, for one set of records: the toolbar, a failed
- * save's message, and the form. Keyed on the records (`<Show keyed>` in Solid),
- * so re-pointing the sidebar builds a fresh form rather than mutating this one.
+ * save's message, and the form. Keyed on the records, so re-pointing the sidebar builds a fresh form rather than mutating this one.
  *
  * The form belongs to the tab rather than to this component (the forms store's
  * stash), so this takes it from there — creating it on first use — by the same

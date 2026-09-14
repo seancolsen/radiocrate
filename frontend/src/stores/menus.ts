@@ -2,14 +2,13 @@ import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 
 // The keyboard contract every dropdown/context menu shares
-// (`ui/useMenuKeyboard.ts`, stage 3) registers itself here while it's open, so
+// (`ui/useMenuKeyboard.ts`) registers itself here while it's open, so
 // the global shortcut pass (`stores/commands.ts`'s `suppressed`) can stand
 // down while a menu owns the keyboard — otherwise a bare Up/Down/Delete bound
 // to a page command (e.g. row selection) would fire *underneath* the menu at
 // the same time it moves the menu's own highlight.
 //
-// Ported from `components/ui/menuKeyboard.ts`'s `openCount` module counter. A
-// `Set<symbol>` rather than a counter, so StrictMode's mount → cleanup →
+// A `Set<symbol>` rather than a counter, so StrictMode's mount → cleanup →
 // mount for one hook instance (which reuses the same symbol every time)
 // nets out to exactly one open entry rather than double-counting; a bare
 // `++`/`--` counter can't tell a StrictMode replay from a second, genuinely

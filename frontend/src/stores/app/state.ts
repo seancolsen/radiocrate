@@ -152,8 +152,7 @@ export interface RecordEditorTarget {
   records: readonly RecordRef[];
 }
 
-/** The status of a boot-time load: what used to be a Solid `Resource`'s
- * `.state`. `"loading"` covers both "hasn't started" and "in flight" — nothing
+/** The status of a boot-time load. `"loading"` covers both "hasn't started" and "in flight" — nothing
  * in this app distinguishes them. */
 export type ResourceStatus = "loading" | "ready" | "error";
 

@@ -1,5 +1,5 @@
-/** A minimal stand-in for Solid's `classList={{…}}`: joins a base class string
- * with any number of conditional entries (a string included as-is, or a
+/** Builds a `className` without a dependency: joins a base class string with
+ * any number of conditional entries (a string included as-is, or a
  * `{ className: condition }` record whose true keys are included). */
 export function cx(
   ...args: Array<

@@ -10,8 +10,8 @@ import type { UpdateActions, UpdateState } from "./update";
 // The one file under `stores/` that imports React (state management rule 6):
 // a context handing down the store bundle `createStores()` built, plus typed
 // hooks over each store so a component subscribes to exactly the slice it
-// reads (rule 2 — narrow selectors are what give React back the fine-grained
-// updates Solid's signals gave for free).
+// reads (rule 2 — narrow selectors are what keep one store write from
+// re-rendering every subscriber).
 
 const StoresContext = createContext<Stores | null>(null);
 

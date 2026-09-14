@@ -65,8 +65,7 @@ import type {
 // return primitives or references already in state (state management rule 2),
 // so a keystroke re-renders the row being edited and the stars above it — not
 // the tree. Rows are keyed on what they stand for (a field's key, a child
-// record's id), which fixes each row's subject for its life the way Solid's
-// `untrack` did.
+// record's id), which fixes each row's subject for its life.
 
 /** The cells of an embedded record with no preview yet — one shared empty list,
  * so a selector falling back to it returns the same reference every time. */

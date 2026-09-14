@@ -20,8 +20,7 @@ export function useSwipeToClose(onClose: () => void, getWidth: () => number) {
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
 
-  // Refs, exactly as the Solid version kept these as plain closure locals
-  // (not signals — nothing needs to re-render off them): a drag's own local
+  // Refs, not state — nothing needs to re-render off them: a drag's own
   // mutable state, read and written only from the pointer handlers below.
   const startX = useRef(0);
   const lastX = useRef(0);

@@ -7,11 +7,11 @@
 // `Date.now()` every call) and keeps raw values around for lineage to read,
 // without a second copy of anything.
 //
-// `QueryResult` is a *class*, not a stylistic choice: Solid's store merges an
-// assigned object into the one already at a store leaf when both are
-// "wrappable", and a class instance isn't — so assigning one always swaps the
-// reference, which is what the grid's effect watches (see `setTabResult` in
-// `state/store.tsx`).
+// `QueryResult` is a *class*, not a stylistic choice: Immer never drafts or
+// freezes a class instance, so a result assigned into the app store stays this
+// exact object — `patchRow` can still rewrite a row in place, and a new result
+// always swaps the reference the grid's subscription watches (see `setResults`
+// in `stores/app/actions.ts`, and `stores/app/immer.test.ts`).
 
 import * as arrow from "apache-arrow";
 import type { DataType as ArrowType, Table } from "apache-arrow";

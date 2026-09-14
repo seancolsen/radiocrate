@@ -30,9 +30,7 @@ import RowActionsMenu from "./RowActionsMenu";
 // "imperative bridges"): one effect creates the grid, a second one — keyed on
 // the tab — subscribes it to that tab's slice of the store with
 // `fireImmediately`, so the listener runs once at subscribe time with the grid
-// already in hand. Solid's "effects run before `onMount`" workarounds (reading
-// a value before the optional call, applying the reveal twice) are gone with
-// it.
+// already in hand.
 //
 // `QueryResult` is a class, so Immer never drafts or freezes it — the engine
 // reads straight off the plain instance, cell derivation included.

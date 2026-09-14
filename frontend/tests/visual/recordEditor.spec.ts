@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
-import type { AppCompatFacade } from "../../src/dev/seed";
+import type { AppStoreFacade } from "../../src/dev/seed";
 
 // The record-editor entry path and everything the form does, behaviorally:
 // right-click a result row → a DOM context menu offering one "Edit {table}" per
@@ -14,7 +14,7 @@ import type { AppCompatFacade } from "../../src/dev/seed";
 
 /** The store the app exposes under `?expose=1`. */
 interface AppWindow {
-  __appStore: AppCompatFacade;
+  __appStore: AppStoreFacade;
 }
 
 async function mockRpc(page: Page) {

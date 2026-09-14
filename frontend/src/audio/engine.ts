@@ -6,7 +6,7 @@
 // `ended` handler pulls from it directly. Those handlers fire from the browser's
 // media-event dispatch, which keeps running while the PWA is backgrounded and
 // the device is locked — so a track ending auto-advances to the next one with no
-// help from Solid, the store, or a repaint. The UI is a *subscriber* to that
+// help from React, the store, or a repaint. The UI is a *subscriber* to that
 // (`EngineEvents`), never the driver.
 //
 // ## Why two elements

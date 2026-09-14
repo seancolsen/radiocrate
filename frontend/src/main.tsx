@@ -12,8 +12,7 @@ import "./app.css";
 // React's way: the store bundle is built once, the URL-param seed is applied to
 // it, and the service worker is registered. `StrictMode` double-invokes render
 // functions, initializers and effects in development, so none of these may sit
-// inside a component — the Solid app could do them from `Root()` because a
-// Solid component body runs exactly once (state management: "StrictMode").
+// inside a component (state management: "StrictMode").
 const stores = createStores();
 
 // Apply any URL-param seed to the store (no-op in production without params).

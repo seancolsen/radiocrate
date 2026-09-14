@@ -13,8 +13,7 @@ import {
 } from "../state/updatePolicy";
 
 // The client-update controller: everything about the service-worker lifecycle
-// lives here, ported from `state/update.ts`'s module of signals into a
-// vanilla store built once by `createStores()`.
+// lives here, in a vanilla store built once by `createStores()`.
 //
 // Detection and application are separate channels on purpose. `app.version` is
 // the detection channel — one cheap RPC that answers "did the binary serving me
@@ -26,8 +25,8 @@ import {
 // hide the fact that the server moved on, and the About panel can show a reason
 // rather than a shrug.
 //
-// The policy deciding what to do about it is in `state/updatePolicy.ts` (pure,
-// unchanged, and unit-tested); this module is the wiring that feeds it.
+// The policy deciding what to do about it is in `state/updatePolicy.ts` (pure
+// and unit-tested); this module is the wiring that feeds it.
 //
 // NOTE: `vite-plugin-pwa` only injects a service worker on *build*, so none of
 // this behavior is observable under `bun run dev`. Verify with `bun run build` +
@@ -143,9 +142,8 @@ function sessionFor(
 
 /** Builds the update store, wired to the given app and forms bundles (the
  * apply policy's inputs — state management: the update store "reads" both).
- * Unlike the Solid module (whose `session` closure only existed once
- * `initUpdates(store)` had run), the session snapshot is always available
- * here: `app`/`forms` are bound at construction, not supplied later. */
+ * They're bound at construction, so the session snapshot is always available,
+ * even before `initUpdates` runs. */
 export function createUpdateStore(
   app: AppStoreBundle,
   forms: FormsStoreBundle,
@@ -161,8 +159,7 @@ export function createUpdateStore(
   /** Guards against overlapping checks — the foreground check and the
    * interval can easily coincide. */
   let checking = false;
-  /** One registration per store, mirroring the Solid module's one-per-page-
-   * load guard. */
+  /** One registration per store (and so, in the app, per page load). */
   let initialized = false;
 
   const applyUpdate = () => {

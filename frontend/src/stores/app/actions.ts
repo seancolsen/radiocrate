@@ -129,8 +129,8 @@ const RUN_DEBOUNCE_MS = 300;
  * instead (state management rule 1): actions are stable references, so a
  * component can put them in an effect's dependency array without churn. */
 export interface AppActions {
-  // Boot loads — replace Solid's three `createResource`s. `createStores()`
-  // (stage 2) runs these once; unit tests call them directly.
+  // Boot loads. `createStores()` runs these once; unit tests call them
+  // directly.
   loadQueries: () => Promise<void>;
   loadPresets: () => Promise<void>;
   loadSchema: () => Promise<void>;
@@ -347,8 +347,7 @@ export interface AppActions {
 /** Builds the write half of the app store: every action closes over the
  * vanilla store's `getState`/`setState` plus the non-reactive internals that
  * never belonged in `AppState` (selection anchors, run tokens, debounce
- * timers, the audio engine) — unchanged from the Solid version's closure
- * variables. */
+ * timers, the audio engine). */
 export function createAppActions(
   store: AppVanillaStore,
   env: AppEnv,
@@ -806,9 +805,7 @@ export function createAppActions(
   /** Replaces `tabId`'s sidebar contents wholesale — an empty `records` closes
    * it, same as `closeRecordEditor`. A plain assignment: Immer produces a fresh
    * reference for the changed leaf on its own, so re-pointing the editor (or
-   * narrowing/widening a bulk selection) already reads as a swap, not a patch —
-   * no delete-then-set needed (unlike the Solid store, which had to force that
-   * itself; see the mapping table in the plan).
+   * narrowing/widening a bulk selection) already reads as a swap, not a patch.
    *
    * Each record appears once, however many selected rows carry it: several
    * tracks of one album identify that album over and over, and the editor is on
@@ -837,11 +834,9 @@ export function createAppActions(
    * it. Opening the sidebar from nothing is *not* this action's job (the
    * context menu and the `results.edit_selected` command do that).
    *
-   * Ported from `QueryPage`'s per-tab effect, which read the current editor
-   * target `untrack`ed so the effect would react only to the selection (or
-   * lineage), never to the write it makes to that target itself — otherwise
-   * it would loop. Here that's simply reading `get()` once at the top: this
-   * function isn't a subscription input (`createStores()` calls it from a
+   * It must react only to the selection (or lineage), never to its own write to
+   * the editor target — otherwise it would loop. That's why it reads `get()`
+   * once at the top: this function isn't a subscription input (`createStores()` calls it from a
    * listener, not a selector), so there's nothing for the loop to form
    * through. */
   const resyncRecordEditors = () => {

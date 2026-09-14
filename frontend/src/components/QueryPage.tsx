@@ -19,11 +19,11 @@ import RecordEditorPanel from "./RecordEditorPanel";
  * page's toolbar and results, while the tab bar and the now-playing bar above
  * and below keep their full width.
  *
- * Two of the Solid version's three effects have left: the form-stash prune and
- * the record editor's "dynamic updates" resync are rules *between* stores, so
- * they're wired in `createStores()` rather than by whichever view happens to be
- * mounted (state management: "cross-store wiring"). What stays is the one effect
- * that fires because a view appeared. */
+ * The form-stash prune and the record editor's "dynamic updates" resync aren't
+ * effects here: they're rules *between* stores, so they're wired in
+ * `createStores()` rather than by whichever view happens to be mounted (state
+ * management: "cross-store wiring"). The one effect here fires because a view
+ * appeared. */
 export default function QueryPage(props: { tabId: string }): JSX.Element {
   const schemaReady = useApp(selectSchemaReady);
   const presetsReady = useApp(selectPresetsReady);

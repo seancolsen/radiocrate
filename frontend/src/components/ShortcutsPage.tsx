@@ -30,7 +30,7 @@ import { cx } from "./ui/cx";
 // name or, in "record" mode, by pressing the chord) and a capture dialog for
 // rebinding.
 //
-// Ported from `components/ShortcutsPage.tsx`. It fills a tab —
+// It fills a tab —
 // `shortcuts.configure` and the explorer's Settings menu open that tab (the
 // command ships unbound). The editor's transient state (search text, record
 // mode, the open capture dialog) lives in the command store rather than here,

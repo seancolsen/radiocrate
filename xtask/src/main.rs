@@ -8,7 +8,7 @@ fn usage() {
     eprintln!(
         "cargo xtask <command>\n\n\
          Commands:\n  \
-           build-release      Build the Solid frontend with Bun/Vite and the production binary\n  \
+           build-release      Build the frontend with Bun/Vite and the production binary\n  \
            build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (armv7)\n  \
            clean-web          Remove the frontend/dist directory\n  \
            icons              Regenerate the PWA icon set from branding/logo.svg\n  \

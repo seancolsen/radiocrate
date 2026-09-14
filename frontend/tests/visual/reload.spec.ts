@@ -24,13 +24,11 @@ async function mockRpc(page: Page) {
   );
 }
 
-// Regression test for the "canvas doesn't refresh when a query reloads" bug:
-// the SolidJS store this app used to have shallow-merged an object set at a
-// store leaf, so replacing a tab's result mutated it in place without changing
-// the reference the QueryResults effect tracked — the grid only repainted when a
-// resize forced a draw. `QueryResults` now subscribes to the result's identity,
-// and this asserts the canvas actually repaints on a result *replace*, with no
-// resize.
+// Regression test for the "canvas doesn't refresh when a query reloads" bug: a
+// store write that merged a replacement result into the old object in place
+// left the reference `QueryResults` subscribes to unchanged, so the grid only
+// repainted when a resize forced a draw. This asserts the canvas actually
+// repaints on a result *replace*, with no resize.
 test("query grid repaints when the result is replaced (no resize)", async ({
   page,
 }) => {

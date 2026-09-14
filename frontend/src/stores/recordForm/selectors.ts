@@ -1,6 +1,5 @@
-// Reads over one form's state — pure functions of a `FormState` snapshot, which
-// is what the Solid model's read accessors (`value`, `count`, `isExpanded`,
-// `isFieldModified`, …) became. Components call them inside
+// Reads over one form's state — pure functions of a `FormState` snapshot.
+// Components call them inside
 // `useFormState(model, (s) => …)`; the model's own actions call them on
 // `get()`.
 //
@@ -225,9 +224,8 @@ export const selectFormModified = (s: FormState): boolean =>
   selectRecordModified(s, ROOT_ID);
 
 /** What the forms store mirrors out of this form (see `RecordFormSummary`):
- * the pieces `formRegistry.ts`/`formStash.ts` read off the Solid model —
- * `focused()`, `selection()`, `picker()`, `isModified()`. A fresh object on
- * every call. */
+ * whether it holds focus, a selection or its picker, and whether it's modified.
+ * A fresh object on every call. */
 export function selectFormSummary(s: FormState): RecordFormSummary {
   return {
     focused: s.focused !== null,

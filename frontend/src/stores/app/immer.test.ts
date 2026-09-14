@@ -5,9 +5,9 @@ import { buildResultFromStringRows } from "../../query/result";
 import { createAppVanillaStore } from "./vanillaStore";
 import { fakeEnv } from "./testEnv";
 
-// State management rule (plan, stage 1): confirm Immer's behavior around the
-// two shapes the Solid store had special mechanics for, *before* any action
-// depends on it.
+// Pins down Immer's behavior around the two state shapes every action relies
+// on it handling: a class-instance result that is patched in place, and
+// selection `Set`s that are replaced wholesale.
 
 describe("Immer compatibility", () => {
   it("holds a QueryResult by reference, undrafted and unfrozen", () => {

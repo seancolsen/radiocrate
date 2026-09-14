@@ -43,7 +43,7 @@ import { selectAnyMenuOpen } from "./menus";
 // defaults), the global keyboard-shortcut pass, and the single dispatch point
 // every command runs through.
 //
-// Ported from `state/commands.tsx`. It sits in its own store, layered over the
+// It sits in its own store, layered over the
 // app, forms and menus stores: commands are defined in terms of their actions,
 // and keeping them out of those stores keeps each about its own state rather
 // than input handling.
@@ -69,8 +69,7 @@ export interface CommandsState {
   paletteQuery: string;
   /** The highlighted row. Not necessarily in range of the current palette
    * list — {@link selectClampedPaletteIndex} is the read every consumer
-   * actually wants, same as `commands.tsx`'s `clampedIndex` memo wrapped the
-   * raw signal. */
+   * actually wants. */
   paletteIndex: number;
 
   // ── The keyboard-shortcuts editor ──
@@ -126,12 +125,11 @@ export const selectCommandForChord = (
   chord: Chord,
 ): CommandId | null => commandForChord(s.overrides, chord);
 
-/** The `When` predicates' inputs, read from the app and forms stores. Ported
- * from `commands.tsx`'s `context` memo: there it re-derived on every read
- * from a `createMemo`; here it's a plain function the keydown pass calls with
- * a fresh `getState()` at keypress time (state management rule 4), and the
- * palette (stage 4) calls the same way from a `useMemo` over its subscribed
- * inputs. */
+/** The `When` predicates' inputs, read from the app and forms stores. A plain
+ * function: the keydown pass calls it with a fresh `getState()` at keypress
+ * time (state management rule 4). The command palette assembles the same shape
+ * from narrower subscriptions instead (see `CommandPalette.tsx`), since a
+ * component can't select whole store states. */
 export function selectCommandContext(
   app: AppState,
   forms: FormsState,
@@ -465,7 +463,7 @@ export function createCommandsStore(
    * stands down. The shortcuts editor's *tab* does not count — the app keeps
    * running behind it — but its chord capture does, so a chord typed at it
    * rebinds instead of firing. An open dropdown/context menu counts too: its
-   * own Up/Down/Enter handling (`ui/useMenuKeyboard`, stage 3) must be the
+   * own Up/Down/Enter handling (`ui/useMenuKeyboard`) must be the
    * only thing acting on those keys, not also a page command like row
    * selection underneath it. */
   const suppressed = (): boolean => {

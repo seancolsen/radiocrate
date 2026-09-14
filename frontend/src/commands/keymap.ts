@@ -1,6 +1,6 @@
 // The resolved keymap: user overrides layered over the built-in defaults, as
-// pure functions over an immutable overrides map — the provider holds it in a
-// signal and replaces it wholesale, so every read is reactive.
+// pure functions over an immutable overrides map, which the command store holds
+// and replaces wholesale on every change.
 
 import { chordsEqual, parseChord, type Chord } from "./chord";
 import {

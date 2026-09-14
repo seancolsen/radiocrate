@@ -25,10 +25,9 @@ export function useTabDragReorder(getContainer: () => HTMLElement | null) {
   }, [getContainer]);
 
   // A drag's own mutable state, read and written only from the pointer
-  // handlers below — refs, not signals, exactly as the Solid version kept
-  // these as plain closure locals (there, the component ran once; here the
-  // hook body re-runs on every render, so these have to survive as refs
-  // instead, the same shape `useSwipeToClose` uses).
+  // handlers below. Refs rather than locals, because the hook body re-runs on
+  // every render and these have to survive it (the same shape
+  // `useSwipeToClose` uses).
   const handleEl = useRef<HTMLElement | null>(null);
   const currentId = useRef<string | null>(null);
   const pointerId = useRef(0);

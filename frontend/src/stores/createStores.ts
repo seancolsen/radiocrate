@@ -23,14 +23,14 @@ export interface Stores {
  * "store topology") — the app, forms, menus, commands and update stores, in
  * that dependency order (the app store imports no other store; forms may
  * call app actions; commands and update read all the others). Runs the boot
- * loads and wires the two cross-store rules that used to live as `QueryPage`
- * effects: rules that span stores, and so belong to neither side of them.
+ * loads and wires the two cross-store rules: rules that span stores, and so
+ * belong to neither side of them.
  *
  * Building outside React keeps `StrictMode`'s double render and double
  * effects away from the boot fetches and the `matchMedia` listener. It does
- * *not* call `update.actions.initUpdates()` — that's `main.tsx`'s job (stage
- * 6), same as the Solid app registers the service worker from `Root()`
- * rather than from the store's own construction.
+ * *not* call `update.actions.initUpdates()`: registering the service worker is
+ * `main.tsx`'s job, so neither the visual harness nor a store test registers
+ * one.
  */
 export function createStores(env: AppEnv = browserEnv()): Stores {
   const app = createAppStore(env);
@@ -39,16 +39,15 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   const commands = createCommandsStore(app, forms, menus);
   const update = createUpdateStore(app, forms);
 
-  // Boot loads — replace Solid's three `createResource`s and the bare
-  // `keybindingList().then(...)`.
+  // Boot loads.
   void app.actions.loadQueries();
   void app.actions.loadPresets();
   void app.actions.loadSchema();
   void app.actions.loadSettings();
   void commands.actions.loadKeymap();
 
-  // Cross-store wiring (state→state rules), moved out of `QueryPage` because
-  // it enforces state consistency and has nothing to do with rendering.
+  // Cross-store wiring (state→state rules): it enforces state consistency and
+  // has nothing to do with rendering, so no component owns it.
 
   // Unsaved record-editor changes live as long as the tab they were made in,
   // not as long as any one sidebar showing them.

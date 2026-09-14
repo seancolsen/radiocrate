@@ -27,9 +27,8 @@ export default function PresetEditor(props: {
   // Seed the edit buffer the first time this preset is expanded; a persisted
   // buffer is reused so unsaved changes are never wiped. This component isn't
   // recreated when a caller switches which preset is expanded (the parent
-  // toggles `presetId` in place), so — like the Solid `onMount` it ports —
-  // this only ever fires for the preset that was expanded when it first
-  // mounted.
+  // toggles `presetId` in place), so this only ever fires for the preset that
+  // was expanded when it first mounted.
   useEffect(() => {
     if (!edit) beginPresetEdit(props.presetId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once seed, see comment above

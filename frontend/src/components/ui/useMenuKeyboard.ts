@@ -10,9 +10,9 @@ import { useStores } from "../../stores/react";
 // selection) would fire *underneath* the menu at the same time it moves the
 // menu's own highlight.
 //
-// Ported from `components/ui/menuKeyboard.ts`. The module-level `openCount`
-// counter becomes the `menus` store's `Set<symbol>`: each hook instance keeps
-// one `symbol` (created once, via a ref) for its whole lifetime, so
+// Open menus are tracked in the `menus` store as a `Set<symbol>`: each hook
+// instance keeps one `symbol` (created once, via a `useState` initializer) for
+// its whole lifetime, so
 // StrictMode's mount → cleanup → mount replay opens and closes the *same* id
 // and nets out to one open entry, where a bare `++`/`--` counter would double
 // it.
@@ -35,9 +35,7 @@ export function useMenuKeyboard(
 
   // Refs so the layout effect below can stay a mount-only effect (an empty
   // dependency array) while still calling whatever `getContainer`/`onClose`
-  // the *latest* render closed over — exactly what `onMount`'s closure gave
-  // Solid for free, since it only ever ran once per component instance.
-  // Synced from effects, never from the render body: a ref write during
+  // the *latest* render closed over. Synced from effects, never from the render body: a ref write during
   // render is unsafe (React may discard or replay a render without it ever
   // having "happened"), even though the ref's *initial* value is already
   // right for the first render via `useRef`'s own argument.
@@ -155,7 +153,7 @@ export function useMenuKeyboard(
     // `id` and `menus` are both stable for the component's life (a `useState`
     // initializer and the store bundle from context, respectively), and every
     // other input is read through a ref — so despite the dependency array,
-    // this never actually re-runs mid-life, matching the Solid `onMount`/
-    // `onCleanup` pair it replaces.
+    // this never actually re-runs mid-life: it sets up as the menu opens and
+    // tears down as it closes.
   }, [id, menus]);
 }

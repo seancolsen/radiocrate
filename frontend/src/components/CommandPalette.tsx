@@ -26,7 +26,7 @@ import { cx } from "./ui/cx";
 // commands by name, showing each command's keyboard shortcut and listing
 // recently-used commands first.
 //
-// Ported from `components/CommandPalette.tsx`. While it's open the global
+// While it's open the global
 // shortcut pass stands down (see `stores/commands.ts`'s `suppressed`), so the
 // palette handles its own arrow/enter/escape navigation and consumes the open
 // shortcut to toggle itself closed.

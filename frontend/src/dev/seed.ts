@@ -48,14 +48,13 @@ import type { Stores } from "../stores/createStores";
 //
 // A no-op when the params are absent, so it never affects production.
 
-/** The subset of the app store's surface `window.__appStore` exposes, under
- * the names the SolidJS app's store used — a compat facade that let
- * `tests/visual/*.spec.ts` drive both apps unchanged during the React port,
- * and was kept at the cutover rather than moving the specs onto the native
- * store API (see `specs/2026-09-react-migration/plan.md`, "dev and test
- * seams"). The specs type `window.__appStore` with this interface; widen it
- * here when a spec needs more. */
-export interface AppCompatFacade {
+/** The subset of the app store's surface `window.__appStore` exposes to the
+ * behavioral specs: plain accessors (`rowSelection`, `queryTab`, …) over
+ * `getState()` plus the few actions they drive, so a spec can reach the store
+ * from `page.evaluate` without importing store code. The specs type
+ * `window.__appStore` with this interface; widen it here when a spec needs
+ * more. */
+export interface AppStoreFacade {
   readonly state: AppState;
   rowSelection: (tabId: string) => ReadonlySet<number>;
   queryTab: (tabId: string) => QueryTab | undefined;
@@ -65,7 +64,7 @@ export interface AppCompatFacade {
   clickRow: AppStoreBundle["actions"]["clickRow"];
 }
 
-function createAppCompatFacade(app: AppStoreBundle): AppCompatFacade {
+function createAppStoreFacade(app: AppStoreBundle): AppStoreFacade {
   return {
     get state() {
       return app.store.getState();
@@ -97,10 +96,10 @@ export function applySeed(stores: Stores): void {
   // one.
   if (params.get("expose") === "1") {
     const w = window as unknown as {
-      __appStore: AppCompatFacade;
+      __appStore: AppStoreFacade;
       __emptyResult: typeof emptyCountResult;
     };
-    w.__appStore = createAppCompatFacade(app);
+    w.__appStore = createAppStoreFacade(app);
     w.__emptyResult = emptyCountResult;
   }
 
@@ -138,9 +137,8 @@ export function applySeed(stores: Stores): void {
 
   // Open tabs once the saved-query list resolves, mapping each seeded name to
   // its query (falling back to the name as a synthetic id if unmatched).
-  // Ported from a Solid `createEffect` reading `store.queries()`: this is
-  // called from outside any component, so a store subscription (rather than
-  // an effect) is what "wait for the resource, then run once" becomes.
+  // This runs outside any component, so "wait for the list, then run once" is
+  // a store subscription that unsubscribes itself.
   let seeded = false;
   const unsubscribe = app.store.subscribe(
     (s) => s.queries.status,

@@ -1,7 +1,6 @@
 // The record editor form's model: one vanilla Zustand+Immer store per edited
 // record set (`state.ts` holds its shape, `selectors.ts` its reads), and the
-// actions that load into it, edit it and save it. Ported from
-// `components/record/formModel.ts`.
+// actions that load into it, edit it and save it.
 //
 // A node stands for however many records the form is on: one, ordinarily, and
 // as many as the result-row selection holds when the user has widened it. That
@@ -115,7 +114,7 @@ export interface RecordFormOptions {
 
 /** Everything the form can be told to do. Stable for the model's life, so a
  * component can call them from any handler or effect without re-subscribing.
- * The Solid model's read accessors are selectors now (`selectors.ts`). */
+ * Reads are selectors (`selectors.ts`). */
 export interface RecordFormActions {
   /** Dismiss the save-error message, leaving the unsaved changes it was about
    * in place. */
@@ -368,9 +367,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
 
   // ── Writes ─────────────────────────────────────────────────────────────────
   //
-  // Solid's path setters merged an object into whatever sat at the path —
-  // conjuring a partial node when nothing did. These merge into an existing node
-  // only: every caller writes a node it created first.
+  // These merge into an existing node only, and skip an absent one: a load that
+  // lands after `reset()` must not conjure a partial node, which `planSave`
+  // would then trip over. Every caller writes a node it created first.
 
   const patchRecord = (id: string, patch: Partial<RecordNode>) =>
     set((s) => {

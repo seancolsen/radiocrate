@@ -9,9 +9,9 @@ export type { RecordFormModel } from "./recordForm";
 // The record editor's unsaved work, kept per record for as long as its tab is
 // open — and which of those forms the keyboard is currently aimed at.
 //
-// Ported from two Solid modules that this stage folds into one store:
+// It does two jobs:
 //
-// - `components/record/formStash.ts`: a form covers as many records as the
+// - **The stash.** A form covers as many records as the
 //   selection it was opened on, so what keys it is a *list* of record
 //   identities — coming back to the same two rows finds the bulk edit made
 //   across them, and coming back to one of them alone is a different form.
@@ -20,12 +20,11 @@ export type { RecordFormModel } from "./recordForm";
 //   component: it's created here on first use and handed back to whichever
 //   `RecordForm` next points at exactly those records. A tab that closes takes
 //   its forms with it (`prune`).
-// - `components/record/formRegistry.ts`: which mounted form(s) the keyboard is
-//   aimed at, for the selection commands ("Select down", "Expand nested
-//   items", "Delete") to route to instead of the result rows.
+// - **The registry.** Which mounted form(s) the keyboard is aimed at, for the
+//   selection commands ("Select down", "Expand nested items", "Delete") to
+//   route to instead of the result rows.
 //
-// `mounted` (a count, not a boolean) replaces `formRegistry`'s separate
-// registered-forms list: StrictMode mounts a component, cleans it up, and
+// `mounted` is a count, not a boolean: StrictMode mounts a component, cleans it up, and
 // mounts it again, and a bare boolean can't tell that apart from a form
 // actually leaving the page — but each of those (re)mounts reuses the *same*
 // stashed model, and `mount`/`unmount` are called in matching pairs from one
@@ -68,11 +67,8 @@ export interface FormsState {
 }
 
 /** A record's identity as a string — table plus key — so two references to the
- * same database row compare equal however they were assembled.
- *
- * Kept here rather than shared with the Solid `formStash.ts` copy it was ported
- * from: the stash's keys are this store's own encoding, and the Solid module is
- * deleted at the cutover. */
+ * same database row compare equal however they were assembled. It lives here
+ * because it's the stash's own key encoding. */
 export function recordIdentity(table: string, key: RecordKey): string {
   return `${table}(${key.map((p) => `${p.column}=${p.value}`).join(",")})`;
 }
@@ -271,7 +267,7 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
 }
 
 /** Builds the forms store: the stash-plus-registry mechanics above, with no
- * model of its own — `RecordForm` (stage 8) supplies one per form through
+ * model of its own — `RecordEditorPanel` supplies one per form through
  * `stashedForm`'s `build`. */
 export function createFormsStore(): {
   store: FormsVanillaStore;

@@ -63,9 +63,9 @@ function ValueInput(props: {
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   };
-  // A layout effect, not a passive one: Solid's `onMount` ran as the input was
-  // inserted, and the form's blur and `relatedTarget` handling depends on focus
-  // having moved here before anything else runs.
+  // A layout effect, not a passive one: the form's blur and `relatedTarget`
+  // handling depends on focus having moved here as the input is inserted,
+  // before anything else runs.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -134,9 +134,8 @@ export function VariedValue(): JSX.Element {
  * Watches itself for truncation, in both directions: the text can change under
  * a fixed width (a load, an edit) and the width can change under fixed text
  * (the sidebar being dragged). A value with a linebreak in it never fits on one
- * line, whatever the width. Solid ran this from the span's `ref` plus a tracking
- * effect; here the effect re-runs when the text does, and the observer covers
- * the width. */
+ * line, whatever the width. The effect re-runs when the text does, and the
+ * observer covers the width. */
 function OneLineValue(props: {
   text: string;
   className: string;
