@@ -168,8 +168,15 @@ fn build_frontend() -> Result<(), String> {
     // `file:` dependency on it resolves during `bun install` below.
     build_querydown_js()?;
 
-    println!("==> bun install");
-    run(Command::new("bun").arg("install").current_dir(&frontend))?;
+    // `--frozen-lockfile`: install exactly what `bun.lock` records, and fail
+    // rather than update it when it no longer matches `package.json`. A
+    // release is built from the versions the lockfile says were tested, never
+    // from ones resolved on the build machine. If this fails, run `bun install`
+    // in `frontend/` and commit the updated `bun.lock`.
+    println!("==> bun install --frozen-lockfile");
+    run(Command::new("bun")
+        .args(["install", "--frozen-lockfile"])
+        .current_dir(&frontend))?;
 
     // Emits `frontend/dist` (Vite's outDir), which `radiocrate` embeds.
     // `vite-plugin-pwa` (Workbox) generates the service worker and handles

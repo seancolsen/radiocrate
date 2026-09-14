@@ -1,3 +1,12 @@
+# One exact Rust for every build, host and dev container alike, so the two
+# can't drift apart on `stable` and compile the release with different
+# compilers. rustup installs this toolchain (and the target below) on first use.
+#
+# Keep the dev container's base image (`FROM rust:…` in the Dockerfile) on the
+# same version, so a freshly built container doesn't download it again. Bumping
+# this recompiles everything, `duckdb-sys` included, once on each machine.
 [toolchain]
-channel = "stable"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]
+# `wasm-pack` builds the querydown-js and track-lineage bindings for this.
+targets = ["wasm32-unknown-unknown"]

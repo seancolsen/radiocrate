@@ -5,9 +5,10 @@
 # track-lineage) plus Claude Code, so the agent can run commands with full
 # permissions without touching the host system.
 #
-# Pinned to the same Rust version used on the host (1.91) so build behavior
-# matches. Bump this when the host toolchain changes.
-FROM rust:1.91-bookworm
+# The Rust version is pinned by rust-toolchain.toml, which host and container
+# builds both obey. Keep this base image on the same version, so the image
+# already carries that toolchain rather than downloading it on first use.
+FROM rust:1.97.1-bookworm
 
 # Match the host user so files created in the bind-mounted workspace stay
 # owned by you rather than root. Override at build time if your UID/GID differ:
@@ -50,8 +51,13 @@ RUN npm install -g @anthropic-ai/claude-code
 # Installed to a shared prefix (rather than a user's ~/.bun) and symlinked onto
 # PATH so every user and every shell — login, interactive, non-interactive —
 # finds it.
+#
+# Pinned, rather than whatever is newest when the image is built, so the
+# container and a host build run the same Bun. Install the same version on the
+# host (`bun upgrade`, or the install script with `-s bun-v<version>`).
+ARG BUN_VERSION=1.4.2
 ENV BUN_INSTALL=/usr/local/bun
-RUN curl -fsSL https://bun.sh/install | bash \
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
     && ln -s "${BUN_INSTALL}/bin/bun" /usr/local/bin/bun \
     && ln -s "${BUN_INSTALL}/bin/bunx" /usr/local/bin/bunx
 

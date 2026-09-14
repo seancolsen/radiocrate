@@ -51,13 +51,17 @@ The production binary is a single executable that starts a web server, serves th
 
 ### One-time setup
 
-Install [Bun](https://bun.sh) 1.2 or newer (the frontend's package manager and
-runtime). Older versions ignore `frontend/bun.lock`, so `cargo xtask` refuses
-them; run `bun upgrade` if yours is older.
+Install [Bun](https://bun.sh) 1.4.2, the frontend's package manager and runtime
+and the version the dev container pins (`BUN_VERSION` in the `Dockerfile`).
+`cargo xtask` refuses anything older than 1.2, which would ignore
+`frontend/bun.lock`.
 
 ```sh
-curl -fsSL https://bun.sh/install | bash
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
 ```
+
+Rust needs no separate pin: `rust-toolchain.toml` names the exact version, and
+rustup installs it on the first `cargo` command.
 
 ### Build
 
@@ -67,7 +71,7 @@ cargo xtask build-release
 
 This runs:
 
-1. `bun install` then `bun run build` in [frontend/](frontend) — builds the React app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
+1. `bun install --frozen-lockfile` then `bun run build` in [frontend/](frontend) — installs exactly what `bun.lock` records (if it no longer matches `package.json`, the build stops: run `bun install` in `frontend/` and commit `bun.lock`), then builds the React app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
 2. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
 
 The resulting binary is at `target/release/radiocrate`.
