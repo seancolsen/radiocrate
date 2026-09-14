@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useRef, type JSX } from "react";
 import { Icons, type IconComponent } from "../icons";
 import { sectionLabel, type Section } from "../query/definition";
 import {
@@ -19,6 +19,7 @@ import PresetSaveModal from "./PresetSaveModal";
 import ViewSqlModal from "./ViewSqlModal";
 import DeleteConfirmModal from "./DeleteConfirmModal";
 import { cx } from "./ui/cx";
+import { useElementWidth } from "./ui/useElementWidth";
 
 /** Width at/below which the bar drops the section buttons' text labels and the
  * run/filter separator. */
@@ -51,18 +52,8 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const { saveQuery, runQuery, toggleFullEditor, toggleBuilderSection } =
     useAppActions();
 
-  const [width, setWidth] = useState(9999);
   const containerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      setWidth(entries[0].contentRect.width);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const compact = width <= COMPACT_WIDTH;
+  const compact = useElementWidth(containerRef) <= COMPACT_WIDTH;
 
   return (
     <div data-testid="query-toolbar" className="bg-panel shrink-0">

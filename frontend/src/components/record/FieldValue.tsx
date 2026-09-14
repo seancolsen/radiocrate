@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,6 +9,7 @@ import {
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
+import { useResizeObserver } from "../ui/useElementWidth";
 import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
@@ -145,16 +145,9 @@ function OneLineValue(props: {
 }): JSX.Element {
   const ref = useRef<HTMLSpanElement>(null);
   const { text, onOverflow } = props;
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !onOverflow) return;
-    const check = () =>
-      onOverflow(el.scrollWidth > el.clientWidth + 1 || /\r?\n/.test(text));
-    const observer = new ResizeObserver(check);
-    observer.observe(el);
-    check();
-    return () => observer.disconnect();
-  }, [text, onOverflow]);
+  useResizeObserver(ref, (el) =>
+    onOverflow?.(el.scrollWidth > el.clientWidth + 1 || /\r?\n/.test(text)),
+  );
 
   return (
     <span

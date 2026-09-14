@@ -1,14 +1,8 @@
-import {
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type JSX,
-  type MouseEvent,
-} from "react";
+import { useMemo, useRef, type JSX, type MouseEvent } from "react";
 import { computeFieldLayout } from "../../query/fieldLayout";
 import { defaultColumnMetadata } from "../../query/columns";
 import { COL_GAP, ROW_PAD_Y, SMALL_LINE_H } from "../../query/rowGeometry";
+import { useElementWidth } from "../ui/useElementWidth";
 import ModifiedStar from "./ModifiedStar";
 
 // The embedded record: a preview of one row, inside the form.
@@ -63,17 +57,11 @@ export default function EmbeddedRecord(props: {
 }): JSX.Element {
   // The available width decides the layout, so it's measured rather than
   // assumed: the sidebar is resizable and the widget is nested arbitrarily deep.
-  // Measured in a layout effect, so the first paint already has the real width.
+  // Measured before the first paint, so it already has the real width.
+  // `clientWidth`: the widget has a border but no padding, and the layout wants
+  // whole pixels.
   const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-    observer.observe(el);
-    setWidth(el.clientWidth);
-    return () => observer.disconnect();
-  }, []);
+  const width = useElementWidth(ref, "client");
 
   const cells = props.cells;
   const layout = useMemo(

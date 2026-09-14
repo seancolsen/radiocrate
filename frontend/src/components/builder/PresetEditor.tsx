@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
 import { selectPresetDirty, selectPresetEdit } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
+import { useElementWidth } from "../ui/useElementWidth";
 
 /** Inline detail editor for an expanded preset. A pink-tinted panel with an
  * editable name and definition and the "Apply by default" checkbox; while the
@@ -36,18 +37,8 @@ export default function PresetEditor(props: {
 
   // Wrap the checkbox onto its own line when the row can't hold the name field,
   // the dirty controls, and the checkbox side by side.
-  const [width, setWidth] = useState(9999);
   const frameRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = frameRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      setWidth(entries[0].contentRect.width);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const wrapDefault = width < (dirty ? 428 : 342);
+  const wrapDefault = useElementWidth(frameRef) < (dirty ? 428 : 342);
 
   const nameOk = (edit?.name.trim() ?? "") !== "";
 
