@@ -23,6 +23,9 @@ services:
       # Persist downloaded crates so rebuilds don't re-fetch every time.
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
+      # Playwright's browser binaries (PLAYWRIGHT_BROWSERS_PATH in the
+      # Dockerfile), so an image rebuild doesn't discard them.
+      - playwright-browsers:/usr/local/ms-playwright
       # Share your authenticated Claude Code login + config with the container.
       # Comment out if you'd rather log in separately inside the container.
       - ${HOME}/.claude:/home/dev/.claude
@@ -32,3 +35,4 @@ volumes:
   target:
   cargo-registry:
   cargo-git:
+  playwright-browsers:

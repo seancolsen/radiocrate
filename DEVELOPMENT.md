@@ -73,8 +73,14 @@ bun run test:visual        # Playwright — compare against committed baselines
 bun run test:visual:update # regenerate + commit the baselines
 ```
 
-Playwright's browser needs a one-time install (`bunx playwright install chromium`,
-plus its OS libraries via `bunx playwright install-deps chromium`). Screenshots
+Both `test:visual` scripts first run `playwright install chromium`, which fetches
+the browser build matching the pinned `@playwright/test` (and is a sub-second
+no-op once it's present). On a host you also need its OS libraries, once, via
+`bunx playwright install-deps chromium`; the container image already has them. In
+the container, browsers live in the `playwright-browsers` named volume
+(`PLAYWRIGHT_BROWSERS_PATH=/usr/local/ms-playwright`), so they survive an image
+rebuild. If you invoke `bunx playwright test` directly instead of going through
+the scripts, run the install yourself first. Screenshots
 are only reproducible in the same (container) environment CI uses — font/GPU
 drift on another machine produces spurious diffs.
 

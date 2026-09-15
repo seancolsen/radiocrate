@@ -68,8 +68,11 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
 # re-populates the package lists we cleaned above; we clean them again after.
 #
 # The browser *binary* is deliberately NOT baked in: its build must match the
-# frontend's pinned @playwright/test version, so it is fetched per-checkout with
-# `bunx playwright install chromium` (see DEVELOPMENT.md).
+# frontend's pinned @playwright/test version. `bun run test:visual` installs it
+# on demand (a no-op once present) into PLAYWRIGHT_BROWSERS_PATH, which
+# docker-compose.yml backs with a named volume. The default, ~/.cache, lives in
+# the container layer, so a rebuild would silently discard the browser.
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/ms-playwright
 RUN npx --yes playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
@@ -116,8 +119,9 @@ RUN groupadd --gid "${USER_GID}" "${USERNAME}" 2>/dev/null || true \
     && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${USERNAME}" \
     && chmod 0440 "/etc/sudoers.d/${USERNAME}" \
-    && mkdir -p /workspace /usr/local/cargo/registry /usr/local/cargo/git \
-    && chown -R "${USER_UID}:${USER_GID}" /workspace /usr/local/cargo /usr/local/rustup /usr/local/uv
+    && mkdir -p /workspace /usr/local/cargo/registry /usr/local/cargo/git "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && chown -R "${USER_UID}:${USER_GID}" /workspace /usr/local/cargo /usr/local/rustup /usr/local/uv \
+        "${PLAYWRIGHT_BROWSERS_PATH}"
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

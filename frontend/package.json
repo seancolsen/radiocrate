@@ -12,8 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:unit": "vitest run",
-    "test:visual": "playwright test",
-    "test:visual:update": "playwright test --update-snapshots"
+    "test:visual": "playwright install chromium && playwright test",
+    "test:visual:update": "playwright install chromium && playwright test --update-snapshots"
   },
   "dependencies": {
     "apache-arrow": "^18.0.0",
