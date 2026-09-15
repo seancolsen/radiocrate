@@ -124,8 +124,8 @@ test("double-click plays a row's track, and `ended` advances to the next", async
   // The bar appears and the first row's track is being streamed.
   await expect(page.getByTestId("now-playing")).toBeVisible();
   await expect.poll(() => audioSrc(page)).toContain("track-a");
-  // The next track is fetched while the first still plays, so the boundary
-  // needs no network.
+  // Once the first track has downloaded, the next is fetched while it still
+  // plays, so the boundary needs no network.
   await expect.poll(() => streamed).toContain("track-b");
 
   // The track ends: the audio layer advances on its own, with no UI involvement.

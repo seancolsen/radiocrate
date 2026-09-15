@@ -11,6 +11,7 @@ class FakeAudio extends EventTarget {
   paused = true;
   ended = false;
   muted = false;
+  networkState = 0;
   preload = "";
   style = {};
   bufferedRanges: [number, number][] = [];
@@ -34,6 +35,7 @@ class FakeAudio extends EventTarget {
     this.duration = Number.NaN;
     this.readyState = 0;
     this.bufferedRanges = [];
+    this.networkState = this.src ? NETWORK_LOADING : 0;
   }
 
   play(): Promise<void> {
@@ -53,6 +55,9 @@ class FakeAudio extends EventTarget {
     if (name === "src") this.src = "";
   }
 }
+
+const NETWORK_IDLE = 1;
+const NETWORK_LOADING = 2;
 
 let created: FakeAudio[] = [];
 let quality: AudioQualityPref = "lower";
@@ -79,6 +84,13 @@ function playTranscode(engine: AudioEngine): FakeAudio {
   return el;
 }
 
+/** Stages `el` as a browser reports a finished download: network idle, then
+ * `suspend`. */
+function finishDownload(el: FakeAudio): void {
+  el.networkState = NETWORK_IDLE;
+  el.dispatchEvent(new Event("suspend"));
+}
+
 beforeEach(() => {
   created = [];
   quality = "lower";
@@ -87,6 +99,67 @@ beforeEach(() => {
   vi.stubGlobal("document", {
     body: { appendChild: () => {} },
     addEventListener: () => {},
+  });
+});
+
+describe("the next track", () => {
+  const t2 = "/api/tracks/t2/stream?quality=opus128";
+  const t3 = "/api/tracks/t3/stream?quality=opus128";
+
+  it("isn't fetched until the current track has downloaded", () => {
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", ["t2"]);
+    const [active, standby] = created;
+    expect(standby!.src).not.toContain("/api/");
+
+    active!.dispatchEvent(new Event("suspend")); // still loading: no effect
+    expect(standby!.src).not.toContain("/api/");
+
+    finishDownload(active!);
+    expect(standby!.src).toBe(t2);
+  });
+
+  it("is primed at once after a handoff to a track already downloaded", () => {
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", ["t2", "t3"]);
+    const [first, second] = created;
+    finishDownload(first!);
+    second!.networkState = NETWORK_IDLE;
+
+    first!.dispatchEvent(new Event("ended"));
+
+    expect(second!.paused).toBe(false);
+    expect(first!.src).toBe(t3);
+  });
+
+  it("waits after a handoff to a track still downloading", () => {
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", ["t2", "t3"]);
+    const [first, second] = created;
+    finishDownload(first!);
+
+    engine.skipNext();
+
+    expect(second!.paused).toBe(false);
+    expect(first!.src).toBe("");
+    expect(first!.networkState).toBe(0); // the skipped track's fetch is aborted
+
+    finishDownload(second!);
+    expect(first!.src).toBe(t3);
+  });
+
+  it("is dropped mid-download when another track starts", () => {
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", ["t2"]);
+    const [active, standby] = created;
+    finishDownload(active!);
+    expect(standby!.src).toBe(t2);
+
+    engine.setPlaylist([], "t5", ["t6"]);
+
+    expect(standby!.src).not.toContain("/api/");
+    finishDownload(active!);
+    expect(standby!.src).toBe("/api/tracks/t6/stream?quality=opus128");
   });
 });
 

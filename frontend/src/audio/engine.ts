@@ -27,6 +27,14 @@
 // memory — no network on the critical path, and the gap in rendered audio is one
 // JS task rather than a round trip. Every fetch the engine performs happens in
 // the safe window: while audio is playing.
+//
+// Priming waits its turn, though. On a slow connection two streams at once
+// starve the one being listened to, so the standby only starts fetching once the
+// active element's own download has settled: it fires `suspend` with its network
+// idle, meaning the file is fully fetched (or the browser has buffered as far
+// ahead as it intends to). A fresh load on the active element likewise drops a
+// prime still in flight. A boundary reached before the prime is ready falls back
+// to a fresh load.
 
 import { trackStreamUrl } from "api-client";
 
@@ -81,6 +89,15 @@ interface AudioSessionNavigator {
 /** `HTMLMediaElement.HAVE_METADATA`, spelled out so the engine loads outside a
  * browser (its tests run in plain Node). */
 const HAVE_METADATA = 1;
+
+/** `HTMLMediaElement.NETWORK_IDLE`: the element has a resource but isn't
+ * fetching any of it right now. */
+const NETWORK_IDLE = 1;
+
+/** Ten milliseconds of silent WAV, for {@link AudioEngine.unlock} to play on a
+ * standby element with nothing loaded yet. Inline, so it costs no fetch. */
+const SILENCE =
+  "data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
 
 /** Whether `t` falls inside one of `ranges`. */
 function inRanges(ranges: TimeRanges, t: number): boolean {
@@ -300,26 +317,47 @@ export class AudioEngine {
     void this.audio.play().catch(() => {});
     this.current = id;
     this.setPlaybackState("playing");
-    this.primeNext();
+    // The next track is primed once this one has downloaded (see `suspend`).
+    this.yieldStandby();
+  }
+
+  /** Makes way for a fresh fetch on the active element. A prime still
+   * downloading would share the connection with it, so it's dropped;
+   * {@link primeNext} starts it again once the active track has downloaded. A
+   * prime of the right track that's already fully fetched costs nothing, so it
+   * stays. */
+  private yieldStandby(): void {
+    if (this.primed === undefined) return;
+    const fetched = this.standby.networkState === NETWORK_IDLE;
+    if (this.primed === this.queue[0] && fetched) return;
+    this.releaseStandby();
+  }
+
+  /** Empties the standby element. `load()` with no `src` is what aborts a fetch
+   * in flight; removing the attribute alone lets it run on. */
+  private releaseStandby(): void {
+    const el = this.standby;
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+    this.primed = undefined;
   }
 
   /** Points the standby element at whatever is next in the queue, so the next
-   * boundary can be crossed without touching the network. Cheap and idempotent:
-   * re-priming the track already primed does nothing, and an empty queue
-   * releases the buffer. */
+   * boundary can be crossed without touching the network. It only starts a
+   * fetch once the active element has finished its own, so the two never share
+   * a slow connection. Cheap and idempotent: re-priming the track already
+   * primed does nothing, and an empty queue releases the buffer. */
   private primeNext(): void {
     if (this.handoffBlocked) return;
     const next = this.queue[0];
     const el = this.standby;
     if (next === undefined) {
-      if (this.primed !== undefined) {
-        el.pause();
-        el.removeAttribute("src");
-      }
-      this.primed = undefined;
+      if (this.primed !== undefined) this.releaseStandby();
       return;
     }
     if (this.primed === next && el.getAttribute("src")) return;
+    if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
     this.primedQuality = streamQualityParam(this.getQuality());
     el.src = trackStreamUrl(next, this.primedQuality);
@@ -332,18 +370,19 @@ export class AudioEngine {
    * `ended` handler of a page that has, for the moment, stopped rendering audio
    * and is therefore at its most freezable. */
   private handoff(id: string): void {
-    const finished = this.audio;
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
-    this.primed = undefined;
     this.activeQuality = this.primedQuality;
     this.offset = 0;
     this.knownDuration = null;
     this.current = id;
     this.wantPlaying = true;
     void this.audio.play().catch(() => this.handoffFailed(id));
-    // `ended` already stopped it; a *skip* did not.
-    finished.pause();
+    // The outgoing element is the standby now. `ended` already stopped it; a
+    // *skip* did not, and a skipped track may still be downloading.
+    this.releaseStandby();
     this.setPlaybackState("playing");
+    // Primes straight away if the incoming track finished downloading while it
+    // waited; otherwise its `suspend` will.
     this.primeNext();
   }
 
@@ -357,22 +396,33 @@ export class AudioEngine {
     const stranded = this.audio;
     stranded.pause();
     stranded.removeAttribute("src");
+    stranded.load(); // abort its fetch, which would compete with the reload
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
     this.load(id);
   }
 
   /** Claims playback permission for the standby element while a user gesture is
    * still on the stack. Muted so the listener hears nothing of the next track;
-   * the element is returned to the start and unmuted before it is ever needed. */
+   * the element is returned to the start and unmuted before it is ever needed.
+   * With nothing primed yet (the usual case, since priming waits on the active
+   * download) it borrows {@link SILENCE} to play, and gives it back after. */
   private unlock(): void {
+    if (this.handoffBlocked) return;
     const el = this.standby;
-    if (this.handoffBlocked || !el.getAttribute("src")) return;
+    const borrowed = !el.getAttribute("src");
+    if (borrowed) el.src = SILENCE;
     el.muted = true;
     void el
       .play()
       .then(() => {
         el.pause();
-        el.currentTime = 0;
+        if (!borrowed) {
+          el.currentTime = 0;
+        } else if (el.getAttribute("src") === SILENCE) {
+          // Not already replaced by a prime.
+          el.removeAttribute("src");
+          el.load();
+        }
         el.muted = false;
       })
       .catch(() => {
@@ -495,6 +545,7 @@ export class AudioEngine {
     this.offset = start;
     el.src = trackStreamUrl(id, this.activeQuality, start);
     el.load();
+    this.yieldStandby();
     if (this.wantPlaying) void el.play().catch(() => {});
     this.updatePositionState();
     this.events.onTransport();
@@ -530,6 +581,12 @@ export class AudioEngine {
         if (!active()) return;
         this.updatePositionState();
         transport();
+      });
+
+      // The active track's download has settled, so the connection is free to
+      // prime the next one. `primeNext` checks the network really went idle.
+      el.addEventListener("suspend", () => {
+        if (active()) this.primeNext();
       });
 
       // Auto-advance when the current track finishes. This fires from the
