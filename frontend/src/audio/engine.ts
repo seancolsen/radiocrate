@@ -193,12 +193,19 @@ export class AudioEngine {
     return this.offset + (Number.isFinite(t) ? t : 0);
   }
 
-  /** The current track's duration, or `null` while neither the stream nor the
-   * library has supplied one. */
+  /** The current track's duration, or `null` while neither the library nor a
+   * finished download has supplied one.
+   *
+   * The library's length wins. The element's own is trusted only once its
+   * download has settled: while a stream is still arriving, a browser may
+   * report the length of what it has so far, which grows as bytes land. */
   get duration(): number | null {
-    const d = this.audio.duration;
-    if (Number.isFinite(d) && d > 0) return this.offset + d;
-    return this.knownDuration;
+    if (this.knownDuration !== null) return this.knownDuration;
+    const el = this.audio;
+    const d = el.duration;
+    const fetched =
+      el.readyState >= HAVE_METADATA && el.networkState === NETWORK_IDLE;
+    return fetched && Number.isFinite(d) && d > 0 ? this.offset + d : null;
   }
 
   /** Whether a track is queued after the current one. */
@@ -585,8 +592,13 @@ export class AudioEngine {
 
       // The active track's download has settled, so the connection is free to
       // prime the next one. `primeNext` checks the network really went idle.
+      // A settled download is also what makes the element's duration
+      // trustworthy (see `duration`), so the bar re-reads it.
       el.addEventListener("suspend", () => {
-        if (active()) this.primeNext();
+        if (!active()) return;
+        this.primeNext();
+        this.updatePositionState();
+        transport();
       });
 
       // Auto-advance when the current track finishes. This fires from the

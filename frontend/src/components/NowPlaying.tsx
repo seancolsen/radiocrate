@@ -62,7 +62,7 @@ function Timeline(): JSX.Element {
   const elapsedText = formatSeconds(elapsed);
   const totalText = total === null ? "-:--" : formatSeconds(total);
   const remainingText =
-    total === null ? "-:--" : `−${formatSeconds(total - elapsed)}`;
+    total === null ? null : `−${formatSeconds(total - elapsed)}`;
   const pct = `${progress * 100}%`;
 
   return (
@@ -99,8 +99,15 @@ function Timeline(): JSX.Element {
           />
         </div>
       </div>
-      <span className="text-ink shrink-0 text-[11px] leading-none tabular-nums">
-        {remainingText}
+      {/* Blank until the length is known; the invisible placeholder holds the
+          clock's width so the track doesn't resize when it arrives. */}
+      <span
+        className={cx(
+          "text-ink shrink-0 text-[11px] leading-none tabular-nums",
+          { invisible: remainingText === null },
+        )}
+      >
+        {remainingText ?? "−0:00"}
       </span>
     </div>
   );

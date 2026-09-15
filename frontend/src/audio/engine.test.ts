@@ -282,6 +282,61 @@ describe("a file served whole", () => {
 
     expect(el.src).toBe("/api/tracks/t1/stream");
     expect(el.currentTime).toBe(120);
+  });
+});
+
+describe("the duration", () => {
+  it("is unknown while the stream is still downloading", () => {
+    quality = "higher";
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 12; // what has arrived so far
+
+    expect(engine.duration).toBeNull();
+    expect(engine.pastHalfway).toBe(false);
+  });
+
+  it("comes from the element once its download has finished", () => {
+    quality = "higher";
+    const { engine, events } = setup();
+    engine.setPlaylist([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 180;
+    events.onTransport.mockClear();
+
+    finishDownload(el);
+
+    expect(engine.duration).toBe(180);
+    expect(events.onTransport).toHaveBeenCalled();
+  });
+
+  it("comes from the library before the download has finished", () => {
+    quality = "higher";
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 12;
+
+    engine.setMetadata(null, null, 180);
+
+    expect(engine.duration).toBe(180);
+  });
+
+  it("prefers the library over the element", () => {
+    quality = "higher";
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 180.4;
+    finishDownload(el);
+
+    engine.setMetadata(null, null, 180);
+
     expect(engine.duration).toBe(180);
   });
 });
