@@ -271,11 +271,21 @@ export async function postQuery(sql: string): Promise<ArrayBuffer> {
  * `quality` mirrors the backend's `StreamParams.quality`: omit it (or pass
  * \"original\") to stream the source file as-is; pass \"opus128\" to request
  * the low-bandwidth transcode (the server only transcodes lossless sources —
- * a lossy file streams unchanged either way).
+ * a lossy file streams unchanged either way). `start` mirrors
+ * `StreamParams.start`: the position, in seconds, a transcode begins from —
+ * its timeline then counts from zero at that point. A file streamed as-is
+ * ignores it (it is served whole, seekable by range request).
  */
-export function trackStreamUrl(id: string, quality?: string): string {
-  const q = quality ? `?quality=${encodeURIComponent(quality)}` : \"\";
-  return `/api/tracks/${encodeURIComponent(id)}/stream${q}`;
+export function trackStreamUrl(
+  id: string,
+  quality?: string,
+  start?: number,
+): string {
+  const params = new URLSearchParams();
+  if (quality) params.set(\"quality\", quality);
+  if (start) params.set(\"start\", String(start));
+  const q = params.toString();
+  return `/api/tracks/${encodeURIComponent(id)}/stream${q ? `?${q}` : \"\"}`;
 }";
 
     format!(

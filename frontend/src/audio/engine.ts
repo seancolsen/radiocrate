@@ -78,6 +78,18 @@ interface AudioSessionNavigator {
   audioSession?: { type: string };
 }
 
+/** `HTMLMediaElement.HAVE_METADATA`, spelled out so the engine loads outside a
+ * browser (its tests run in plain Node). */
+const HAVE_METADATA = 1;
+
+/** Whether `t` falls inside one of `ranges`. */
+function inRanges(ranges: TimeRanges, t: number): boolean {
+  for (let i = 0; i < ranges.length; i++) {
+    if (ranges.start(i) <= t && t <= ranges.end(i)) return true;
+  }
+  return false;
+}
+
 export class AudioEngine {
   /** The two interchangeable players: one active, one holding the next track
    * pre-buffered. Roles swap on every auto-advance — see {@link handoff}. */
@@ -106,6 +118,21 @@ export class AudioEngine {
   private wantPlaying = false;
   /** Reads the live streaming-quality preference, consulted on every `load`. */
   private readonly getQuality: () => AudioQualityPref;
+  /** The `quality` param the active element's stream was requested with, so a
+   * restart (see {@link seek}) asks for the same stream even if the preference
+   * has changed since. */
+  private activeQuality: string | undefined;
+  /** The same, for the stream the standby element is buffering. */
+  private primedQuality: string | undefined;
+  /** Where the active element's timeline starts within the track, in seconds.
+   * Zero unless a seek restarted a transcode part-way in: the element then
+   * counts from zero again, so everything it reports is shifted by this much. */
+  private offset = 0;
+  /** The current track's length according to the library, from
+   * {@link setMetadata}. A transcode is streamed as it's encoded — no
+   * `Content-Length`, no range support — so its element reports an infinite
+   * duration, and this is the only length it has. */
+  private knownDuration: number | null = null;
 
   constructor(events: EngineEvents, getQuality: () => AudioQualityPref) {
     this.events = events;
@@ -146,13 +173,15 @@ export class AudioEngine {
 
   get position(): number {
     const t = this.audio.currentTime;
-    return Number.isFinite(t) ? t : 0;
+    return this.offset + (Number.isFinite(t) ? t : 0);
   }
 
-  /** The current track's duration, or `null` before metadata has loaded. */
+  /** The current track's duration, or `null` while neither the stream nor the
+   * library has supplied one. */
   get duration(): number | null {
     const d = this.audio.duration;
-    return Number.isFinite(d) && d > 0 ? d : null;
+    if (Number.isFinite(d) && d > 0) return this.offset + d;
+    return this.knownDuration;
   }
 
   /** Whether a track is queued after the current one. */
@@ -205,6 +234,8 @@ export class AudioEngine {
     }
     this.current = undefined;
     this.primed = undefined;
+    this.offset = 0;
+    this.knownDuration = null;
     this.history = [];
     this.queue = [];
     if (this.media) {
@@ -214,8 +245,17 @@ export class AudioEngine {
     this.events.onTransport();
   }
 
-  /** Updates the OS / lock-screen "now playing" metadata for the current track. */
-  setMetadata(title: string | null, artist: string | null): void {
+  /** Takes the current track's library metadata: its title and artist for the
+   * OS / lock-screen "now playing" display, and its length for the transport
+   * (see {@link knownDuration}). */
+  setMetadata(
+    title: string | null,
+    artist: string | null,
+    duration: number | null,
+  ): void {
+    this.knownDuration = duration !== null && duration > 0 ? duration : null;
+    this.updatePositionState();
+    this.events.onTransport();
     if (!this.media) return;
     this.media.metadata = new MediaMetadata({
       title: title ?? "",
@@ -249,7 +289,12 @@ export class AudioEngine {
    * the first track, for "previous", and whenever the standby element isn't
    * already holding the track we want. */
   private load(id: string): void {
-    this.audio.src = trackStreamUrl(id, streamQualityParam(this.getQuality()));
+    // A retry of the same track (see `handoffFailed`) keeps the length its
+    // metadata fetch already supplied.
+    if (id !== this.current) this.knownDuration = null;
+    this.offset = 0;
+    this.activeQuality = streamQualityParam(this.getQuality());
+    this.audio.src = trackStreamUrl(id, this.activeQuality);
     this.audio.load();
     this.wantPlaying = true;
     void this.audio.play().catch(() => {});
@@ -276,7 +321,8 @@ export class AudioEngine {
     }
     if (this.primed === next && el.getAttribute("src")) return;
     el.pause();
-    el.src = trackStreamUrl(next, streamQualityParam(this.getQuality()));
+    this.primedQuality = streamQualityParam(this.getQuality());
+    el.src = trackStreamUrl(next, this.primedQuality);
     el.load();
     this.primed = next;
   }
@@ -289,6 +335,9 @@ export class AudioEngine {
     const finished = this.audio;
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
     this.primed = undefined;
+    this.activeQuality = this.primedQuality;
+    this.offset = 0;
+    this.knownDuration = null;
     this.current = id;
     this.wantPlaying = true;
     void this.audio.play().catch(() => this.handoffFailed(id));
@@ -406,12 +455,49 @@ export class AudioEngine {
     });
   }
 
-  /** Moves the playhead to `seconds`, clamped to the track. */
+  /** Moves the playhead to `seconds`, clamped to the track.
+   *
+   * A file served whole seeks in place: the browser range-requests whatever it
+   * needs. A transcode can't — it has no length and no range support — so it
+   * seeks in place only within what it has already buffered. Anywhere else the
+   * stream is restarted from the target (see {@link restartAt}). */
   seek(seconds: number): void {
     const duration = this.duration;
     let target = Math.max(seconds, 0);
     if (duration !== null) target = Math.min(target, duration);
-    this.audio.currentTime = target;
+    const el = this.audio;
+    const local = target - this.offset;
+    const inPlace =
+      local >= 0 &&
+      // Before its metadata loads, the element keeps the position as where to
+      // start once it does — nor could it tell a transcode from a file yet.
+      (el.readyState < HAVE_METADATA ||
+        Number.isFinite(el.duration) ||
+        inRanges(el.buffered, local));
+    if (inPlace) el.currentTime = local;
+    else this.restartAt(target);
+  }
+
+  /** Re-requests the current track's transcode starting at `target` seconds,
+   * via the backend's `start` param. The new stream's timeline begins at zero,
+   * which {@link offset} accounts for. */
+  private restartAt(target: number): void {
+    const id = this.current;
+    if (id === undefined) return;
+    const duration = this.duration;
+    if (duration !== null && target >= duration) {
+      // Nothing left to stream: finish the track, as `ended` would.
+      if (!this.goNext(true)) this.events.onQueueDry();
+      return;
+    }
+    const start = Math.round(target * 1000) / 1000;
+    const el = this.audio;
+    this.offset = start;
+    el.src = trackStreamUrl(id, this.activeQuality, start);
+    el.load();
+    if (this.wantPlaying) void el.play().catch(() => {});
+    this.updatePositionState();
+    this.events.onTransport();
   }
 
   private seekBy(offset: number): void {

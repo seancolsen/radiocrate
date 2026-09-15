@@ -9,6 +9,9 @@ export interface TrackMetadata {
   title: string | null;
   /** Credited artists in credit order (joined with ", " for display). */
   artists: string[];
+  /** The file's length in seconds, as the scanner measured it. A transcoded
+   * stream carries no length of its own, so this is the only one it has. */
+  duration: number | null;
 }
 
 /** Escapes a value for embedding in a single-quoted SQL literal. */
@@ -28,8 +31,12 @@ export async function fetchTrackMetadata(
     `from credit c join artist ar on ar.id = c.artist ` +
     `group by c.track` +
     `) ` +
-    `select t.id::text as id, t.title, a.artists ` +
-    `from track t left join a on a.track = t.id ` +
+    // `epoch` turns the INTERVAL into seconds as a DOUBLE, which Arrow JS
+    // decodes natively (it can't decode DuckDB's intervals).
+    `select t.id::text as id, t.title, a.artists, ` +
+    `epoch(f.duration) as duration ` +
+    `from track t left join file f on f.id = t.file ` +
+    `left join a on a.track = t.id ` +
     `where t.id = TRY_CAST('${sqlLiteral(trackId)}' as UUID);`;
 
   try {
@@ -38,7 +45,12 @@ export async function fetchTrackMetadata(
     if (!row) return undefined;
     const title = row["title"];
     const artists = row["artists"];
+    const duration: unknown = row["duration"];
     return {
+      duration:
+        typeof duration === "number" && Number.isFinite(duration)
+          ? duration
+          : null,
       title: title == null ? null : stringifyArrowValue(title),
       artists: isListLikeValue(artists)
         ? Array.from(artists as Iterable<unknown>)

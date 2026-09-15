@@ -751,9 +751,10 @@ export function createAppActions(
     ).catch((err) => console.error("play log failed", err));
   };
 
-  /** Fetches the track's title/artists, then fills them into the bar and pushes
-   * them to the OS media session — but only while that track is still the
-   * current one, so a fetch overtaken by an auto-advance is discarded. */
+  /** Fetches the track's title/artists/duration, then fills them into the bar
+   * and hands them to the engine (the OS media session, and the length a
+   * transcoded stream lacks) — but only while that track is still the current
+   * one, so a fetch overtaken by an auto-advance is discarded. */
   const loadMetadata = async (id: string) => {
     const meta = await fetchTrackMetadata(id);
     if (!meta || get().currentTrack?.id !== id) return;
@@ -766,6 +767,7 @@ export function createAppActions(
     audio?.setMetadata(
       meta.title,
       meta.artists.length > 0 ? meta.artists.join(", ") : null,
+      meta.duration,
     );
   };
 
