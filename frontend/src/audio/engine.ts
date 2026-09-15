@@ -406,11 +406,16 @@ export class AudioEngine {
     });
   }
 
-  private seekBy(offset: number): void {
+  /** Moves the playhead to `seconds`, clamped to the track. */
+  seek(seconds: number): void {
     const duration = this.duration;
-    let target = Math.max(this.position + offset, 0);
+    let target = Math.max(seconds, 0);
     if (duration !== null) target = Math.min(target, duration);
     this.audio.currentTime = target;
+  }
+
+  private seekBy(offset: number): void {
+    this.seek(this.position + offset);
   }
 
   /** Registers the browser callbacks that drive playback off the UI: the audio
@@ -499,7 +504,7 @@ export class AudioEngine {
     on("seekbackward", (d) => this.seekBy(-(d.seekOffset ?? 10)));
     on("seekforward", (d) => this.seekBy(d.seekOffset ?? 10));
     on("seekto", (d) => {
-      if (d.seekTime != null) this.audio.currentTime = d.seekTime;
+      if (d.seekTime != null) this.seek(d.seekTime);
     });
   }
 }

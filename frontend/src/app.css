@@ -15,6 +15,7 @@
   --color-preset: var(--preset);
   --color-danger: var(--danger);
   --color-accent-soft: var(--accent-soft);
+  --color-now-playing: var(--now-playing);
   --color-timeline-rest: var(--timeline-rest);
   --color-field-text: var(--field-text);
   --color-field-number: var(--field-number);
@@ -40,10 +41,12 @@
     --split-trigger: #d7eafd; /* the ⋮ trigger's lighter tint */
     --preset: #f3e3fb; /* expanded preset tab + detail panel */
     --danger: #c0392b; /* delete / unsaved-marker red */
-    /* ACCENT_BLUE (lib.rs): the played part of the now-playing timeline and the
-       playing row's edge marker. Its companions are a translucent strong blue —
-       the timeline's remaining part, and the wash over the playing row. */
+    /* ACCENT_BLUE (lib.rs): the playing row's edge marker. The strong blue beside
+       it is the now-playing bar's play button, played timeline and knob; its
+       translucent companions are the timeline's remaining part and the wash over
+       the playing row. */
     --accent-soft: #bcd0ea;
+    --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);
     /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
@@ -81,6 +84,7 @@
       --preset: #483755;
       --danger: #e06b5c;
       --accent-soft: #6e8fb5;
+      --now-playing: rgb(46 124 246);
       --timeline-rest: rgb(46 124 246 / 0.275);
       --row-current: rgb(46 124 246 / 0.063);
       --row-bg-top: #303030;
@@ -114,6 +118,7 @@
     --preset: #f3e3fb;
     --danger: #c0392b;
     --accent-soft: #bcd0ea;
+    --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);
     --row-bg-top: #ffffff;
@@ -148,6 +153,7 @@
     --preset: #483755;
     --danger: #e06b5c;
     --accent-soft: #6e8fb5;
+    --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);
     --row-bg-top: #303030;

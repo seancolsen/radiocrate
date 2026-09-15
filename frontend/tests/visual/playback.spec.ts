@@ -53,10 +53,34 @@ async function mockBackend(page: Page): Promise<string[]> {
   await page.route("**/api/query", (route) =>
     route.fulfill({ status: 200, contentType: "text/plain", body: "" }),
   );
+  // The stream answers Range requests, as the server's `ServeFile` does: without
+  // them the browser reports nothing seekable and ignores every seek.
   await page.route("**/api/tracks/*/stream", (route) => {
     const id = /tracks\/([^/]+)\/stream/.exec(route.request().url())?.[1];
     if (id) streamed.push(id);
-    void route.fulfill({ contentType: "audio/wav", body: silentWav() });
+    const body = silentWav();
+    const range = /bytes=(\d+)-(\d*)/.exec(
+      route.request().headers()["range"] ?? "",
+    );
+    if (!range) {
+      void route.fulfill({
+        contentType: "audio/wav",
+        headers: { "Accept-Ranges": "bytes" },
+        body,
+      });
+      return;
+    }
+    const start = Number(range[1]);
+    const end = range[2] ? Number(range[2]) : body.length - 1;
+    void route.fulfill({
+      status: 206,
+      contentType: "audio/wav",
+      headers: {
+        "Accept-Ranges": "bytes",
+        "Content-Range": `bytes ${start}-${end}/${body.length}`,
+      },
+      body: body.subarray(start, end + 1),
+    });
   });
   return streamed;
 }
@@ -231,4 +255,46 @@ test("the bar's Close action dismisses playback", async ({ page }) => {
     .click();
   await page.getByRole("menuitem", { name: "Close" }).click();
   await expect(page.getByTestId("now-playing")).toBeHidden();
+});
+
+test("the bar's Next button skips to the next queued track", async ({
+  page,
+}) => {
+  await mockBackend(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
+  await expect(page.locator("canvas[data-rows]")).toBeVisible();
+  await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
+  await expect.poll(() => audioSrc(page)).toContain("track-a");
+
+  const next = page
+    .getByTestId("now-playing")
+    .getByRole("button", { name: "Next" });
+  await next.click();
+  await expect.poll(() => audioSrc(page)).toContain("track-b");
+  // Nothing is queued after the last row.
+  await expect(next).toBeDisabled();
+});
+
+test("clicking the timeline seeks the playing track", async ({ page }) => {
+  await mockBackend(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
+  await expect(page.locator("canvas[data-rows]")).toBeVisible();
+  await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
+
+  // The silent track is 30s; the slider is live once its duration is known.
+  const slider = page.getByTestId("now-playing").getByRole("slider");
+  await expect(slider).toHaveAttribute("aria-valuemax", "30");
+  const box = (await slider.boundingBox())!;
+  await slider.click({ position: { x: box.width * 0.5, y: box.height / 2 } });
+
+  const currentTime = () =>
+    page.evaluate(
+      () =>
+        [...document.querySelectorAll("audio")].find((el) => !el.paused)
+          ?.currentTime ?? -1,
+    );
+  await expect.poll(currentTime).toBeGreaterThanOrEqual(14);
+  expect(await currentTime()).toBeLessThan(20);
 });

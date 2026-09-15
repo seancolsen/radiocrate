@@ -256,6 +256,8 @@ export interface AppActions {
   togglePlayPause: () => void;
   /** Skip to the next queued track (the bar's "Next"). */
   skipNext: () => void;
+  /** Move the playing track's playhead to `seconds` (the bar's timeline). */
+  seek: (seconds: number) => void;
   /** Dismiss the bar: stop playback and tear down the queue (the bar's "Close"). */
   stopPlayback: () => void;
   /** Jump to the playing track's row: activate its source tab, select the row and
@@ -1180,6 +1182,11 @@ export function createAppActions(
     },
     skipNext: () => {
       audio?.skipNext();
+      syncTransport();
+    },
+    seek: (seconds) => {
+      if (!audio || !get().currentTrack) return;
+      audio.seek(seconds);
       syncTransport();
     },
     stopPlayback: () => {

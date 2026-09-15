@@ -115,8 +115,9 @@ for (const colorScheme of SCHEMES) {
     await expect(dialog).toHaveScreenshot(snapshot("about/modal", colorScheme));
   });
 
-  // The now-playing bar: title + artists on the left, play/pause and the
-  // overflow trigger on the right, progress timeline across the bottom.
+  // The now-playing bar: the round play/pause button, title + artists with Next
+  // and the overflow trigger at the right, and the seek timeline with elapsed and
+  // remaining time beneath them.
   test(`now-playing/playing - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "now-playing/playing", colorScheme);
     await expect(page.getByTestId("now-playing")).toBeVisible();

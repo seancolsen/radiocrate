@@ -279,7 +279,7 @@ export const STORIES: Record<string, Story> = {
   // deliberately left unlocated in the results (see `seedPlayback`).
   "now-playing/menu": {
     width: 160,
-    height: 120,
+    height: 90,
     setup: (stores) => seedPlayback(stores),
     render: () => (
       <Menu defaultOpen width="130px" trigger={() => null}>

@@ -176,13 +176,17 @@ function durationSeconds(value: string): number | null {
   return Number(m[1] ?? 0) * 86_400 + (m[2] === "-" ? -time : time);
 }
 
-/** Formats a duration as `M:SS` (minutes unpadded, seconds zero-padded),
- * rounded to the nearest second. */
+/** Formats a duration cell as `M:SS` (see {@link formatSeconds}). */
 function formatDuration(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed === "") return null;
   const secs = durationSeconds(trimmed);
-  if (secs === null) return null;
+  return secs === null ? null : formatSeconds(secs);
+}
+
+/** Formats a count of seconds as `M:SS` (minutes unpadded, seconds
+ * zero-padded), rounded to the nearest second. */
+export function formatSeconds(secs: number): string {
   const total = Math.round(secs);
   const sign = total < 0 ? "-" : "";
   const abs = Math.abs(total);

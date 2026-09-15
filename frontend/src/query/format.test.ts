@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   displayText,
+  formatSeconds,
   formatValue,
   parseFormatter,
   relativeBetween,
@@ -67,6 +68,16 @@ describe("Duration formatter", () => {
   // not a duration: the formatter declines it and the caller shows it raw.
   it("declines an interval with a month component", () => {
     expect(formatValue({ type: "duration" }, "14 months")).toBeNull();
+  });
+});
+
+// The now-playing bar's clocks format seconds straight from the audio element.
+describe("formatSeconds", () => {
+  it("formats M:SS, rounded to the second", () => {
+    expect(formatSeconds(0)).toBe("0:00");
+    expect(formatSeconds(74.4)).toBe("1:14");
+    expect(formatSeconds(254.6)).toBe("4:15");
+    expect(formatSeconds(3725)).toBe("62:05");
   });
 });
 
