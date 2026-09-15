@@ -42,6 +42,7 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import { querydownReady } from "../../query/querydown";
+import type { RecordQuery } from "../../query/recordForm";
 import {
   analyzeColumnSources,
   recordKeyColumns,
@@ -276,6 +277,12 @@ export interface AppActions {
   /** Open a new ephemeral (unsaved) query tab based on "track", seeded with
    * that base's default filter/sort/display presets. */
   newQueryTab: () => void;
+  /** Open a new ephemeral query tab on exactly the records `query` finds — the
+   * record editor's "open in a new tab" on a multi-record field. Its filter and
+   * sort are `query`'s own; its display is the base table's default display
+   * preset when there is one, and `query`'s otherwise. The tab goes in to the
+   * right of `besideTabId` and becomes the active one. */
+  openRecordsTab: (besideTabId: string, query: RecordQuery) => void;
 
   /** Begin renaming query `id`, seeding the buffer with its current name. */
   beginRename: (id: string) => void;
@@ -625,6 +632,24 @@ export function createAppActions(
     rowClickAnchor.delete(id);
     rowSelectionLead.delete(id);
     runTokens.delete(id);
+  };
+
+  /** Opens `def` in a new ephemeral (never-saved) query tab named for the
+   * current moment, and makes it the active tab. It goes in at `index` in the
+   * tab bar, or at the end without one. */
+  const openEphemeralTab = (def: QueryDefinition, index?: number) => {
+    const newId = newUuid();
+    set((s) => {
+      s.tabs.splice(index ?? s.tabs.length, 0, {
+        kind: "query",
+        id: newId,
+        name: nowName(),
+        saved: cloneDefinition(def),
+        live: def,
+        persisted: false,
+      });
+      s.activeTabId = newId;
+    });
   };
 
   // ── Writing to a result row ─────────────────────────────────────────────────
@@ -1260,34 +1285,23 @@ export function createAppActions(
       // copy — carrying any unsaved edits. Nothing is written to the backend
       // until the user saves it; the tab reads
       // as unsaved (its ✱ shows) meanwhile, and it stays out of the Queries list.
-      const live = cloneDefinition(source.live);
-      const newId = newUuid();
-      set((s) => {
-        s.tabs.push({
-          kind: "query",
-          id: newId,
-          name: nowName(),
-          saved: cloneDefinition(live),
-          live,
-          persisted: false,
-        });
-        s.activeTabId = newId;
-      });
+      openEphemeralTab(cloneDefinition(source.live));
     },
     newQueryTab: () => {
-      const def = definitionForBase("track", selectEffectivePresets(get()));
-      const newId = newUuid();
-      set((s) => {
-        s.tabs.push({
-          kind: "query",
-          id: newId,
-          name: nowName(),
-          saved: cloneDefinition(def),
-          live: def,
-          persisted: false,
-        });
-        s.activeTabId = newId;
-      });
+      openEphemeralTab(
+        definitionForBase("track", selectEffectivePresets(get())),
+      );
+    },
+    openRecordsTab: (besideTabId, query) => {
+      // Seeded from the table's defaults only for the display: the filter and
+      // sort have to be exactly `query`'s, or the tab would show other records,
+      // or show them in another order, than the ones it was opened on.
+      const def = definitionForBase(query.base, selectEffectivePresets(get()));
+      def.filter = { custom: query.filter, presets: [] };
+      def.sort = { custom: query.sort };
+      if (!("preset" in def.display)) def.display = { custom: query.display };
+      const beside = get().tabs.findIndex((t) => t.id === besideTabId);
+      openEphemeralTab(def, beside === -1 ? undefined : beside + 1);
     },
 
     // Only a query has a name of its own to rename; a settings tab's handle text

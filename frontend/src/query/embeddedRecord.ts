@@ -268,9 +268,25 @@ export function childRecordsQuery(
 ): RecordQuery {
   const keys = field.keyColumns.map((c) => `$${c}`);
   return {
+    ...childRecordsTabQuery(field, parent, spec),
+    display: [...keys, ...spec.display].join(" "),
+  };
+}
+
+/** The records behind a multi-record field as a query of their own — what
+ * opening the field in a new query tab starts from. The same records in the same
+ * order as {@link childRecordsQuery}, but displaying only what their embedded
+ * records show: the preview columns, or the keys standing in for them. */
+export function childRecordsTabQuery(
+  field: MultiRecordField,
+  parent: string,
+  spec: EmbedSpec,
+): RecordQuery {
+  const keys = field.keyColumns.map((c) => `$${c}`);
+  return {
     base: field.table,
     filter: `${field.column}:=${quoteValue(parent)}`,
     sort: spec.sort || field.keyColumns.map((c) => `\\\\${c}`).join(" "),
-    display: [...keys, ...spec.display].join(" "),
+    display: (spec.display.length > 0 ? spec.display : keys).join(" "),
   };
 }

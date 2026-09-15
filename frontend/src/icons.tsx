@@ -41,6 +41,7 @@ import Querydown from "~icons/material-symbols/code";
 import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
+import OpenInTab from "~icons/material-symbols/open-in-new";
 import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
@@ -97,6 +98,7 @@ export const Icons = {
   Rename, // rename query (wrench menu + double-click)
   Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)
+  OpenInTab, // record editor: open a multi-record field's records as a query tab
   Play, // now-playing bar: resume
   Pause, // now-playing bar: pause
   Next, // now-playing menu: skip to the next queued track

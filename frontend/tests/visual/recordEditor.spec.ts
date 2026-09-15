@@ -353,6 +353,9 @@ test("widening the selection puts the editor on every record it covers", async (
   ).toBeVisible();
   await expect(editor.getByRole("button", { name: "Add credit" })).toBeHidden();
   await expect(
+    editor.getByRole("button", { name: "Open credit in new tab" }),
+  ).toBeHidden();
+  await expect(
     editor.getByRole("button", { name: "Expand credit" }),
   ).toBeHidden();
 
@@ -842,6 +845,44 @@ test("the + button scaffolds a new record, open and ready to type into", async (
   await expect(editor.getByText("role", { exact: true })).toBeVisible();
   await expect(star(editor, "credit")).toBeVisible();
   await expect(editor.getByText("3", { exact: true }).first()).toBeVisible();
+});
+
+test("a multi-record field opens its records in a new query tab beside this one", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+  const source = await page.evaluate(
+    () => (window as unknown as AppWindow).__appStore.state.activeTabId,
+  );
+
+  await editor.getByRole("button", { name: "Open credit in new tab" }).click();
+
+  const opened = await page.evaluate(() => {
+    const store = (window as unknown as AppWindow).__appStore;
+    const { tabs, activeTabId } = store.state;
+    return {
+      ids: tabs.map((t) => t.id),
+      activeTabId,
+      tab: store.queryTab(activeTabId!),
+    };
+  });
+  // Unsaved, active, and right after the tab the editor was open in.
+  expect(opened.ids.indexOf(opened.activeTabId!)).toBe(
+    opened.ids.indexOf(source!) + 1,
+  );
+  expect(opened.tab?.persisted).toBe(false);
+  // The credits the field lists, filtered and ordered as it lists them, shown
+  // by what their embedded records show (there are no presets to prefer).
+  expect(opened.tab?.live).toEqual({
+    base: "credit",
+    filter: { custom: `track:="track-3"`, presets: [] },
+    sort: { custom: expect.stringMatching(/^\\\\order /) },
+    display: { custom: expect.stringContaining("$artist.name") },
+  });
+  // The new tab is the one showing, so the editor's page is not.
+  await expect(editor).toBeHidden();
 });
 
 // ── Context menus ───────────────────────────────────────────────────────────

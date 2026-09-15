@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   childRecordsQuery,
+  childRecordsTabQuery,
   embeddedRecordQuery,
   embedSpec,
   recordPickerQuery,
@@ -140,6 +141,31 @@ describe("preview queries", () => {
   it("falls back to ordering a list by its keys when there's no preview", () => {
     const field = creditField();
     expect(childRecordsQuery(field, "t1", { display: [], sort: "" })).toEqual({
+      base: "credit",
+      filter: `track:="t1"`,
+      sort: "\\\\track \\\\artist",
+      display: "$track $artist",
+    });
+  });
+
+  it("opens a multi-record field's records as a query showing their previews", () => {
+    const field = creditField();
+    expect(
+      childRecordsTabQuery(field, "t1", embedSpec(TABLES, "credit", "track")),
+    ).toEqual({
+      base: "credit",
+      filter: `track:="t1"`,
+      sort: "\\\\order \\\\artist.name \\\\artist",
+      // Only what the embedded records show — no keys ahead of it.
+      display: "$artist.name",
+    });
+  });
+
+  it("shows the keys in an opened query when there's no preview", () => {
+    const field = creditField();
+    expect(
+      childRecordsTabQuery(field, "t1", { display: [], sort: "" }),
+    ).toEqual({
       base: "credit",
       filter: `track:="t1"`,
       sort: "\\\\track \\\\artist",

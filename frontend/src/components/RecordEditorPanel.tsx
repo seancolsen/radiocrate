@@ -261,6 +261,7 @@ function PanelForm(props: {
         // opened on (see `query/rowDml.ts`).
         runDml: (operations) =>
           stores.app.actions.runRecordDml(tabId, records, operations),
+        openRecords: (query) => stores.app.actions.openRecordsTab(tabId, query),
       }),
     );
     return { identities: ids, model };

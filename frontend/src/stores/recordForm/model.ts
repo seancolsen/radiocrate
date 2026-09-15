@@ -48,11 +48,13 @@ import {
   type FormField,
   type MultiRecordField,
   type RecordKey,
+  type RecordQuery,
   type ScalarLinkField,
 } from "../../query/recordForm";
 import { isShared, shared, type ColumnValues } from "../../record/formValues";
 import {
   childRecordsQuery,
+  childRecordsTabQuery,
   embeddedRecordQuery,
   embedSpec,
   type EmbedSpec,
@@ -110,6 +112,10 @@ export interface RecordFormOptions {
    * so the row is re-read once the save lands (see `query/rowDml.ts`). Either way
    * what comes back is the API's own answer, which is all this model reads. */
   runDml?: (operations: DmlOperation[]) => Promise<DmlResult>;
+  /** Shows the records `query` finds somewhere other than the form — the query
+   * page opens them in a new query tab. Without it, a multi-record field has
+   * nowhere to open its records. */
+  openRecords?: (query: RecordQuery) => void;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -217,6 +223,12 @@ export interface RecordFormActions {
    * the list, expanded, with its first editable field activated so the user can
    * type straight into it. */
   addChild: (recordId: string, field: MultiRecordField) => void;
+  /** Hand the records under a multi-record field to `openRecords`, as a query
+   * with the same filter, sort and preview columns the field lists them with.
+   * The records as the database holds them, not as the form has them: a query
+   * can't see unsaved changes. A no-op for a record with no id of its own yet,
+   * or when the records the form is on don't share one. */
+  openChildRecords: (recordId: string, field: MultiRecordField) => void;
   /** Scaffold a new record for a scalar linked record field to point at, in
    * place of whatever it pointed at before. `seed` fills in its first text
    * field — the record picker hands over what the user had searched for, on the
@@ -1224,6 +1236,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     removeChild: (recordId, field, childRecordId) =>
       removeChildren(recordId, field, [childRecordId]),
     removeChildren,
+
+    openChildRecords: (recordId, field) => {
+      // The value the children point back at, exactly as `ensureList` finds it.
+      const parent = selectSharedValue(get(), recordId, "id");
+      if (!isShared(parent) || parent == null || parent === "") return;
+      opts.openRecords?.(
+        childRecordsTabQuery(field, parent, specFor(field.table, field.column)),
+      );
+    },
 
     addChild: (recordId, field) => {
       // A record can only be filed under one parent, so this waits on bulk

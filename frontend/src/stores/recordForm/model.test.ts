@@ -180,6 +180,42 @@ describe("loading", () => {
   });
 });
 
+describe("opening child records", () => {
+  it("hands over the field's records as a query, filtered and sorted as the field lists them", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 2)] });
+    const openRecords = vi.fn();
+    const model = form([trackKey("t1")], { openRecords });
+    model.start();
+    await flush();
+
+    model.openChildRecords(ROOT_ID, credits(model));
+
+    expect(openRecords).toHaveBeenCalledWith({
+      base: "credit",
+      filter: `track:="t1"`,
+      sort: "\\\\id \\\\role",
+      display: "$id $role",
+    });
+  });
+
+  it("opens nothing when the records don't share one id", async () => {
+    serve({
+      track: [
+        trackRow("t1", "Formation", "Pop", 2),
+        trackRow("t2", "Sorry", "Pop", 2),
+      ],
+    });
+    const openRecords = vi.fn();
+    const model = form([trackKey("t1"), trackKey("t2")], { openRecords });
+    model.start();
+    await flush();
+
+    model.openChildRecords(ROOT_ID, credits(model));
+
+    expect(openRecords).not.toHaveBeenCalled();
+  });
+});
+
 describe("several records at once", () => {
   it("blocks the fields the records disagree on, and edits the rest across all of them", async () => {
     // The database's own order, not the keys' — rows are matched by key.

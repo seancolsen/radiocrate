@@ -276,6 +276,80 @@ describe("toggleFilterPreset", () => {
   });
 });
 
+describe("openRecordsTab", () => {
+  const QUERY = {
+    base: "credit",
+    filter: `track:="t1"`,
+    sort: "\\\\order",
+    display: "$artist.name",
+  };
+  const preset = (
+    id: string,
+    section: "filter" | "sort" | "display",
+    baseTable = "credit",
+  ) => ({
+    id,
+    name: id,
+    baseTable,
+    section,
+    definition: "",
+    isDefault: true,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+
+  it("opens an unsaved tab to the right of the given tab, and activates it", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    openQueryTab(bundle, "b");
+    openQueryTab(bundle, "c");
+    bundle.actions.selectTab("b");
+
+    bundle.actions.openRecordsTab("b", QUERY);
+
+    const s = bundle.store.getState();
+    const opened = s.tabs[2];
+    expect(s.tabs.map((t) => t.id)).toEqual(["a", "b", opened.id, "c"]);
+    expect(s.activeTabId).toBe(opened.id);
+    expect(opened.kind === "query" && opened.persisted).toBe(false);
+    expect(opened.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+  });
+
+  it("uses the query's own filter, sort and display when the table has no default display", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.openRecordsTab("a", QUERY);
+    const tab = bundle.store.getState().tabs[1];
+    expect(tab.kind === "query" && tab.live).toEqual({
+      base: "credit",
+      filter: { custom: `track:="t1"`, presets: [] },
+      sort: { custom: "\\\\order" },
+      display: { custom: "$artist.name" },
+    });
+  });
+
+  it("takes the table's default display preset, but none of its default filter or sort", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.store.setState((s) => {
+      s.presets.push(
+        preset("f", "filter"),
+        preset("s", "sort"),
+        preset("d-track", "display", "track"),
+        preset("d", "display"),
+      );
+    });
+    bundle.actions.openRecordsTab("a", QUERY);
+    const tab = bundle.store.getState().tabs[1];
+    expect(tab.kind === "query" && tab.live).toEqual({
+      base: "credit",
+      filter: { custom: `track:="t1"`, presets: [] },
+      sort: { custom: "\\\\order" },
+      display: { preset: "d" },
+    });
+  });
+});
+
 describe("saveSetting", () => {
   it("stores a real customization with settingSet, and re-runs open query tabs", () => {
     const bundle = createAppStore(fakeEnv());

@@ -364,6 +364,19 @@ function FieldRow(props: {
             />
           )}
 
+        {/* The same records, as rows of a query tab of their own. A record the
+            form is still creating has none to open — and several records have
+            no one set of them — so neither gets the button. */}
+        {field.kind === "multiRecord" && !props.isNew && !bulkBlocked && (
+          <IconButton
+            icon={Icons.OpenInTab}
+            label={`Open ${field.label} in new tab`}
+            size="sm"
+            tabIndex={-1}
+            onClick={() => model.openChildRecords(recordId, field)}
+          />
+        )}
+
         {/* What a multi-record field offers while the form is on several
             records: nothing yet. The records under it belong to one record
             each, and editing them together is separate work still to come.
