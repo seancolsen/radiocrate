@@ -122,7 +122,14 @@ function fieldExpandable(
   if (field.kind === "scalarLink") {
     return selectHasLinkedRecord(s, recordId, field);
   }
-  return field.valueType === "text" && overflowing;
+  // A primitive field is expandable if it's varied (records disagree on the value)
+  // or if it's a text field that overflows.
+  if (field.kind === "primitive") {
+    const value = selectSharedValue(s, recordId, field.column);
+    if (value === VARIED) return true;
+    return field.valueType === "text" && overflowing;
+  }
+  return false;
 }
 
 /** One field: its row, plus whatever the row expands into. */
@@ -265,15 +272,20 @@ function FieldRow(props: {
     else model.toggleField(recordId, field);
   };
 
-  /** A field label's double click: a primitive field goes into edit mode, a
-   * scalar linked record field opens the record picker (spec: "Modal record
-   * picker" — whatever the field currently points at, which is why this isn't
-   * the expansion the chevron and the embedded record already offer), and a
-   * multi-record field opens or closes. */
+  /** A field label's double click: a primitive field goes into edit mode (or
+   * toggles expansion if it's varied), a scalar linked record field opens the
+   * record picker (spec: "Modal record picker" — whatever the field currently
+   * points at, which is why this isn't the expansion the chevron and the
+   * embedded record already offer), and a multi-record field opens or closes. */
   const activate = () => {
-    if (field.kind === "primitive") model.beginEdit(recordId, field.key);
-    else if (field.kind === "scalarLink") model.openPicker(recordId, field.key);
-    else model.toggleField(recordId, field);
+    if (field.kind === "primitive") {
+      if (value === VARIED) model.toggleField(recordId, field);
+      else model.beginEdit(recordId, field.key);
+    } else if (field.kind === "scalarLink") {
+      model.openPicker(recordId, field.key);
+    } else {
+      model.toggleField(recordId, field);
+    }
   };
 
   /** Activating an empty field's value — the pencil button, or a click on the
@@ -451,6 +463,26 @@ function FieldRow(props: {
         </Subtree>
       )}
 
+      {/* Expanded varied primitive field: shows distinct values with apply buttons. */}
+      {expanded &&
+        field.kind === "primitive" &&
+        value === VARIED && (
+          <Subtree>
+            <div className="pr-1 pb-1">
+              <FieldValueSlot
+                model={model}
+                recordId={recordId}
+                field={field}
+                value={value}
+                expanded={true}
+                onBeginEdit={beginEdit}
+                onCommit={commit}
+                onContextMenu={(e) => openMenu(e, "field")}
+              />
+            </div>
+          </Subtree>
+        )}
+
       {/* A linked record expands into its own form. */}
       {expanded && field.kind === "scalarLink" && (
         <Subtree>
@@ -507,6 +539,8 @@ function FieldValueSlot(props: {
       onCommit={props.onCommit}
       onContextMenu={props.onContextMenu}
       onOverflow={props.onOverflow}
+      model={model}
+      recordId={recordId}
     />
   );
 }

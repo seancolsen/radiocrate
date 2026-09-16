@@ -53,6 +53,35 @@ export const selectCount = (
   fieldKey: string,
 ): number | Varied | undefined => shared(s.records[recordId]?.counts[fieldKey]);
 
+/** The distinct values in a column that the records don't all share, sorted by
+ * frequency (most common first) then by value. Returns empty if the records all
+ * share the same value or the column hasn't loaded. */
+export interface DistinctValue {
+  value: string | null;
+  count: number;
+}
+
+export const selectDistinctValues = (
+  s: FormState,
+  recordId: string,
+  column: string,
+): DistinctValue[] => {
+  const values = s.records[recordId]?.values[column];
+  if (!values || values.length === 0) return [];
+
+  const counts = new Map<string | null, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  // If all values are the same, return empty
+  if (counts.size === 1) return [];
+
+  return Array.from(counts.entries())
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+};
+
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>
   s.expanded[itemId] === true;

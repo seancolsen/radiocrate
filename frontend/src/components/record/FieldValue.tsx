@@ -12,6 +12,8 @@ import { cx } from "../ui/cx";
 import { useResizeObserver } from "../ui/useElementWidth";
 import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
+import type { RecordFormModel } from "../../stores/recordForm";
+import VariedValueField from "./VariedValueField";
 
 /** Where focus goes when an activated field leaves edit mode: back to this
  * field's own label, to the next item's, to the previous one's, or nowhere (the
@@ -167,7 +169,7 @@ function OneLineValue(props: {
  *    (not even the pencil): the form shows its labels while the data is on its
  *    way, and only the key values it already had.
  *  - **varied** — the records the form is on hold different values here, so
- *    there is no value to show: "(varied)" stands in for it.
+ *    there is no value to show: a component showing distinct values stands in for it.
  *  - **empty** — NULL or the empty string, so there's nothing to click: a pencil
  *    button activates an empty input instead.
  *  - **filled** — the value, on one line (newlines become spaces, overflow
@@ -191,11 +193,24 @@ export default function FieldValue(props: {
   onCommit: (text: string, exit: EditExit) => void;
   onContextMenu: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
+  model?: RecordFormModel;
+  recordId?: string;
 }): JSX.Element | null {
   // Nothing loaded for this field yet — no value, no pencil.
   if (props.value === undefined) return null;
-  // The records disagree: nothing to show, and nothing to edit yet.
-  if (props.value === VARIED) return <VariedValue />;
+  // The records disagree: show the new varied value component if we have the model.
+  if (props.value === VARIED) {
+    if (props.model && props.recordId && props.field.kind === "primitive") {
+      return (
+        <VariedValueField
+          model={props.model}
+          recordId={props.recordId}
+          field={props.field}
+        />
+      );
+    }
+    return <VariedValue />;
+  }
 
   /** The value as text — meaningful once the records are known to agree on it,
    * which every state below "varied" is. */
