@@ -19,7 +19,6 @@ import {
   shared,
   VARIED,
   type SharedValue,
-  type Varied,
 } from "../../record/formValues";
 import type { RecordFormSummary } from "../forms";
 import type { EmbedNode, FormState, ListNode, RecordNode } from "./state";
@@ -46,12 +45,40 @@ export const selectSharedValue = (
   column: string,
 ): SharedValue => shared(s.records[recordId]?.values[column]);
 
-/** Likewise for a multi-record field's count of related records. */
-export const selectCount = (
+/** How many database records a node stands for: one, ordinarily; as many as the
+ * result-row selection holds, at the root; and — for a row of a multi-record
+ * field — as many as agreed on everything but which base record they hang off
+ * (`record/childGroups.ts`). */
+export const selectRecordCount = (s: FormState, recordId: string): number =>
+  s.records[recordId]?.keys.length ?? 0;
+
+/** The least and greatest number of related records a multi-record field has,
+ * across the records its node stands for. `undefined` before the counts land.
+ *
+ * Two selectors over one private reading rather than one returning a range:
+ * a selector returns a primitive (state management rule 2), and a fresh
+ * `{ min, max }` would re-render its row on every write to the form. */
+function countRange(
   s: FormState,
   recordId: string,
   fieldKey: string,
-): number | Varied | undefined => shared(s.records[recordId]?.counts[fieldKey]);
+): [number, number] | undefined {
+  const counts = s.records[recordId]?.counts[fieldKey];
+  if (!counts || counts.length === 0) return undefined;
+  return [Math.min(...counts), Math.max(...counts)];
+}
+
+export const selectCountMin = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): number | undefined => countRange(s, recordId, fieldKey)?.[0];
+
+export const selectCountMax = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): number | undefined => countRange(s, recordId, fieldKey)?.[1];
 
 /** The distinct values in a column that the records don't all share, sorted by
  * frequency (most common first) then by value. Returns empty if the records all
@@ -79,7 +106,10 @@ export const selectDistinctValues = (
 
   return Array.from(counts.entries())
     .map(([value, count]) => ({ value, count }))
-    .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+    .sort(
+      (a, b) =>
+        b.count - a.count || String(a.value).localeCompare(String(b.value)),
+    );
 };
 
 /** Whether an item (field or child record) is expanded. */
@@ -99,11 +129,15 @@ export const selectFieldOf = (
   s.records[recordId]?.fields.find((f) => f.key === fieldKey);
 
 /** Whether a field is beyond what the form will do to several records at once:
- * a multi-record field, whose child records bulk modification doesn't reach
- * yet, or a scalar field the records disagree on, which shows "(varied)" and
- * has no one value to edit from. False for a single record, which can neither
- * disagree with itself nor be a bulk anything — this is the whole of the
- * form's behavioral difference between one record and many. */
+ * a scalar field the records disagree on, which has no one value to edit from
+ * (a primitive offers its distinct values instead; a link has no one record to
+ * open). False for a single record, which can neither disagree with itself nor
+ * be a bulk anything — this is the whole of the form's behavioral difference
+ * between one record and many.
+ *
+ * A multi-record field is *not* among them: its records group into rows that
+ * say the same thing about every base record they hang off, and editing one row
+ * edits all of them (`record/childGroups.ts`). */
 export function selectBeyondBulk(
   s: FormState,
   recordId: string,
@@ -111,7 +145,7 @@ export function selectBeyondBulk(
 ): boolean {
   const node = s.records[recordId];
   if (!node || node.keys.length <= 1) return false;
-  if (field.kind === "multiRecord") return true;
+  if (field.kind === "multiRecord") return false;
   return selectSharedValue(s, recordId, field.column) === VARIED;
 }
 

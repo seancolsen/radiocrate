@@ -17,6 +17,8 @@ import {
   fieldItemId,
   listId,
   ROOT_ID,
+  selectCountMax,
+  selectCountMin,
   selectFieldModified,
   selectFormModified,
   selectIsBulkBlocked,
@@ -54,30 +56,74 @@ const TABLES: SchemaTable[] = [
     ],
     uniqueConstraints: [["id"]],
   },
+  // A join table, keyed by the pair rather than by an id of its own — the shape
+  // that *groups*: two tracks tagged the same way say the same thing, and the
+  // form lists that as one row (`record/childGroups.ts`). A child table with an
+  // id of its own, like `credit` above, never groups: its records are distinct
+  // by that id however much else they agree on.
+  {
+    name: "track_tag",
+    columns: [
+      col("track", "UUID"),
+      col("tag", "VARCHAR"),
+      col("note", "VARCHAR", true),
+    ],
+    uniqueConstraints: [["track", "tag"]],
+  },
 ];
 
 const runner = vi.mocked(runRecordQuery);
 
 const trackKey = (id: string) => [{ column: "id", value: id }];
 
-/** A row of the root's data query: the key, then `id`, `title`, `genre` and
- * the `#credit` count, positionally. */
+/** A row of the root's data query: the key, then `id`, `title`, `genre` and the
+ * `#credit` and `#track_tag` counts, positionally (referencing tables come
+ * alphabetically). */
 const trackRow = (
   id: string,
   title: string,
   genre: string | null,
   credits: number,
-) => [id, id, title, genre, String(credits)];
+  tags = 0,
+) => [id, id, title, genre, String(credits), String(tags)];
 
 /** A credit row, which fits both queries that reach the table: a child list
  * (key, then the `$id $role` preview) and a credit's own data (key, then its
  * `id` and `role` fields — `track` is hidden under its parent). */
 const creditRow = (id: string, role: string | null) => [id, id, role];
 
+/** A row of a `track_tag` list query: the key `(track, tag)`, the `$tag`
+ * preview, then every column — which is what decides how the records group. */
+const tagRow = (track: string, tag: string, note: string | null = null) => [
+  track,
+  tag,
+  tag,
+  track,
+  tag,
+  note,
+];
+
+/** A row of one `track_tag` row's own data query: the key, then its `tag` and
+ * `note` fields (`track` is hidden under its parent). */
+const tagDataRow = (track: string, tag: string, note: string | null = null) => [
+  track,
+  tag,
+  tag,
+  note,
+];
+
 /** Answers every query from fixed rows, by table. */
-function serve(rows: { track?: RecordRows; credit?: RecordRows }) {
+function serve(rows: {
+  track?: RecordRows;
+  credit?: RecordRows;
+  track_tag?: RecordRows;
+}) {
   runner.mockImplementation(async (query) =>
-    query.base === "track" ? (rows.track ?? []) : (rows.credit ?? []),
+    query.base === "track"
+      ? (rows.track ?? [])
+      : query.base === "track_tag"
+        ? (rows.track_tag ?? [])
+        : (rows.credit ?? []),
   );
 }
 
@@ -198,7 +244,7 @@ describe("opening child records", () => {
     });
   });
 
-  it("opens nothing when the records don't share one id", async () => {
+  it("opens the records of every record the form is on", async () => {
     serve({
       track: [
         trackRow("t1", "Formation", "Pop", 2),
@@ -212,7 +258,14 @@ describe("opening child records", () => {
 
     model.openChildRecords(ROOT_ID, credits(model));
 
-    expect(openRecords).not.toHaveBeenCalled();
+    // Both tracks' credits, filtered to either of them — and as the records
+    // they are: a query tab shows rows, not the rows the form groups them into.
+    expect(openRecords).toHaveBeenCalledWith({
+      base: "credit",
+      filter: `[\n  track:="t1"\n  track:="t2"\n]`,
+      sort: "\\\\id \\\\role",
+      display: "$id $role",
+    });
   });
 });
 
@@ -232,8 +285,10 @@ describe("several records at once", () => {
     let s = model.store.getState();
     expect(selectSharedValue(s, ROOT_ID, "genre")).toBe(VARIED);
     expect(selectIsBulkBlocked(s, ROOT_ID, "genre")).toBe(true);
-    expect(selectIsBulkBlocked(s, ROOT_ID, "#credit")).toBe(true);
     expect(selectIsBulkBlocked(s, ROOT_ID, "title")).toBe(false);
+    // A multi-record field is never blocked: its records group into rows that
+    // say the same thing about every record the form is on.
+    expect(selectIsBulkBlocked(s, ROOT_ID, "#credit")).toBe(false);
 
     model.beginEdit(ROOT_ID, "genre");
     model.clearField(ROOT_ID, fieldOf(model, ROOT_ID, "genre"));
@@ -241,7 +296,7 @@ describe("several records at once", () => {
     s = model.store.getState();
     expect(s.editing).toBeNull();
     expect(s.records[ROOT_ID]?.values["genre"]).toEqual(["Pop", "Rock"]);
-    expect(s.expanded[fieldItemId(ROOT_ID, "#credit")]).toBeUndefined();
+    expect(s.expanded[fieldItemId(ROOT_ID, "#credit")]).toBe(true);
 
     model.beginEdit(ROOT_ID, "title");
     expect(model.store.getState().editing).toBe(fieldItemId(ROOT_ID, "title"));
@@ -261,6 +316,163 @@ describe("several records at once", () => {
     for (const field of s.records[ROOT_ID]?.fields ?? []) {
       expect(selectIsBulkBlocked(s, ROOT_ID, field.key)).toBe(false);
     }
+  });
+});
+
+describe("a multi-record field on several records", () => {
+  const tagsField = (model: RecordFormModel) =>
+    fieldOf(model, ROOT_ID, "#track_tag") as MultiRecordField;
+  const TAGS_LIST = listId(ROOT_ID, "#track_tag");
+  const ROCK = `${TAGS_LIST}[0]`;
+
+  /** Two tracks tagged "Rock" alike, and "Soul" on the first alone. */
+  const serveTags = () =>
+    serve({
+      track: [
+        trackRow("t1", "Same", "Pop", 0, 2),
+        trackRow("t2", "Same", "Pop", 0, 1),
+      ],
+      track_tag: [
+        tagRow("t1", "Rock"),
+        tagRow("t2", "Rock"),
+        tagRow("t1", "Soul"),
+      ],
+    });
+
+  /** The form on both tracks, with the `track_tag` field opened out. */
+  async function opened(extra: Partial<RecordFormOptions> = {}) {
+    serveTags();
+    const model = form([trackKey("t1"), trackKey("t2")], extra);
+    model.start();
+    await flush();
+    model.toggleField(ROOT_ID, tagsField(model), true);
+    await flush();
+    return model;
+  }
+
+  const saves = () =>
+    vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(() =>
+      Promise.resolve({}),
+    );
+
+  it("collapses the records that say the same thing into one row", async () => {
+    const model = await opened();
+    const s = model.store.getState();
+
+    // One query for both tracks' tags, filtered to either of them.
+    expect(runner.mock.calls[1]?.[0].filter).toBe(
+      `[\n  track:="t1"\n  track:="t2"\n]`,
+    );
+    expect(s.lists[TAGS_LIST]?.childIds).toEqual([ROCK, `${TAGS_LIST}[1]`]);
+    // "Rock" is on both tracks: one row standing for two records, previewed by
+    // what both of them say.
+    expect(s.records[ROCK]?.keys).toEqual([
+      [
+        { column: "track", value: "t1" },
+        { column: "tag", value: "Rock" },
+      ],
+      [
+        { column: "track", value: "t2" },
+        { column: "tag", value: "Rock" },
+      ],
+    ]);
+    expect(s.embeds[ROCK]?.cells).toEqual(["Rock"]);
+    // "Soul" is on the first track alone.
+    expect(s.records[`${TAGS_LIST}[1]`]?.keys).toHaveLength(1);
+
+    // So the field's count is a range: two tags on one track, one on the other.
+    expect(selectCountMin(s, ROOT_ID, "#track_tag")).toBe(1);
+    expect(selectCountMax(s, ROOT_ID, "#track_tag")).toBe(2);
+  });
+
+  it("edits every record a row stands for", async () => {
+    const runDml = saves();
+    const model = await opened({ runDml });
+    // Expanding a row loads the records it stands for — both of them, in the
+    // one query any node standing for several records makes.
+    runner.mockImplementation(async () => [
+      tagDataRow("t1", "Rock"),
+      tagDataRow("t2", "Rock"),
+    ]);
+    model.toggleChild(ROCK, true);
+    await flush();
+
+    model.commitEdit(ROCK, "note", "Live");
+    await model.save();
+
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "track_tag",
+        where: { track: "t1", tag: "Rock" },
+        values: { note: "Live" },
+      },
+      {
+        operation: "update",
+        id: "op2",
+        table: "track_tag",
+        where: { track: "t2", tag: "Rock" },
+        values: { note: "Live" },
+      },
+    ]);
+  });
+
+  it("deletes every record a row stands for", async () => {
+    const runDml = saves();
+    const model = await opened({ runDml });
+
+    model.removeChild(ROOT_ID, tagsField(model), ROCK);
+    // The row took a tag off each track, so both counts came down — one of
+    // them to nothing.
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.counts["#track_tag"]).toEqual([1, 0]);
+
+    await model.save();
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "delete",
+        id: "op1",
+        table: "track_tag",
+        where: { track: "t1", tag: "Rock" },
+      },
+      {
+        operation: "delete",
+        id: "op2",
+        table: "track_tag",
+        where: { track: "t2", tag: "Rock" },
+      },
+    ]);
+  });
+
+  it("adds one record per record the form is on", async () => {
+    const runDml = saves();
+    const model = await opened({ runDml });
+
+    model.addChild(ROOT_ID, tagsField(model));
+    const created = `${TAGS_LIST}[new:1]`;
+    const s = model.store.getState();
+    // One row, standing for a record on each track — and both counts went up.
+    expect(s.records[created]?.keys).toEqual([[], []]);
+    expect(s.records[ROOT_ID]?.counts["#track_tag"]).toEqual([3, 2]);
+
+    model.commitEdit(created, "tag", "Soul");
+    await model.save();
+
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "insert",
+        id: "op1",
+        table: "track_tag",
+        values: { tag: "Soul", track: "t1" },
+      },
+      {
+        operation: "insert",
+        id: "op2",
+        table: "track_tag",
+        values: { tag: "Soul", track: "t2" },
+      },
+    ]);
   });
 });
 

@@ -30,9 +30,10 @@ export type LoadStatus = "unloaded" | "loading" | "loaded" | "error";
 export interface RecordNode {
   table: string;
   /** The records this node is the form for, by key. The root holds as many as
-   * the result-row selection does; every node reached by expanding a field holds
-   * exactly one. A record the form is *creating* is one record with no key
-   * yet — `[[]]`, not `[]`. */
+   * the result-row selection does. A row of a multi-record field holds as many
+   * as said the same thing about the base records the form is on — one,
+   * ordinarily (see `record/childGroups.ts`). Records the form is *creating*
+   * have no keys yet: `[[]]` for one, `[[], []]` for one per base record. */
   keys: readonly RecordKey[];
   /** Columns hidden as this record's contextual filter (see `buildFormFields`). */
   hidden: readonly string[];
@@ -60,7 +61,9 @@ export interface ListNode {
   status: LoadStatus;
   error: string | null;
   /** The related-record count known from the parent's load — how many
-   * placeholders to render while the children themselves are in flight. */
+   * placeholders to render while the children themselves are in flight. On
+   * several base records that's every one of their records, which is an upper
+   * bound on the rows: some of them may turn out to be the same row. */
   expected: number;
   childIds: string[];
   /** The records the user has taken out of the list, kept — with their keys —

@@ -3,6 +3,7 @@ import {
   buildFormFields,
   keyConditions,
   keySignature,
+  linkConditions,
   quoteValue,
   recordDataQuery,
   valueTypeOf,
@@ -190,6 +191,16 @@ describe("Querydown generation", () => {
       `[\n  {\n    track:="t1"\n    artist:="a1"\n  }\n` +
         `  {\n    track:="t2"\n    artist:="a2"\n  }\n]`,
     );
+  });
+
+  it("matches the records pointing at any one of several parents", () => {
+    // Bare conditions inside `[…]` are alternatives: one condition is a whole
+    // alternative here, unlike the columns of a composite key.
+    expect(linkConditions("track", ["t1"])).toBe(`track:="t1"`);
+    expect(linkConditions("track", ["t1", "t2"])).toBe(
+      `[\n  track:="t1"\n  track:="t2"\n]`,
+    );
+    expect(linkConditions("track", [])).toBe("");
   });
 
   it("loads a record's values and its related-record counts in one query", () => {

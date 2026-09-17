@@ -242,6 +242,30 @@ export function keyConditions(keys: readonly RecordKey[]): string {
   return `[\n${groups.join("\n")}\n]`;
 }
 
+/** Querydown conditions matching every record whose `column` points at one of
+ * `values` — the children of all the records the form is on, in one query.
+ *
+ * Bare conditions inside `[…]` are alternatives, which is exactly what's wanted
+ * here: unlike a composite key, one condition is one whole alternative, so no
+ * `{…}` groups are needed.
+ *
+ * ```
+ * [
+ *   track:="t1"
+ *   track:="t2"
+ * ]
+ * ```
+ *
+ * One value needs no alternatives, and reads better without them. */
+export function linkConditions(
+  column: string,
+  values: readonly string[],
+): string {
+  const conditions = values.map((v) => `${column}:=${quoteValue(v)}`);
+  if (conditions.length <= 1) return conditions[0] ?? "";
+  return `[\n${conditions.map((c) => `  ${c}`).join("\n")}\n]`;
+}
+
 /** A record's key values as one string, so a row of {@link recordDataQuery} can
  * be matched back to the record it belongs to. */
 export function keySignature(values: readonly (string | null)[]): string {

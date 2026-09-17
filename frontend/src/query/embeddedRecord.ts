@@ -21,7 +21,7 @@
 import { identifyingColumns, inferLinks, type SchemaTable } from "./schema";
 import {
   keyConditions,
-  quoteValue,
+  linkConditions,
   valueTypeOf,
   type MultiRecordField,
   type RecordKey,
@@ -254,38 +254,50 @@ export function recordPickerQuery(
 }
 
 /** The query behind a multi-record field: every record of `field.table` whose
- * `field.column` points at the record `parent` identifies, in one request —
- * both the identifying columns (which is how each child record is addressed
- * afterwards) and the preview columns its embedded record shows.
+ * `field.column` points at one of the records `parents` identifies, in one
+ * request — the identifying columns (which is how each child record is addressed
+ * afterwards), the preview columns its embedded record shows, and `columns`,
+ * every column of the table.
+ *
+ * Those last are what decides which of the records that come back are *the same
+ * record but for the parent it hangs off* — the rows the form collapses into one
+ * (see `record/childGroups.ts`). Fetching a table's columns to compare them is
+ * the price of one query for the whole list; with one parent to list, the
+ * comparison is an identity and they go unread.
  *
  * The result's columns are positional: `field.keyColumns` first, then
- * `spec.display`. With no preview columns to be had, the keys stand in for them
- * and order the list themselves. */
+ * `spec.display`, then `columns`. With no preview columns to be had, the keys
+ * stand in for them and order the list themselves. */
 export function childRecordsQuery(
   field: MultiRecordField,
-  parent: string,
+  parents: readonly string[],
   spec: EmbedSpec,
+  columns: readonly string[],
 ): RecordQuery {
   const keys = field.keyColumns.map((c) => `$${c}`);
   return {
-    ...childRecordsTabQuery(field, parent, spec),
-    display: [...keys, ...spec.display].join(" "),
+    ...childRecordsTabQuery(field, parents, spec),
+    display: [...keys, ...spec.display, ...columns.map((c) => `$${c}`)].join(
+      " ",
+    ),
   };
 }
 
 /** The records behind a multi-record field as a query of their own — what
  * opening the field in a new query tab starts from. The same records in the same
  * order as {@link childRecordsQuery}, but displaying only what their embedded
- * records show: the preview columns, or the keys standing in for them. */
+ * records show: the preview columns, or the keys standing in for them. Nothing
+ * here collapses anything, so the records of several parents arrive as the rows
+ * they are. */
 export function childRecordsTabQuery(
   field: MultiRecordField,
-  parent: string,
+  parents: readonly string[],
   spec: EmbedSpec,
 ): RecordQuery {
   const keys = field.keyColumns.map((c) => `$${c}`);
   return {
     base: field.table,
-    filter: `${field.column}:=${quoteValue(parent)}`,
+    filter: linkConditions(field.column, parents),
     sort: spec.sort || field.keyColumns.map((c) => `\\\\${c}`).join(" "),
     display: (spec.display.length > 0 ? spec.display : keys).join(" "),
   };

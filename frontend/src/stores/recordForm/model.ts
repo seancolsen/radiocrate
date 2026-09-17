@@ -6,9 +6,16 @@
 // as many as the result-row selection holds when the user has widened it. That
 // number is *not* a branch in the shape of anything here — a node keeps one
 // value per field per record and one load covers them all — it only surfaces
-// where a field's records turn out to disagree (`formValues.ts`), and at the few
-// modifications the form won't yet make to several records at once
+// where a field's records turn out to disagree (`formValues.ts`), which is the
+// one thing the form won't edit across several records at once
 // (`selectBeyondBulk`).
+//
+// A multi-record field is no exception, and that is what makes it work: the
+// records under it are loaded for every base record in one query and collapsed
+// into the rows that say the same thing about each of them
+// (`record/childGroups.ts`). A row is then simply another node standing for
+// several records — editable, deletable and savable by everything above it,
+// with no bulk path of its own.
 //
 // Loading is lazy and idempotent: expanding an item fetches its data the first
 // time only, and collapsing keeps it. Each fetch is guarded by a token so a
@@ -51,7 +58,7 @@ import {
   type RecordQuery,
   type ScalarLinkField,
 } from "../../query/recordForm";
-import { isShared, shared, type ColumnValues } from "../../record/formValues";
+import { isShared, type ColumnValues } from "../../record/formValues";
 import {
   childRecordsQuery,
   childRecordsTabQuery,
@@ -60,6 +67,7 @@ import {
   type EmbedSpec,
 } from "../../query/embeddedRecord";
 import { runRecordQuery } from "../../query/recordData";
+import { groupChildRows } from "../../record/childGroups";
 import {
   focusAdjacentItem,
   focusItem,
@@ -221,13 +229,16 @@ export interface RecordFormActions {
 
   /** Scaffold a new record within a multi-record field: it goes in at the top of
    * the list, expanded, with its first editable field activated so the user can
-   * type straight into it. */
+   * type straight into it. A record can only be filed under one parent, so on
+   * several base records this scaffolds one apiece — a single row saying the
+   * same thing about each of them. */
   addChild: (recordId: string, field: MultiRecordField) => void;
   /** Hand the records under a multi-record field to `openRecords`, as a query
-   * with the same filter, sort and preview columns the field lists them with.
-   * The records as the database holds them, not as the form has them: a query
-   * can't see unsaved changes. A no-op for a record with no id of its own yet,
-   * or when the records the form is on don't share one. */
+   * with the same filter, sort and preview columns the field lists them with —
+   * the records of every base record the form is on, as the rows they are
+   * rather than the rows the form collapses them into. The records as the
+   * database holds them, not as the form has them: a query can't see unsaved
+   * changes. A no-op for records with no id of their own yet. */
   openChildRecords: (recordId: string, field: MultiRecordField) => void;
   /** Scaffold a new record for a scalar linked record field to point at, in
    * place of whatever it pointed at before. `seed` fills in its first text
@@ -423,20 +434,22 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     id: string,
     table: string,
     hidden: readonly string[],
+    records = 1,
   ) => {
     const fields = buildFormFields(opts.tables, table, hidden);
     const values: Record<string, ColumnValues> = {};
     const counts: Record<string, readonly number[]> = {};
+    // One entry per record being created: one, ordinarily, and one per base
+    // record when a multi-record field is being added to across several.
+    const each = Array.from({ length: records }, () => null);
     for (const field of fields) {
-      // One record, so one entry per column — a record is only ever created
-      // singly, however many the form around it is editing.
-      if (field.kind === "multiRecord") counts[field.key] = [0];
-      else values[field.column] = [null];
+      if (field.kind === "multiRecord") counts[field.key] = each.map(() => 0);
+      else values[field.column] = [...each];
     }
     set((s) => {
       s.records[id] = castDraft({
         table,
-        keys: [[]],
+        keys: each.map(() => []),
         hidden,
         fields,
         status: "loaded",
@@ -467,6 +480,66 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const n = s.records[recordId];
       if (n) n.counts[fieldKey] = n.keys.map(() => count);
     });
+
+  /** Likewise, when the records hold *different* numbers of related records —
+   * which is what the field's badge reads as a range. */
+  const setCounts = (
+    recordId: string,
+    fieldKey: string,
+    counts: readonly number[],
+  ) =>
+    set((s) => {
+      const n = s.records[recordId];
+      if (n) n.counts[fieldKey] = [...counts];
+    });
+
+  /** The ids of the records a node stands for — what the records under its
+   * multi-record fields point back at. Every inferred link points at
+   * `<table>.id`, so that, not the node's key (which may be composite), is the
+   * value. A record with no id of its own (one the form is creating) has no
+   * children to find, and drops out. */
+  const parentValues = (recordId: string): string[] =>
+    (get().records[recordId]?.values["id"] ?? []).filter(
+      (value): value is string => (value ?? "") !== "",
+    );
+
+  /** Every column of a table, as introspection gives them — what a child list's
+   * query carries so its records can be compared with each other. */
+  const columnsOf = (table: string): string[] =>
+    opts.tables.find((t) => t.name === table)?.columns.map((c) => c.name) ?? [];
+
+  /** Brings a multi-record field's counts back in line with the rows its list
+   * holds — one count per record the node stands for, which is what the field's
+   * badge reads. Every row knows which base record each of its records hangs
+   * off (the link column it was loaded with), so this is a tally rather than
+   * another query.
+   *
+   * A row the form is *creating* has no link value yet: it was scaffolded with
+   * one record per base record, in that order, so its records are counted by
+   * position instead. */
+  const recountField = (recordId: string, field: MultiRecordField) => {
+    const s = get();
+    const node = s.records[recordId];
+    const list = s.lists[listId(recordId, field.key)];
+    if (!node || !list) return;
+    const parents = node.keys.map((_, i) => node.values["id"]?.[i] ?? null);
+    const counts = node.keys.map(() => 0);
+    for (const child of list.childIds) {
+      const row = s.records[child];
+      if (!row) continue;
+      if (row.isNew) {
+        row.keys.forEach((_, i) => {
+          if (i < counts.length) counts[i] += 1;
+        });
+      } else {
+        for (const link of row.values[field.column] ?? []) {
+          const i = parents.indexOf(link);
+          if (i !== -1) counts[i] += 1;
+        }
+      }
+    }
+    setCounts(recordId, field.key, counts);
+  };
 
   const beyondBulk = (recordId: string, field: FormField): boolean =>
     selectBeyondBulk(get(), recordId, field);
@@ -635,43 +708,60 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   };
 
   /** Loads the records behind a multi-record field: one query for all of them,
-   * carrying both each record's key and the preview its embedded record shows,
-   * so the list renders in full from a single request. Each child is otherwise
-   * unloaded until the user expands it. */
+   * across every base record the form is on, carrying each record's key, the
+   * preview its embedded record shows and every column of its table — so the
+   * list renders in full from a single request.
+   *
+   * Those records become the field's *rows* by grouping (`childGroups.ts`): one
+   * row per thing said, however many of the base records say it. Each row is
+   * otherwise unloaded until the user expands it. */
   const loadChildren = async (
-    id: string,
+    recordId: string,
     field: MultiRecordField,
-    parentValue: string,
+    parents: readonly string[],
   ) => {
+    const id = listId(recordId, field.key);
     const token = ++tokenSeq;
     tokens.set(id, token);
     patchList(id, { status: "loading", error: null });
     try {
       const spec = specFor(field.table, field.column);
+      const columns = columnsOf(field.table);
       const rows = await runRecordQuery(
-        childRecordsQuery(field, parentValue, spec),
+        childRecordsQuery(field, parents, spec, columns),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
-      // One write for the whole list, rather than one per child.
+      const groups = groupChildRows(rows, {
+        keyColumns: field.keyColumns,
+        previewWidth: spec.display.length,
+        columns,
+        linkColumn: field.column,
+      });
+      // One write for the whole list, rather than one per row.
       set((s) => {
         const childIds: string[] = [];
-        rows.forEach((row, index) => {
-          const key = field.keyColumns.map((column, i) => ({
-            column,
-            value: row[i] ?? "",
-          }));
+        groups.forEach((group, index) => {
           const child = childId(id, index);
-          // The column tying every child to this parent is the same for all of
-          // them — hidden inside the child's own form (spec: "Progressive
-          // expansion").
-          s.records[child] = castDraft(
-            recordNode(field.table, [key], [field.column], "unloaded"),
+          // The column tying each of a row's records to its own base record is
+          // hidden inside the child's own form (spec: "Progressive expansion"),
+          // so nothing will ever load it — and the row needs it, to say how many
+          // records each base record has. It's seeded from the load instead.
+          const node = recordNode(
+            field.table,
+            group.keys,
+            [field.column],
+            "unloaded",
           );
-          const cells = row.slice(field.keyColumns.length);
+          node.values[field.column] = [...group.links];
+          node.original[field.column] = [...group.links];
+          s.records[child] = castDraft(node);
           s.embeds[child] = castDraft({
             status: "loaded",
-            cells: cells.length > 0 ? cells : key.map((p) => p.value),
+            cells:
+              group.cells.length > 0
+                ? group.cells
+                : (group.keys[0] ?? []).map((p) => p.value),
           });
           childIds.push(child);
         });
@@ -686,6 +776,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         list.status = "loaded";
         list.childIds = [...created, ...childIds];
       });
+      // What came back may be fewer records than the counts said (a base record
+      // the field is empty for), or more rows than one apiece.
+      recountField(recordId, field);
     } catch (err) {
       if (tokens.get(id) !== token) return;
       patchList(id, { status: "error", error: errorMessage(err) });
@@ -710,30 +803,32 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     void loadRecord(id);
   };
 
-  /** Creates and loads a multi-record field's child list, once. */
+  /** Creates and loads a multi-record field's child list, once. Records with no
+   * id of their own (ones the form is creating) have nothing to fetch, but the
+   * list is made all the same: records can be added to it. */
   const ensureList = (recordId: string, field: MultiRecordField) => {
     const id = listId(recordId, field.key);
     const s = get();
     if (s.lists[id]) return;
-    const node = s.records[recordId];
-    // Every inferred link points at `<table>.id`, so that — not this record's
-    // key, which may be composite — is the value the children carry. A record
-    // with no id of its own (one the form is creating) has nothing to fetch, but
-    // still gets a list: records can be added to it.
-    const parent = selectSharedValue(s, recordId, "id");
-    const parentValue = isShared(parent) ? (parent ?? "") : "";
-    const expected = shared(node?.counts[field.key]);
+    const parents = parentValues(recordId);
+    // Every base record brings its own records, and the counts say how many are
+    // coming — an upper bound on the rows, some of which may turn out to be the
+    // same row.
+    const expected = (s.records[recordId]?.counts[field.key] ?? []).reduce(
+      (total, count) => total + count,
+      0,
+    );
     set((draft) => {
       draft.lists[id] = {
-        status: parentValue === "" ? "loaded" : "unloaded",
+        status: parents.length === 0 ? "loaded" : "unloaded",
         error: null,
-        expected: isShared(expected) ? expected : 0,
+        expected,
         childIds: [],
         removed: [],
         dirty: false,
       };
     });
-    if (parentValue !== "") void loadChildren(id, field, parentValue);
+    if (parents.length > 0) void loadChildren(recordId, field, parents);
   };
 
   /** Fetches the records a multi-record field holds *only so they can be
@@ -744,28 +839,29 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
    * Tracked in {@link pendingRemovals} because a save made before this lands
    * would otherwise write a deletion it can't name. */
   const loadRemovedChildren = async (
-    id: string,
+    recordId: string,
     field: MultiRecordField,
-    parentValue: string,
+    parents: readonly string[],
   ) => {
+    const id = listId(recordId, field.key);
     try {
+      const spec = specFor(field.table, field.column);
+      const columns = columnsOf(field.table);
       const rows = await runRecordQuery(
-        childRecordsQuery(
-          field,
-          parentValue,
-          specFor(field.table, field.column),
-        ),
+        childRecordsQuery(field, parents, spec, columns),
         opts.schemaJson,
       );
       set((s) => {
-        const ids = rows.map((row, index) => {
-          const key = field.keyColumns.map((column, i) => ({
-            column,
-            value: row[i] ?? "",
-          }));
+        const groups = groupChildRows(rows, {
+          keyColumns: field.keyColumns,
+          previewWidth: spec.display.length,
+          columns,
+          linkColumn: field.column,
+        });
+        const ids = groups.map((group, index) => {
           const child = deletedChildId(id, index);
           s.records[child] = castDraft(
-            recordNode(field.table, [key], [field.column], "unloaded"),
+            recordNode(field.table, group.keys, [field.column], "unloaded"),
           );
           return child;
         });
@@ -813,7 +909,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       removed: [...list.removed, ...deletable(childRecordIds)],
       dirty: true,
     });
-    setCount(recordId, field.key, remaining.length);
+    // A row taken out takes every record it stood for with it, so the counts
+    // come down by that much — one base record's by more than another's, when
+    // the row was not the same size for both.
+    recountField(recordId, field);
     deselect(childRecordIds);
   };
 
@@ -825,14 +924,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   // modified any more, records that were being created are records, and records
   // that were removed are gone.
 
-  /** The key of a record the database has just issued one for. A record is only
-   * ever created singly, so this reads the one record the node holds. */
-  const keyOf = (node: RecordNode): RecordKey => {
+  /** The key of a record the database has just issued one for: the `index`th of
+   * however many records the node stands for. */
+  const keyOf = (node: RecordNode, index: number): RecordKey => {
     const table = opts.tables.find((t) => t.name === node.table);
     const columns = table ? identifyingColumns(table) : [];
     return columns.map((column) => ({
       column,
-      value: node.values[column]?.[0] ?? "",
+      value: node.values[column]?.[index] ?? "",
     }));
   };
 
@@ -863,19 +962,26 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       for (const column of Object.keys(n.values)) {
         n.original[column] = [...n.values[column]];
       }
-      if (n.isNew) {
-        n.isNew = false;
-        n.keys = castDraft([keyOf(n)]);
-      }
     });
 
   const applySave = (plan: SavePlan, result: DmlResult) => {
     for (const [opId, target] of plan.saved) {
       applyRow(target.recordId, target.index, result[opId]);
     }
-    // A record that was being created has never had a preview — it rendered as
-    // "New". Now that it has a key, it can have one.
+    // The records that were being created are records now, each keyed by what
+    // the database issued for it — which is why this waits until every returned
+    // row above has been folded in.
+    //
+    // They have never had a preview either, having rendered as "New" until now.
+    // A row standing for several records gets one preview, all of them saying
+    // the same thing.
     for (const recordId of plan.created) {
+      set((s) => {
+        const n = s.records[recordId];
+        if (!n) return;
+        n.isNew = false;
+        n.keys = castDraft(n.keys.map((_, index) => keyOf(n, index)));
+      });
       const node = get().records[recordId];
       const key = node?.keys[0];
       if (node && key && key.length > 0) {
@@ -1187,8 +1293,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         const s = get();
         const list = s.lists[id];
         const children = list?.childIds ?? [];
-        const count = shared(s.records[recordId]?.counts[field.key]);
-        const had = children.length > 0 || (isShared(count) ? count : 0) > 0;
+        const counts = s.records[recordId]?.counts[field.key] ?? [];
+        const had = children.length > 0 || counts.some((count) => count > 0);
         setCount(recordId, field.key, 0);
         deselect(children);
         // The deletion is recorded whether or not the list was ever opened: an
@@ -1210,11 +1316,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           });
           // Clearing a field the user never opened deletes records the form has
           // never seen, so it fetches their keys now — the one thing a save
-          // can't work out for itself later.
-          const parent = selectSharedValue(get(), recordId, "id");
-          const parentValue = isShared(parent) ? (parent ?? "") : "";
-          if (list?.status !== "loaded" && parentValue !== "") {
-            const pending = loadRemovedChildren(id, field, parentValue);
+          // can't work out for itself later. Every base record's, at that: the
+          // field was cleared on all of them.
+          const parents = parentValues(recordId);
+          if (list?.status !== "loaded" && parents.length > 0) {
+            const pending = loadRemovedChildren(recordId, field, parents);
             pendingRemovals.add(pending);
             void pending.finally(() => pendingRemovals.delete(pending));
           }
@@ -1238,18 +1344,20 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     removeChildren,
 
     openChildRecords: (recordId, field) => {
-      // The value the children point back at, exactly as `ensureList` finds it.
-      const parent = selectSharedValue(get(), recordId, "id");
-      if (!isShared(parent) || parent == null || parent === "") return;
+      // The values the children point back at, exactly as `ensureList` finds
+      // them.
+      const parents = parentValues(recordId);
+      if (parents.length === 0) return;
       opts.openRecords?.(
-        childRecordsTabQuery(field, parent, specFor(field.table, field.column)),
+        childRecordsTabQuery(
+          field,
+          parents,
+          specFor(field.table, field.column),
+        ),
       );
     },
 
     addChild: (recordId, field) => {
-      // A record can only be filed under one parent, so this waits on bulk
-      // modification like everything else under a multi-record field.
-      if (beyondBulk(recordId, field)) return;
       set((s) => {
         s.expanded[fieldItemId(recordId, field.key)] = true;
       });
@@ -1258,14 +1366,17 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const list = get().lists[id];
       if (!list) return;
       const child = newChildId(id, ++newSeq);
-      addNewRecord(child, field.table, [field.column]);
+      // A record can only be filed under one parent, so adding one to a field
+      // on several base records adds one to each — a single row saying the same
+      // thing about all of them, which is what every other row here is.
+      const records = get().records[recordId]?.keys.length ?? 1;
+      addNewRecord(child, field.table, [field.column], records);
       patchList(id, {
         childIds: [child, ...list.childIds],
-        expected: list.expected + 1,
+        expected: list.expected + records,
         dirty: true,
       });
-      const count = shared(get().records[recordId]?.counts[field.key]);
-      setCount(recordId, field.key, (isShared(count) ? count : 0) + 1);
+      recountField(recordId, field);
       set((s) => {
         s.expanded[child] = true;
       });

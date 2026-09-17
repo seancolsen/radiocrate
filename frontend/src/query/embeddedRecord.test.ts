@@ -124,47 +124,88 @@ describe("preview queries", () => {
       (f) => f.key === "#credit",
     ) as MultiRecordField;
 
-  it("fetches a multi-record field's records and their previews at once", () => {
+  /** Every column of a table, as the form hands them to a child-list query. */
+  const columnsOf = (table: string) =>
+    (TABLES.find((t) => t.name === table)?.columns ?? []).map((c) => c.name);
+
+  it("fetches a multi-record field's records, previews and columns at once", () => {
     const field = creditField();
     expect(
-      childRecordsQuery(field, "t1", embedSpec(TABLES, "credit", "track")),
+      childRecordsQuery(
+        field,
+        ["t1"],
+        embedSpec(TABLES, "credit", "track"),
+        columnsOf("credit"),
+      ),
     ).toEqual({
       base: "credit",
       filter: `track:="t1"`,
       sort: "\\\\order \\\\artist.name \\\\artist",
       // The identifying columns first — that's how each child is addressed —
-      // then the preview.
-      display: "$track $artist $artist.name",
+      // then the preview, then every column: what decides which of the records
+      // are the same record but for the parent they hang off.
+      display: "$track $artist $artist.name $track $artist $order $role",
     });
+  });
+
+  it("lists the records of every record the form is on, in one query", () => {
+    const field = creditField();
+    expect(
+      childRecordsQuery(
+        field,
+        ["t1", "t2"],
+        embedSpec(TABLES, "credit", "track"),
+        columnsOf("credit"),
+      ).filter,
+    ).toBe(`[\n  track:="t1"\n  track:="t2"\n]`);
   });
 
   it("falls back to ordering a list by its keys when there's no preview", () => {
     const field = creditField();
-    expect(childRecordsQuery(field, "t1", { display: [], sort: "" })).toEqual({
+    expect(
+      childRecordsQuery(
+        field,
+        ["t1"],
+        { display: [], sort: "" },
+        columnsOf("credit"),
+      ),
+    ).toEqual({
       base: "credit",
       filter: `track:="t1"`,
       sort: "\\\\track \\\\artist",
-      display: "$track $artist",
+      display: "$track $artist $track $artist $order $role",
     });
   });
 
   it("opens a multi-record field's records as a query showing their previews", () => {
     const field = creditField();
     expect(
-      childRecordsTabQuery(field, "t1", embedSpec(TABLES, "credit", "track")),
+      childRecordsTabQuery(field, ["t1"], embedSpec(TABLES, "credit", "track")),
     ).toEqual({
       base: "credit",
       filter: `track:="t1"`,
       sort: "\\\\order \\\\artist.name \\\\artist",
-      // Only what the embedded records show — no keys ahead of it.
+      // Only what the embedded records show — no keys ahead of it, and no
+      // columns: nothing here collapses anything.
       display: "$artist.name",
     });
+  });
+
+  it("opens the records of several parents as the rows they are", () => {
+    const field = creditField();
+    expect(
+      childRecordsTabQuery(
+        field,
+        ["t1", "t2"],
+        embedSpec(TABLES, "credit", "track"),
+      ).filter,
+    ).toBe(`[\n  track:="t1"\n  track:="t2"\n]`);
   });
 
   it("shows the keys in an opened query when there's no preview", () => {
     const field = creditField();
     expect(
-      childRecordsTabQuery(field, "t1", { display: [], sort: "" }),
+      childRecordsTabQuery(field, ["t1"], { display: [], sort: "" }),
     ).toEqual({
       base: "credit",
       filter: `track:="t1"`,

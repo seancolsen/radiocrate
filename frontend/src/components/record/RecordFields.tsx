@@ -10,19 +10,19 @@ import {
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
-import FieldValue, { VariedValue, type EditExit } from "./FieldValue";
+import FieldValue, { type EditExit } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
 import {
   fieldItemId,
-  isShared,
   listId,
   scalarChildId,
-  selectCount,
+  selectCountMax,
+  selectCountMin,
   selectFieldModified,
   selectHasLinkedRecord,
-  selectIsBulkBlocked,
   selectIsExpanded,
   selectIsSelected,
+  selectRecordCount,
   selectRecordModified,
   selectSharedValue,
   VARIED,
@@ -57,9 +57,10 @@ import type {
 //
 // A row renders the same whether the form is on one record or several: what it
 // shows is what those records agree on, which is a value like any other. The two
-// places the count matters are here in `FieldRow` — a field the records disagree
-// on shows "(varied)" in place of its value, and a multi-record field says bulk
-// modification of child records isn't supported yet.
+// places the count shows are here in `FieldRow` — a field the records disagree
+// on shows its distinct values in place of one value, and a multi-record field
+// whose records hold different numbers of related records shows the range —
+// and on a `ChildRow`, which says how many records its one row stands for.
 //
 // Every component subscribes to the form's store through narrow selectors that
 // return primitives or references already in state (state management rule 2),
@@ -70,6 +71,27 @@ import type {
 /** The cells of an embedded record with no preview yet — one shared empty list,
  * so a selector falling back to it returns the same reference every time. */
 const NO_CELLS: readonly (string | null)[] = [];
+
+/** The bubble a count is drawn in — a field's related-record count, or the
+ * number of records one row of such a field stands for. */
+const BUBBLE =
+  "bg-edge/50 text-ink-weak shrink-0 rounded-full px-2 text-xs leading-[18px]";
+
+/** How many records a multi-record field holds. On several base records that's
+ * a *range* — the fewest any one of them has, and the most — drawn as two
+ * bubbles with the dash between rather than inside them, so each number still
+ * reads as a count of its own rather than the pair reading as one odd value. */
+function CountBadge(props: { min: number; max: number }): JSX.Element {
+  if (props.min === props.max) {
+    return <span className={BUBBLE}>{props.min}</span>;
+  }
+  return (
+    <span className="text-ink-weak flex shrink-0 items-center gap-0.5 text-xs">
+      <span className={BUBBLE}>{props.min}</span>–
+      <span className={BUBBLE}>{props.max}</span>
+    </span>
+  );
+}
 
 /** All of one record's fields, dimmed under the loading wash while its data is
  * in flight. */
@@ -111,13 +133,11 @@ function fieldExpandable(
   overflowing: boolean,
 ): boolean {
   if (field.kind === "multiRecord") {
-    // A field with no records has nothing to open; one whose table has no
-    // record identity at all can be counted but not listed; and one on
-    // several records can't be listed yet either.
-    if (selectIsBulkBlocked(s, recordId, field.key)) return false;
-    const count = selectCount(s, recordId, field.key);
-    const shared = isShared(count) ? count : undefined;
-    return (shared ?? 0) > 0 && field.keyColumns.length > 0;
+    // A field with no records anywhere has nothing to open — one base record
+    // having some is enough — and one whose table has no record identity at all
+    // can be counted but not listed.
+    const most = selectCountMax(s, recordId, field.key) ?? 0;
+    return most > 0 && field.keyColumns.length > 0;
   }
   if (field.kind === "scalarLink") {
     return selectHasLinkedRecord(s, recordId, field);
@@ -154,23 +174,19 @@ function FieldRow(props: {
   const itemId = fieldItemId(recordId, field.key);
   const expanded = useFormState(model, (s) => selectIsExpanded(s, itemId));
 
-  /** Whether the form is on several records, which is what a multi-record field
-   * has no bulk modification for yet. */
-  const bulkBlocked = useFormState(model, (s) =>
-    selectIsBulkBlocked(s, recordId, field.key),
-  );
-
-  /** The record count behind a multi-record field: the number its records
-   * share, `VARIED` when they hold different numbers, `undefined` before it
-   * lands (or for any other kind of field). */
-  const relatedCount = useFormState(model, (s) =>
+  /** The record count behind a multi-record field: the fewest and the most its
+   * records hold, which are the same number unless the form is on several that
+   * disagree. `undefined` before they land (or for any other kind of field). */
+  const countMin = useFormState(model, (s) =>
     field.kind === "multiRecord"
-      ? selectCount(s, recordId, field.key)
+      ? selectCountMin(s, recordId, field.key)
       : undefined,
   );
-  /** That count when there's a number to put in the badge. */
-  const count = isShared(relatedCount) ? relatedCount : undefined;
-  const variedCount = relatedCount === VARIED;
+  const countMax = useFormState(model, (s) =>
+    field.kind === "multiRecord"
+      ? selectCountMax(s, recordId, field.key)
+      : undefined,
+  );
 
   /** The column value behind any other field: `undefined` until loaded,
    * `VARIED` when the records disagree. */
@@ -351,35 +367,27 @@ function FieldRow(props: {
               still wears one, for having gained it. */}
           {!props.isNew && modified && <ModifiedStar label={field.label} />}
         </div>
-        {field.kind === "multiRecord" && count !== undefined && (
-          <span className="bg-edge/50 text-ink-weak rounded-full px-2 text-xs leading-[18px]">
-            {count}
-          </span>
+        {countMin !== undefined && countMax !== undefined && (
+          <CountBadge min={countMin} max={countMax} />
         )}
-        {/* Records that hold different numbers of related records say so the
-            same way a field they disagree on does. */}
-        {variedCount && <VariedValue />}
 
         {/* The one way into a multi-record field that doesn't need a record to
             already be there: add one. Like the expansion toggle beside it, it's
             a control *on* the field rather than an item of its own, so it isn't
             focusable and doesn't take focus when clicked. */}
-        {field.kind === "multiRecord" &&
-          field.keyColumns.length > 0 &&
-          !bulkBlocked && (
-            <IconButton
-              icon={Icons.Add}
-              label={`Add ${field.label}`}
-              size="sm"
-              tabIndex={-1}
-              onClick={() => model.addChild(recordId, field)}
-            />
-          )}
+        {field.kind === "multiRecord" && field.keyColumns.length > 0 && (
+          <IconButton
+            icon={Icons.Add}
+            label={`Add ${field.label}`}
+            size="sm"
+            tabIndex={-1}
+            onClick={() => model.addChild(recordId, field)}
+          />
+        )}
 
         {/* The same records, as rows of a query tab of their own. A record the
-            form is still creating has none to open — and several records have
-            no one set of them — so neither gets the button. */}
-        {field.kind === "multiRecord" && !props.isNew && !bulkBlocked && (
+            form is still creating has none to open, so it gets no button. */}
+        {field.kind === "multiRecord" && !props.isNew && (
           <IconButton
             icon={Icons.OpenInTab}
             label={`Open ${field.label} in new tab`}
@@ -387,17 +395,6 @@ function FieldRow(props: {
             tabIndex={-1}
             onClick={() => model.openChildRecords(recordId, field)}
           />
-        )}
-
-        {/* What a multi-record field offers while the form is on several
-            records: nothing yet. The records under it belong to one record
-            each, and editing them together is separate work still to come.
-            Smaller than a value, since it's about the form rather than about
-            the data — and it has a sidebar's width to fit into. */}
-        {field.kind === "multiRecord" && bulkBlocked && (
-          <span className="text-ink-weak min-w-0 flex-1 truncate text-xs italic">
-            Bulk modification not yet supported
-          </span>
         )}
 
         {/* A scalar linked record field shows the record it points at, rather
@@ -464,24 +461,22 @@ function FieldRow(props: {
       )}
 
       {/* Expanded varied primitive field: shows distinct values with apply buttons. */}
-      {expanded &&
-        field.kind === "primitive" &&
-        value === VARIED && (
-          <Subtree>
-            <div className="pr-1 pb-1">
-              <FieldValueSlot
-                model={model}
-                recordId={recordId}
-                field={field}
-                value={value}
-                expanded={true}
-                onBeginEdit={beginEdit}
-                onCommit={commit}
-                onContextMenu={(e) => openMenu(e, "field")}
-              />
-            </div>
-          </Subtree>
-        )}
+      {expanded && field.kind === "primitive" && value === VARIED && (
+        <Subtree>
+          <div className="pr-1 pb-1">
+            <FieldValueSlot
+              model={model}
+              recordId={recordId}
+              field={field}
+              value={value}
+              expanded={true}
+              onBeginEdit={beginEdit}
+              onCommit={commit}
+              onContextMenu={(e) => openMenu(e, "field")}
+            />
+          </div>
+        </Subtree>
+      )}
 
       {/* A linked record expands into its own form. */}
       {expanded && field.kind === "scalarLink" && (
@@ -625,6 +620,19 @@ function ChildRow(props: {
     selectRecordModified(s, recordId),
   );
 
+  /** How many database records this row stands for: one, ordinarily; more when
+   * the form is on several base records and each of them has a record saying
+   * exactly this (`record/childGroups.ts`). */
+  const records = useFormState(model, (s) => selectRecordCount(s, recordId));
+  /** Whether the form is on several base records at all — which is when that
+   * number is worth showing. Every row carries one then, including the rows
+   * standing for a single record, so they read as a column of counts rather
+   * than as annotations on the odd row. */
+  const counted = useFormState(
+    model,
+    (s) => selectRecordCount(s, parentId) > 1,
+  );
+
   /** What an expansion toggle's aria-label names this record: the preview it
    * shows, falling back to its key. */
   const label = isNew
@@ -687,6 +695,7 @@ function ChildRow(props: {
               : model.toggleChild(recordId)
           }
         />
+        {counted && <span className={BUBBLE}>{records}</span>}
         <EmbeddedRecord
           cells={isNew ? NO_CELLS : cells}
           isNew={isNew}

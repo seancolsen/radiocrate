@@ -326,6 +326,94 @@ describe("planSave", () => {
     ]);
   });
 
+  it("creates one record per base record, each filed under its own", () => {
+    // Adding to a multi-record field while the form is on two tracks: one row,
+    // standing for a credit on each of them. A record can only be filed under
+    // one parent, so the row is two inserts — and each carries the parent it
+    // belongs to, the two being aligned record for record.
+    const both = loadedAll(
+      "track",
+      [TRACK_KEY, [{ column: "id", value: "track-2" }]],
+      { title: "Sorry" },
+    );
+    const root: RecordNode = {
+      ...both,
+      values: { ...both.values, id: ["track-1", "track-2"] },
+      original: { ...both.original, id: ["track-1", "track-2"] },
+    };
+    const child = `${credits}[new:1]`;
+    const plan = planSave(
+      tree(
+        {
+          [ROOT_ID]: root,
+          [child]: {
+            ...created("credit", { artist: "artist-9" }, ["track"]),
+            keys: [[], []],
+            values: perRecord({ artist: "artist-9" }, 2),
+          },
+        },
+        { [credits]: list([child]) },
+      ),
+    );
+    expect(plan.operations).toEqual([
+      {
+        operation: "insert",
+        id: "op1",
+        table: "credit",
+        values: { artist: "artist-9", track: "track-1" },
+      },
+      {
+        operation: "insert",
+        id: "op2",
+        table: "credit",
+        values: { artist: "artist-9", track: "track-2" },
+      },
+    ]);
+    // Each answer goes back to the record its operation was for.
+    expect(plan.saved.get("op2")).toEqual({ recordId: child, index: 1 });
+    expect(plan.created).toEqual([child]);
+  });
+
+  it("deletes every record one row of a multi-record field stands for", () => {
+    // The same row on the way out: two records, two deletes.
+    const child = `${credits}[0]`;
+    const plan = planSave(
+      tree(
+        {
+          [ROOT_ID]: trackNode(),
+          [child]: {
+            ...loaded("credit", [], { artist: "artist-1" }, ["track"]),
+            keys: [
+              [
+                { column: "track", value: "track-1" },
+                { column: "artist", value: "artist-1" },
+              ],
+              [
+                { column: "track", value: "track-2" },
+                { column: "artist", value: "artist-1" },
+              ],
+            ],
+          },
+        },
+        { [credits]: list([], [child]) },
+      ),
+    );
+    expect(plan.operations).toEqual([
+      {
+        operation: "delete",
+        id: "op1",
+        table: "credit",
+        where: { track: "track-1", artist: "artist-1" },
+      },
+      {
+        operation: "delete",
+        id: "op2",
+        table: "credit",
+        where: { track: "track-2", artist: "artist-1" },
+      },
+    ]);
+  });
+
   it("drops a record the form created and the user then removed", () => {
     const plan = planSave(
       tree(

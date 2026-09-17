@@ -24,11 +24,15 @@
 // server rejects it as a dangling reference. That error lands in the form like
 // any other.
 //
-// A node standing for several records (the editor on a multi-row selection)
-// needs no rule of its own: an operation names one record, so the node yields
-// one per record it holds — each with its own `where` and its own changed
+// A node standing for several records (the editor on a multi-row selection, or
+// one row of a multi-record field standing for what several base records each
+// say) needs no rule of its own: an operation names one record, so the node
+// yields one per record it holds — each with its own `where` and its own changed
 // columns, which for an edit made across all of them is the same column with the
-// same value. Everything above still holds, record by record.
+// same value. A node being *created* likewise inserts one record apiece, and a
+// new child of such a node carries the parent record at its own index, since the
+// two are aligned: the nth record of the row belongs to the nth base record.
+// Everything above still holds, record by record.
 
 import type { DmlOperation, JsonValue } from "api-client";
 import type {
@@ -159,10 +163,12 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
    *
    * `context` is the foreign key tying a new record to the record it's being
    * created under: the column a multi-record field filters on, which the child's
-   * own form hides precisely because it isn't the user's to fill in. */
+   * own form hides precisely because it isn't the user's to fill in. It carries
+   * one value per record the *parent* node stands for, which a new row under it
+   * is aligned to record for record. */
   const planRecord = (
     recordId: string,
-    context?: { column: string; value: JsonValue },
+    context?: { column: string; values: readonly JsonValue[] },
   ): string | undefined => {
     const node = tree.record(recordId);
     if (!node) return undefined;
@@ -196,21 +202,29 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
       // A record the form is creating for a link is created once, and every
       // record of the node comes to point at it.
       Object.assign(changed, links);
-      if (node.isNew && context) changed[context.column] = context.value;
+      if (node.isNew && context) {
+        changed[context.column] = context.values[index] ?? null;
+      }
       return changed;
     });
 
-    let opId: string | undefined;
+    /** The operation creating each record of this node — empty for a node that
+     * already exists. What points back at this node reads it by index. */
+    const insertIds: string[] = [];
     if (node.isNew) {
-      // A record is only ever created singly, whatever the form around it holds.
-      opId = nextOpId();
-      operations.push({
-        operation: "insert",
-        id: opId,
-        table: node.table,
-        values: values[0] ?? {},
+      // One insert per record the node stands for: adding to a multi-record
+      // field across several base records files one new record under each.
+      node.keys.forEach((_, index) => {
+        const id = nextOpId();
+        insertIds.push(id);
+        operations.push({
+          operation: "insert",
+          id,
+          table: node.table,
+          values: values[index] ?? {},
+        });
+        saved.set(id, { recordId, index });
       });
-      saved.set(opId, { recordId, index: 0 });
       created.push(recordId);
     } else {
       node.keys.forEach((key, index) => {
@@ -230,20 +244,25 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     // The records that point back at this one go after it, so a new child can
     // carry the id this operation is about to produce. Every inferred link
     // points at `<table>.id`, so that — not this record's key, which may be
-    // composite — is what a child carries. A node holding several records has
-    // no children to plan: they can only be opened on one record at a time
-    // (`beyondBulk`), which is why one id is the whole story here.
+    // composite — is what a child carries. One per record this node stands for,
+    // since a new child row holds one record for each of them.
     for (const field of node.fields) {
       if (field.kind !== "multiRecord") continue;
       const list = tree.list(listId(recordId, field.key));
       if (!list) continue;
-      const parent: JsonValue =
-        opId === undefined ? (node.values["id"]?.[0] ?? null) : { id: opId };
+      const parents: JsonValue[] = node.keys.map((_, index) => {
+        const insert = insertIds[index];
+        return insert !== undefined
+          ? { id: insert }
+          : (node.values["id"]?.[index] ?? null);
+      });
       for (const child of list.childIds) {
-        planRecord(child, { column: field.column, value: parent });
+        planRecord(child, { column: field.column, values: parents });
       }
     }
-    return opId;
+    // What anything pointing *at* this node references. A link is only ever to
+    // one record, and only a node holding exactly one is ever linked to.
+    return insertIds[0];
   };
 
   planRemovals(rootId);
