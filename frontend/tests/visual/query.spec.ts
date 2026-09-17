@@ -151,6 +151,20 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The same row on a scrolling grid: the ring runs the full width and the
+  // scrollbar thumb sits over it, so no cell content is clipped.
+  test(`results/playing-row-scrollbar - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "results/playing-row-scrollbar",
+      colorScheme,
+    );
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/playing-row-scrollbar", colorScheme),
+    );
+  });
+
   // Multi-select mode: the floating toolbar over the rows, counting the two
   // selected ones. Its actions menu is the row menu's body over the whole
   // selection, minus the "Select multiple" entry that put the mode on.

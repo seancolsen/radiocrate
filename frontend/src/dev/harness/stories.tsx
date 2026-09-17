@@ -510,6 +510,30 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // The same playing row on a stage too short for all five rows, so the grid
+  // shows its scrollbar: the ring stays full-width and the thumb rides over it,
+  // rather than the ring pulling in and clipping the row's last column.
+  "results/playing-row-scrollbar": {
+    width: 1280,
+    height: 110,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult();
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.seedNowPlaying(
+        {
+          sourceTabId: id,
+          id: "seeded-track",
+          rowIndex: 1,
+          title: "Uncatena",
+          artists: ["Sylvan Esso", "Nick Sanborn"],
+        },
+        { playing: true, position: 74, duration: 255, hasNext: true },
+      );
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // A row's context menu: one entry per table whose primary key the row
   // carries, over the entry that turns multi-select mode on.
   "result-row/context-menu": {

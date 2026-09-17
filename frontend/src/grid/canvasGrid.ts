@@ -845,6 +845,8 @@ export class CanvasGrid {
       return;
     }
 
+    this.layoutScrollbar();
+
     const { rowH } = layout;
     const first = Math.max(0, Math.floor(this.scrollTop / rowH));
     const last = Math.min(
@@ -934,17 +936,20 @@ export class CanvasGrid {
   /** The playing row's marker: a rounded blue rectangle around the row. Drawn
    * after the row's cells (and after the separator the background lays down, so
    * no hairline crosses it), with the stroke's center placed half a line-width
-   * inside the inset edge, which keeps the 2px band on whole device pixels. The
-   * right edge clears the overlay scrollbar's gutter when one is showing, so the
-   * thumb never slides over the ring. */
+   * inside the inset edge, which keeps the 2px band on whole device pixels. It
+   * spans the full row width whether or not a scrollbar is showing, so the ring
+   * never shifts inward over the cells. Where the thumb crosses it the ring
+   * isn't painted at all, which is what puts the scrollbar visually on top: the
+   * thumb is translucent, so a ring merely drawn under it would tint it blue
+   * and read as the nearer of the two. */
   private drawCurrentMarker(screenY: number, rowH: number): void {
     const ctx = this.ctx;
     const off = CURRENT_MARKER_INSET + CURRENT_MARKER_W / 2;
-    const gutter = this.scrollRange > 0 ? SB_WIDTH + 2 * SB_MARGIN : 0;
-    const w = this.vw - 2 * off - gutter;
+    const w = this.vw - 2 * off;
     const h = rowH - 2 * off;
     if (w <= 0 || h <= 0) return;
     ctx.save();
+    this.clipOutThumb();
     ctx.strokeStyle = this.theme.currentMarker;
     ctx.lineWidth = CURRENT_MARKER_W;
     roundRectPath(
@@ -957,6 +962,29 @@ export class CanvasGrid {
     );
     ctx.stroke();
     ctx.restore();
+  }
+
+  /** Cuts the thumb's box out of the clip region, so what follows paints
+   * everywhere but behind the scrollbar. The cut is the thumb's *bounding* box,
+   * not its rounded pill: squaring it off keeps stray slivers of the clipped
+   * artwork out of the notches beside the thumb's round ends. Its edges are
+   * snapped outward to whole device pixels so no fraction of a pixel survives
+   * along them. Call inside a `save()`/`restore()` pair. */
+  private clipOutThumb(): void {
+    const thumb = this.thumb;
+    if (!thumb) return;
+    const ctx = this.ctx;
+    const out = (v: number, dir: -1 | 1): number =>
+      (dir < 0 ? Math.floor(v * this.dpr) : Math.ceil(v * this.dpr)) / this.dpr;
+    ctx.beginPath();
+    ctx.rect(0, 0, this.vw, this.vh);
+    ctx.rect(
+      this.vw - SB_MARGIN - SB_WIDTH,
+      out(thumb.y, -1),
+      SB_WIDTH,
+      out(thumb.y + thumb.h, 1) - out(thumb.y, -1),
+    );
+    ctx.clip("evenodd");
   }
 
   /** The unsaved-changes ✱ for one row: the record editor is holding edits to
@@ -1112,29 +1140,34 @@ export class CanvasGrid {
     }
   }
 
-  private drawScrollbar(): void {
+  /** Places the thumb for this frame (and clears it when there's nothing to
+   * scroll). Runs before the rows are drawn, because the playing row's ring has
+   * to know where the thumb will land to leave its box unpainted. */
+  private layoutScrollbar(): void {
     if (this.scrollRange <= 0) {
       this.thumb = undefined;
       return;
     }
-    const { vw, vh } = this;
+    const vh = this.vh;
     // The thumb is sized against everything the view can be scrolled over —
     // the rows *plus* whatever space an overlay reserved above them — so it
     // still spans the whole travel when the only thing to scroll is the inset.
     const span = vh + this.scrollRange;
-    const thumbH = Math.max(SB_MIN_THUMB, (vh * vh) / span);
-    const thumbY =
-      ((this.scrollTop - this.minScroll) / this.scrollRange) * (vh - thumbH);
-    this.thumb = { y: thumbY, h: thumbH };
+    const h = Math.max(SB_MIN_THUMB, (vh * vh) / span);
+    const y = ((this.scrollTop - this.minScroll) / this.scrollRange) * (vh - h);
+    this.thumb = { y, h };
+  }
 
+  private drawScrollbar(): void {
+    if (!this.thumb) return;
     const ctx = this.ctx;
     ctx.fillStyle = this.theme.scrollThumb;
     roundRectPath(
       ctx,
-      vw - SB_MARGIN - SB_WIDTH,
-      thumbY,
+      this.vw - SB_MARGIN - SB_WIDTH,
+      this.thumb.y,
       SB_WIDTH,
-      thumbH,
+      this.thumb.h,
       SB_WIDTH / 2,
     );
     ctx.fill();
