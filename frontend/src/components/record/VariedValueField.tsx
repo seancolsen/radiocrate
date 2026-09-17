@@ -53,28 +53,28 @@ export default function VariedValueField(props: {
     <div className="flex flex-col gap-1">
       {/* Collapsed view: show distinct count in gray italic */}
       {!expanded && (
-        <span className="text-ink-weak text-sm/5 italic cursor-default">
+        <span className="text-ink-weak cursor-default text-sm/5 italic">
           {distinctCount} distinct record{distinctCount !== 1 ? "s" : ""}
         </span>
       )}
 
       {/* Expanded view: show each distinct value with count and apply button */}
       {expanded && (
-        <div className="border-edge flex flex-col gap-1 rounded border p-2 bg-panel/50">
+        <div className="border-edge bg-panel/50 flex flex-col gap-1 rounded border p-2">
           {distinctValues.map((item: DistinctValue, index: number) => (
             <div key={index} className="flex items-center gap-2">
               {/* Count badge */}
-              <span className="bg-edge/50 text-ink-weak rounded-full px-2 text-xs leading-[18px] shrink-0">
+              <span className="bg-edge/50 text-ink-weak shrink-0 rounded-full px-2 text-xs leading-[18px]">
                 {item.count}
               </span>
 
               {/* Value */}
               <span
                 className={cx(
-                  "text-sm/5 flex-1 min-w-0 truncate",
+                  "min-w-0 flex-1 truncate text-sm/5",
                   isNullOrEmpty(item.value)
                     ? "text-ink-weak italic"
-                    : "text-ink"
+                    : "text-ink",
                 )}
               >
                 {getDisplayText(item.value)}
