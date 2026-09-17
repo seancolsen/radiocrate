@@ -54,6 +54,7 @@ vi.mock("../../query/lineage", () => ({
 import { settingDelete, settingSet } from "api-client";
 import { compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources } from "../../query/lineage";
+import { buildResultFromArrow } from "../../query/result";
 import { SETTINGS } from "../../state/settings";
 
 function openQueryTab(bundle: AppStoreBundle, id: string) {
@@ -276,6 +277,26 @@ describe("resyncRecordEditors", () => {
     expect(() => bundle.actions.resyncRecordEditors()).not.toThrow();
     expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
   });
+
+  it("holds the record it has when the selected rows name none of that table", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults("a", buildResultFromStringRows([["1"], ["2"]]), {
+      records: [{ table: "track", keyColumns: ["id"], keyIndices: [0] }],
+    });
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.setRecordEditorRecords("a", "album", [
+      { table: "album", key: [{ column: "id", value: "7" }] },
+    ]);
+
+    // The rows carry track keys, never an album's — so there's no album for
+    // the selection to re-point the editor at. It keeps the album it has: it
+    // just has no row to write back through.
+    bundle.actions.resyncRecordEditors();
+    expect(bundle.store.getState().pages["a"]?.recordEditor?.records).toEqual([
+      { table: "album", key: [{ column: "id", value: "7" }] },
+    ]);
+  });
 });
 
 describe("toggleFilterPreset", () => {
@@ -474,5 +495,101 @@ describe("a superseded run token", () => {
     resolvers[0](1);
     await new Promise((r) => setTimeout(r, 0));
     expect(bundle.store.getState().pages["a"]?.lineage?.trackIdColumn).toBe(2);
+  });
+});
+
+describe("a refresh", () => {
+  // A re-run is a refresh when it compiles to the SQL the rows on screen came
+  // from, so each test here drives `compileSavedQuery` (already mocked at the
+  // top of the file) and takes the rows that come back from
+  // `buildResultFromArrow`. `analyzeColumnSources` is put back to its
+  // file-level default (resolving to nothing, so no lineage lands), which an
+  // earlier test in this file replaces with a promise it never settles.
+  beforeEach(() => {
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 1",
+      columnAnnotations: [],
+    });
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["1"], ["2"], ["3"]]),
+    );
+  });
+
+  /** Runs `tabId`'s query and waits for its rows to land. */
+  async function run(bundle: AppStoreBundle, tabId: string) {
+    bundle.actions.runQuery(tabId);
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().pages[tabId]?.running).toBe(false),
+    );
+  }
+
+  /** A tab that has run its query once, with a row selected, multi-select on,
+   * the results scrolled, and the record editor open on the selected row. */
+  async function tabWithRowsInUse(): Promise<AppStoreBundle> {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setSchemaJson("{}");
+    await run(bundle, "a");
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.setResultsScroll("a", 420);
+    bundle.actions.setRecordEditorRecords("a", "track", [
+      { table: "track", key: [{ column: "id", value: "2" }] },
+    ]);
+    return bundle;
+  }
+
+  it("lands its rows under the selection, the editor and the scroll position", async () => {
+    const bundle = await tabWithRowsInUse();
+
+    await run(bundle, "a"); // the Refresh button: same query, same SQL
+
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.resultIsRefresh).toBe(true);
+    expect([...(page?.selection ?? [])]).toEqual([1]);
+    expect(page?.multiSelect).toBe(true);
+    expect(page?.scrollOffset).toBe(420);
+    expect(page?.recordEditor?.records).toEqual([
+      { table: "track", key: [{ column: "id", value: "2" }] },
+    ]);
+  });
+
+  it("sweeps all of it away when the query itself changed", async () => {
+    const bundle = await tabWithRowsInUse();
+
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 2",
+      columnAnnotations: [],
+    });
+    await run(bundle, "a");
+
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.resultIsRefresh).toBe(false);
+    expect(page?.selection).toBeUndefined();
+    expect(page?.multiSelect).toBe(false);
+    expect(page?.scrollOffset).toBe(0);
+    // The editor goes with the selection it was standing on — but that's the
+    // resync's doing, not this action's (see `createStores`).
+    bundle.actions.resyncRecordEditors();
+    expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
+  });
+
+  it("drops only the selected rows the re-run came back too short for", async () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setSchemaJson("{}");
+    await run(bundle, "a");
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 2, { shift: true, ctrl: false });
+
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["1"], ["2"]]),
+    );
+    await run(bundle, "a");
+
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.resultIsRefresh).toBe(true);
+    expect([...(page?.selection ?? [])]).toEqual([0, 1]);
   });
 });

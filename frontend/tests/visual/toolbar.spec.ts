@@ -173,3 +173,60 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
     ),
   ).not.toBeNull();
 });
+
+test("the Refresh icon spins while the run it starts is in flight", async ({
+  page,
+}) => {
+  // The same fixtures as `mockRpc`, but with the SQL endpoint held open, so the
+  // tab's run stays in flight for as long as the assertions need it to.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/rpc", async (route) => {
+    const body = route.request().postDataJSON() as {
+      method: string;
+      id: number;
+    };
+    const result =
+      body.method === "query.list"
+        ? QUERIES_FIXTURE
+        : body.method === "preset.list"
+          ? PRESETS_FIXTURE
+          : null;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ jsonrpc: "2.0", result, id: body.id }),
+    });
+  });
+  await page.route("**/api/query", async (route) => {
+    await held;
+    await route.fulfill({ status: 200, contentType: "text/plain", body: "" });
+  });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  // A definition the record fixture's schema can actually compile — the
+  // seeded `FILTER_DEF` leans on a preset that names columns it doesn't have,
+  // and a compile that throws never reaches the request being held.
+  const RUNNABLE = {
+    base: "track",
+    filter: { custom: "", presets: [] },
+    sort: { custom: "" },
+    display: { custom: "" },
+  };
+  await page.goto(
+    `/?tabs=Lemonade&clean=1&recordFixture=1&expose=1&def=${def(RUNNABLE)}`,
+  );
+  const toolbar = page.getByTestId("query-toolbar");
+  await expect(toolbar).toBeVisible();
+
+  // The tab runs its query as soon as it's viewed, and that run is the one
+  // being held here.
+  const icon = toolbar
+    .getByRole("button", { name: "Refresh", exact: true })
+    .locator("svg");
+  await expect(icon).toHaveClass(/animate-spin/);
+
+  release();
+  await expect(icon).not.toHaveClass(/animate-spin/);
+});

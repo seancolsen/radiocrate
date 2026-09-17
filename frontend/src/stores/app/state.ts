@@ -191,6 +191,24 @@ export interface RpcErrorNotice {
 export interface QueryPageState {
   /** The decoded, render-ready result (absent until a run lands). */
   result?: QueryResult;
+  /** Whether the result now in `result` is a *refresh* of the one before it —
+   * a re-run that compiled to the very same SQL (the Refresh button; a revert
+   * or preset edit that changed nothing), as against the rows of a query the
+   * user has just changed.
+   *
+   * A refresh leaves the row selection, the record editor standing on it and
+   * the results' scroll position alone: same query, same rows, same place in
+   * them. Anything else is a new set of rows, and all three are reset. The flag
+   * is what tells the grid which of the two swaps it's being handed, so it's
+   * read the moment the swap is observed rather than rendered. */
+  resultIsRefresh: boolean;
+  /** Where the results pane was scrolled to, in logical px — kept so switching
+   * tabs and coming back lands where the user left off. One `CanvasGrid` serves
+   * every tab, so this is the handoff: the pane writes the live offset here as
+   * a tab is left, and restores it as one is entered. It isn't live while the
+   * tab is on screen (the grid owns the offset there), and a new result set
+   * puts it back to the top. */
+  scrollOffset: number;
   /** The result-row selection: a set of row indexes (absent = none). Replaced
    * wholesale on every change so subscribers observe a new reference; cleared
    * when the result changes. Treated as opaque by Immer: a `Set` is always
@@ -230,6 +248,8 @@ export interface QueryPageState {
 /** A page with nothing in it yet — what a tab's first page write starts from. */
 export function emptyPage(): QueryPageState {
   return {
+    resultIsRefresh: false,
+    scrollOffset: 0,
     multiSelect: false,
     recordEditor: null,
     running: false,

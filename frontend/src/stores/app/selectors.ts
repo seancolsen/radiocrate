@@ -64,6 +64,21 @@ export const selectRowSelection = (
   tabId: string,
 ): ReadonlySet<number> => s.pages[tabId]?.selection ?? EMPTY_SELECTION;
 
+/** Whether a run of `tabId`'s query is in flight — what spins the toolbar's
+ * Refresh icon. */
+export const selectRunning = (s: AppState, tabId: string): boolean =>
+  s.pages[tabId]?.running ?? false;
+
+/** Whether the result `tabId` is showing arrived as a refresh of the one before
+ * it (see `QueryPageState.resultIsRefresh`) — read by the results grid as it's
+ * handed the swap, to decide whether the scroll position survives it. */
+export const selectResultIsRefresh = (s: AppState, tabId: string): boolean =>
+  s.pages[tabId]?.resultIsRefresh ?? false;
+
+/** Where `tabId`'s results were scrolled to when the tab was last left. */
+export const selectResultsScroll = (s: AppState, tabId: string): number =>
+  s.pages[tabId]?.scrollOffset ?? 0;
+
 /** Whether `tabId`'s results pane is in multi-select mode (the floating
  * multi-select toolbar, and click-to-toggle rows). */
 export const selectMultiSelect = (s: AppState, tabId: string): boolean =>

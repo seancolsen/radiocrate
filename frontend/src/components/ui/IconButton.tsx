@@ -22,6 +22,10 @@ const IconButton = forwardRef<
   {
     icon: IconComponent;
     label: string;
+    /** Extra classes for the *glyph* rather than the button — the button's own
+     * look is this component's to decide, but what the icon is doing inside it
+     * isn't (the toolbar's Refresh spins while its query runs). */
+    iconClassName?: string;
     onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
     disabled?: boolean;
     danger?: boolean;
@@ -52,7 +56,7 @@ const IconButton = forwardRef<
       onMouseDown={(e) => props.tabIndex === -1 && e.preventDefault()}
       onClick={(e) => props.onClick?.(e)}
     >
-      <Icon className="size-4" />
+      <Icon className={cx("size-4", props.iconClassName)} />
     </button>
   );
 });

@@ -12,6 +12,8 @@ import {
   selectMultiSelect,
   selectRecordsForRows,
   selectResultCount,
+  selectResultIsRefresh,
+  selectResultsScroll,
   selectRowRecords,
   selectRowSelection,
   selectTableRecordsForRows,
@@ -119,8 +121,13 @@ function subscribeModifiedRows(
 /** The results pane: the current tab's result set painted to a canvas grid. */
 export default function QueryResults(props: { tabId: string }): JSX.Element {
   const stores = useStores();
-  const { clickRow, doubleClickRow, setMultiSelect, setRecordEditorRecords } =
-    useAppActions();
+  const {
+    clickRow,
+    doubleClickRow,
+    setMultiSelect,
+    setRecordEditorRecords,
+    setResultsScroll,
+  } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
@@ -228,10 +235,20 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       // it comes before the selection push that repaints with the right rows
       // highlighted. The ticker re-arms here too: whether a `relativeTime`
       // column is on screen is a property of the result.
+      //
+      // A *refresh* — the same query re-run, which brought back the same rows
+      // the user is looking at — keeps the scroll where it is instead, and the
+      // store is what knows which of the two swaps this is (the store's
+      // `resultIsRefresh`; it keeps the selection over the same swaps). Read
+      // through `getState()` rather than subscribed to: it qualifies the result
+      // landing, it isn't news of its own.
       store.subscribe(
         (s) => s.pages[tabId]?.result,
         (result) => {
-          grid.setResult(result);
+          grid.setResult(
+            result,
+            selectResultIsRefresh(store.getState(), tabId),
+          );
           syncTicker();
         },
         { fireImmediately: true },
@@ -279,7 +296,19 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       ),
     ];
 
+    // Where this tab was scrolled to when it was last on screen. After the
+    // subscriptions, not before: the result push above has just put the engine
+    // back at the top of a tab it's seeing for the first time this visit, and
+    // this is the tab's own place in those rows, restored over it. A tab that
+    // has never been scrolled restores a harmless 0.
+    grid.setScrollOffset(selectResultsScroll(store.getState(), tabId));
+
     return () => {
+      // Leaving the tab: hand its scroll offset back to the store, since the
+      // grid itself is about to be shown another tab's rows (or torn down —
+      // `grid` is the captured instance, so this still reads the right number
+      // even once the layout effect below has destroyed it).
+      setResultsScroll(tabId, grid.scrollOffset());
       for (const unsubscribe of subscriptions) unsubscribe();
       document.removeEventListener("visibilitychange", syncTicker);
       clearInterval(ticker);
@@ -289,7 +318,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       // and come back with the tab if the user switched away and back.
       setRowMenu(undefined);
     };
-  }, [props.tabId, stores, clickRow, doubleClickRow]);
+  }, [props.tabId, stores, clickRow, doubleClickRow, setResultsScroll]);
 
   // The floating multi-select toolbar covers the first rows, so the grid gets
   // that much room to scroll up into — the toolbar's own height plus the

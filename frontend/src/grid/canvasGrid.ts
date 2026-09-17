@@ -265,15 +265,49 @@ export class CanvasGrid {
     this.raf = 0;
   }
 
-  /** Swaps in a new result (or clears): resets the scroll position, recomputes
-   * the layout, and repaints. Called when the tab's result changes. */
-  setResult(result: QueryResult | undefined): void {
+  /** Swaps in a new result (or clears): recomputes the layout and repaints.
+   * Called when the tab's result changes.
+   *
+   * The scroll goes back to the top because new rows are *other* rows — row 200
+   * of the query you just narrowed isn't the row you were looking at.
+   * `preserveScroll` is the exception: a re-run that compiled to the very same
+   * query (Refresh), where these are the same rows and the user's place in them
+   * is worth keeping. It's clamped, since the re-run may have come back
+   * shorter, and the hover is re-derived rather than dropped — the pointer
+   * hasn't moved, but the row under it may have. */
+  setResult(result: QueryResult | undefined, preserveScroll = false): void {
     this.result = result;
-    this.scrollTop = 0;
+    if (!preserveScroll) this.scrollTop = 0;
     this.flinging = false;
     this.velocity = 0;
     this.hoverRow = undefined;
     this.relayout();
+    if (preserveScroll) {
+      this.clampScroll();
+      if (this.lastMouseY !== undefined) this.updateHover(this.lastMouseY);
+    }
+    this.requestDraw();
+  }
+
+  /** The current scroll offset, in logical px below the first row (negative
+   * while an overlay has reserved space above it). Read when a tab hands the
+   * shared grid over to the next one — see {@link setScrollOffset}. */
+  scrollOffset(): number {
+    return this.scrollTop;
+  }
+
+  /** Puts a scroll offset back, clamped to what the current result allows.
+   *
+   * One `CanvasGrid` serves every tab in turn, so a tab switch is a swap of
+   * result, selection *and* the place in the rows the user had reached; the
+   * results pane keeps the last of those per tab and restores it here (the
+   * first two ride in on the store). Any fling in flight belonged to the tab
+   * being left, so it's dropped. */
+  setScrollOffset(px: number): void {
+    this.stopFling();
+    this.scrollTop = px;
+    this.clampScroll();
+    if (this.lastMouseY !== undefined) this.updateHover(this.lastMouseY);
     this.requestDraw();
   }
 

@@ -100,9 +100,14 @@ export function applySeed(stores: Stores): void {
     const w = window as unknown as {
       __appStore: AppStoreFacade;
       __emptyResult: typeof emptyCountResult;
+      __seededResult: typeof lemonadeGridResult;
     };
     w.__appStore = createAppStoreFacade(app);
     w.__emptyResult = emptyCountResult;
+    // The seeded grid's own rows, buildable a second time: a spec about a
+    // *refresh* (the same query re-run) needs the rows to come back the same,
+    // which an empty stand-in can't show.
+    w.__seededResult = lemonadeGridResult;
   }
 
   // The record editor's stand-in backend, installed before anything opens a

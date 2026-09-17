@@ -179,6 +179,10 @@ export interface AppActions {
     tabId: string,
     result: QueryResult,
     lineage?: LineageMapping,
+    /** Land these rows as a *refresh* of the ones already there rather than as
+     * a new set — what a real re-run to identical SQL does, and the only way to
+     * reach that path without one. */
+    refresh?: boolean,
   ) => void;
   /** Re-points one result row at freshly-seeded values, exactly as the re-read
    * that follows a DML write does (dev/test seam — the tail of a row-context
@@ -198,6 +202,12 @@ export interface AppActions {
     saved: QueryDefinition,
     live: QueryDefinition,
   ) => void;
+
+  /** Hand a tab's results scroll offset to the store on the way out of it, and
+   * take it back on the way in — one `CanvasGrid` is shared by every tab, so
+   * this is where a tab's place in its rows waits while another tab has the
+   * grid (see `QueryPageState.scrollOffset`). */
+  setResultsScroll: (tabId: string, offset: number) => void;
 
   /** Turn `tabId`'s results multi-select mode on or off. Turning it off leaves
    * the selection as it stands — the toolbar goes away, the selected rows
@@ -412,6 +422,13 @@ export function createAppActions(
   const runTokens = new Map<string, number>();
   let runTokenSeq = 0;
 
+  // The SQL each tab's rows on screen were compiled from. A run that compiles
+  // to the same string is asking the same question again — a refresh — which is
+  // what lets its answer land *under* the selection and the scroll position
+  // rather than replacing them (see `setTabResult`). Non-reactive: nothing
+  // renders from it.
+  const lastRunSql = new Map<string, string>();
+
   // Trailing-debounced re-runs, keyed by tab id, so a burst of keystrokes in a
   // builder text input collapses into one query run once the user pauses.
   const runTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -458,8 +475,33 @@ export function createAppActions(
    *
    * `QueryResult` is a class, so assigning one at a store leaf always swaps the
    * reference — Immer never drafts a class instance (see the unit tests), so
-   * the new value simply replaces the old one, same as every other write. */
-  const setTabResult = (tabId: string, result: QueryResult) => {
+   * the new value simply replaces the old one, same as every other write.
+   *
+   * `refresh` says these rows *replace the same query's* rows rather than
+   * answering a new question (see `QueryPageState.resultIsRefresh`), and is
+   * what keeps everything the user had built on top of the old rows —
+   * selection, multi-select mode, the open record editor, the scroll position,
+   * the lineage mapping — standing instead of being swept away. The one thing a
+   * refresh still has to touch is a selected row that came back shorter than
+   * the rows it pointed into. */
+  const setTabResult = (
+    tabId: string,
+    result: QueryResult,
+    refresh = false,
+  ) => {
+    // What a refresh has to do about rows the re-run came back too short for,
+    // worked out here rather than inside the producer below: a selection is a
+    // `Set`, and *reading* one through a draft is what would ask Immer for the
+    // MapSet plugin this store deliberately does without (see the state's
+    // "treated as opaque by Immer" note). `undefined` means "leave it as it
+    // is" — including leaving the reference alone, so the record editor's
+    // resync doesn't wake up for a refresh that moved nothing.
+    let trimmed: Set<number> | undefined;
+    if (refresh) {
+      const rows = [...(get().pages[tabId]?.selection ?? EMPTY_SELECTION)];
+      const kept = rows.filter((row) => row < result.rowCount);
+      if (kept.length !== rows.length) trimmed = new Set(kept);
+    }
     set((s) => {
       // `castDraft` here (and at the other `readonly`-bearing assignments
       // below) is a type-only escape hatch: Immer's `Draft<T>` mapped type
@@ -470,6 +512,21 @@ export function createAppActions(
       // Immer to actually draft at runtime.
       const page = pageDraft(s, tabId);
       page.result = castDraft(result);
+      page.resultIsRefresh = refresh;
+      if (refresh) {
+        // Same query, same rows: everything pinned to a row index still means
+        // what it meant, so nothing else here is touched.
+        if (trimmed !== undefined) {
+          if (trimmed.size !== 0) page.selection = trimmed;
+          else {
+            // Nothing selected is left: multi-select mode goes with it, rather
+            // than leaving a toolbar counting rows that are gone.
+            delete page.selection;
+            page.multiSelect = false;
+          }
+        }
+        return;
+      }
       // New rows invalidate the old selection and any prior lineage mapping (the
       // latter is repopulated asynchronously by `analyzeLineage`). Multi-select
       // mode goes with the selection it was made for, rather than leaving a
@@ -477,10 +534,15 @@ export function createAppActions(
       delete page.selection;
       page.multiSelect = false;
       delete page.lineage;
+      // Nor is the place in the old rows a place in these ones.
+      page.scrollOffset = 0;
       // The playing track's row belonged to the rows just replaced; it's
       // re-located once the new mapping lands (see `analyzeLineage`).
       if (s.currentTrack?.sourceTabId === tabId) s.currentTrack.rowIndex = null;
     });
+    // The anchor and the lead are row indexes too, so a refresh keeps them —
+    // unless it left nothing selected for them to grow from.
+    if (refresh && trimmed?.size !== 0) return;
     rowClickAnchor.delete(tabId);
     rowSelectionLead.delete(tabId);
   };
@@ -523,16 +585,20 @@ export function createAppActions(
       });
     });
     if (!playable) return;
-    // Re-locate the playing track's row in the rows that just landed, so
-    // "Locate" keeps working after the tab is re-run (mirrors
-    // `maybe_revalidate_current_track_index`).
+    relocateCurrentTrack(tabId);
+  };
+
+  /** Re-locates the playing track's row in the rows a tab has just landed, so
+   * "Locate" keeps working across a re-run (mirrors
+   * `maybe_revalidate_current_track_index`). A no-op for a tab that isn't the
+   * one the track is playing from. */
+  const relocateCurrentTrack = (tabId: string) => {
     const ct = get().currentTrack;
-    if (ct?.sourceTabId === tabId) {
-      const rowIndex = selectLocateRow(get(), tabId, ct.id);
-      set((s) => {
-        if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
-      });
-    }
+    if (ct?.sourceTabId !== tabId) return;
+    const rowIndex = selectLocateRow(get(), tabId, ct.id);
+    set((s) => {
+      if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
+    });
   };
 
   const runQuery = (tabId: string) => {
@@ -564,11 +630,28 @@ export function createAppActions(
         // Decode the result once, here — never per resize/frame (§6). Display
         // text is derived from it on read, not precomputed.
         const result = buildResultFromArrow(table, columnAnnotations);
-        setTabResult(tabId, result);
-        // Then, off the critical path, figure out what these rows *are* — tracks
-        // to play, records to edit. Deliberately not awaited: the results are
-        // already shown, and the WASM lineage analysis is heavy.
-        void analyzeLineage(tabId, sql, result, token);
+        // A run that compiled to the SQL the rows on screen came from is a
+        // *refresh* — the Refresh button, a re-run after a settings change, a
+        // revert or preset edit that turned out to change nothing. The same
+        // question asked again, so what the user built on the last answer
+        // (selection, editor, scroll) survives it; see `setTabResult`.
+        const page = get().pages[tabId];
+        const refresh =
+          page?.result !== undefined && lastRunSql.get(tabId) === sql;
+        lastRunSql.set(tabId, sql);
+        setTabResult(tabId, result, refresh);
+        if (refresh && page?.lineage !== undefined) {
+          // Identical SQL maps its columns identically, so the mapping the tab
+          // already holds is the mapping these rows want — and re-deriving it
+          // would only churn the reference the record editor's resync watches.
+          // The *rows* did move, though, so the playing one is looked up again.
+          relocateCurrentTrack(tabId);
+        } else {
+          // Off the critical path, figure out what these rows *are* — tracks to
+          // play, records to edit. Deliberately not awaited: the results are
+          // already shown, and the WASM lineage analysis is heavy.
+          void analyzeLineage(tabId, sql, result, token);
+        }
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
@@ -640,6 +723,7 @@ export function createAppActions(
     rowClickAnchor.delete(id);
     rowSelectionLead.delete(id);
     runTokens.delete(id);
+    lastRunSql.delete(id);
   };
 
   /** Opens `def` in a new ephemeral (never-saved) query tab named for the
@@ -920,6 +1004,14 @@ export function createAppActions(
             (r) => r.table === current.table,
           ),
         );
+      // Rows that name no record of this table leave the editor holding the one
+      // it has. It stays fully usable — it loaded that record from the database
+      // and saves it back there — it simply has no row to write through any
+      // more: nothing to patch in place after a save, nowhere to put the ✱.
+      // Only an *emptied selection* closes the sidebar (above), because that's
+      // the user putting the rows down; this is the rows moving out from under
+      // a still-open editor, which a refresh can do at any moment.
+      if (records.length === 0) continue;
       setRecordEditorRecords(tabId, current.table, records);
     }
   };
@@ -1079,8 +1171,8 @@ export function createAppActions(
     ensureRun: (tabId) => {
       if (!autoRun.has(tabId)) runQuery(tabId);
     },
-    setResults: (tabId, result, lineage) => {
-      setTabResult(tabId, result);
+    setResults: (tabId, result, lineage, refresh) => {
+      setTabResult(tabId, result, refresh ?? false);
       if (lineage) {
         set((s) => {
           pageDraft(s, tabId).lineage = castDraft(lineage);
@@ -1114,6 +1206,13 @@ export function createAppActions(
       });
     },
 
+    setResultsScroll: (tabId, offset) =>
+      set((s) => {
+        // Not `pageDraft`: this is written as a tab is left, which a tab being
+        // *closed* also is — and a closed tab's page shouldn't come back.
+        const page = s.pages[tabId];
+        if (page) page.scrollOffset = offset;
+      }),
     setMultiSelect: (tabId, on) =>
       set((s) => {
         pageDraft(s, tabId).multiSelect = on;

@@ -7,6 +7,7 @@ import {
   selectIsFullQuery,
   selectIsUnsaved,
   selectResultCount,
+  selectRunning,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import IconButton from "./ui/IconButton";
@@ -48,6 +49,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const fullMode = useApp((s) => selectIsFullQuery(s, props.tabId));
   const fullEditorOpen = useApp((s) => selectFullEditorOpen(s, props.tabId));
   const section = useApp((s) => selectBuilderSection(s, props.tabId));
+  const running = useApp((s) => selectRunning(s, props.tabId));
   const builderOpen = fullMode ? fullEditorOpen : section !== null;
   const { saveQuery, runQuery, toggleFullEditor, toggleBuilderSection } =
     useAppActions();
@@ -70,9 +72,14 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
             onClick={() => saveQuery(props.tabId)}
           />
         )}
+        {/* The glyph turns while the run it starts is in flight. Its circular
+            arrow is drawn centred in the icon's own box, so the default
+            transform origin already spins it about the centre of the circle
+            rather than about the arrowhead that juts out past it. */}
         <IconButton
           icon={Icons.Refresh}
           label="Refresh"
+          iconClassName={cx({ "animate-spin": running })}
           onClick={() => runQuery(props.tabId)}
         />
         <Menu

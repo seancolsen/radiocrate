@@ -214,6 +214,36 @@ test("Escape closes the menu; the X closes the editor", async ({ page }) => {
   await expect(editor).toBeHidden();
 });
 
+test("a refresh leaves the sidebar open, even on a record the rows have lost", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await expect(editor).toContainText("track-1");
+
+  // Re-run the query and get rows that no longer carry a track key at all —
+  // the record being edited is nowhere in the new results. The editor keeps it
+  // loaded and usable; what it loses is only the backreference to a row (the
+  // in-place patch after a save, and the ✱ marking unsaved changes).
+  await page.evaluate(() => {
+    const w = window as unknown as AppWindow & {
+      __seededResult: () => { result: unknown };
+    };
+    const { result } = w.__seededResult();
+    w.__appStore.setResults(
+      w.__appStore.state.activeTabId!,
+      result as Parameters<AppStoreFacade["setResults"]>[1],
+      { records: [] },
+      true,
+    );
+  });
+
+  await expect(editor).toBeVisible();
+  await expect(editor.getByRole("heading")).toHaveText("Edit track");
+  await expect(editor).toContainText("track-1");
+});
+
 test("the sidebar is resizable, and its width persists", async ({ page }) => {
   await openGrid(page);
   await rightClickRow(page);
