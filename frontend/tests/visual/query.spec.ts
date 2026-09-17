@@ -141,6 +141,16 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The now-playing track's row: a blue rectangle drawn around it, over the
+  // cells, plus the faint wash across the row inside it.
+  test(`results/playing-row - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/playing-row", colorScheme);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/playing-row", colorScheme),
+    );
+  });
+
   // Multi-select mode: the floating toolbar over the rows, counting the two
   // selected ones. Its actions menu is the row menu's body over the whole
   // selection, minus the "Select multiple" entry that put the mode on.

@@ -487,6 +487,29 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // The playing row, ringed by its blue rectangle — seeded on row 1 so the rows
+  // around it show the ring is a frame around one row, not a divider.
+  "results/playing-row": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult();
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.seedNowPlaying(
+        {
+          sourceTabId: id,
+          id: "seeded-track",
+          rowIndex: 1,
+          title: "Uncatena",
+          artists: ["Sylvan Esso", "Nick Sanborn"],
+        },
+        { playing: true, position: 74, duration: 255, hasNext: true },
+      );
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // A row's context menu: one entry per table whose primary key the row
   // carries, over the entry that turns multi-select mode on.
   "result-row/context-menu": {

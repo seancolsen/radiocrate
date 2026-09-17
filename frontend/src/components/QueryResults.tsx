@@ -260,7 +260,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         { fireImmediately: true },
       ),
       // The playing track's row, when it lives in *this* tab's results — the
-      // grid paints it with an accent edge marker.
+      // grid rings it with a blue rectangle.
       store.subscribe(
         (s) => {
           const ct = s.currentTrack;

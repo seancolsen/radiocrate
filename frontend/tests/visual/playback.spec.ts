@@ -142,12 +142,12 @@ test("double-click plays a row's track, and `ended` advances to the next", async
   await expect(page.getByTestId("now-playing")).toBeHidden();
 });
 
-// The playing row's accent marker is canvas paint, asserted against the canvas
-// pixels rather than a screenshot: `toHaveScreenshot` reproduces late canvas
-// content in dark mode but not light (the marker is verifiably in the backing
-// store either way — `page.screenshot` shows it in both).
+// The blue rectangle around the playing row is canvas paint, asserted against
+// the canvas pixels rather than a screenshot: `toHaveScreenshot` reproduces late
+// canvas content in dark mode but not light (the marker is verifiably in the
+// backing store either way — `page.screenshot` shows it in both).
 for (const colorScheme of ["light", "dark"] as const) {
-  test(`the playing row carries an accent marker - ${colorScheme}`, async ({
+  test(`the playing row is ringed in blue - ${colorScheme}`, async ({
     page,
   }) => {
     await mockBackend(page);
@@ -158,8 +158,9 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
     await expect(page.getByTestId("now-playing")).toBeVisible();
 
-    // Sample the marker band on row 0 (`x` 0…4, the 5px width), just past it,
-    // and the same column three rows down — against the theme's own accent.
+    // Sample row 0's ring — its left band (inset 2px, 2px wide, so `x` 2…3) and
+    // its top band (`y` 2…3, read away from the rounded corners) — then the row
+    // inside it, just past the band, and the same column three rows down.
     const read = () =>
       page.evaluate(() => {
         const canvas = document.querySelector("canvas")!;
@@ -169,30 +170,32 @@ for (const colorScheme of ["light", "dark"] as const) {
           const d = ctx.getImageData(x * dpr, y * dpr, 1, 1).data;
           return `${d[0]},${d[1]},${d[2]}`;
         };
-        // Resolve `--accent-soft` to rgb through a throwaway canvas, so the
+        // Resolve `--now-playing` to rgb through a throwaway canvas, so the
         // expectation tracks the theme rather than a hard-coded hex.
         const probe = document.createElement("canvas").getContext("2d")!;
         probe.fillStyle = getComputedStyle(document.documentElement)
-          .getPropertyValue("--accent-soft")
+          .getPropertyValue("--now-playing")
           .trim();
         probe.fillRect(0, 0, 1, 1);
         const a = probe.getImageData(0, 0, 1, 1).data;
         return {
           accent: `${a[0]},${a[1]},${a[2]}`,
-          markerNear: at(2, 20),
-          markerFar: at(4, 20),
-          pastMarker: at(6, 20),
+          leftBand: at(2, 20),
+          leftBandFar: at(3, 20),
+          topBand: at(200, 3),
+          insideRing: at(6, 20),
           otherRow: at(2, 120),
         };
       });
 
     await expect
-      .poll(async () => (await read()).markerNear)
+      .poll(async () => (await read()).leftBand)
       .toBe((await read()).accent);
     const px = await read();
-    expect(px.markerFar).toBe(px.accent); // the full 5px band is painted
-    expect(px.pastMarker).not.toBe(px.accent); // and it stops there
-    expect(px.otherRow).not.toBe(px.accent); // only the playing row is marked
+    expect(px.leftBandFar).toBe(px.accent); // the full 2px band is painted
+    expect(px.topBand).toBe(px.accent); // and the ring closes across the top
+    expect(px.insideRing).not.toBe(px.accent); // the band stops there
+    expect(px.otherRow).not.toBe(px.accent); // only the playing row is ringed
   });
 }
 

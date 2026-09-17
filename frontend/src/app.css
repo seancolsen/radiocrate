@@ -14,7 +14,6 @@
   --color-split-trigger: var(--split-trigger);
   --color-preset: var(--preset);
   --color-danger: var(--danger);
-  --color-accent-soft: var(--accent-soft);
   --color-now-playing: var(--now-playing);
   --color-timeline-rest: var(--timeline-rest);
   --color-field-text: var(--field-text);
@@ -32,7 +31,9 @@
     --ink: #1b1b1b;
     /* Chrome tokens (measured from whole_app.png; cross-checked theme.rs). */
     --bar: #eeeeee; /* tab-bar bg: shade(panel, 10) */
-    --accent: #77a5ce; /* HOVER_BLUE — same in both themes */
+    /* The active/hover blue — the same ACCENT_BLUE the now-playing bar's play
+       button wears (--now-playing), and the same in both themes. */
+    --accent: rgb(46 124 246);
     --ink-weak: #5a5a5a; /* secondary/dim text + icon gray */
     --hover: #eeeeee; /* row/header/handle hover: shade(panel, 10) */
     --edge: #c8c8c8; /* hairline dividers / input borders */
@@ -41,11 +42,9 @@
     --split-trigger: #d7eafd; /* the ⋮ trigger's lighter tint */
     --preset: #f3e3fb; /* expanded preset tab + detail panel */
     --danger: #c0392b; /* delete / unsaved-marker red */
-    /* ACCENT_BLUE (lib.rs): the playing row's edge marker. The strong blue beside
-       it is the now-playing bar's play button, played timeline and knob; its
-       translucent companions are the timeline's remaining part and the wash over
-       the playing row. */
-    --accent-soft: #bcd0ea;
+    /* ACCENT_BLUE (lib.rs): the now-playing bar's play button, played timeline
+       and knob, and the rectangle drawn around the playing row. Its translucent
+       companions are the timeline's remaining part and the wash over that row. */
     --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);
@@ -75,7 +74,7 @@
       --sheet: #232323;
       --ink: #f8f8f8;
       --bar: #252525;
-      --accent: #77a5ce;
+      --accent: rgb(46 124 246);
       --ink-weak: #aeaeae;
       --hover: #252525;
       --edge: #3c3c3c;
@@ -83,7 +82,6 @@
       --split-trigger: #38597d;
       --preset: #483755;
       --danger: #e06b5c;
-      --accent-soft: #6e8fb5;
       --now-playing: rgb(46 124 246);
       --timeline-rest: rgb(46 124 246 / 0.275);
       --row-current: rgb(46 124 246 / 0.063);
@@ -109,7 +107,7 @@
     --sheet: #f0f0f0;
     --ink: #1b1b1b;
     --bar: #eeeeee;
-    --accent: #77a5ce;
+    --accent: rgb(46 124 246);
     --ink-weak: #5a5a5a;
     --hover: #eeeeee;
     --edge: #c8c8c8;
@@ -117,7 +115,6 @@
     --split-trigger: #d7eafd;
     --preset: #f3e3fb;
     --danger: #c0392b;
-    --accent-soft: #bcd0ea;
     --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);
@@ -144,7 +141,7 @@
     --sheet: #232323;
     --ink: #f8f8f8;
     --bar: #252525;
-    --accent: #77a5ce;
+    --accent: rgb(46 124 246);
     --ink-weak: #aeaeae;
     --hover: #252525;
     --edge: #3c3c3c;
@@ -152,7 +149,6 @@
     --split-trigger: #38597d;
     --preset: #483755;
     --danger: #e06b5c;
-    --accent-soft: #6e8fb5;
     --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
     --row-current: rgb(46 124 246 / 0.063);

@@ -59,9 +59,12 @@ const PILL_GAP = 4;
 const PILL_RADIUS = 4;
 const PILL_LINE_HEIGHT = 1.2;
 
-/** Width of the accent bar down the left edge of the playing row, wide enough
- * that the marker reads at a glance on a dense grid. */
-const CURRENT_MARKER_W = 5;
+// The playing row is ringed by a rounded blue rectangle: inset from the row's
+// box so the ring reads as a frame around the row rather than a border between
+// rows, and stroked thick enough to hold its color at a glance on a dense grid.
+const CURRENT_MARKER_INSET = 2;
+const CURRENT_MARKER_W = 2;
+const CURRENT_MARKER_RADIUS = 8;
 
 /** The glyph marking a row whose record has unsaved edits in the record editor,
  * drawn large enough to read at a glance over the row's left padding. */
@@ -106,8 +109,8 @@ interface Theme {
   ink: string;
   inkWeak: string;
   scrollThumb: string;
-  /** The playing row's left edge marker, and the translucent wash over the rest
-   * of that row. */
+  /** The rectangle ringing the playing row, and the translucent wash over the
+   * rest of that row. */
   currentMarker: string;
   currentWash: string;
   /** The unsaved-changes ✱, in the same red as everywhere else. */
@@ -374,7 +377,7 @@ export class CanvasGrid {
   }
 
   /** Marks the row playing right now (`undefined` when the now-playing track
-   * isn't in this result set), painted with an accent edge and a faint wash. */
+   * isn't in this result set), painted with a blue ring and a faint wash. */
   setCurrentRow(row: number | undefined): void {
     if (row === this.currentRow) return;
     this.currentRow = row;
@@ -862,6 +865,7 @@ export class CanvasGrid {
         this.drawCell(r, k, screenY);
       }
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
+      if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH);
     }
 
     this.drawScrollbar();
@@ -914,20 +918,45 @@ export class CanvasGrid {
       ctx.fillStyle = this.rowGradient(screenY, rowH, top, bottom);
       ctx.fillRect(0, screenY, this.vw, rowH);
     }
-    if (current) {
-      // The playing row: a faint blue wash (skipped on a selected row, whose own
-      // fill already carries the color) plus an accent bar down the left edge.
-      if (!selected) {
-        ctx.fillStyle = t.currentWash;
-        ctx.fillRect(0, screenY, this.vw, rowH);
-      }
-      ctx.fillStyle = t.currentMarker;
-      ctx.fillRect(0, screenY, CURRENT_MARKER_W, rowH);
+    // The playing row also takes a faint blue wash, skipped on a selected row
+    // whose own fill already carries the color. (Its ring is drawn over the
+    // cells, in `drawCurrentMarker`.)
+    if (current && !selected) {
+      ctx.fillStyle = t.currentWash;
+      ctx.fillRect(0, screenY, this.vw, rowH);
     }
     // Softened hairline separator along the bottom edge. Snap to the device grid
     // so the 1px line stays a crisp single pixel instead of a blurred 2px smear.
     ctx.fillStyle = t.rowSep;
     ctx.fillRect(0, this.snap(screenY + rowH - 1), this.vw, this.snap(1));
+  }
+
+  /** The playing row's marker: a rounded blue rectangle around the row. Drawn
+   * after the row's cells (and after the separator the background lays down, so
+   * no hairline crosses it), with the stroke's center placed half a line-width
+   * inside the inset edge, which keeps the 2px band on whole device pixels. The
+   * right edge clears the overlay scrollbar's gutter when one is showing, so the
+   * thumb never slides over the ring. */
+  private drawCurrentMarker(screenY: number, rowH: number): void {
+    const ctx = this.ctx;
+    const off = CURRENT_MARKER_INSET + CURRENT_MARKER_W / 2;
+    const gutter = this.scrollRange > 0 ? SB_WIDTH + 2 * SB_MARGIN : 0;
+    const w = this.vw - 2 * off - gutter;
+    const h = rowH - 2 * off;
+    if (w <= 0 || h <= 0) return;
+    ctx.save();
+    ctx.strokeStyle = this.theme.currentMarker;
+    ctx.lineWidth = CURRENT_MARKER_W;
+    roundRectPath(
+      ctx,
+      this.snap(off),
+      this.snap(screenY + off),
+      w,
+      h,
+      CURRENT_MARKER_RADIUS,
+    );
+    ctx.stroke();
+    ctx.restore();
   }
 
   /** The unsaved-changes ✱ for one row: the record editor is holding edits to
@@ -1148,7 +1177,7 @@ export class CanvasGrid {
       selectedBgHover: v("--row-selected-hover", "#b4d0eb"),
       ink: v("--ink", "#1b1b1b"),
       inkWeak: v("--ink-weak", "#5a5a5a"),
-      currentMarker: v("--accent-soft", "#bcd0ea"),
+      currentMarker: v("--now-playing", "rgb(46 124 246)"),
       currentWash: v("--row-current", "rgb(46 124 246 / 0.063)"),
       danger: v("--danger", "#c0392b"),
       // No CSS token for the thumb; a mid-gray reads on both themes.
