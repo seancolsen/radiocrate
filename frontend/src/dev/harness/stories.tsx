@@ -501,7 +501,8 @@ export const STORIES: Record<string, Story> = {
     'Duplicate key "title: Sorry" violates unique constraint.',
   ),
   // Two records at once: the fields they agree on (`disc_number`) editable as
-  // ever, the ones they don't showing what they hold instead of one value, the
+  // ever, the ones they don't showing how many values they hold between them —
+  // openable, though nothing here opens them — instead of one value, the
   // `credit` count they happen to share drawn as one bubble, and the `play` and
   // `track_tag` counts they don't drawn as the range between two.
   "record-editor/bulk": recordEditor([3, 5]),
@@ -510,6 +511,14 @@ export const STORIES: Record<string, Story> = {
   // row standing for two records — the (2) beside it — over the one credit each
   // track holds alone.
   "record-editor/bulk-expanded": recordEditor([3, 5]),
+  // Three records at once, with two of the fields they disagree on opened out
+  // (the test does the opening): every value they hold, commonest first, with
+  // how many records hold it and the paint roller that gives it to the rest.
+  // `title` is three values of its own; `rating` is a link, so its values are
+  // the records they point at — two tracks rated 4 and one rated 3.5 — and one
+  // of those is opened into its own form, the way a field they agreed on would
+  // open into the single record it points at.
+  "record-editor/varied-expanded": recordEditor([1, 2, 3]),
   // The modal record picker on its own: the search box with its sort and
   // display buttons, the results as the embedded records they're about to
   // become, and the "New record" way out. `initialSort`/`initialDisplay` are

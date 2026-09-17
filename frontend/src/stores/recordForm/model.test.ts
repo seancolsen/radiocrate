@@ -17,13 +17,16 @@ import {
   fieldItemId,
   listId,
   ROOT_ID,
+  scalarChildId,
   selectCountMax,
   selectCountMin,
+  distinctValues,
   selectFieldModified,
   selectFormModified,
   selectIsBulkBlocked,
   selectSharedValue,
   VARIED,
+  variedChildId,
   type RecordFormModel,
   type RecordFormOptions,
 } from ".";
@@ -38,12 +41,21 @@ const col = (name: string, type: string, nullable = false) => ({
   nullable,
 });
 const TABLES: SchemaTable[] = [
+  // A table `track` points *at*, by the UUID-column-named-after-a-table
+  // convention `inferLinks` reads — which is what makes `track.album` a scalar
+  // linked record field rather than an id to type.
+  {
+    name: "album",
+    columns: [col("id", "UUID"), col("title", "VARCHAR")],
+    uniqueConstraints: [["id"]],
+  },
   {
     name: "track",
     columns: [
       col("id", "UUID"),
       col("title", "VARCHAR"),
       col("genre", "VARCHAR", true),
+      col("album", "UUID", true),
     ],
     uniqueConstraints: [["id"]],
   },
@@ -76,16 +88,17 @@ const runner = vi.mocked(runRecordQuery);
 
 const trackKey = (id: string) => [{ column: "id", value: id }];
 
-/** A row of the root's data query: the key, then `id`, `title`, `genre` and the
- * `#credit` and `#track_tag` counts, positionally (referencing tables come
- * alphabetically). */
+/** A row of the root's data query: the key, then `id`, `title`, `genre`,
+ * `album` and the `#credit` and `#track_tag` counts, positionally (referencing
+ * tables come alphabetically). */
 const trackRow = (
   id: string,
   title: string,
   genre: string | null,
   credits: number,
   tags = 0,
-) => [id, id, title, genre, String(credits), String(tags)];
+  album: string | null = null,
+) => [id, id, title, genre, album, String(credits), String(tags)];
 
 /** A credit row, which fits both queries that reach the table: a child list
  * (key, then the `$id $role` preview) and a credit's own data (key, then its
@@ -117,14 +130,22 @@ function serve(rows: {
   track?: RecordRows;
   credit?: RecordRows;
   track_tag?: RecordRows;
+  /** The albums, by id → title: two queries reach one (its own data and the
+   * preview an embedded record shows), and both are answered from this. */
+  albums?: Record<string, string>;
 }) {
-  runner.mockImplementation(async (query) =>
-    query.base === "track"
-      ? (rows.track ?? [])
-      : query.base === "track_tag"
-        ? (rows.track_tag ?? [])
-        : (rows.credit ?? []),
-  );
+  runner.mockImplementation(async (query) => {
+    if (query.base === "track") return rows.track ?? [];
+    if (query.base === "track_tag") return rows.track_tag ?? [];
+    if (query.base === "credit") return rows.credit ?? [];
+    // Two queries reach an album, both for the one the filter names: its own
+    // data — the key, then `id`, `title` and the `#track` count — and the
+    // `$title` preview an embedded record shows.
+    const id = /id:="([^"]*)"/.exec(query.filter)?.[1] ?? "";
+    const title = rows.albums?.[id];
+    if (title === undefined) return [];
+    return query.display.startsWith("$id") ? [[id, id, title, "1"]] : [[title]];
+  });
 }
 
 function deferred<T>() {
@@ -158,6 +179,14 @@ const fieldOf = (model: RecordFormModel, recordId: string, key: string) => {
   if (!field) throw new Error(`no field ${key} on ${recordId}`);
   return field;
 };
+/** A scalar field by key — a primitive or a link, which is what the actions
+ * that take one value across every record the form is on are about. */
+const scalarField = (model: RecordFormModel, recordId: string, key: string) => {
+  const field = fieldOf(model, recordId, key);
+  if (field.kind === "multiRecord") throw new Error(`${key} is not scalar`);
+  return field;
+};
+
 const credits = (model: RecordFormModel) =>
   fieldOf(model, ROOT_ID, "#credit") as MultiRecordField;
 const CREDITS_LIST = listId(ROOT_ID, "#credit");
@@ -316,6 +345,130 @@ describe("several records at once", () => {
     for (const field of s.records[ROOT_ID]?.fields ?? []) {
       expect(selectIsBulkBlocked(s, ROOT_ID, field.key)).toBe(false);
     }
+  });
+});
+
+describe("a field the records disagree on", () => {
+  /** Three tracks: two on one album, one on another, each with its own genre —
+   * a link and a primitive the form's records both disagree about, and disagree
+   * about *unevenly*, so "commonest first" has something to order. */
+  const serveThree = () =>
+    serve({
+      track: [
+        trackRow("t1", "Same", "Pop", 0, 0, "a1"),
+        trackRow("t2", "Same", "Rock", 0, 0, "a2"),
+        trackRow("t3", "Same", "Rock", 0, 0, "a2"),
+      ],
+      albums: { a1: "Lemonade", a2: "4" },
+    });
+
+  const threeTracks = () =>
+    form([trackKey("t1"), trackKey("t2"), trackKey("t3")]);
+
+  it("lists the values they hold, the commonest first", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const values = model.store.getState().records[ROOT_ID]?.values["genre"];
+    expect(distinctValues(values)).toEqual([
+      { value: "Rock", count: 2 },
+      { value: "Pop", count: 1 },
+    ]);
+  });
+
+  it("opens a disagreeing field although it blocks editing it", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const genre = fieldOf(model, ROOT_ID, "genre");
+    expect(selectIsBulkBlocked(model.store.getState(), ROOT_ID, "genre")).toBe(
+      true,
+    );
+    model.toggleField(ROOT_ID, genre);
+    expect(model.store.getState().expanded[fieldItemId(ROOT_ID, "genre")]).toBe(
+      true,
+    );
+  });
+
+  it("takes one value for every record, and opens it for editing", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const genre = scalarField(model, ROOT_ID, "genre");
+    model.toggleField(ROOT_ID, genre, true);
+    model.useValueForAll(ROOT_ID, genre, "Rock");
+
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["genre"]).toEqual([
+      "Rock",
+      "Rock",
+      "Rock",
+    ]);
+    expect(selectSharedValue(s, ROOT_ID, "genre")).toBe("Rock");
+    // No longer varied, so no longer blocked — and the field has closed onto
+    // the value it now holds, with the editor open on it.
+    expect(selectIsBulkBlocked(s, ROOT_ID, "genre")).toBe(false);
+    expect(s.expanded[fieldItemId(ROOT_ID, "genre")]).toBe(false);
+    expect(s.editing).toBe(fieldItemId(ROOT_ID, "genre"));
+    expect(selectFieldModified(s, ROOT_ID, "genre")).toBe(true);
+  });
+
+  it("previews a record per distinct value of a link, and opens any of them", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    model.toggleField(ROOT_ID, fieldOf(model, ROOT_ID, "album"), true);
+    await flush();
+
+    const a1 = variedChildId(ROOT_ID, "album", "a1");
+    const a2 = variedChildId(ROOT_ID, "album", "a2");
+    let s = model.store.getState();
+    expect(s.embeds[a1]?.cells).toEqual(["Lemonade"]);
+    expect(s.embeds[a2]?.cells).toEqual(["4"]);
+    // The records themselves wait to be opened.
+    expect(s.records[a1]?.status).toBe("unloaded");
+
+    model.toggleChild(a1);
+    await flush();
+    s = model.store.getState();
+    expect(s.records[a1]?.status).toBe("loaded");
+    expect(selectSharedValue(s, a1, "title")).toBe("Lemonade");
+
+    // An edit inside it is the field's, which is what the star above says.
+    model.commitEdit(a1, "title", "Lemonade (Deluxe)");
+    expect(selectFieldModified(model.store.getState(), ROOT_ID, "album")).toBe(
+      true,
+    );
+  });
+
+  it("points every record at one of those, keeping the preview it showed", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const album = scalarField(model, ROOT_ID, "album");
+    model.toggleField(ROOT_ID, album, true);
+    await flush();
+    model.useValueForAll(ROOT_ID, album, "a2");
+
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["album"]).toEqual(["a2", "a2", "a2"]);
+    // The chosen record's preview becomes the field's own, without a further
+    // request; the list it came from is gone, along with everything under it.
+    expect(s.embeds[scalarChildId(ROOT_ID, "album")]?.cells).toEqual(["4"]);
+    expect(s.embeds[variedChildId(ROOT_ID, "album", "a1")]).toBeUndefined();
+    expect(s.records[variedChildId(ROOT_ID, "album", "a2")]).toBeUndefined();
+    // A link has no text to type, so nothing is put into edit mode.
+    expect(s.editing).toBeNull();
   });
 });
 

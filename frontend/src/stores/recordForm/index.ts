@@ -15,5 +15,6 @@ export {
   listId,
   ROOT_ID,
   scalarChildId,
+  variedChildId,
 } from "../../record/formIds";
 export { isShared, VARIED, type SharedValue } from "../../record/formValues";

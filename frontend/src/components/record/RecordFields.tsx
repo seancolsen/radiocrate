@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type JSX,
@@ -13,11 +14,13 @@ import FieldLabel from "./FieldLabel";
 import FieldValue, { type EditExit } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
 import {
+  distinctValues,
   fieldItemId,
   listId,
   scalarChildId,
   selectCountMax,
   selectCountMin,
+  selectDistinctCount,
   selectFieldModified,
   selectHasLinkedRecord,
   selectIsExpanded,
@@ -26,6 +29,8 @@ import {
   selectRecordModified,
   selectSharedValue,
   VARIED,
+  variedChildId,
+  type DistinctValue,
   type FormState,
   type RecordFormModel,
   type SharedValue,
@@ -139,17 +144,14 @@ function fieldExpandable(
     const most = selectCountMax(s, recordId, field.key) ?? 0;
     return most > 0 && field.keyColumns.length > 0;
   }
+  // A scalar field the records disagree on opens into the distinct values they
+  // hold, whichever kind it is — that list is the only way such a field gets a
+  // value at all, so it always opens.
+  if (selectSharedValue(s, recordId, field.column) === VARIED) return true;
   if (field.kind === "scalarLink") {
     return selectHasLinkedRecord(s, recordId, field);
   }
-  // A primitive field is expandable if it's varied (records disagree on the value)
-  // or if it's a text field that overflows.
-  if (field.kind === "primitive") {
-    const value = selectSharedValue(s, recordId, field.column);
-    if (value === VARIED) return true;
-    return field.valueType === "text" && overflowing;
-  }
-  return false;
+  return field.valueType === "text" && overflowing;
 }
 
 /** One field: its row, plus whatever the row expands into. */
@@ -200,6 +202,16 @@ function FieldRow(props: {
     fieldExpandable(s, recordId, field, overflowing),
   );
 
+  /** Whether the records the form is on disagree about this field — the state
+   * with no value of its own to show, which expands into the values they hold
+   * instead (`DistinctValues`). Never true on one record, which cannot disagree
+   * with itself. */
+  const varied = value === VARIED;
+  /** How many different values that is — what the row shows in place of one. */
+  const distinct = useFormState(model, (s) =>
+    varied ? selectDistinctCount(s, recordId, field.column) : 0,
+  );
+
   /** Whether a scalar linked record field has a record to show — one it points
    * at, or a new one the user is entering into it. What decides between an
    * embedded record and the pencil that offers to fill the field in. */
@@ -240,12 +252,14 @@ function FieldRow(props: {
   const embedLoading = embedIsNew !== true && embedStatus !== "loaded";
 
   /** An expanded *text* field moves its value below the label, where it has the
-   * width to wrap; an expanded link/record field grows a subtree instead. */
-  const textBelow = field.kind === "primitive" && expanded;
+   * width to wrap; an expanded link/record field grows a subtree instead. A
+   * field the records disagree on has no value to move: what's below it is the
+   * list of values they do hold. */
+  const textBelow = field.kind === "primitive" && expanded && !varied;
 
-  /** Whether the row's value renders as plain text (or a pencil): everything
-   * except a record count, an embedded record, and text that has moved below
-   * its label. */
+  /** Whether the row's value renders as plain text (or a pencil, or the count
+   * of what the records disagree about): everything except a record count, an
+   * embedded record, and text that has moved below its label. */
   const plainValue = field.kind !== "multiRecord" && !textBelow && !linked;
 
   // What this row can do to itself, for the keyboard commands. Registered from
@@ -288,19 +302,22 @@ function FieldRow(props: {
     else model.toggleField(recordId, field);
   };
 
-  /** A field label's double click: a primitive field goes into edit mode (or
-   * toggles expansion if it's varied), a scalar linked record field opens the
-   * record picker (spec: "Modal record picker" — whatever the field currently
-   * points at, which is why this isn't the expansion the chevron and the
-   * embedded record already offer), and a multi-record field opens or closes. */
+  /** A field label's double click: a primitive field goes into edit mode, a
+   * scalar linked record field opens the record picker (spec: "Modal record
+   * picker" — whatever the field currently points at, which is why this isn't
+   * the expansion the chevron and the embedded record already offer), and a
+   * multi-record field opens or closes.
+   *
+   * A scalar field the records *disagree* on has neither an edit to begin nor
+   * one record to re-point, so it opens or closes too — onto the values they
+   * hold, which is where both of those become possible again. */
   const activate = () => {
-    if (field.kind === "primitive") {
-      if (value === VARIED) model.toggleField(recordId, field);
-      else model.beginEdit(recordId, field.key);
-    } else if (field.kind === "scalarLink") {
-      model.openPicker(recordId, field.key);
-    } else {
+    if (varied || field.kind === "multiRecord") {
       model.toggleField(recordId, field);
+    } else if (field.kind === "primitive") {
+      model.beginEdit(recordId, field.key);
+    } else {
+      model.openPicker(recordId, field.key);
     }
   };
 
@@ -432,6 +449,7 @@ function FieldRow(props: {
             recordId={recordId}
             field={field}
             value={value}
+            distinct={distinct}
             expanded={false}
             onBeginEdit={beginEdit}
             onCommit={commit}
@@ -451,6 +469,7 @@ function FieldRow(props: {
               recordId={recordId}
               field={field}
               value={value}
+              distinct={distinct}
               expanded={true}
               onBeginEdit={beginEdit}
               onCommit={commit}
@@ -460,26 +479,15 @@ function FieldRow(props: {
         </Subtree>
       )}
 
-      {/* Expanded varied primitive field: shows distinct values with apply buttons. */}
-      {expanded && field.kind === "primitive" && value === VARIED && (
+      {/* A field the records disagree on expands into the values they hold. */}
+      {expanded && varied && field.kind !== "multiRecord" && (
         <Subtree>
-          <div className="pr-1 pb-1">
-            <FieldValueSlot
-              model={model}
-              recordId={recordId}
-              field={field}
-              value={value}
-              expanded={true}
-              onBeginEdit={beginEdit}
-              onCommit={commit}
-              onContextMenu={(e) => openMenu(e, "field")}
-            />
-          </div>
+          <DistinctValues model={model} recordId={recordId} field={field} />
         </Subtree>
       )}
 
       {/* A linked record expands into its own form. */}
-      {expanded && field.kind === "scalarLink" && (
+      {expanded && !varied && field.kind === "scalarLink" && (
         <Subtree>
           <RecordNodeView model={model} recordId={embedId} />
         </Subtree>
@@ -509,6 +517,8 @@ function FieldValueSlot(props: {
   recordId: string;
   field: PrimitiveField | ScalarLinkField;
   value: SharedValue;
+  /** How many different values the records hold, when they disagree. */
+  distinct: number;
   expanded: boolean;
   onBeginEdit: () => void;
   onCommit: (text: string, exit: EditExit) => void;
@@ -534,9 +544,154 @@ function FieldValueSlot(props: {
       onCommit={props.onCommit}
       onContextMenu={props.onContextMenu}
       onOverflow={props.onOverflow}
-      model={model}
-      recordId={recordId}
+      distinct={props.distinct}
     />
+  );
+}
+
+/** A distinct value's key within its list — `null` and the string `"null"` are
+ * two different values, and both can be in it. */
+const valueKey = (value: string | null): string =>
+  value === null ? "\u0000null" : `=${value}`;
+
+/** What a scalar field the records the form is on disagree about expands into:
+ * every value they hold, the commonest first, each with how many of them hold
+ * it and a button that takes it for all of them — which is how such a field
+ * gets one value to be the form's, there being nothing to type into a row that
+ * shows no value.
+ *
+ * A linked record field shows each value as the record it points at, expandable
+ * into that record's own form exactly as the single record of a field they
+ * agree on is — so the user can look at what they're choosing between before
+ * choosing. */
+function DistinctValues(props: {
+  model: RecordFormModel;
+  recordId: string;
+  field: PrimitiveField | ScalarLinkField;
+}): JSX.Element {
+  const { model, recordId, field } = props;
+  // The column as the node holds it — a reference already in state, so the list
+  // below is rebuilt when that column is written and at no other time.
+  const column = useFormState(
+    model,
+    (s) => s.records[recordId]?.values[field.column],
+  );
+  const values = useMemo(() => distinctValues(column), [column]);
+  return (
+    <>
+      {values.map((distinct) => (
+        <DistinctValueRow
+          key={valueKey(distinct.value)}
+          model={model}
+          recordId={recordId}
+          field={field}
+          distinct={distinct}
+        />
+      ))}
+    </>
+  );
+}
+
+/** One of those values: how many records hold it, the value itself, and the
+ * paint roller that gives it to the rest of them. Its own component so that a
+ * preview landing — or the record behind it being opened — re-renders one row
+ * rather than the list. */
+function DistinctValueRow(props: {
+  model: RecordFormModel;
+  recordId: string;
+  field: PrimitiveField | ScalarLinkField;
+  distinct: DistinctValue;
+}): JSX.Element {
+  const { model, recordId, field } = props;
+  const { value, count } = props.distinct;
+  const readOnly = field.kind === "primitive" && field.readOnly;
+
+  /** The record this value points at, when it names one: a linked record field
+   * whose value is neither NULL nor blank. Everything else is a value to read
+   * and take, with nothing to open. */
+  const childId =
+    field.kind === "scalarLink" && value != null && value !== ""
+      ? variedChildId(recordId, field.key, value)
+      : undefined;
+  const expanded = useFormState(
+    model,
+    (s) => childId !== undefined && selectIsExpanded(s, childId),
+  );
+  const cells = useFormState(
+    model,
+    (s) => (childId && s.embeds[childId]?.cells) || NO_CELLS,
+  );
+  const loading = useFormState(
+    model,
+    (s) => childId !== undefined && s.embeds[childId]?.status !== "loaded",
+  );
+
+  /** What the expansion toggle's aria-label names: the preview, while it has
+   * one, falling back to the id it was loaded from. */
+  const label = cells.filter(Boolean).join(" ") || (value ?? "");
+
+  return (
+    <>
+      <div className="flex min-h-[26px] items-center gap-1 py-0.5">
+        <ExpansionToggle
+          expandable={childId !== undefined}
+          expanded={expanded}
+          label={label}
+          onToggle={() => childId && model.toggleChild(childId)}
+        />
+        <span
+          className={BUBBLE}
+          aria-label={`${count} ${count === 1 ? "record" : "records"}`}
+        >
+          {count}
+        </span>
+        {childId !== undefined ? (
+          <LoadingRegion loading={loading} className="flex min-w-0 flex-1">
+            <EmbeddedRecord
+              cells={cells}
+              onDblClick={() => model.toggleChild(childId)}
+            />
+          </LoadingRegion>
+        ) : (
+          <DistinctText value={value} />
+        )}
+        {/* A primary key is issued by the database, not the user: its values
+            are worth reading side by side, but none of them is one to hand to
+            the other records. */}
+        {!readOnly && (
+          <IconButton
+            icon={Icons.PaintRoller}
+            label="Use this value for all records"
+            size="sm"
+            tabIndex={-1}
+            onClick={() => model.useValueForAll(recordId, field, value)}
+          />
+        )}
+      </div>
+      {expanded && childId !== undefined && (
+        <Subtree>
+          <RecordNodeView model={model} recordId={childId} />
+        </Subtree>
+      )}
+    </>
+  );
+}
+
+/** One distinct value as text: what it says, or what it is when it says
+ * nothing — the two empties a column can hold are named rather than drawn as a
+ * blank line, since a list of values has to distinguish them. */
+function DistinctText(props: { value: string | null }): JSX.Element {
+  if (props.value === null || props.value === "") {
+    return (
+      <span className="text-ink-weak min-w-0 flex-1 truncate text-sm/5 italic">
+        {props.value === null ? "NULL" : "(empty string)"}
+      </span>
+    );
+  }
+  return (
+    <span className="text-ink min-w-0 flex-1 truncate text-sm/5">
+      {props.value.replace(/\s*\r?\n\s*/g, " ")}
+    </span>
   );
 }
 

@@ -84,8 +84,9 @@ for (const colorScheme of SCHEMES) {
   });
 
   // The editor on two records at once: the same form, showing what they agree
-  // on and what they hold where they don't — and, beside each multi-record
-  // field, how many records it has for each of them.
+  // on and — where they don't — how many values they hold between them, which
+  // the row expands into (`record-editor/varied-expanded` does the expanding).
+  // Beside each multi-record field, how many records it has for each of them.
   test(`record-editor/bulk - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "record-editor/bulk", colorScheme);
     await expect(stage.getByRole("heading")).toHaveText("Edit 2 track records");
@@ -120,6 +121,31 @@ for (const colorScheme of SCHEMES) {
     await expect(stage.getByText("Beyoncé").nth(1)).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/bulk-expanded", colorScheme),
+    );
+  });
+
+  // Two of the fields three records disagree on, opened out: the values they
+  // hold, commonest first. `title` is three plain values; `rating` is a link,
+  // so each of its values is the record it points at — and the commonest of
+  // them is opened into its own form, as a field they agreed on would open into
+  // the one record it points at.
+  test(`record-editor/varied-expanded - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/varied-expanded",
+      colorScheme,
+    );
+    await expect(stage.getByRole("heading")).toHaveText("Edit 3 track records");
+    await stage.getByRole("button", { name: "Expand title" }).click();
+    await stage.getByRole("button", { name: "Expand rating" }).click();
+    // Each distinct rating is a record of its own, previewed — a second
+    // request apiece, so they're waited for rather than caught empty.
+    await expect(stage.locator(".rc-embedded")).toHaveCount(2);
+    await expect(stage.getByText("3.5", { exact: true })).toBeVisible();
+    await stage.getByRole("button", { name: "Expand 4" }).click();
+    await expect(stage.getByText("value", { exact: true })).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/varied-expanded", colorScheme),
     );
   });
 

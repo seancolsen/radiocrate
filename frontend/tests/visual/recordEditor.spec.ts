@@ -341,12 +341,15 @@ test("widening the selection puts the editor on every record it covers", async (
   await extendSelectionTo(page, 1); // track-1 and track-2
   await expect(editor.getByRole("heading")).toHaveText("Edit 2 track records");
 
-  // The titles differ, so there is no title to show — or to edit.
+  // The titles differ, so there is no title to show — how many they hold
+  // between them stands in for it, and double-clicking the label opens those
+  // rather than an editor there is no value to start.
   await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
   await expect(formItem(editor, "r:title")).toBeVisible();
-  await expect(editor.getByText("(varied)").first()).toBeVisible();
+  await expect(editor.getByText("2 distinct values").first()).toBeVisible();
   await formItem(editor, "r:title").dblclick();
   await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
 
   // A multi-record field keeps every way into it: its records group into rows
   // the form edits across both tracks at once.
@@ -398,6 +401,117 @@ test("editing a field the records share writes every one of them", async ({
       table: "track",
       where: { id: "track-2" },
       values: { disc_number: "2" },
+    },
+  ]);
+});
+
+// ── The values they disagree on ─────────────────────────────────────────────
+//
+// A scalar field the records disagree on has no one value to edit, so it
+// expands into the values they *do* hold — each with how many records hold it,
+// and a button that gives it to the rest of them. Taking one is what turns such
+// a field back into an ordinary one: editable from there, and saved to every
+// record the form is on.
+
+test("a field the records disagree on expands into the values they hold", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 1); // track-2
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4); // tracks 2…5
+
+  // All four are on disc 1, so that field is one value as ever; their titles
+  // are four, and their ratings are two records rather than two numbers.
+  await expect(editor.getByText("1", { exact: true }).first()).toBeVisible();
+  await expect(editor.getByText("4 distinct values").first()).toBeVisible();
+
+  await editor.getByRole("button", { name: "Expand title" }).click();
+  await expect(editor.getByText("Hold Up", { exact: true })).toBeVisible();
+  await expect(editor.getByText(/Live at the Superdome/)).toBeVisible();
+
+  // A link's values are the records they point at: previewed, counted, and
+  // openable into their own forms. Three of the four are rated 4.
+  await editor.getByRole("button", { name: "Expand rating" }).click();
+  await expect(embeddedRecords(editor)).toHaveCount(2);
+  await expect(editor.getByLabel("3 records", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Expand 4", exact: true }).click();
+  await expect(formItem(editor, "r>rating=rating-4:value")).toBeVisible();
+});
+
+test("taking one of those values edits it, and saves it to every record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 1); // track-2
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 2); // tracks 2 and 3
+
+  await editor.getByRole("button", { name: "Expand title" }).click();
+  // The counts being equal, the values sort between themselves: track 3's long
+  // title comes before track 2's "Hold Up".
+  await editor
+    .getByRole("button", { name: "Use this value for all records" })
+    .first()
+    .click();
+  // The field is an ordinary one now: one value, in an open editor — which is
+  // where the taken value can be adjusted rather than only accepted.
+  const input = editor.getByRole("textbox");
+  await expect(input).toHaveValue(/Live at the Superdome/);
+  await input.fill("Both of them");
+  await page.keyboard.press("Escape");
+  await expect(star(editor, "title")).toBeVisible();
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-2" },
+      values: { title: "Both of them" },
+    },
+    {
+      operation: "update",
+      id: "op2",
+      table: "track",
+      where: { id: "track-3" },
+      values: { title: "Both of them" },
+    },
+  ]);
+});
+
+test("taking a linked record points every record at it", async ({ page }) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 1); // track-2
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4); // tracks 2…5, rated 4, 4, 4 and 4.5
+
+  await editor.getByRole("button", { name: "Expand rating" }).click();
+  await expect(embeddedRecords(editor)).toHaveCount(2);
+  // The commonest value comes first, so taking it leaves the field pointing at
+  // the record three of the four already held — the one embedded record a field
+  // they agree on shows, with the preview the list had already loaded.
+  await editor
+    .getByRole("button", { name: "Use this value for all records" })
+    .first()
+    .click();
+  await expect(embeddedRecords(editor)).toHaveCount(1);
+  await expect(embeddedRecords(editor)).toHaveText("4");
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  // The one track that disagreed is the only one with anything to write.
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-5" },
+      values: { rating: "rating-4" },
     },
   ]);
 });

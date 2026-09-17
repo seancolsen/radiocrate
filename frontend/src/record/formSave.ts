@@ -33,6 +33,12 @@
 // new child of such a node carries the parent record at its own index, since the
 // two are aligned: the nth record of the row belongs to the nth base record.
 // Everything above still holds, record by record.
+//
+// One such node can hold *several* linked records under a single scalar linked
+// record field, though — one per distinct value, when its records point at
+// different ones and the user opened them to compare. Each is an ordinary
+// record being updated in place, so each is planned like any other; only the
+// one the field actually points at is a reference for it to resolve.
 
 import type { DmlOperation, JsonValue } from "api-client";
 import type {
@@ -40,7 +46,7 @@ import type {
   RecordKey,
   ScalarLinkField,
 } from "../query/recordForm";
-import { listId, ROOT_ID, scalarChildId } from "./formIds";
+import { listId, ROOT_ID, scalarChildId, variedChildIds } from "./formIds";
 import type { ListNode, RecordNode } from "../stores/recordForm/state";
 
 /** The slice of the form's state the planner reads: nodes by id, however they
@@ -90,6 +96,25 @@ function columnValue(
   if (value !== "") return value;
   const isText = field.kind === "primitive" && field.valueType === "text";
   return isText && !field.nullable ? "" : null;
+}
+
+/** The records one scalar linked record field opened into when the records of
+ * `node` turned out to point at *different* ones — a node per distinct value,
+ * each a record the user can edit in place. Only the ones the form actually
+ * holds; a field they agree on has none of them, and an unopened one has none
+ * either.
+ *
+ * Derived from the column's values rather than from a list the model keeps, so
+ * the planner finds them the same way the form made them. */
+function variedRecords(
+  tree: FormTree,
+  recordId: string,
+  node: RecordNode,
+  field: ScalarLinkField,
+): string[] {
+  return variedChildIds(recordId, field.key, node.values[field.column]).filter(
+    (id) => tree.record(id) !== undefined,
+  );
 }
 
 /** Every record hanging off `node` that the form has loaded: the children of its
@@ -146,6 +171,9 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     for (const field of node.fields) {
       if (field.kind === "scalarLink") {
         planRemovals(scalarChildId(recordId, field.key));
+        for (const id of variedRecords(tree, recordId, node, field)) {
+          planRemovals(id);
+        }
       } else if (field.kind === "multiRecord") {
         const list = tree.list(listId(recordId, field.key));
         if (!list) continue;
@@ -178,6 +206,13 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     const links: Record<string, JsonValue> = {};
     for (const field of node.fields) {
       if (field.kind !== "scalarLink") continue;
+      // The records a *disagreeing* field was opened into are planned too: each
+      // is a record the user could have edited in place. None of them is being
+      // created, and none of them is the one value this field is about, so none
+      // is a reference for it to resolve.
+      for (const id of variedRecords(tree, recordId, node, field)) {
+        planRecord(id);
+      }
       const childId = scalarChildId(recordId, field.key);
       if (!tree.record(childId)) continue;
       const opId = planRecord(childId);

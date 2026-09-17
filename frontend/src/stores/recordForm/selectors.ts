@@ -13,11 +13,13 @@ import {
   listId,
   ROOT_ID,
   scalarChildId,
+  variedChildIds,
 } from "../../record/formIds";
 import {
   isShared,
   shared,
   VARIED,
+  type ColumnValues,
   type SharedValue,
 } from "../../record/formValues";
 import type { RecordFormSummary } from "../forms";
@@ -80,43 +82,34 @@ export const selectCountMax = (
   fieldKey: string,
 ): number | undefined => countRange(s, recordId, fieldKey)?.[1];
 
-/** The distinct values in a column that the records don't all share, sorted by
- * frequency (most common first) then by value. Returns empty if the records all
- * share the same value or the column hasn't loaded. */
+/** One value a node's records hold in a column, and how many of them hold it. */
 export interface DistinctValue {
   value: string | null;
   count: number;
 }
 
-/** Nothing to choose between — one shared reference, so a selector falling back
- * to it returns the same value every time. */
+/** Nothing to choose between — one shared reference, so a caller falling back
+ * to it gets the same value every time. */
 const NO_DISTINCT_VALUES: readonly DistinctValue[] = [];
 
-/** One snapshot's answers. A selector read through `useSyncExternalStore` must
- * return the same reference for the same state or its component re-renders
- * without end, and this one builds a list — so it's memoized per snapshot,
- * exactly as the modification stars below are: Immer gives every write a new
- * root object, so a `WeakMap` keyed on it holds one write's worth of answers. */
-const distinctCache = new WeakMap<
-  FormState,
-  Map<string, readonly DistinctValue[]>
->();
-
-function distinctValues(
-  s: FormState,
-  recordId: string,
-  column: string,
+/** The values a node's records hold in one column, when they don't all hold the
+ * same one: the commonest first, ties broken by the values themselves. Empty
+ * when they agree, or before the column loads — a value every record holds is
+ * not a choice to be offered.
+ *
+ * Pure in the column's values rather than a selector over the whole state,
+ * because it builds a list: a component reads the column — a reference already
+ * in state (state management rule 2) — and `useMemo`s this over it, so the rows
+ * it renders survive every write that isn't to that column. */
+export function distinctValues(
+  values: ColumnValues | undefined,
 ): readonly DistinctValue[] {
-  const values = s.records[recordId]?.values[column];
   if (!values || values.length === 0) return NO_DISTINCT_VALUES;
-
   const counts = new Map<string | null, number>();
   for (const value of values) {
     counts.set(value, (counts.get(value) ?? 0) + 1);
   }
-  // A value every record holds is not a choice to be offered.
   if (counts.size === 1) return NO_DISTINCT_VALUES;
-
   return Array.from(counts.entries())
     .map(([value, count]) => ({ value, count }))
     .sort(
@@ -125,23 +118,13 @@ function distinctValues(
     );
 }
 
-export const selectDistinctValues = (
+/** How many of them there are — the primitive a row shows in place of the one
+ * value it hasn't got. */
+export const selectDistinctCount = (
   s: FormState,
   recordId: string,
   column: string,
-): readonly DistinctValue[] => {
-  let memo = distinctCache.get(s);
-  if (!memo) {
-    memo = new Map();
-    distinctCache.set(s, memo);
-  }
-  const key = `${recordId} ${column}`;
-  const cached = memo.get(key);
-  if (cached) return cached;
-  const result = distinctValues(s, recordId, column);
-  memo.set(key, result);
-  return result;
-};
+): number => distinctValues(s.records[recordId]?.values[column]).length;
 
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>
@@ -160,11 +143,13 @@ export const selectFieldOf = (
   s.records[recordId]?.fields.find((f) => f.key === fieldKey);
 
 /** Whether a field is beyond what the form will do to several records at once:
- * a scalar field the records disagree on, which has no one value to edit from
- * (a primitive offers its distinct values instead; a link has no one record to
- * open). False for a single record, which can neither disagree with itself nor
- * be a bulk anything — this is the whole of the form's behavioral difference
- * between one record and many.
+ * a scalar field the records disagree on, which has no one value to edit from,
+ * clear, or point somewhere else. It still *expands* — into the distinct values
+ * the records hold, any one of which the user can take for all of them
+ * (`RecordFields.tsx`'s `DistinctValues`), which is how such a field gets a
+ * value to edit in the first place. False for a single record, which can
+ * neither disagree with itself nor be a bulk anything — this is the whole of
+ * the form's behavioral difference between one record and many.
  *
  * A multi-record field is *not* among them: its records group into rows that
  * say the same thing about every base record they hang off, and editing one row
@@ -193,8 +178,10 @@ export function selectIsBulkBlocked(
   return field !== undefined && selectBeyondBulk(s, recordId, field);
 }
 
-/** Whether a scalar linked record field has a record to show: one it points
- * at, or a new one the user is entering into it. */
+/** Whether a scalar linked record field has *one* record to show: one every
+ * record the form is on points at, or a new one the user is entering into it.
+ * False when they point at different records — that field shows its distinct
+ * values instead (see {@link selectBeyondBulk}). */
 export function selectHasLinkedRecord(
   s: FormState,
   recordId: string,
@@ -271,10 +258,16 @@ function fieldModified(
         list.childIds.some((child) => recordModified(s, memo, child)));
   } else if (columnModified(node, field.column)) {
     result = true;
-  } else {
+  } else if (field.kind === "scalarLink") {
+    // The record the field points at, or — when the form's records point at
+    // different ones — any of the records its distinct values opened into.
     result =
-      field.kind === "scalarLink" &&
-      recordModified(s, memo, scalarChildId(recordId, field.key));
+      recordModified(s, memo, scalarChildId(recordId, field.key)) ||
+      variedChildIds(recordId, field.key, node.values[field.column]).some(
+        (id) => recordModified(s, memo, id),
+      );
+  } else {
+    result = false;
   }
   memo.set(memoKey, result);
   return result;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planSave, type FormTree } from "./formSave";
-import { listId, ROOT_ID, scalarChildId } from "./formIds";
+import { listId, ROOT_ID, scalarChildId, variedChildId } from "./formIds";
 import type { ListNode, RecordNode } from "../stores/recordForm/state";
 import { buildFormFields, type RecordKey } from "../query/recordForm";
 import type { ColumnValues } from "./formValues";
@@ -494,6 +494,46 @@ describe("planSave", () => {
         ),
       }),
     );
+    expect(plan.operations).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "album",
+        where: { id: "album-1" },
+        values: { title: "Lemonade (Deluxe)" },
+      },
+    ]);
+  });
+
+  it("edits a record opened under a field the form's records disagree on", () => {
+    // Two tracks on different albums: the field has no one record to open, so
+    // it opened into one node per album, and the user edited one of them.
+    const node = loadedAll(
+      "track",
+      [
+        [{ column: "id", value: "track-1" }],
+        [{ column: "id", value: "track-2" }],
+      ],
+      { title: "Sorry", genre: "R&B" },
+    );
+    const varied = {
+      ...node,
+      values: { ...node.values, album: ["album-1", "album-2"] },
+      original: { ...node.original, album: ["album-1", "album-2"] },
+    };
+    const albumNode = (id: string, title: string) =>
+      loaded("album", [{ column: "id", value: id }], { id, title });
+    const plan = planSave(
+      tree({
+        [ROOT_ID]: varied,
+        [variedChildId(ROOT_ID, "album", "album-1")]: edited(
+          albumNode("album-1", "Lemonade"),
+          { title: "Lemonade (Deluxe)" },
+        ),
+        [variedChildId(ROOT_ID, "album", "album-2")]: albumNode("album-2", "4"),
+      }),
+    );
+    // Only the one the user changed, and the tracks themselves are untouched.
     expect(plan.operations).toEqual([
       {
         operation: "update",

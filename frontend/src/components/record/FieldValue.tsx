@@ -12,8 +12,6 @@ import { cx } from "../ui/cx";
 import { useResizeObserver } from "../ui/useElementWidth";
 import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
-import type { RecordFormModel } from "../../stores/recordForm";
-import VariedValueField from "./VariedValueField";
 
 /** Where focus goes when an activated field leaves edit mode: back to this
  * field's own label, to the next item's, to the previous one's, or nowhere (the
@@ -124,11 +122,18 @@ function ValueInput(props: {
   );
 }
 
-/** What a field shows when the records the form is on don't agree on it. It's
- * read-only for now: there's no one value to edit from, and typing into it would
- * flatten differences the user can't see. */
-export function VariedValue(): JSX.Element {
-  return <span className="text-ink-weak text-sm/5 italic">(varied)</span>;
+/** What a field shows when the records the form is on don't agree on it: how
+ * many different things they say, rather than any one of them. There is nothing
+ * here to edit — typing into it would flatten differences the user can't see —
+ * so the field expands instead, into those values one by one
+ * (`RecordFields.tsx`'s `DistinctValues`), any of which can be taken for every
+ * record and edited from there. */
+export function VariedValue(props: { distinct: number }): JSX.Element {
+  return (
+    <span className="text-ink-weak cursor-default text-sm/5 italic">
+      {props.distinct} distinct {props.distinct === 1 ? "value" : "values"}
+    </span>
+  );
 }
 
 /** The collapsed rendering of a filled value: one line, truncated.
@@ -169,7 +174,8 @@ function OneLineValue(props: {
  *    (not even the pencil): the form shows its labels while the data is on its
  *    way, and only the key values it already had.
  *  - **varied** — the records the form is on hold different values here, so
- *    there is no value to show: a component showing distinct values stands in for it.
+ *    there is no value to show: how many different ones there are stands in for
+ *    it, and the row expands into them (see {@link VariedValue}).
  *  - **empty** — NULL or the empty string, so there's nothing to click: a pencil
  *    button activates an empty input instead.
  *  - **filled** — the value, on one line (newlines become spaces, overflow
@@ -193,24 +199,14 @@ export default function FieldValue(props: {
   onCommit: (text: string, exit: EditExit) => void;
   onContextMenu: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
-  model?: RecordFormModel;
-  recordId?: string;
+  /** How many different values the records hold here — only read while `value`
+   * is `VARIED`, which is the one state that has no value of its own to show. */
+  distinct: number;
 }): JSX.Element | null {
   // Nothing loaded for this field yet — no value, no pencil.
   if (props.value === undefined) return null;
-  // The records disagree: show the new varied value component if we have the model.
-  if (props.value === VARIED) {
-    if (props.model && props.recordId && props.field.kind === "primitive") {
-      return (
-        <VariedValueField
-          model={props.model}
-          recordId={props.recordId}
-          field={props.field}
-        />
-      );
-    }
-    return <VariedValue />;
-  }
+  // The records disagree: how many ways, and the row expands into them.
+  if (props.value === VARIED) return <VariedValue distinct={props.distinct} />;
 
   /** The value as text — meaningful once the records are known to agree on it,
    * which every state below "varied" is. */

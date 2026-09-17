@@ -48,7 +48,7 @@ import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
 import About from "~icons/material-symbols/info";
-import FormatPaint from "~icons/material-symbols/format-paint";
+import PaintRoller from "~icons/material-symbols/imagesearch-roller";
 // The record editor's field-label glyphs, one per value category.
 import FieldText from "~icons/material-symbols/notes";
 import FieldNumber from "~icons/material-symbols/tag";
@@ -106,7 +106,7 @@ export const Icons = {
   Locate, // now-playing menu: jump to the playing track's row
   Keyboard, // shortcuts editor: "Record keys" search toggle
   About, // Settings footer: "About RadioCrate" (versions + update actions)
-  FormatPaint, // record editor: apply value to all records
+  PaintRoller, // record editor: take one distinct value for every record
   FieldText, // record editor: a text field's label
   FieldNumber, // record editor: a numeric field's label
   FieldId, // record editor: a UUID field's label

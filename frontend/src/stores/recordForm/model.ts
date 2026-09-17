@@ -54,6 +54,7 @@ import {
   recordDataQuery,
   type FormField,
   type MultiRecordField,
+  type PrimitiveField,
   type RecordKey,
   type RecordQuery,
   type ScalarLinkField,
@@ -81,10 +82,13 @@ import {
   newChildId,
   ROOT_ID,
   scalarChildId,
+  variedChildId,
+  variedChildIds,
 } from "../../record/formIds";
 import { planSave, type SavePlan } from "../../record/formSave";
 import type { RecordFormSummary } from "../forms";
 import {
+  distinctValues,
   selectBeyondBulk,
   selectFieldOf,
   selectFormSummary,
@@ -267,6 +271,20 @@ export interface RecordFormActions {
     field: ScalarLinkField,
     keyValue: string,
     cells: readonly (string | null)[],
+  ) => void;
+
+  /** Take one of the values the form's records disagree on for *all* of them,
+   * which is how a field they disagree on gets a value at all (see
+   * {@link selectBeyondBulk}). The field stops being varied on the spot: it
+   * collapses back into an ordinary one holding that value — editable, clearable
+   * and savable like any other — and the distinct values it was showing go.
+   *
+   * Ephemeral, like every other form modification: it reaches the database when
+   * the form is saved, and then for every record the form is on. */
+  useValueForAll: (
+    recordId: string,
+    field: PrimitiveField | ScalarLinkField,
+    value: string | null,
   ) => void;
 }
 
@@ -821,6 +839,48 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     void loadRecord(id);
   };
 
+  /** Creates and previews the record behind each *distinct* value of a scalar
+   * linked record field — what the same field expands into when the records the
+   * form is on point at different ones. One node apiece, so the user can open
+   * any of them into its own form (`toggleChild` loads it when they do), and one
+   * preview apiece, loaded now: the list is a chooser, and a row of it reads as
+   * the record it stands for or not at all.
+   *
+   * NULL and the empty string point at no record, so they get no node — the list
+   * offers them as values to apply, with nothing to open. */
+  const ensureVariedChildren = (recordId: string, field: ScalarLinkField) => {
+    const values = get().records[recordId]?.values[field.column];
+    for (const { value } of distinctValues(values)) {
+      if (value == null || value === "") continue;
+      const id = variedChildId(recordId, field.key, value);
+      const key = [{ column: field.keyColumn, value }];
+      if (!get().records[id]) {
+        addRecord(id, field.table, [key], [], "unloaded");
+      }
+      if (!get().embeds[id]) void loadEmbed(id, field.table, key);
+    }
+  };
+
+  /** Drops those nodes, their previews and whatever the user opened under them —
+   * what taking one of the values for every record leaves behind, the field
+   * having just one record to show from then on. The same discarding
+   * `pickRecord` does to the record a field used to point at. */
+  const dropVariedChildren = (recordId: string, field: ScalarLinkField) => {
+    const ids = variedChildIds(
+      recordId,
+      field.key,
+      get().records[recordId]?.values[field.column],
+    );
+    for (const id of ids) tokens.set(id, ++tokenSeq);
+    set((s) => {
+      for (const id of ids) {
+        delete s.records[id];
+        delete s.embeds[id];
+        delete s.expanded[id];
+      }
+    });
+  };
+
   /** Creates and loads a multi-record field's child list, once. Records with no
    * id of their own (ones the form is creating) have nothing to fetch, but the
    * list is made all the same: records can be added to it. */
@@ -1123,14 +1183,18 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const expanded = get().expanded[itemId] === true;
       const next = open ?? !expanded;
       if (next === expanded) return;
-      // There's nothing under a field the form can't reach across the records
-      // it's on — no one linked record, no one list of children — so it doesn't
-      // open. (Closing one always works, whatever it holds.)
-      if (next && beyondBulk(recordId, field)) return;
       setExpandedItem(itemId, next);
       if (!next) return;
-      if (field.kind === "scalarLink") ensureScalarChild(recordId, field);
-      else if (field.kind === "multiRecord") ensureList(recordId, field);
+      // A scalar field the records disagree on opens into the distinct values
+      // they hold rather than into one value's own contents: a linked record
+      // apiece to preview and open, where an ordinary link has the single
+      // record every one of them points at.
+      if (field.kind === "scalarLink") {
+        if (beyondBulk(recordId, field)) ensureVariedChildren(recordId, field);
+        else ensureScalarChild(recordId, field);
+      } else if (field.kind === "multiRecord") {
+        ensureList(recordId, field);
+      }
     },
     toggleChild: (id, open) => {
       const expanded = get().expanded[id] === true;
@@ -1460,6 +1524,40 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set((s) => {
         s.embeds[id] = castDraft({ status: "loaded", cells });
         s.picker = null;
+      });
+    },
+    useValueForAll: (recordId, field, value) => {
+      // A primary key is the database's to issue, never the user's to spread
+      // across records — the one field whose distinct values are only to read.
+      if (field.kind === "primitive" && field.readOnly) return;
+      const itemId = fieldItemId(recordId, field.key);
+      if (field.kind === "scalarLink") {
+        // Read off the list that is about to be dismissed: the preview of the
+        // chosen record becomes the field's own, so the embedded record it now
+        // shows renders without a second request. (Before the column is
+        // written — the ids are derived from the values it is replacing.)
+        const chosen =
+          value == null || value === ""
+            ? undefined
+            : get().embeds[variedChildId(recordId, field.key, value)];
+        dropVariedChildren(recordId, field);
+        const id = scalarChildId(recordId, field.key);
+        set((s) => {
+          delete s.embeds[id];
+          delete s.records[id];
+          if (chosen) s.embeds[id] = castDraft(chosen);
+        });
+        tokens.set(id, ++tokenSeq);
+      }
+      setColumn(recordId, field.column, value);
+      // The list it was expanded into is gone, so the field closes — onto the
+      // one value it now holds, which a primitive field opens straight into
+      // edit mode so the chosen value can be adjusted rather than only taken.
+      setExpandedItem(itemId, false);
+      if (field.kind !== "primitive") return;
+      set((s) => {
+        s.editing = itemId;
+        s.editingSelectAll = false;
       });
     },
   };
