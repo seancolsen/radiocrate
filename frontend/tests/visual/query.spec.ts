@@ -141,14 +141,34 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // Multi-select mode: the floating toolbar over the rows, counting the two
+  // selected ones. Its actions menu is the row menu's body over the whole
+  // selection, minus the "Select multiple" entry that put the mode on.
+  test(`results/multi-select - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/multi-select", colorScheme);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage.getByText("2 records")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/multi-select", colorScheme),
+    );
+
+    await stage.getByRole("button", { name: "Selection actions" }).click();
+    await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+      "Edit track",
+      "Edit album",
+    ]);
+  });
+
   // A row's context menu: one "Edit {table}" entry per table whose primary key
-  // the row carries. Shot through the menu (it portals out of the stage).
+  // the row carries, then "Select multiple". Shot through the menu (it portals
+  // out of the stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
     const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Edit track",
       "Edit album",
+      "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
       snapshot("result-row/context-menu", colorScheme),

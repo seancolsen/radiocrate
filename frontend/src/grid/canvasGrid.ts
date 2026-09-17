@@ -14,6 +14,11 @@
 //   • touch              → drag-to-pan with hand-rolled inertia (velocity
 //                          tracking + an exponential-decay rAF loop)
 //
+// Scroll offset 0 puts the first row at the top, and the offset may go negative
+// when the owner has reserved a band there for a floating overlay of its own
+// (`setTopOverscroll` — the multi-select toolbar): the rows it covers are then
+// scrollable into the clear, as they'd be under a sticky header.
+//
 // Row interaction is hit-tested against the same windowed geometry: pointer moves
 // track a hovered row (repainted with a subtly shifted background), clicks report
 // a `(row, modifiers)` selection intent to the owner, right-clicks report a
@@ -181,6 +186,9 @@ export class CanvasGrid {
   private dpr = 1;
 
   private scrollTop = 0;
+  /** How far above the first row the view may scroll (see
+   * {@link setTopOverscroll}). */
+  private topInset = 0;
 
   // Row interaction: the selection (owned outside, pushed in for painting), the
   // currently-hovered row, the last mouse Y (to re-derive hover after a scroll),
@@ -308,6 +316,20 @@ export class CanvasGrid {
     this.requestDraw();
   }
 
+  /** Reserves `px` of scrollable space above the first row, for a floating
+   * overlay the owner paints over the top of the grid (the multi-select
+   * toolbar). The rows aren't moved: the view can simply be scrolled up past
+   * them by that much, so the rows the overlay covers can be read by scrolling
+   * — the same bargain a sticky header strikes. `0` gives it back. */
+  setTopOverscroll(px: number): void {
+    const inset = Math.max(0, px);
+    if (inset === this.topInset) return;
+    this.topInset = inset;
+    this.stopFling();
+    this.clampScroll();
+    this.requestDraw();
+  }
+
   /** Marks the rows whose records the record editor is holding unsaved changes
    * for, painted with a red ✱ in the left margin. Replaced wholesale, like the
    * selection, so a new set means a repaint. */
@@ -378,7 +400,10 @@ export class CanvasGrid {
     if (!layout || index < 0) return;
     const top = index * layout.rowH;
     const bottom = top + layout.rowH;
-    if (top < this.scrollTop) this.scrollTop = top;
+    // The reserved band at the top is covered by an overlay, so a row revealed
+    // into it wouldn't be visible — scroll it clear of the band instead.
+    if (top < this.scrollTop + this.topInset)
+      this.scrollTop = top - this.topInset;
     else if (bottom > this.scrollTop + this.vh)
       this.scrollTop = bottom - this.vh;
     else return;
@@ -402,6 +427,18 @@ export class CanvasGrid {
 
   private get maxScroll(): number {
     return Math.max(0, this.totalHeight - this.vh);
+  }
+
+  /** The topmost scroll offset — negative while an overlay has reserved space
+   * above the first row. */
+  private get minScroll(): number {
+    return -this.topInset;
+  }
+
+  /** How much scrolling there is to do at all: `0` means the content fits and
+   * nothing is reserved above it, so every gesture is inert. */
+  private get scrollRange(): number {
+    return this.maxScroll - this.minScroll;
   }
 
   /** Snaps a logical coordinate to the device-pixel grid. The context is scaled
@@ -483,7 +520,8 @@ export class CanvasGrid {
 
   private clampScroll(): void {
     const max = this.maxScroll;
-    if (this.scrollTop < 0) this.scrollTop = 0;
+    const min = this.minScroll;
+    if (this.scrollTop < min) this.scrollTop = min;
     else if (this.scrollTop > max) this.scrollTop = max;
   }
 
@@ -494,11 +532,13 @@ export class CanvasGrid {
     this.scrollTop = before + dy;
     this.clampScroll();
     this.dirty = true;
-    return this.scrollTop === 0 || this.scrollTop === this.maxScroll;
+    return (
+      this.scrollTop === this.minScroll || this.scrollTop === this.maxScroll
+    );
   }
 
   private onWheel = (e: WheelEvent): void => {
-    if (this.frozen || this.maxScroll <= 0) return;
+    if (this.frozen || this.scrollRange <= 0) return;
     this.stopFling();
     // Normalize line/page deltas to pixels so trackpads and mice agree.
     let dy = e.deltaY;
@@ -519,7 +559,7 @@ export class CanvasGrid {
   }
 
   private onPointerDown = (e: PointerEvent): void => {
-    if (this.frozen || this.gesture || this.maxScroll <= 0) return;
+    if (this.frozen || this.gesture || this.scrollRange <= 0) return;
     const { x, y } = this.localPoint(e);
 
     // A press on the scrollbar thumb starts a thumb drag (any pointer type).
@@ -570,7 +610,10 @@ export class CanvasGrid {
     if (g.kind === "scrollbar") {
       const range = this.vh - (this.thumb?.h ?? 0);
       const thumbY = Math.max(0, Math.min(range, y - g.grabOffset));
-      this.scrollTop = range > 0 ? (thumbY / range) * this.maxScroll : 0;
+      this.scrollTop =
+        range > 0
+          ? this.minScroll + (thumbY / range) * this.scrollRange
+          : this.minScroll;
       this.dirty = true;
       this.requestDraw();
       e.preventDefault();
@@ -686,7 +729,7 @@ export class CanvasGrid {
   /** Whether local x falls in the custom scrollbar's grab column (only when a
    * scrollbar is actually shown). */
   private overScrollbar(x: number): boolean {
-    if (this.maxScroll <= 0) return false;
+    if (this.scrollRange <= 0) return false;
     return x >= this.vw - SB_MARGIN - SB_WIDTH - SB_GRAB_SLOP;
   }
 
@@ -1007,13 +1050,18 @@ export class CanvasGrid {
   }
 
   private drawScrollbar(): void {
-    if (this.maxScroll <= 0) {
+    if (this.scrollRange <= 0) {
       this.thumb = undefined;
       return;
     }
     const { vw, vh } = this;
-    const thumbH = Math.max(SB_MIN_THUMB, (vh * vh) / this.totalHeight);
-    const thumbY = (this.scrollTop / this.maxScroll) * (vh - thumbH);
+    // The thumb is sized against everything the view can be scrolled over —
+    // the rows *plus* whatever space an overlay reserved above them — so it
+    // still spans the whole travel when the only thing to scroll is the inset.
+    const span = vh + this.scrollRange;
+    const thumbH = Math.max(SB_MIN_THUMB, (vh * vh) / span);
+    const thumbY =
+      ((this.scrollTop - this.minScroll) / this.scrollRange) * (vh - thumbH);
     this.thumb = { y: thumbY, h: thumbH };
 
     const ctx = this.ctx;

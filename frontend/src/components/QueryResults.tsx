@@ -9,15 +9,19 @@ import type { JSX } from "react";
 import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
+  selectMultiSelect,
+  selectRecordsForRows,
   selectResultCount,
   selectRowRecords,
   selectRowSelection,
+  selectTableRecordsForRows,
   type RecordRef,
 } from "../stores/app";
 import { recordIdentity, selectModifiedRecords } from "../stores/forms";
 import type { Stores } from "../stores/createStores";
-import { useAppActions, useStores } from "../stores/react";
+import { useApp, useAppActions, useStores } from "../stores/react";
 import { ContextMenu } from "./ui/ContextMenu";
+import MultiSelectToolbar, { MULTI_SELECT_INSET } from "./MultiSelectToolbar";
 import RowActionsMenu from "./RowActionsMenu";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).
@@ -35,10 +39,11 @@ import RowActionsMenu from "./RowActionsMenu";
 // `QueryResult` is a class, so Immer never drafts or freezes it — the engine
 // reads straight off the plain instance, cell derivation included.
 //
-// The one thing this shell owns beyond the canvas is the row context menu, which
-// is real DOM (rows are painted pixels; a menu needs to be hit-testable, styled
-// and accessible). While it's open the grid is frozen, so the rows underneath
-// hold still.
+// What this shell owns beyond the canvas is the DOM over it (rows are painted
+// pixels; a menu or a toolbar needs to be hit-testable, styled and accessible):
+// the row context menu — while it's open the grid is frozen, so the rows
+// underneath hold still — and the floating multi-select toolbar, whose height
+// the grid is told to keep scrollable above its first row.
 
 /** An open row context menu: where it was raised, the rows it acts on, and the
  * records it offers to edit.
@@ -52,29 +57,15 @@ import RowActionsMenu from "./RowActionsMenu";
 interface RowMenu {
   x: number;
   y: number;
-  /** The rows the menu acts on: the right-clicked row alone, unless it's part
-   * of an existing multi-row selection — then every selected row (the bulk
-   * case; see `RecordEditorTarget`). */
+  /** The rows the menu acts on — the selection as the right-click left it: the
+   * clicked row alone, unless it belonged to a multi-row selection (or one
+   * being assembled in multi-select mode), in which case every selected row
+   * (the bulk case; see `RecordEditorTarget`). */
   rows: readonly number[];
   /** One entry per table whose primary key those rows carry (a track row
-   * joined to its album offers both). */
+   * joined to its album offers both) — empty for rows that identify nothing,
+   * where the menu still offers "Select multiple". */
   records: readonly RecordRef[];
-}
-
-/** The records `rows` offer to edit: one per table, in first-row-first order. */
-function menuRecords(
-  stores: Stores,
-  tabId: string,
-  rows: readonly number[],
-): RecordRef[] {
-  const state = stores.app.store.getState();
-  const byTable = new Map<string, RecordRef>();
-  for (const row of rows) {
-    for (const record of selectRowRecords(state, tabId, row)) {
-      if (!byTable.has(record.table)) byTable.set(record.table, record);
-    }
-  }
-  return [...byTable.values()];
 }
 
 /** The rows whose records the editor is holding unsaved changes for — a ✱ on
@@ -128,9 +119,12 @@ function subscribeModifiedRows(
 /** The results pane: the current tab's result set painted to a canvas grid. */
 export default function QueryResults(props: { tabId: string }): JSX.Element {
   const stores = useStores();
-  const { clickRow, doubleClickRow, setRecordEditorRecords } = useAppActions();
+  const { clickRow, doubleClickRow, setMultiSelect, setRecordEditorRecords } =
+    useAppActions();
+  const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const [rowMenu, setRowMenu] = useState<RowMenu | undefined>(undefined);
   const closeMenu = useCallback(() => setRowMenu(undefined), []);
 
@@ -185,16 +179,24 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       onRowClick: (index, mods) => clickRow(tabId, index, mods),
       onRowDoubleClick: (index) => doubleClickRow(tabId, index),
       onRowContextMenu: (index, x, y) => {
-        // A right-click inside an existing multi-row selection acts on the
-        // whole selection, left as-is; any other right-click selects its row
-        // alone first, so the menu's target is visible.
-        const selection = selectRowSelection(store.getState(), tabId);
-        const multi = selection.size > 1 && selection.has(index);
-        if (!multi) clickRow(tabId, index, { shift: false, ctrl: false });
-        // With nothing editable in the targeted row(s), there's nothing to show.
-        const rows = multi ? [...selection] : [index];
-        const records = menuRecords(stores, tabId, rows);
-        if (records.length === 0) return;
+        // The menu acts on the selection, so the selection is put where the
+        // right-click means it: an existing multi-row selection the clicked row
+        // belongs to is left as-is, and so is the selection in multi-select
+        // mode (where collapsing it would throw away what the user is
+        // assembling — an unselected row is added to it instead). Any other
+        // right-click selects its row alone, so the menu's target is visible.
+        const state = store.getState();
+        const selection = selectRowSelection(state, tabId);
+        const multiMode = selectMultiSelect(state, tabId);
+        const keep = multiMode
+          ? selection.has(index)
+          : selection.size > 1 && selection.has(index);
+        if (!keep) clickRow(tabId, index, { shift: false, ctrl: false });
+        const rows = [...selectRowSelection(store.getState(), tabId)];
+        const records = selectRecordsForRows(store.getState(), tabId, rows);
+        // Nothing editable in the targeted rows leaves the menu with only
+        // "Select multiple" — and nothing at all once that mode is already on.
+        if (records.length === 0 && multiMode) return;
         setRowMenu({ x, y, rows, records });
       },
     });
@@ -289,6 +291,30 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     };
   }, [props.tabId, stores, clickRow, doubleClickRow]);
 
+  // The floating multi-select toolbar covers the first rows, so the grid gets
+  // that much room to scroll up into — the toolbar's own height plus the
+  // margin it sits in. Measured rather than assumed (the bar is as tall as its
+  // content), and given back when the mode ends. A layout effect: the reserve
+  // is in place before the first paint with the toolbar up.
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const el = toolbarRef.current;
+    if (!el) {
+      grid.setTopOverscroll(0);
+      return;
+    }
+    const push = () =>
+      grid.setTopOverscroll(el.offsetHeight + MULTI_SELECT_INSET);
+    const ro = new ResizeObserver(push);
+    ro.observe(el);
+    push();
+    return () => {
+      ro.disconnect();
+      grid.setTopOverscroll(0);
+    };
+  }, [multiSelect]);
+
   // The rows stop responding while their menu is up: no hover, no scroll, no
   // click. The blocking layer over the canvas already stops most of it; this
   // covers the rest (see `CanvasGrid.setFrozen`).
@@ -299,19 +325,28 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   return (
     <div className="bg-panel relative min-h-0 flex-1 overflow-hidden">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
+      {multiSelect && (
+        <MultiSelectToolbar ref={toolbarRef} tabId={props.tabId} />
+      )}
       {rowMenu && (
         <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={closeMenu}>
           <RowActionsMenu
             records={rowMenu.records}
-            onEdit={(record) => {
-              const state = stores.app.store.getState();
-              const records = rowMenu.rows.flatMap((row) =>
-                selectRowRecords(state, props.tabId, row).filter(
-                  (r) => r.table === record.table,
+            onEdit={(record) =>
+              setRecordEditorRecords(
+                props.tabId,
+                record.table,
+                selectTableRecordsForRows(
+                  stores.app.store.getState(),
+                  props.tabId,
+                  rowMenu.rows,
+                  record.table,
                 ),
-              );
-              setRecordEditorRecords(props.tabId, record.table, records);
-            }}
+              )
+            }
+            onSelectMultiple={
+              multiSelect ? undefined : () => setMultiSelect(props.tabId, true)
+            }
           />
         </ContextMenu>
       )}

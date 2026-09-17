@@ -145,6 +145,41 @@ describe("clickRow / moveRowSelection", () => {
       1,
     ]);
   });
+
+  it("toggles rows on a plain click in multi-select mode", () => {
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
+    expect(
+      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+    ).toEqual([1, 4]);
+  });
+
+  it("still extends a shift-click range in multi-select mode", () => {
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 3, { shift: true, ctrl: false });
+    expect(
+      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("keeps the selection when multi-select mode is turned off", () => {
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
+    bundle.actions.setMultiSelect("a", false);
+    const s = bundle.store.getState();
+    expect(s.pages["a"]?.multiSelect).toBe(false);
+    expect([...(s.pages["a"]?.selection ?? [])].sort()).toEqual([1, 2]);
+    // …and a plain click replaces the selection again.
+    bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
+    expect([...(bundle.store.getState().pages["a"]?.selection ?? [])]).toEqual([
+      4,
+    ]);
+  });
 });
 
 describe("setResults", () => {
@@ -155,6 +190,7 @@ describe("setResults", () => {
       records: [],
     });
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.setMultiSelect("a", true);
     bundle.actions.seedNowPlaying(
       { sourceTabId: "a", id: "t1", rowIndex: 1, title: null, artists: [] },
       { playing: true, position: 0, duration: null, hasNext: false },
@@ -167,6 +203,7 @@ describe("setResults", () => {
 
     const s = bundle.store.getState();
     expect(s.pages["a"]?.selection).toBeUndefined();
+    expect(s.pages["a"]?.multiSelect).toBe(false);
     expect(s.pages["a"]?.lineage).toBeUndefined();
     expect(s.currentTrack?.rowIndex).toBeNull();
     // The rest of the now-playing bar survives — only the row pointer is

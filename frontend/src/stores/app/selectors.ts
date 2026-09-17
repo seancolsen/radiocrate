@@ -1,6 +1,8 @@
 import type { Preset } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
 import { defsEqual, type Section } from "../../query/definition";
+import type { LineageMapping } from "../../query/lineage";
+import type { QueryResult } from "../../query/result";
 import type { RowContext } from "../../query/rowDml";
 import {
   EMPTY_SELECTION,
@@ -62,6 +64,11 @@ export const selectRowSelection = (
   tabId: string,
 ): ReadonlySet<number> => s.pages[tabId]?.selection ?? EMPTY_SELECTION;
 
+/** Whether `tabId`'s results pane is in multi-select mode (the floating
+ * multi-select toolbar, and click-to-toggle rows). */
+export const selectMultiSelect = (s: AppState, tabId: string): boolean =>
+  s.pages[tabId]?.multiSelect ?? false;
+
 /** The records result row `index` identifies — one per table whose primary key
  * the row carries in full, in result-column order. Empty when the lineage
  * analysis found none (or hasn't finished), which is what leaves the row's
@@ -71,8 +78,19 @@ export function selectRowRecords(
   tabId: string,
   index: number,
 ): RecordRef[] {
-  const result = s.pages[tabId]?.result;
-  const targets = s.pages[tabId]?.lineage?.records ?? [];
+  return rowRecords(s.pages[tabId]?.result, s.pages[tabId]?.lineage, index);
+}
+
+/** {@link selectRowRecords} over the pieces of page state it reads, for a
+ * component that has selected those references out of the store and derives
+ * from them in a `useMemo` (rule 2) rather than subscribing to a selector that
+ * builds a fresh array. */
+export function rowRecords(
+  result: QueryResult | undefined,
+  lineage: LineageMapping | undefined,
+  index: number,
+): RecordRef[] {
+  const targets = lineage?.records ?? [];
   if (!result) return [];
   const records: RecordRef[] = [];
   for (const target of targets) {
@@ -87,6 +105,52 @@ export function selectRowRecords(
         value: result.keyText(index, target.keyIndices[i]),
       })),
     });
+  }
+  return records;
+}
+
+/** What a menu raised on `rows` offers to edit: one record per table those
+ * rows carry a primary key for, in first-row-first order (a track row joined
+ * to its album offers both). Builds a fresh array on every call. */
+export function recordsForRows(
+  result: QueryResult | undefined,
+  lineage: LineageMapping | undefined,
+  rows: Iterable<number>,
+): RecordRef[] {
+  const byTable = new Map<string, RecordRef>();
+  for (const row of rows) {
+    for (const record of rowRecords(result, lineage, row)) {
+      if (!byTable.has(record.table)) byTable.set(record.table, record);
+    }
+  }
+  return [...byTable.values()];
+}
+
+/** {@link recordsForRows} against the whole state. Builds a fresh array on
+ * every call. */
+export function selectRecordsForRows(
+  s: AppState,
+  tabId: string,
+  rows: Iterable<number>,
+): RecordRef[] {
+  return recordsForRows(s.pages[tabId]?.result, s.pages[tabId]?.lineage, rows);
+}
+
+/** Every record of `table` that `rows` identify, in row order — what opening
+ * the editor on a (possibly multi-row) selection edits. Duplicates are left in;
+ * `setRecordEditorRecords` takes each record once. Builds a fresh array on
+ * every call. */
+export function selectTableRecordsForRows(
+  s: AppState,
+  tabId: string,
+  rows: Iterable<number>,
+  table: string,
+): RecordRef[] {
+  const records: RecordRef[] = [];
+  for (const row of rows) {
+    for (const record of selectRowRecords(s, tabId, row)) {
+      if (record.table === table) records.push(record);
+    }
   }
   return records;
 }

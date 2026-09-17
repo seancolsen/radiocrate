@@ -199,8 +199,13 @@ export interface AppActions {
     live: QueryDefinition,
   ) => void;
 
+  /** Turn `tabId`'s results multi-select mode on or off. Turning it off leaves
+   * the selection as it stands — the toolbar goes away, the selected rows
+   * don't. */
+  setMultiSelect: (tabId: string, on: boolean) => void;
   /** Apply a click on result row `index`, updating the selection: Shift extends a
-   * range from the anchor, Ctrl/Cmd toggles the row, a plain click selects it
+   * range from the anchor, Ctrl/Cmd — or any plain click while multi-select
+   * mode is on — toggles the row, and a plain click otherwise selects it
    * alone. */
   clickRow: (
     tabId: string,
@@ -466,8 +471,11 @@ export function createAppActions(
       const page = pageDraft(s, tabId);
       page.result = castDraft(result);
       // New rows invalidate the old selection and any prior lineage mapping (the
-      // latter is repopulated asynchronously by `analyzeLineage`).
+      // latter is repopulated asynchronously by `analyzeLineage`). Multi-select
+      // mode goes with the selection it was made for, rather than leaving a
+      // toolbar counting rows that are gone.
       delete page.selection;
+      page.multiSelect = false;
       delete page.lineage;
       // The playing track's row belonged to the rows just replaced; it's
       // re-located once the new mapping lands (see `analyzeLineage`).
@@ -1106,8 +1114,16 @@ export function createAppActions(
       });
     },
 
+    setMultiSelect: (tabId, on) =>
+      set((s) => {
+        pageDraft(s, tabId).multiSelect = on;
+      }),
     clickRow: (tabId, index, mods) => {
-      const prev = get().pages[tabId]?.selection;
+      const page = get().pages[tabId];
+      const prev = page?.selection;
+      // Multi-select mode gives a plain click the Ctrl click's meaning, which
+      // is the whole point of it: a touch device has no Ctrl to hold.
+      const toggle = mods.ctrl || (page?.multiSelect ?? false);
       let next: Set<number>;
       if (mods.shift) {
         // Grow a range from the anchor (or this row, with nothing anchored yet).
@@ -1117,7 +1133,7 @@ export function createAppActions(
         next = new Set<number>();
         for (let i = lo; i <= hi; i++) next.add(i);
         rowClickAnchor.set(tabId, anchor);
-      } else if (mods.ctrl) {
+      } else if (toggle) {
         // Toggle this row in/out of the existing selection.
         next = new Set(prev);
         if (next.has(index)) next.delete(index);

@@ -466,8 +466,29 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // The same rows in multi-select mode: the floating toolbar over them, two
+  // rows selected, and the first rows scrolled clear of the bar.
+  "results/multi-select": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        recordKeys: {
+          track: ["track-1", "track-2", "track-3", "track-4", "track-5"],
+          album: ["album-1", "album-1", "album-2", "album-2", "album-3"],
+        },
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.setMultiSelect(id, true);
+      stores.app.actions.clickRow(id, 1, { shift: false, ctrl: false });
+      stores.app.actions.clickRow(id, 3, { shift: false, ctrl: false });
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // A row's context menu: one entry per table whose primary key the row
-  // carries.
+  // carries, over the entry that turns multi-select mode on.
   "result-row/context-menu": {
     render: () => (
       <ContextMenu x={8} y={8} onClose={() => {}}>
@@ -477,6 +498,7 @@ export const STORIES: Record<string, Story> = {
             { table: "album", key: [{ column: "id", value: "album-1" }] },
           ]}
           onEdit={() => {}}
+          onSelectMultiple={() => {}}
         />
       </ContextMenu>
     ),

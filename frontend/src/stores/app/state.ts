@@ -197,6 +197,12 @@ export interface QueryPageState {
    * swapped in whole, never mutated through a draft, so no `enableMapSet()`
    * plugin is needed. */
   selection?: ReadonlySet<number>;
+  /** Whether the results pane is in multi-select mode: the floating
+   * multi-select toolbar is up, and a plain click toggles a row in or out of
+   * the selection rather than replacing it (what a touch device has instead of
+   * Ctrl+click). Turning it off leaves the selection as it stands; a new result
+   * set turns it off along with clearing the selection. */
+  multiSelect: boolean;
   /** The lineage mapping: which output column (if any) carries `track.id`
    * (drives double-click-to-play) and which tables the rows carry a full
    * primary key for (drives the results context menu's "Edit {table}"
@@ -224,6 +230,7 @@ export interface QueryPageState {
 /** A page with nothing in it yet — what a tab's first page write starts from. */
 export function emptyPage(): QueryPageState {
   return {
+    multiSelect: false,
     recordEditor: null,
     running: false,
     builderSection: null,

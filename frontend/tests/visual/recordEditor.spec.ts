@@ -109,16 +109,20 @@ test("a row's context menu offers one entry per table it identifies", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Edit track",
     "Edit album",
+    "Select multiple",
   ]);
   // Right-clicking a row also selects it, so the menu's target is visible.
   expect(await selection(page)).toEqual([0]);
 });
 
-test("rows with no primary key offer no menu", async ({ page }) => {
-  // Same grid, without the `records=` lineage stand-in.
+test("rows with no primary key offer only multi-select", async ({ page }) => {
+  // Same grid, without the `records=` lineage stand-in: nothing to edit, but
+  // the rows can still be selected (see multiSelect.spec.ts).
   await openGrid(page, "/?tabs=Lemonade&grid=lemonade&expose=1");
   await rightClickRow(page);
-  await expect(page.getByRole("menu")).toBeHidden();
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Select multiple",
+  ]);
 });
 
 test("choosing an entry opens the record editor on that record", async ({
