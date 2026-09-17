@@ -88,21 +88,34 @@ export interface DistinctValue {
   count: number;
 }
 
-export const selectDistinctValues = (
+/** Nothing to choose between — one shared reference, so a selector falling back
+ * to it returns the same value every time. */
+const NO_DISTINCT_VALUES: readonly DistinctValue[] = [];
+
+/** One snapshot's answers. A selector read through `useSyncExternalStore` must
+ * return the same reference for the same state or its component re-renders
+ * without end, and this one builds a list — so it's memoized per snapshot,
+ * exactly as the modification stars below are: Immer gives every write a new
+ * root object, so a `WeakMap` keyed on it holds one write's worth of answers. */
+const distinctCache = new WeakMap<
+  FormState,
+  Map<string, readonly DistinctValue[]>
+>();
+
+function distinctValues(
   s: FormState,
   recordId: string,
   column: string,
-): DistinctValue[] => {
+): readonly DistinctValue[] {
   const values = s.records[recordId]?.values[column];
-  if (!values || values.length === 0) return [];
+  if (!values || values.length === 0) return NO_DISTINCT_VALUES;
 
   const counts = new Map<string | null, number>();
   for (const value of values) {
     counts.set(value, (counts.get(value) ?? 0) + 1);
   }
-
-  // If all values are the same, return empty
-  if (counts.size === 1) return [];
+  // A value every record holds is not a choice to be offered.
+  if (counts.size === 1) return NO_DISTINCT_VALUES;
 
   return Array.from(counts.entries())
     .map(([value, count]) => ({ value, count }))
@@ -110,6 +123,24 @@ export const selectDistinctValues = (
       (a, b) =>
         b.count - a.count || String(a.value).localeCompare(String(b.value)),
     );
+}
+
+export const selectDistinctValues = (
+  s: FormState,
+  recordId: string,
+  column: string,
+): readonly DistinctValue[] => {
+  let memo = distinctCache.get(s);
+  if (!memo) {
+    memo = new Map();
+    distinctCache.set(s, memo);
+  }
+  const key = `${recordId} ${column}`;
+  const cached = memo.get(key);
+  if (cached) return cached;
+  const result = distinctValues(s, recordId, column);
+  memo.set(key, result);
+  return result;
 };
 
 /** Whether an item (field or child record) is expanded. */
