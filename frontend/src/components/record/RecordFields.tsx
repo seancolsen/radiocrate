@@ -695,7 +695,14 @@ function ChildRow(props: {
               : model.toggleChild(recordId)
           }
         />
-        {counted && <span className={BUBBLE}>{records}</span>}
+        {counted && (
+          <span
+            className={BUBBLE}
+            aria-label={`${records} ${records === 1 ? "record" : "records"}`}
+          >
+            {records}
+          </span>
+        )}
         <EmbeddedRecord
           cells={isNew ? NO_CELLS : cells}
           isNew={isNew}

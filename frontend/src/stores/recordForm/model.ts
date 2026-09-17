@@ -517,11 +517,29 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
    * A row the form is *creating* has no link value yet: it was scaffolded with
    * one record per base record, in that order, so its records are counted by
    * position instead. */
+  /** Moves a multi-record field's count by `delta` for every record the node
+   * stands for — what adding to a list that hasn't arrived yet does, there
+   * being nothing to tally until it has. */
+  const bumpCounts = (recordId: string, fieldKey: string, delta: number) => {
+    const node = get().records[recordId];
+    if (!node) return;
+    setCounts(
+      recordId,
+      fieldKey,
+      node.keys.map((_, i) =>
+        Math.max(0, (node.counts[fieldKey]?.[i] ?? 0) + delta),
+      ),
+    );
+  };
+
   const recountField = (recordId: string, field: MultiRecordField) => {
     const s = get();
     const node = s.records[recordId];
     const list = s.lists[listId(recordId, field.key)];
-    if (!node || !list) return;
+    // A list still on its way holds none of the rows it is about to: what the
+    // field's own load reported is all there is to go on until it lands (which
+    // is what `bumpCounts` is for).
+    if (!node || list?.status !== "loaded") return;
     const parents = node.keys.map((_, i) => node.values["id"]?.[i] ?? null);
     const counts = node.keys.map(() => 0);
     for (const child of list.childIds) {
@@ -1376,7 +1394,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         expected: list.expected + records,
         dirty: true,
       });
-      recountField(recordId, field);
+      // Adding to a field the user never opened leaves nothing to tally — the
+      // counts its own load reported still stand, plus the record just filed
+      // under each. The load that is on its way will count the lot.
+      if (get().lists[id]?.status === "loaded") recountField(recordId, field);
+      else bumpCounts(recordId, field.key, 1);
       set((s) => {
         s.expanded[child] = true;
       });
