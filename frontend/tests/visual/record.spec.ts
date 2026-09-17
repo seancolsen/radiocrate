@@ -84,19 +84,42 @@ for (const colorScheme of SCHEMES) {
   });
 
   // The editor on two records at once: the same form, showing what they agree
-  // on and "(varied)" where they don't, and — under the multi-record fields —
-  // the bulk modification that's still to come.
+  // on and what they hold where they don't — and, beside each multi-record
+  // field, how many records it has for each of them.
   test(`record-editor/bulk - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "record-editor/bulk", colorScheme);
     await expect(stage.getByRole("heading")).toHaveText("Edit 2 track records");
-    // Both records' data has landed once the counts they share have — one per
-    // multi-record field, of which `track` has three (`credit`, `play` and, as
-    // of migration 0003, `track_tag`).
+    // Both records' data has landed once the multi-record fields can be
+    // opened, which takes the counts of every one of them.
     await expect(
-      stage.getByText("Bulk modification not yet supported"),
-    ).toHaveCount(3);
+      stage.getByRole("button", { name: "Expand credit" }),
+    ).toBeVisible();
+    await expect(
+      stage.getByRole("button", { name: "Expand play" }),
+    ).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/bulk", colorScheme),
+    );
+  });
+
+  // …with one of those fields opened out. Both tracks are credited to Beyoncé
+  // at order 1, so that is one row standing for two records, over the one
+  // credit each of them holds alone — and the shared row expands into the form
+  // that edits both records at once.
+  test(`record-editor/bulk-expanded - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/bulk-expanded",
+      colorScheme,
+    );
+    await stage.getByRole("button", { name: "Expand credit" }).click();
+    await expect(stage.locator("[data-selectable]")).toHaveCount(3);
+    await stage.getByRole("button", { name: /^Expand Beyoncé/ }).click();
+    // The artist both credits point at, previewed inside the row's own form —
+    // a second request, so the widget is waited for rather than caught empty.
+    await expect(stage.getByText("Beyoncé").nth(1)).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/bulk-expanded", colorScheme),
     );
   });
 

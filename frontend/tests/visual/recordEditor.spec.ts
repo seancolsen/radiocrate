@@ -316,8 +316,10 @@ test("selecting another row rebuilds the form on that record", async ({
 //
 // Widening the result-row selection puts the editor on every record it covers.
 // It's the same form: what the records agree on is editable as ever and the edit
-// lands on all of them, what they disagree on reads "(varied)", and their child
-// records wait for bulk modification proper.
+// lands on all of them, what they disagree on reads "(varied)", and the records
+// under a multi-record field collapse into the rows that say the same thing
+// about each of them — one row, edited or deleted across every record it stands
+// for.
 
 /** Widens the row selection to rows 0…`through`, the sidebar following it. */
 async function extendSelectionTo(page: Page, through: number) {
@@ -346,18 +348,17 @@ test("widening the selection puts the editor on every record it covers", async (
   await formItem(editor, "r:title").dblclick();
   await expect(editor.getByRole("textbox")).toBeHidden();
 
-  // Child records are not editable across records yet, so a multi-record field
-  // says so in place of the ways into it.
+  // A multi-record field keeps every way into it: its records group into rows
+  // the form edits across both tracks at once.
   await expect(
-    editor.getByText("Bulk modification not yet supported").first(),
+    editor.getByRole("button", { name: "Add credit" }),
   ).toBeVisible();
-  await expect(editor.getByRole("button", { name: "Add credit" })).toBeHidden();
   await expect(
     editor.getByRole("button", { name: "Open credit in new tab" }),
-  ).toBeHidden();
+  ).toBeVisible();
   await expect(
     editor.getByRole("button", { name: "Expand credit" }),
-  ).toBeHidden();
+  ).toBeVisible();
 
   // Narrowing the selection back to one row is the single-record form again.
   await page.locator("canvas").click({ position: { x: 200, y: rowY(1) } });
@@ -397,6 +398,142 @@ test("editing a field the records share writes every one of them", async ({
       table: "track",
       where: { id: "track-2" },
       values: { disc_number: "2" },
+    },
+  ]);
+});
+
+test("a multi-record field groups the records that say the same thing", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2); // track-3
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4); // tracks 3, 4 and 5
+  await expect(editor.getByRole("heading")).toHaveText("Edit 3 track records");
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  // Tracks 3 and 5 are both credited to Beyoncé at order 1, and track 4 has no
+  // credits at all: four records, three rows.
+  const credits = selectableRecords(editor);
+  await expect(credits).toHaveCount(3);
+  await expect(credits.first()).toContainText("Beyoncé");
+  // Each row says how many records it stands for, the ones standing for a
+  // single record included.
+  await expect(editor.getByLabel("2 records", { exact: true })).toBeVisible();
+  await expect(editor.getByLabel("1 record", { exact: true })).toHaveCount(2);
+});
+
+test("editing inside a grouped row writes every record it stands for", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4);
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: /^Expand Beyoncé/ }).click();
+  // The `order` both of its credits hold, edited once in the row that stands
+  // for them. Enter on a focused label is the field's "do the thing" key.
+  await formItem(editor, "r##credit[0]:order").click();
+  await page.keyboard.press("Enter");
+  await editor.getByRole("textbox").fill("9");
+  await page.keyboard.press("Escape");
+  await expect(star(editor, "order")).toBeVisible();
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "credit",
+      where: { track: "track-3", artist: "artist-1" },
+      values: { order: "9" },
+    },
+    {
+      operation: "update",
+      id: "op2",
+      table: "credit",
+      where: { track: "track-5", artist: "artist-1" },
+      values: { order: "9" },
+    },
+  ]);
+});
+
+test("deleting a grouped row deletes every record it stands for", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4);
+
+  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await expect(selectableRecords(editor)).toHaveCount(3);
+  await editor.getByRole("button", { name: "Delete Beyoncé" }).click();
+  await expect(selectableRecords(editor)).toHaveCount(2);
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  // Both of the records the one row stood for, in the one request.
+  expect(calls[0]).toEqual([
+    {
+      operation: "delete",
+      id: "op1",
+      table: "credit",
+      where: { track: "track-3", artist: "artist-1" },
+    },
+    {
+      operation: "delete",
+      id: "op2",
+      table: "credit",
+      where: { track: "track-5", artist: "artist-1" },
+    },
+  ]);
+});
+
+test("the + on a multi-record field files one record under each record", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4);
+
+  await editor.getByRole("button", { name: "Add credit" }).click();
+  // One row, standing for a credit on each of the three tracks.
+  await expect(selectableRecords(editor).first()).toHaveText("New");
+  await expect(editor.getByLabel("3 records", { exact: true })).toBeVisible();
+  await expect(editor.getByRole("textbox")).toBeFocused();
+  await page.keyboard.type("3");
+  await page.keyboard.press("Escape");
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  // A record can only be filed under one parent, so the row is three inserts —
+  // each carrying the track it belongs to.
+  expect(calls[0]).toEqual([
+    {
+      operation: "insert",
+      id: "op1",
+      table: "credit",
+      values: { order: "3", track: "track-3" },
+    },
+    {
+      operation: "insert",
+      id: "op2",
+      table: "credit",
+      values: { order: "3", track: "track-4" },
+    },
+    {
+      operation: "insert",
+      id: "op3",
+      table: "credit",
+      values: { order: "3", track: "track-5" },
     },
   ]);
 });

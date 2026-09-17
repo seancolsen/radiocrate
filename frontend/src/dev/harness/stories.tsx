@@ -501,11 +501,15 @@ export const STORIES: Record<string, Story> = {
     'Duplicate key "title: Sorry" violates unique constraint.',
   ),
   // Two records at once: the fields they agree on (`disc_number`) editable as
-  // ever, the ones they don't reading "(varied)", the `credit` count they
-  // happen to share still shown beside the message that says child records
-  // aren't editable in bulk yet, and the `play` count they don't share varied
-  // like any other value.
+  // ever, the ones they don't showing what they hold instead of one value, the
+  // `credit` count they happen to share drawn as one bubble, and the `play` and
+  // `track_tag` counts they don't drawn as the range between two.
   "record-editor/bulk": recordEditor([3, 5]),
+  // …and a multi-record field opened out on those same two tracks (the test
+  // does the opening). Both are credited to Beyoncé at order 1, which is one
+  // row standing for two records — the (2) beside it — over the one credit each
+  // track holds alone.
+  "record-editor/bulk-expanded": recordEditor([3, 5]),
   // The modal record picker on its own: the search box with its sort and
   // display buttons, the results as the embedded records they're about to
   // become, and the "New record" way out. `initialSort`/`initialDisplay` are
