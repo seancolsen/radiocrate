@@ -177,7 +177,8 @@ function rowActionsMenu(
   };
 }
 
-/** A record-editor story: the panel alone, on the tracks `ns` names, over the
+/** A record-editor story: the panel alone, on the tracks `ns` names (rows of
+ * the seeded grid, selected), over the
  * canned schema and record data (`recordFixture.ts`) that stand in for a
  * backend. More than one track is the bulk case — the same form, on every record
  * the result-row selection covers. `saveFails` makes the next save come back
@@ -191,14 +192,25 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
       if (saveFails !== undefined) failDml(saveFails);
       stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
       installRecordFixture(0);
-      openLemonade(stores);
+      // Opened as the app opens it: on the result rows the tracks sit on,
+      // selected — the editor follows the selection, and closes without one.
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        recordKeys: {
+          track: ["track-1", "track-2", "track-3", "track-4", "track-5"],
+        },
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      ns.forEach((n, i) =>
+        stores.app.actions.clickRow(id, n - 1, { shift: false, ctrl: i > 0 }),
+      );
+      stores.app.actions.setRecordEditorRecords(
+        id,
+        "track",
+        ns.map(trackRecord),
+      );
     },
-    render: () => (
-      <RecordEditorPanel
-        tabId={LEMONADE.id}
-        target={{ table: "track", records: ns.map(trackRecord) }}
-      />
-    ),
+    render: () => <RecordEditorPanel tabId={LEMONADE.id} />,
   };
 }
 

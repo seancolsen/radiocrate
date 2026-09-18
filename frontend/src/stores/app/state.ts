@@ -204,11 +204,12 @@ export interface QueryPageState {
    * read the moment the swap is observed rather than rendered. */
   resultIsRefresh: boolean;
   /** Where the results pane was scrolled to, in logical px — kept so switching
-   * tabs and coming back lands where the user left off. One `CanvasGrid` serves
-   * every tab, so this is the handoff: the pane writes the live offset here as
-   * a tab is left, and restores it as one is entered. It isn't live while the
-   * tab is on screen (the grid owns the offset there), and a new result set
-   * puts it back to the top. */
+   * tabs and coming back lands where the user left off. A hidden page tears
+   * its `CanvasGrid` down (its effects are cleaned up; see `TabContent`), so
+   * this is the handoff: the pane writes the live offset here as the tab is
+   * hidden, and restores it as it's shown again. It isn't live while the tab
+   * is on screen (the grid owns the offset there), and a new result set puts
+   * it back to the top. */
   scrollOffset: number;
   /** The result-row selection: a set of row indexes (absent = none). Replaced
    * wholesale on every change so subscribers observe a new reference; cleared
@@ -230,8 +231,9 @@ export interface QueryPageState {
    * empty mapping. */
   lineage?: LineageMapping;
   /** The record(s) open in the record-editor sidebar (`null` when it's closed).
-   * Per tab — the sidebar belongs to the query page, so switching tabs
-   * switches editors. */
+   * Per tab — the sidebar belongs to the query page. It's also what keeps the
+   * form alive: the forms store holds the form this names for as long as it
+   * names it (`FormsActions.retain`). */
   recordEditor: RecordEditorTarget | null;
   /** Whether a run is in flight. */
   running: boolean;

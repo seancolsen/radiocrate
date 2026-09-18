@@ -63,7 +63,8 @@ async function openShortGrid(page: Page, url: string) {
  * put a highlight in the buffer that every later comparison would have to
  * reproduce exactly.  */
 async function scrollResults(page: Page) {
-  const canvas = page.locator("canvas");
+  // Every open tab keeps its page; only the active one's canvas is visible.
+  const canvas = page.locator("canvas:visible");
   const top = await canvas.screenshot();
   await canvas.hover({ position: { x: 200, y: 20 } });
   await page.mouse.wheel(0, 120);
@@ -99,7 +100,7 @@ test("the results come back to where they were when the tab does", async ({
   await tabHandle(page, "Lemonade").click({ position: { x: 24, y: 12 } });
   await page.waitForTimeout(150);
 
-  // The grid was shown another tab's (empty) rows in between, so this is the
+  // The page was hidden in between, which tears its grid down, so this is the
   // offset coming back out of the store, not one that was never disturbed.
   expect(Buffer.compare(await canvas.screenshot(), scrolled)).toBe(0);
 });

@@ -6,20 +6,27 @@ import type { RecordFormModel } from "./recordForm";
 
 export type { RecordFormModel } from "./recordForm";
 
-// The record editor's unsaved work, kept per record for as long as its tab is
-// open — and which of those forms the keyboard is currently aimed at.
+// The record editor's forms, kept per tab — the one its editor is open on and
+// every one holding unsaved work — and which of those forms the keyboard is
+// currently aimed at.
 //
-// It does two jobs:
+// It does three jobs:
 //
-// - **The stash.** A form covers as many records as the
-//   selection it was opened on, so what keys it is a *list* of record
+// - **The stash.** A form covers as many records as the selection it was
+//   opened on, so what keys it is a *list* of record
 //   identities — coming back to the same two rows finds the bulk edit made
 //   across them, and coming back to one of them alone is a different form.
 //   The sidebar follows the row selection, so a form is mounted and unmounted
 //   constantly, but the *model* it wraps doesn't belong to the mounted
 //   component: it's created here on first use and handed back to whichever
-//   `RecordForm` next points at exactly those records. A tab that closes takes
-//   its forms with it (`prune`).
+//   `RecordForm` next points at exactly those records.
+// - **The lifetime.** When a model is let go is decided by *state*, never by
+//   whether a component happens to be on screen (`retain`): a form lives as
+//   long as its tab's editor is open on it, or as long as it holds unsaved
+//   changes, and a tab that closes takes its forms with it. Unmounting — a
+//   tab switch hiding the page, the sidebar following the selection, a
+//   StrictMode remount — never loses anything, expansion and loaded data
+//   included.
 // - **The registry.** Which mounted form(s) the keyboard is aimed at, for the
 //   selection commands ("Select down", "Expand nested items", "Delete") to
 //   route to instead of the result rows.
@@ -64,6 +71,17 @@ export interface FormEntry {
 
 export interface FormsState {
   entries: readonly FormEntry[];
+  /** Each open tab → the `formKey` of the records its editor is open on
+   * (`null` while the editor is closed), as `retain` last reported it. A tab
+   * missing here hasn't been reported yet, and nothing of it is released. */
+  targets: Readonly<Record<string, string | null>>;
+}
+
+/** One open tab, as `retain` wants it: its id, and the identities of the
+ * records its record editor is open on (`null` while it's closed). */
+export interface FormRetention {
+  tabId: string;
+  target: readonly string[] | null;
 }
 
 /** A record's identity as a string — table plus key — so two references to the
@@ -73,9 +91,8 @@ export function recordIdentity(table: string, key: RecordKey): string {
   return `${table}(${key.map((p) => `${p.column}=${p.value}`).join(",")})`;
 }
 
-/** The identities of a form's records as one comparable string — same
- * encoding `formStash.ts` used for its key. */
-function formKey(identities: readonly string[]): string {
+/** The identities of a form's records as one comparable string. */
+export function formKey(identities: readonly string[]): string {
   return identities.join(" ");
 }
 
@@ -91,7 +108,7 @@ function findEntry(
 }
 
 function initialFormsState(): FormsState {
-  return { entries: [] };
+  return { entries: [], targets: {} };
 }
 
 function createFormsVanillaStore() {
@@ -101,6 +118,21 @@ function createFormsVanillaStore() {
 export type FormsVanillaStore = ReturnType<typeof createFormsVanillaStore>;
 
 // ── Selectors — pure functions of `FormsState` ──────────────────────────────
+
+/** Whether `entry` has earned its place in the stash: its tab is open and
+ * either its editor is on it, it holds unsaved changes, or something still
+ * has it mounted (a sidebar that is about to re-render onto its new target
+ * still holds the old model for one commit). */
+function isRetained(entry: FormEntry, targets: FormsState["targets"]): boolean {
+  const target = targets[entry.tabId];
+  // Not reported yet: keep it until there's word on its tab.
+  if (target === undefined) return true;
+  return (
+    target === formKey(entry.identities) ||
+    entry.summary.modified ||
+    entry.mounted > 0
+  );
+}
 
 /** One set of records' form, if it has one. */
 export function selectFormFor(
@@ -150,22 +182,21 @@ export interface FormsActions {
     build: () => RecordFormModel,
   ) => RecordFormModel;
   /** Register one more mounted component pointed at this form — call from an
-   * effect; the paired cleanup must call `unmount` with the same arguments. */
+   * effect; the paired cleanup must call `unmount` with the same arguments.
+   * Mounting only says the form is on screen (for the keyboard registry); it
+   * has no say in how long the form lives. */
   mount: (tabId: string, identities: readonly string[]) => void;
   unmount: (tabId: string, identities: readonly string[]) => void;
-  /** Lets go of one form unless it holds unsaved changes — what a form does
-   * as it unmounts. Keeping every record the user has merely *looked* at
-   * would grow with the number of rows they click through; what has to
-   * survive is the changes, and those keep their form.
+  /** Tells the stash what the app holds open — every open tab and the records
+   * its editor is on — and lets go of (disposing) every form nothing retains
+   * any longer: every form of a tab not listed (a closed tab's unsaved
+   * changes go with it), and an unmodified form its editor has moved off or
+   * closed. Keeping every record the user has merely *looked* at would grow
+   * with the number of rows they click through; what has to survive is the
+   * open form and the changes.
    *
-   * A form something still has mounted is kept too: StrictMode's mount →
-   * cleanup → mount remounts the *same* model, which a release in between
-   * would have disposed (`RecordForm` defers its call a tick, by which time the
-   * remount has counted itself back in). */
-  releaseUnmodified: (tabId: string, identities: readonly string[]) => void;
-  /** Forgets (and disposes) the forms of every tab not in `liveTabIds` — a
-   * closed tab's unsaved changes go with it. */
-  prune: (liveTabIds: readonly string[]) => void;
+   * Wired in `createStores()` to the app store's tabs and editor targets. */
+  retain: (tabs: readonly FormRetention[]) => void;
 }
 
 function createFormsActions(store: FormsVanillaStore): FormsActions {
@@ -195,12 +226,26 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
     const nextEntries = entries.slice();
     nextEntries[idx] = { ...entry, summary: next };
     store.setState({ entries: nextEntries });
+    // A form the editor has moved off stays only while it's modified; one
+    // that was saved or reset from there has nothing left to keep.
+    if (entry.summary.modified && !next.modified) sweep();
   }
 
   function disposeEntry(entry: FormEntry) {
     modelUnsubscribes.get(unsubscribeKey(entry.tabId, entry.identities))?.();
     modelUnsubscribes.delete(unsubscribeKey(entry.tabId, entry.identities));
     entry.model.dispose();
+  }
+
+  /** Drops (and disposes) every entry that `isRetained` no longer holds on
+   * to. Run whenever one of its inputs changes: the targets, a form's mount
+   * count, or a form's modified flag. */
+  function sweep() {
+    const { entries, targets } = store.getState();
+    const dropped = entries.filter((e) => !isRetained(e, targets));
+    if (dropped.length === 0) return;
+    for (const entry of dropped) disposeEntry(entry);
+    store.setState({ entries: entries.filter((e) => !dropped.includes(e)) });
   }
 
   function updateEntry(
@@ -246,22 +291,24 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
         ...e,
         mounted: Math.max(0, e.mounted - 1),
       }));
+      sweep();
     },
-    releaseUnmodified(tabId, identities) {
-      const entry = findEntry(store.getState().entries, tabId, identities);
-      if (!entry || entry.summary.modified || entry.mounted > 0) return;
-      disposeEntry(entry);
-      store.setState((s) => ({
-        entries: s.entries.filter((e) => e !== entry),
-      }));
-    },
-    prune(liveTabIds) {
-      const live = new Set(liveTabIds);
+    retain(tabs) {
+      const targets: Record<string, string | null> = {};
+      for (const { tabId, target } of tabs) {
+        targets[tabId] = target === null ? null : formKey(target);
+      }
       const { entries } = store.getState();
-      const dropped = entries.filter((e) => !live.has(e.tabId));
-      if (dropped.length === 0) return;
-      for (const entry of dropped) disposeEntry(entry);
-      store.setState({ entries: entries.filter((e) => live.has(e.tabId)) });
+      // A tab that isn't listed is closed: everything of it goes, modified
+      // or not.
+      for (const entry of entries) {
+        if (!(entry.tabId in targets)) disposeEntry(entry);
+      }
+      store.setState({
+        entries: entries.filter((e) => e.tabId in targets),
+        targets,
+      });
+      sweep();
     },
   };
 }

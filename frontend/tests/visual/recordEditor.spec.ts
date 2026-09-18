@@ -58,8 +58,9 @@ async function openGrid(page: Page, url = SEEDED) {
 
 /** Right-clicks a row of the results canvas (row 0 unless told otherwise). */
 async function rightClickRow(page: Page, y = 20) {
+  // Every open tab keeps its page; only the active one's canvas is visible.
   await page
-    .locator("canvas")
+    .locator("canvas:visible")
     .click({ button: "right", position: { x: 200, y } });
 }
 
@@ -392,6 +393,44 @@ test("selecting another row rebuilds the form on that record", async ({
   await page.locator("canvas").click({ position: { x: 200, y: rowY(2) } });
   await expect(editor.getByText(/Live at the Superdome/)).toBeVisible();
   await expect(title("Pray You Catch Me")).toBeHidden();
+});
+
+test("switching tabs and back leaves the form exactly as it was", async ({
+  page,
+}) => {
+  // Every record query is held back, so a form rebuilt on the way back would
+  // spend this long showing its labels alone — and its expansion would be gone.
+  const delay = 2000;
+  await openGrid(
+    page,
+    `/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&records=track,album&recordFixture=1&recordDelay=${delay}&expose=1`,
+  );
+  await openEditor(page, "track", 2); // track-3: two credits
+  const editor = editorPanel(page);
+  await editor
+    .getByRole("button", { name: "Expand credit" })
+    .click({ timeout: delay * 3 });
+  await editor
+    .getByRole("button", { name: /^Expand Jack White/ })
+    .click({ timeout: delay * 3 });
+  await expect(editor.getByText("role", { exact: true })).toBeVisible({
+    timeout: delay * 3,
+  });
+
+  const tabHandle = (name: string) =>
+    page.locator("[data-tab-id]").filter({ hasText: name });
+  await tabHandle("Deep Cuts").click({ position: { x: 24, y: 12 } });
+  await expect(editor).toBeHidden();
+  await tabHandle("Lemonade").click({ position: { x: 24, y: 12 } });
+
+  // Well inside the delay: nothing was fetched again, nothing was closed.
+  const quick = { timeout: delay / 4 };
+  await expect(editor.getByText(/Live at the Superdome/)).toBeVisible(quick);
+  await expect(selectableRecords(editor)).toHaveCount(2, quick);
+  await expect(editor.getByText("role", { exact: true })).toBeVisible(quick);
+  await expect(
+    editor.getByRole("button", { name: /^Collapse Jack White/ }),
+  ).toBeVisible(quick);
 });
 
 // ── Several records at once ─────────────────────────────────────────────────

@@ -5,7 +5,11 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import type { RecordEditorTarget, RecordRef } from "../stores/app";
+import {
+  selectRecordEditor,
+  type RecordEditorTarget,
+  type RecordRef,
+} from "../stores/app";
 import { RECORD_SIDEBAR_MIN_WIDTH } from "../stores/app/persistence";
 import { recordIdentity } from "../stores/forms";
 import { createRecordForm, selectFormModified } from "../stores/recordForm";
@@ -102,11 +106,24 @@ function PanelHeader(props: {
   );
 }
 
-/** The record-editor sidebar for `tabId`, showing the record(s) it's open on.
- * `target.records` holds more than one entry when the result-row selection it
- * tracks widens to multiple rows; the form below handles that as a matter of
- * course. */
+/** The record-editor sidebar for `tabId`, when its editor is open.
+ *
+ * Reads what it's open on from the store rather than taking it from the
+ * caller: the forms store keeps a form alive *because* it's the tab's editor
+ * target, so the form on screen must be the target the store holds — never a
+ * copy of it that could drift. */
 export default function RecordEditorPanel(props: {
+  tabId: string;
+}): JSX.Element | null {
+  const target = useApp((s) => selectRecordEditor(s, props.tabId));
+  if (!target) return null;
+  return <OpenPanel tabId={props.tabId} target={target} />;
+}
+
+/** The open sidebar, showing the record(s) the editor is on. `target.records`
+ * holds more than one entry when the result-row selection it tracks widens to
+ * multiple rows; the form below handles that as a matter of course. */
+function OpenPanel(props: {
   tabId: string;
   target: RecordEditorTarget;
 }): JSX.Element {

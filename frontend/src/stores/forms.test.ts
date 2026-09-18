@@ -108,55 +108,95 @@ describe("forms store", () => {
     expect(selectModifiedRecords(forms.store.getState(), "tab-b")).toEqual([]);
   });
 
-  it("releaseUnmodified drops (and disposes) an unmodified form, but keeps a modified one", () => {
-    const clean = stubModel(IDLE);
-    const dirty = stubModel({ ...IDLE, modified: true });
-    forms.actions.stashedForm("tab-a", ["clean"], () => clean.model);
-    forms.actions.stashedForm("tab-a", ["dirty"], () => dirty.model);
-
-    forms.actions.releaseUnmodified("tab-a", ["clean"]);
-    forms.actions.releaseUnmodified("tab-a", ["dirty"]);
-
-    expect(
-      selectFormFor(forms.store.getState(), "tab-a", ["clean"]),
-    ).toBeUndefined();
-    expect(selectFormFor(forms.store.getState(), "tab-a", ["dirty"])).toBe(
-      dirty.model,
-    );
-    expect(clean.dispose).toHaveBeenCalledTimes(1);
-    expect(dirty.dispose).not.toHaveBeenCalled();
-  });
-
-  it("releaseUnmodified keeps a form that is still mounted (StrictMode's remount)", () => {
+  it("keeps a form nothing has reported on yet, whatever its mounts do", () => {
     const clean = stubModel(IDLE);
     forms.actions.stashedForm("tab-a", ["r1"], () => clean.model);
-    // mount → cleanup → mount, with the cleanup's release landing after.
+    forms.actions.mount("tab-a", ["r1"]);
+    forms.actions.unmount("tab-a", ["r1"]);
+    expect(selectFormFor(forms.store.getState(), "tab-a", ["r1"])).toBe(
+      clean.model,
+    );
+    expect(clean.dispose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the form its tab's editor is open on across unmounts (a tab switch)", () => {
+    const clean = stubModel(IDLE);
+    forms.actions.retain([{ tabId: "tab-a", target: ["r1"] }]);
+    forms.actions.stashedForm("tab-a", ["r1"], () => clean.model);
+    // StrictMode's mount → cleanup → mount, then the page hiding.
     forms.actions.mount("tab-a", ["r1"]);
     forms.actions.unmount("tab-a", ["r1"]);
     forms.actions.mount("tab-a", ["r1"]);
-    forms.actions.releaseUnmodified("tab-a", ["r1"]);
+    forms.actions.unmount("tab-a", ["r1"]);
 
     expect(selectFormFor(forms.store.getState(), "tab-a", ["r1"])).toBe(
       clean.model,
     );
     expect(clean.dispose).not.toHaveBeenCalled();
+  });
 
-    // A real unmount lets it go.
+  it("drops an unmodified form once the editor moves off it or closes, but keeps a modified one", () => {
+    const clean = stubModel(IDLE);
+    const dirty = stubModel({ ...IDLE, modified: true });
+    forms.actions.retain([{ tabId: "tab-a", target: ["clean"] }]);
+    forms.actions.stashedForm("tab-a", ["clean"], () => clean.model);
+    forms.actions.retain([{ tabId: "tab-a", target: ["dirty"] }]);
+    forms.actions.stashedForm("tab-a", ["dirty"], () => dirty.model);
+
+    expect(
+      selectFormFor(forms.store.getState(), "tab-a", ["clean"]),
+    ).toBeUndefined();
+    expect(clean.dispose).toHaveBeenCalledTimes(1);
+
+    forms.actions.retain([{ tabId: "tab-a", target: null }]);
+    expect(selectFormFor(forms.store.getState(), "tab-a", ["dirty"])).toBe(
+      dirty.model,
+    );
+    expect(dirty.dispose).not.toHaveBeenCalled();
+  });
+
+  it("waits for a still-mounted form to unmount before dropping it", () => {
+    const clean = stubModel(IDLE);
+    forms.actions.retain([{ tabId: "tab-a", target: ["r1"] }]);
+    forms.actions.stashedForm("tab-a", ["r1"], () => clean.model);
+    forms.actions.mount("tab-a", ["r1"]);
+
+    // The editor moves on before the sidebar has re-rendered.
+    forms.actions.retain([{ tabId: "tab-a", target: ["r2"] }]);
+    expect(clean.dispose).not.toHaveBeenCalled();
+
     forms.actions.unmount("tab-a", ["r1"]);
-    forms.actions.releaseUnmodified("tab-a", ["r1"]);
     expect(
       selectFormFor(forms.store.getState(), "tab-a", ["r1"]),
     ).toBeUndefined();
     expect(clean.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("prune drops and disposes every form of a closed tab, keeping the rest", () => {
+  it("drops a form left behind with changes once they're saved or reset", () => {
+    const dirty = stubModel({ ...IDLE, modified: true });
+    forms.actions.retain([{ tabId: "tab-a", target: ["r1"] }]);
+    forms.actions.stashedForm("tab-a", ["r1"], () => dirty.model);
+    forms.actions.retain([{ tabId: "tab-a", target: ["r2"] }]);
+    expect(dirty.dispose).not.toHaveBeenCalled();
+
+    dirty.setSummary(IDLE);
+    expect(
+      selectFormFor(forms.store.getState(), "tab-a", ["r1"]),
+    ).toBeUndefined();
+    expect(dirty.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops and disposes every form of a closed tab, keeping the rest", () => {
     const closed = stubModel({ ...IDLE, modified: true }); // even a modified form goes with its tab
     const kept = stubModel(IDLE);
+    forms.actions.retain([
+      { tabId: "closed-tab", target: ["r1"] },
+      { tabId: "open-tab", target: ["r2"] },
+    ]);
     forms.actions.stashedForm("closed-tab", ["r1"], () => closed.model);
     forms.actions.stashedForm("open-tab", ["r2"], () => kept.model);
 
-    forms.actions.prune(["open-tab"]);
+    forms.actions.retain([{ tabId: "open-tab", target: ["r2"] }]);
 
     expect(
       selectFormFor(forms.store.getState(), "closed-tab", ["r1"]),

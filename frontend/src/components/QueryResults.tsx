@@ -145,10 +145,11 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   const [rowMenu, setRowMenu] = useState<RowMenu | undefined>(undefined);
   const closeMenu = useCallback(() => setRowMenu(undefined), []);
 
-  // The engine itself, created once and outliving every tab switch (the query
-  // page is reused, with a new `tabId`). A layout effect, not a passive one:
-  // the tab subscriptions below push into the grid as they're installed, so it
-  // has to exist by then.
+  // The engine itself, created as the page is shown and destroyed as it's
+  // hidden (each tab has its own page, and a hidden one runs its effects'
+  // cleanups; see `TabContent`). A layout effect, not a passive one: the tab
+  // subscriptions below push into the grid as they're installed, so it has to
+  // exist by then.
   useLayoutEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
@@ -183,9 +184,9 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   }, []);
 
   // Everything about *this tab*: what the grid is shown, and what a click on it
-  // does. Re-runs on a tab switch, which tears down the old tab's
-  // subscriptions and installs the new tab's — each with `fireImmediately`, so
-  // the grid is caught up in one pass.
+  // does. Runs each time the page is shown, installing the subscriptions with
+  // `fireImmediately` so the new grid is caught up in one pass, and tears them
+  // down as it's hidden.
   useEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
@@ -311,25 +312,24 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     ];
 
     // Where this tab was scrolled to when it was last on screen. After the
-    // subscriptions, not before: the result push above has just put the engine
-    // back at the top of a tab it's seeing for the first time this visit, and
-    // this is the tab's own place in those rows, restored over it. A tab that
+    // subscriptions, not before: the result push above has just put the new
+    // engine at the top of the rows, and this is the tab's own place in them,
+    // restored over it. A tab that
     // has never been scrolled restores a harmless 0.
     grid.setScrollOffset(selectResultsScroll(store.getState(), tabId));
 
     return () => {
       // Leaving the tab: hand its scroll offset back to the store, since the
-      // grid itself is about to be shown another tab's rows (or torn down —
-      // `grid` is the captured instance, so this still reads the right number
-      // even once the layout effect below has destroyed it).
+      // grid is about to be torn down (`grid` is the captured instance, so this
+      // still reads the right number even once the layout effect above has
+      // destroyed it).
       setResultsScroll(tabId, grid.scrollOffset());
       for (const unsubscribe of subscriptions) unsubscribe();
       document.removeEventListener("visibilitychange", syncTicker);
       clearInterval(ticker);
       ticker = undefined;
-      // This component outlives a tab switch, so a menu raised on the old
-      // tab's rows would otherwise linger over rows it no longer refers to —
-      // and come back with the tab if the user switched away and back.
+      // A menu is a gesture in progress, not state of the tab: it doesn't come
+      // back with the page.
       setRowMenu(undefined);
     };
   }, [

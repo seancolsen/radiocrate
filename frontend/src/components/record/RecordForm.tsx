@@ -13,10 +13,12 @@ import RecordNodeView from "./RecordFields";
  *
  * One instance belongs to one set of records — a different set means a different
  * instance (the panel keys it) rather than this one being repointed. What it
- * does *not* own is their state: unsaved changes belong to the tab, not to the
- * sidebar that happens to be showing them, so the model comes from the stash
- * (the forms store) and goes back to it when the user selects another row.
- * Coming back picks up exactly where they left it, expansion and edits and all.
+ * does *not* own is their state: the form belongs to the tab, not to the
+ * sidebar that happens to be showing it, so the model comes from the stash
+ * (the forms store), and unmounting — a tab switch, the user selecting another
+ * row — neither disposes it nor decides when it's disposed (the store does,
+ * from the editor's target; see `FormsActions.retain`). Coming back picks up
+ * exactly where the user left it, loaded data, expansion and edits and all.
  * The panel takes the model out of the stash and hands it down, since its
  * toolbar acts on the same model (see `RecordEditorPanel`).
  *
@@ -42,20 +44,15 @@ export default function RecordForm(props: {
     forms.mount(tabId, identities);
     model.start();
     return () => {
-      forms.unmount(tabId, identities);
       // Whatever was focused, selected or right-clicked in here was in *this*
       // sidebar; none of it outlives the sidebar, and a stale focused item would
       // otherwise go on claiming the arrow keys when the record comes back.
       model.noteBlur();
       model.closeMenu();
       model.closePicker();
-      // Only unsaved *changes* are worth keeping — records the user merely looked
-      // at are dropped rather than held for the life of the tab. Deferred a
-      // tick: StrictMode's mount → cleanup → mount runs within one commit, and
-      // releasing (which disposes the model) in between would strand the
-      // remount on a dead model. The forms store also declines to release a
-      // form something still has mounted.
-      queueMicrotask(() => forms.releaseUnmodified(tabId, identities));
+      // Last: letting go of the mount may be what lets the stash dispose a form
+      // the editor has already moved off.
+      forms.unmount(tabId, identities);
     };
   }, [forms, tabId, identities, model]);
 

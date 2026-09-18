@@ -1,9 +1,14 @@
 import { onRpcFailure } from "api-client";
 import { shallow } from "zustand/vanilla/shallow";
 import { browserEnv, type AppEnv } from "./env";
-import { createAppStore, type AppStoreBundle } from "./app";
+import { createAppStore, type AppState, type AppStoreBundle } from "./app";
 import { createCommandsStore, type CommandsStoreBundle } from "./commands";
-import { createFormsStore, type FormsStoreBundle } from "./forms";
+import {
+  createFormsStore,
+  recordIdentity,
+  type FormRetention,
+  type FormsStoreBundle,
+} from "./forms";
 import { createMenusStore, type MenusStoreBundle } from "./menus";
 import { createUpdateStore, type UpdateStoreBundle } from "./update";
 
@@ -33,6 +38,38 @@ export interface Stores {
  * `main.tsx`'s job, so neither the visual harness nor a store test registers
  * one.
  */
+/** Every open tab and the identities of the records its editor is open on —
+ * what the forms store is told to keep (`FormsActions.retain`). */
+function selectFormRetention(s: AppState): FormRetention[] {
+  return s.tabs.map((t) => {
+    const target = s.pages[t.id]?.recordEditor;
+    return {
+      tabId: t.id,
+      target: target
+        ? target.records.map((r) => recordIdentity(r.table, r.key))
+        : null,
+    };
+  });
+}
+
+/** Retention compared by value: the resync re-points an editor at the same
+ * records as new objects on every selection write, which isn't news. */
+function sameRetention(
+  a: readonly FormRetention[],
+  b: readonly FormRetention[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (x, i) =>
+        x.tabId === b[i].tabId &&
+        (x.target === null || b[i].target === null
+          ? x.target === b[i].target
+          : shallow(x.target, b[i].target)),
+    )
+  );
+}
+
 export function createStores(env: AppEnv = browserEnv()): Stores {
   const app = createAppStore(env);
   const forms = createFormsStore();
@@ -50,14 +87,15 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   // Cross-store wiring (state→state rules): it enforces state consistency and
   // has nothing to do with rendering, so no component owns it.
 
-  // Unsaved record-editor changes live as long as the tab they were made in,
-  // not as long as any one sidebar showing them.
-  const unsubscribePrune = app.store.subscribe(
-    (s) => s.tabs.map((t) => t.id),
-    (ids) => {
-      forms.actions.prune(ids);
+  // A record-editor form lives as long as its tab's editor is open on it, and
+  // unsaved changes as long as the tab they were made in — never as long as
+  // any one component showing them happens to be mounted.
+  const unsubscribeRetain = app.store.subscribe(
+    selectFormRetention,
+    (tabs) => {
+      forms.actions.retain(tabs);
     },
-    { equalityFn: shallow },
+    { equalityFn: sameRetention, fireImmediately: true },
   );
 
   // "Dynamic updates": keep every open record editor pointed at its tab's
@@ -86,7 +124,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   document.addEventListener("keydown", onKeyDown, true);
 
   function dispose() {
-    unsubscribePrune();
+    unsubscribeRetain();
     unsubscribeResync();
     unsubscribeRpcFailures();
     document.removeEventListener("keydown", onKeyDown, true);
