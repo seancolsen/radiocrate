@@ -129,6 +129,11 @@ export class AudioEngine {
    * {@link unlock}). From then on the engine advances by reloading the single
    * element it knows it is allowed to use — the pre-two-element behavior. */
   private handoffBlocked = false;
+  /** Whether the Media Session transport actions (play/pause/next/…) are
+   * currently wired to this engine. {@link stop} unwires them so a hardware or
+   * Bluetooth control can't resume a track that's been closed; {@link load}
+   * wires them back for whatever plays next. */
+  private mediaHandlersInstalled = false;
   /** Whether the engine believes it should be producing sound. Distinguishes "the
    * user paused" from "the platform stalled us", which is what makes the
    * resume-on-foreground check safe. */
@@ -232,6 +237,20 @@ export class AudioEngine {
     this.unlock();
   }
 
+  /** Replaces the play context around the current track — `preceding` and
+   * `upcoming` computed fresh, e.g. after the query it came from re-ran and the
+   * surrounding rows shifted — without touching what's actually playing. Drops
+   * a standby prime that no longer matches the new `upcoming[0]` and re-primes
+   * if one is now due. */
+  updateQueue(preceding: string[], upcoming: string[]): void {
+    if (this.current === undefined) return;
+    this.history = preceding;
+    this.queue = upcoming;
+    this.yieldStandby();
+    this.primeNext();
+    this.events.onTransport(); // hasNext may have changed
+  }
+
   play(): void {
     this.wantPlaying = true;
     void this.audio.play().catch(() => {});
@@ -266,6 +285,12 @@ export class AudioEngine {
       this.media.metadata = null;
       this.media.playbackState = "none";
     }
+    // Clearing metadata alone leaves the transport actions wired: a hardware
+    // or Bluetooth "play" press would still reach `this.play()` and call
+    // `.play()` on an element with no `src`, which silently no-ops but still
+    // flips `playbackState` back to "playing". Unwiring the actions means a
+    // closed track genuinely can't be resumed from outside the app.
+    this.teardownMediaActionHandlers();
     this.events.onTransport();
   }
 
@@ -324,6 +349,9 @@ export class AudioEngine {
     void this.audio.play().catch(() => {});
     this.current = id;
     this.setPlaybackState("playing");
+    // A previous `stop()` may have unwired the transport actions; this track
+    // is resumable again, so wire them back.
+    if (!this.mediaHandlersInstalled) this.installMediaActionHandlers();
     // The next track is primed once this one has downloaded (see `suspend`).
     this.yieldStandby();
   }
@@ -640,26 +668,54 @@ export class AudioEngine {
       void this.audio.play().catch(() => {});
     });
 
+    this.installMediaActionHandlers();
+  }
+
+  /** Registers (or re-registers) the Media Session transport actions —
+   * lock-screen, notification-shade, Bluetooth and headset controls. Paired
+   * with {@link teardownMediaActionHandlers}, which {@link stop} uses to make
+   * sure a closed track can't be resumed from outside the app. */
+  private installMediaActionHandlers(): void {
     const media = this.media;
     if (!media) return;
-    const on = (
-      action: MediaSessionAction,
-      handler: MediaSessionActionHandler,
-    ) => {
-      try {
-        media.setActionHandler(action, handler);
-      } catch {
-        // An action this browser doesn't know about — nothing to degrade.
-      }
-    };
-    on("play", () => this.play());
-    on("pause", () => this.pause());
-    on("nexttrack", () => this.goNext(false));
-    on("previoustrack", () => this.goPrev());
-    on("seekbackward", (d) => this.seekBy(-(d.seekOffset ?? 10)));
-    on("seekforward", (d) => this.seekBy(d.seekOffset ?? 10));
-    on("seekto", (d) => {
+    this.setMediaActionHandler("play", () => this.play());
+    this.setMediaActionHandler("pause", () => this.pause());
+    this.setMediaActionHandler("nexttrack", () => this.goNext(false));
+    this.setMediaActionHandler("previoustrack", () => this.goPrev());
+    this.setMediaActionHandler("seekbackward", (d) =>
+      this.seekBy(-(d.seekOffset ?? 10)),
+    );
+    this.setMediaActionHandler("seekforward", (d) =>
+      this.seekBy(d.seekOffset ?? 10),
+    );
+    this.setMediaActionHandler("seekto", (d) => {
       if (d.seekTime != null) this.seek(d.seekTime);
     });
+    this.mediaHandlersInstalled = true;
+  }
+
+  /** Unregisters every Media Session transport action, so a hardware or
+   * Bluetooth control has nothing left to call. */
+  private teardownMediaActionHandlers(): void {
+    if (!this.mediaHandlersInstalled) return;
+    this.setMediaActionHandler("play", null);
+    this.setMediaActionHandler("pause", null);
+    this.setMediaActionHandler("nexttrack", null);
+    this.setMediaActionHandler("previoustrack", null);
+    this.setMediaActionHandler("seekbackward", null);
+    this.setMediaActionHandler("seekforward", null);
+    this.setMediaActionHandler("seekto", null);
+    this.mediaHandlersInstalled = false;
+  }
+
+  private setMediaActionHandler(
+    action: MediaSessionAction,
+    handler: MediaSessionActionHandler | null,
+  ): void {
+    try {
+      this.media?.setActionHandler(action, handler);
+    } catch {
+      // An action this browser doesn't know about — nothing to degrade.
+    }
   }
 }

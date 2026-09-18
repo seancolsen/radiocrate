@@ -59,6 +59,21 @@ class FakeAudio extends EventTarget {
 const NETWORK_IDLE = 1;
 const NETWORK_LOADING = 2;
 
+/** Just enough of `navigator.mediaSession` to see which transport actions the
+ * engine has wired up: `handlers.get(action)` is the last handler passed to
+ * `setActionHandler`, `null` once it's been torn down. */
+function fakeMediaSession() {
+  const handlers = new Map<string, unknown>();
+  return {
+    metadata: null as unknown,
+    playbackState: "none" as MediaSessionPlaybackState,
+    setActionHandler: (action: string, handler: unknown) => {
+      handlers.set(action, handler);
+    },
+    handlers,
+  };
+}
+
 let created: FakeAudio[] = [];
 let quality: AudioQualityPref = "lower";
 
@@ -282,6 +297,78 @@ describe("a file served whole", () => {
 
     expect(el.src).toBe("/api/tracks/t1/stream");
     expect(el.currentTime).toBe(120);
+  });
+});
+
+describe("closing the current track", () => {
+  it("unwires the Media Session transport actions, so a hardware control can't resume it", () => {
+    const media = fakeMediaSession();
+    vi.stubGlobal("navigator", { mediaSession: media });
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", []);
+    expect(media.handlers.get("play")).toBeTypeOf("function");
+
+    engine.stop();
+
+    for (const action of [
+      "play",
+      "pause",
+      "nexttrack",
+      "previoustrack",
+      "seekbackward",
+      "seekforward",
+      "seekto",
+    ]) {
+      expect(media.handlers.get(action)).toBeNull();
+    }
+  });
+
+  it("wires the actions back when another track starts", () => {
+    const media = fakeMediaSession();
+    vi.stubGlobal("navigator", { mediaSession: media });
+    const { engine } = setup();
+    engine.setPlaylist([], "t1", []);
+    engine.stop();
+
+    engine.setPlaylist([], "t2", []);
+
+    expect(media.handlers.get("play")).toBeTypeOf("function");
+    expect(media.handlers.get("nexttrack")).toBeTypeOf("function");
+  });
+});
+
+describe("updating the queue in place", () => {
+  it("replaces preceding/upcoming without restarting the current track", () => {
+    const { engine, events } = setup();
+    engine.setPlaylist([], "t1", ["t2"]);
+    const el = created[0]!;
+    const src = el.src;
+    events.onTransport.mockClear();
+
+    engine.updateQueue(["t0"], ["t5"]);
+
+    expect(el.src).toBe(src);
+    expect(engine.hasNext).toBe(true);
+    expect(events.onTransport).toHaveBeenCalled();
+  });
+
+  it("advances into the replaced queue, not the old one", () => {
+    const { engine, events } = setup();
+    engine.setPlaylist([], "t1", ["t2"]);
+
+    engine.updateQueue([], ["t5"]);
+    engine.skipNext();
+
+    expect(events.onTrackChange).toHaveBeenCalledWith("t5");
+  });
+
+  it("is a no-op with nothing loaded", () => {
+    const { engine, events } = setup();
+
+    engine.updateQueue([], ["t5"]);
+
+    expect(engine.hasNext).toBe(false);
+    expect(events.onTransport).not.toHaveBeenCalled();
   });
 });
 

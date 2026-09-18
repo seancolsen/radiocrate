@@ -590,8 +590,11 @@ export function createAppActions(
 
   /** Re-locates the playing track's row in the rows a tab has just landed, so
    * "Locate" keeps working across a re-run (mirrors
-   * `maybe_revalidate_current_track_index`). A no-op for a tab that isn't the
-   * one the track is playing from. */
+   * `maybe_revalidate_current_track_index`), and recomputes the play queue
+   * around that row — the surrounding tracks may have moved, been added, or
+   * dropped. A no-op for a tab that isn't the one the track is playing from.
+   * When the track can no longer be found, the queue is left as it was: there's
+   * no row to recompute it around. */
   const relocateCurrentTrack = (tabId: string) => {
     const ct = get().currentTrack;
     if (ct?.sourceTabId !== tabId) return;
@@ -599,6 +602,14 @@ export function createAppActions(
     set((s) => {
       if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
     });
+    if (rowIndex !== null) {
+      const { preceding, upcoming } = selectPlaylistAround(
+        get(),
+        tabId,
+        rowIndex,
+      );
+      audio?.updateQueue(preceding, upcoming);
+    }
   };
 
   const runQuery = (tabId: string) => {
