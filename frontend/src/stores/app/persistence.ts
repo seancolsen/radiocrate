@@ -109,6 +109,37 @@ export function persistRecordSidebarWidth(env: AppEnv, px: number): void {
   }
 }
 
+const EXPANDED_FOLDERS_KEY = "expandedFolders";
+
+/** The explorer folders left expanded (by id). Anything unreadable restores
+ * none — every folder starts collapsed. */
+export function storedExpandedFolders(env: AppEnv): ReadonlySet<string> {
+  try {
+    const raw = env.storage.getItem(EXPANDED_FOLDERS_KEY);
+    const ids: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(
+      Array.isArray(ids)
+        ? ids.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+  } catch {
+    // Private-mode denial, or a value that isn't JSON.
+    return new Set();
+  }
+}
+
+export function persistExpandedFolders(
+  env: AppEnv,
+  ids: ReadonlySet<string>,
+): void {
+  try {
+    if (ids.size === 0) env.storage.removeItem(EXPANDED_FOLDERS_KEY);
+    else env.storage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Denied or over quota — the folders just start collapsed next time.
+  }
+}
+
 /** An open tab as a previous visit left it: a query tab with both of its
  * definitions (so unsaved edits survive), or the keyboard-shortcuts editor,
  * which carries nothing of its own. */

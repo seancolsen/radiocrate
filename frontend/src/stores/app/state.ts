@@ -1,4 +1,10 @@
-import type { DmlOperation, DmlResult, Preset, Query } from "api-client";
+import type {
+  DmlOperation,
+  DmlResult,
+  Preset,
+  Query,
+  QueryFolder,
+} from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
@@ -9,6 +15,7 @@ import type { SettingKey, SettingOverrides } from "../../state/settings";
 import type { AppEnv } from "../env";
 import {
   storedAudioQuality,
+  storedExpandedFolders,
   storedRecordSidebarWidth,
   storedSidebarOpen,
   storedTabs,
@@ -268,6 +275,14 @@ export interface AppState {
   tabs: Tab[]; // open tabs, in tab-bar order
   activeTabId: string | null;
   queryFilter: string; // "Filter" input text in the Queries section
+  /** Whether the Queries section's filter input is shown. Hiding it clears
+   * `queryFilter`, so a filter is never in force out of sight. */
+  queryFilterOpen: boolean;
+  /** The explorer folders showing their contents (persisted). Replaced
+   * wholesale on every change, like a page's `selection`. */
+  expandedFolders: ReadonlySet<string>;
+  /** The folder whose name is being edited in place in the explorer, if any. */
+  renamingFolder: string | null;
   openedCollapsed: boolean; // "Opened" section disclosure
   queriesCollapsed: boolean; // "Queries" section disclosure
   /** Each query tab's page state, keyed by tab id. An entry is created by the
@@ -301,6 +316,9 @@ export interface AppState {
   playback: PlaybackState;
   /** The saved-query list (loads via `query.list`; `refetchQueries` reloads). */
   queries: ResourceState<readonly Query[]>;
+  /** The explorer's query folders (loads via `folder.list`, alongside
+   * `queries` — the two lists make up one tree; see `query/explorerTree.ts`). */
+  folders: ResourceState<readonly QueryFolder[]>;
   /** The rating vocabulary the results row menu offers (the whole `rating`
    * table, lowest value first). Loaded on demand — the first time a menu that
    * offers it is raised — rather than at boot: it needs the schema the
@@ -360,6 +378,9 @@ export function initialState(env: AppEnv): AppState {
     tabs,
     activeTabId,
     queryFilter: "",
+    queryFilterOpen: false,
+    expandedFolders: storedExpandedFolders(env),
+    renamingFolder: null,
     openedCollapsed: false,
     queriesCollapsed: false,
     pages: {},
@@ -376,6 +397,7 @@ export function initialState(env: AppEnv): AppState {
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
     queries: { status: "loading", data: [] },
+    folders: { status: "loading", data: [] },
     ratings: { status: "loading", data: [] },
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
@@ -389,7 +411,7 @@ export function initialState(env: AppEnv): AppState {
 
 // Re-exported so `stores/app/actions.ts` and its tests don't have to reach into
 // `api-client` themselves just to name these DML types.
-export type { DmlOperation, DmlResult, Preset, Query };
+export type { DmlOperation, DmlResult, Preset, Query, QueryFolder };
 // …and so the menu surfaces can name a rating through the store, as they name
 // every other thing they render.
 export type { Rating };

@@ -53,6 +53,9 @@ function rpcResult(method: string, params: unknown): unknown {
       return QUERIES_FIXTURE;
     case "preset.list":
       return PRESETS_FIXTURE;
+    // No folders: the stories about the tree install their own (`stories.tsx`).
+    case "folder.list":
+      return [];
     // No persisted overrides, so every command shows its built-in default and
     // every setting its built-in value.
     case "keybinding.list":

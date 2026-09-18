@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, DmlRequest, DmlResult, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams, Setting, SettingDeleteParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryArrangeParams, QueryDeleteParams, QueryFolder, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams, Setting, SettingDeleteParams } from "./types";
 import { handleAuthRedirect, rpcCall } from "./rpc";
 
 export async function queryList(): Promise<Query[]> {
@@ -27,6 +27,26 @@ export async function queryRename(params: QueryRenameParams): Promise<null> {
 
 export async function queryUpdateDefinition(params: QueryUpdateDefinitionParams): Promise<null> {
   return (await rpcCall("query.update_definition", params)) as null;
+}
+
+export async function queryArrange(params: QueryArrangeParams): Promise<null> {
+  return (await rpcCall("query.arrange", params)) as null;
+}
+
+export async function folderList(): Promise<QueryFolder[]> {
+  return (await rpcCall("folder.list", null)) as QueryFolder[];
+}
+
+export async function folderAdd(params: QueryFolder): Promise<null> {
+  return (await rpcCall("folder.add", params)) as null;
+}
+
+export async function folderRename(params: FolderRenameParams): Promise<null> {
+  return (await rpcCall("folder.rename", params)) as null;
+}
+
+export async function folderDelete(params: FolderDeleteParams): Promise<null> {
+  return (await rpcCall("folder.delete", params)) as null;
 }
 
 export async function presetList(): Promise<Preset[]> {

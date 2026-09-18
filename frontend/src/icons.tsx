@@ -12,6 +12,9 @@
 import type { ComponentType, SVGProps } from "react";
 
 import Query from "~icons/material-symbols/manage-search";
+import Folder from "~icons/material-symbols/folder";
+import FolderOpen from "~icons/material-symbols/folder-open";
+import NewFolder from "~icons/material-symbols/create-new-folder";
 import ExplorerOpen from "~icons/material-symbols/left-panel-open";
 import ExplorerClose from "~icons/material-symbols/left-panel-close";
 import Close from "~icons/material-symbols/close";
@@ -73,6 +76,9 @@ export type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
 
 export const Icons = {
   Query, // query rows + tab handle icon
+  Folder, // a collapsed explorer folder
+  FolderOpen, // an expanded explorer folder
+  NewFolder, // Queries "+" menu: new folder
   ExplorerOpen, // sidebar toggle when closed
   ExplorerClose, // sidebar toggle when open
   Close, // tab close ×, opened-row ×

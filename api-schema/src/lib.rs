@@ -26,7 +26,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::{Config, TS};
 
 /// A saved query as exchanged over the wire. Timestamps are i64 epoch seconds
-/// and are authored by the frontend.
+/// and are authored by the frontend, as is its place in the explorer tree:
+/// `parent` is the containing [`QueryFolder`]'s id (`None` at the top level) and
+/// `position` orders it among its siblings — folders and queries alike.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Query {
@@ -39,6 +41,65 @@ pub struct Query {
     #[ts(type = "number")]
     pub last_play: i64,
     pub definition: String,
+    pub parent: Option<String>,
+    pub position: i32,
+}
+
+/// A folder in the explorer's tree of saved queries. It holds queries and other
+/// folders, and sits in its own `parent` at `position`, exactly as a [`Query`]
+/// does. See migration 0005.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryFolder {
+    pub id: String,
+    pub name: String,
+    pub parent: Option<String>,
+    pub position: i32,
+}
+
+/// Which table a [`Placement`] moves a row of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum TreeItemKind {
+    Query,
+    Folder,
+}
+
+/// One explorer-tree item's new place: its parent folder (`None` at the top
+/// level) and its position among that folder's children.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Placement {
+    pub kind: TreeItemKind,
+    pub id: String,
+    pub parent: Option<String>,
+    pub position: i32,
+}
+
+/// Params for `query.arrange`: every item whose place in the tree changed. They
+/// are written together, in one transaction, so the tree is never seen half
+/// rearranged.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryArrangeParams {
+    pub placements: Vec<Placement>,
+}
+
+/// Params for `folder.rename`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderRenameParams {
+    pub id: String,
+    pub name: String,
+}
+
+/// Params for `folder.delete`. Only the folder row goes: its contents are the
+/// caller's to move out first (with `query.arrange`), or they are left naming a
+/// parent that no longer exists — which reads as the top level.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderDeleteParams {
+    pub id: String,
 }
 
 /// A saved query-section preset as exchanged over the wire. The `section` is one
@@ -230,6 +291,36 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "query.arrange",
+        func: "queryArrange",
+        params: Some("QueryArrangeParams"),
+        result: "null",
+    },
+    Method {
+        wire: "folder.list",
+        func: "folderList",
+        params: None,
+        result: "QueryFolder[]",
+    },
+    Method {
+        wire: "folder.add",
+        func: "folderAdd",
+        params: Some("QueryFolder"),
+        result: "null",
+    },
+    Method {
+        wire: "folder.rename",
+        func: "folderRename",
+        params: Some("FolderRenameParams"),
+        result: "null",
+    },
+    Method {
+        wire: "folder.delete",
+        func: "folderDelete",
+        params: Some("FolderDeleteParams"),
+        result: "null",
+    },
+    Method {
         wire: "preset.list",
         func: "presetList",
         params: None,
@@ -316,6 +407,9 @@ pub fn type_decls() -> Vec<String> {
     let cfg = Config::default();
     vec![
         format!("export {}", Query::decl(&cfg)),
+        format!("export {}", QueryFolder::decl(&cfg)),
+        format!("export {}", TreeItemKind::decl(&cfg)),
+        format!("export {}", Placement::decl(&cfg)),
         format!("export {}", Preset::decl(&cfg)),
         format!("export {}", Keybinding::decl(&cfg)),
         format!("export {}", Setting::decl(&cfg)),
@@ -324,6 +418,9 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", QueryRecordPlayParams::decl(&cfg)),
         format!("export {}", QueryRenameParams::decl(&cfg)),
         format!("export {}", QueryUpdateDefinitionParams::decl(&cfg)),
+        format!("export {}", QueryArrangeParams::decl(&cfg)),
+        format!("export {}", FolderRenameParams::decl(&cfg)),
+        format!("export {}", FolderDeleteParams::decl(&cfg)),
         format!("export {}", PresetUpdateParams::decl(&cfg)),
         format!("export {}", PresetDeleteParams::decl(&cfg)),
         format!("export {}", KeybindingDeleteParams::decl(&cfg)),

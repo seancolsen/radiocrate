@@ -41,7 +41,13 @@ export type DmlRequest = { operations: DmlOperation[] };
 /** Per-operation returned rows, keyed by operation id (delete ops produce none). */
 export type DmlResult = Record<string, Record<string, JsonValue>>;
 
-export type Query = { id: string, name: string, createdAt: number, modifiedAt: number, lastPlay: number, definition: string, };
+export type Query = { id: string, name: string, createdAt: number, modifiedAt: number, lastPlay: number, definition: string, parent: string | null, position: number, };
+
+export type QueryFolder = { id: string, name: string, parent: string | null, position: number, };
+
+export type TreeItemKind = "query" | "folder";
+
+export type Placement = { kind: TreeItemKind, id: string, parent: string | null, position: number, };
 
 export type Preset = { id: string, name: string, baseTable: string, section: string, definition: string, isDefault: boolean, createdAt: number, modifiedAt: number, };
 
@@ -58,6 +64,12 @@ export type QueryRecordPlayParams = { id: string, lastPlay: number, };
 export type QueryRenameParams = { id: string, name: string, };
 
 export type QueryUpdateDefinitionParams = { id: string, definition: string, modifiedAt: number, };
+
+export type QueryArrangeParams = { placements: Array<Placement>, };
+
+export type FolderRenameParams = { id: string, name: string, };
+
+export type FolderDeleteParams = { id: string, };
 
 export type PresetUpdateParams = { id: string, name: string, definition: string, isDefault: boolean, modifiedAt: number, };
 

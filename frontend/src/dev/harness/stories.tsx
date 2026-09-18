@@ -77,6 +77,31 @@ export interface Story {
 
 const [LEMONADE, DEEP_CUTS] = QUERIES_FIXTURE;
 
+/** Folder ids for the explorer-tree stories. */
+const FAVORITES = "00000000-0000-0000-0000-0000000000f1";
+const ROAD_TRIP = "00000000-0000-0000-0000-0000000000f2";
+const ARCHIVE = "00000000-0000-0000-0000-0000000000f3";
+
+/** Arranges the fixture queries into folders: "Favorites" (open) holds
+ * Lemonade and a "Road trip" folder (closed) holding Workout Mix; Deep Cuts and
+ * an empty "Archive" folder sit beside it at the top level. */
+function arrangeQueryTree(stores: Stores): void {
+  const [lemonade, deepCuts, workoutMix] = QUERIES_FIXTURE;
+  stores.app.store.setState((s) => {
+    s.folders.data = [
+      { id: FAVORITES, name: "Favorites", parent: null, position: 0 },
+      { id: ROAD_TRIP, name: "Road trip", parent: FAVORITES, position: 1 },
+      { id: ARCHIVE, name: "Archive", parent: null, position: 2 },
+    ];
+    s.queries.data = [
+      { ...lemonade, parent: FAVORITES, position: 0 },
+      { ...deepCuts, parent: null, position: 1 },
+      { ...workoutMix, parent: ROAD_TRIP, position: 0 },
+    ];
+  });
+  stores.app.actions.toggleFolderExpanded(FAVORITES);
+}
+
 /** Opens the "Lemonade" fixture query in a tab and returns its id. */
 function openLemonade(stores: Stores): string {
   stores.app.actions.openTab({
@@ -300,6 +325,38 @@ export const STORIES: Record<string, Story> = {
         definition: "",
       });
       stores.app.actions.selectTab(active);
+    },
+    render: () => <Explorer />,
+  },
+  // The saved queries arranged in folders, one open and two closed.
+  "explorer/tree": {
+    width: 220,
+    height: 360,
+    frame: "flex flex-col",
+    setup: arrangeQueryTree,
+    render: () => <Explorer />,
+  },
+  // A filter that matches one query deep inside a closed folder: the folders
+  // above it open to show it, and nothing else shows.
+  "explorer/filter": {
+    width: 220,
+    height: 360,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      arrangeQueryTree(stores);
+      stores.app.actions.toggleQueryFilter();
+      stores.app.actions.setQueryFilter("workout");
+    },
+    render: () => <Explorer />,
+  },
+  // A folder's name being edited in place.
+  "explorer/folder-rename": {
+    width: 220,
+    height: 360,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      arrangeQueryTree(stores);
+      stores.app.actions.beginFolderRename(ROAD_TRIP);
     },
     render: () => <Explorer />,
   },

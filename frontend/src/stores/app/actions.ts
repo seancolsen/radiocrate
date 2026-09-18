@@ -2,10 +2,15 @@ import * as arrow from "apache-arrow";
 import { castDraft, type Draft } from "immer";
 import { shallow } from "zustand/vanilla/shallow";
 import {
+  folderAdd,
+  folderDelete,
+  folderList,
+  folderRename,
   presetAdd,
   presetList,
   presetUpdate,
   queryAdd,
+  queryArrange,
   queryDelete,
   queryList,
   queryRecordPlay,
@@ -16,6 +21,7 @@ import {
   settingSet,
   type DmlOperation,
   type DmlResult,
+  type Placement,
   type Preset,
 } from "api-client";
 import { runSql, runSqlScalar } from "../../api/query";
@@ -53,11 +59,22 @@ import {
 } from "../../query/lineage";
 import { buildResultFromArrow, type QueryResult } from "../../query/result";
 import { runRowDml } from "../../query/rowDml";
+import {
+  applyPlacements,
+  buildTree,
+  dissolvePlacements,
+  movePlacements,
+  storedPositions,
+  topPosition,
+  type DropTarget,
+  type TreeItemRef,
+} from "../../query/explorerTree";
 import type { AppEnv } from "../env";
 import { applyThemeToDocument, watchSystemTheme } from "./theme";
 import {
   clampRecordSidebarWidth,
   persistAudioQuality,
+  persistExpandedFolders,
   persistRecordSidebarWidth,
   persistSidebar,
   persistTabs,
@@ -171,6 +188,22 @@ export interface AppActions {
   selectTab: (id: string) => void;
   reorderTab: (id: string, toIndex: number) => void;
   setQueryFilter: (text: string) => void;
+  /** Show or hide the Queries filter input. Hiding it clears the filter. */
+  toggleQueryFilter: () => void;
+  /** Show or hide explorer folder `id`'s contents. */
+  toggleFolderExpanded: (id: string) => void;
+  /** Create a folder at the top of the Queries tree and start renaming it. */
+  newFolder: () => void;
+  /** Start editing folder `id`'s name in place. */
+  beginFolderRename: (id: string) => void;
+  /** Finish the in-place folder rename with `name` (`folder.rename`); a blank
+   * or unchanged name just ends it. */
+  commitFolderRename: (id: string, name: string) => void;
+  cancelFolderRename: () => void;
+  /** Delete folder `id`, moving its contents out into its place. */
+  deleteFolder: (id: string) => void;
+  /** Move an explorer-tree item to `target` (a drag-and-drop's drop). */
+  moveTreeItem: (item: TreeItemRef, target: DropTarget) => void;
   toggleOpenedCollapsed: () => void;
   toggleQueriesCollapsed: () => void;
   /** Install an introspection document directly (dev/test seam — lets the
@@ -1063,20 +1096,36 @@ export function createAppActions(
     }
   };
 
+  /** Moves tree items in the loaded lists ahead of the backend's copy — the
+   * optimistic half of `query.arrange`. */
+  const applyPlacementsLocally = (placements: readonly Placement[]) => {
+    if (placements.length === 0) return;
+    set((s) => {
+      const next = applyPlacements(s.queries.data, s.folders.data, placements);
+      s.queries.data = next.queries;
+      s.folders.data = next.folders;
+    });
+  };
+
   const actions: AppActions = {
     loadQueries: async () => {
+      // Queries and folders load together: the explorer builds one tree of
+      // both, which one list without the other would scramble.
       set((s) => {
         s.queries.status = "loading";
+        s.folders.status = "loading";
       });
       try {
-        const data = await queryList();
+        const [data, folders] = await Promise.all([queryList(), folderList()]);
         set((s) => {
           s.queries = { status: "ready", data };
+          s.folders = { status: "ready", data: folders ?? [] };
         });
       } catch (err) {
         console.error("query list failed", err);
         set((s) => {
           s.queries.status = "error";
+          s.folders.status = "error";
         });
       }
     },
@@ -1228,6 +1277,100 @@ export function createAppActions(
       set((s) => {
         s.queryFilter = text;
       }),
+    toggleQueryFilter: () =>
+      set((s) => {
+        s.queryFilterOpen = !s.queryFilterOpen;
+        if (!s.queryFilterOpen) s.queryFilter = "";
+      }),
+    toggleFolderExpanded: (id) => {
+      const next = new Set(get().expandedFolders);
+      if (!next.delete(id)) next.add(id);
+      set((s) => {
+        s.expandedFolders = next;
+      });
+      persistExpandedFolders(env, next);
+    },
+    newFolder: () => {
+      const s0 = get();
+      const folder = {
+        id: newUuid(),
+        name: "New folder",
+        parent: null,
+        position: topPosition(s0.queries.data, s0.folders.data),
+      };
+      // Inserted optimistically, and put where it can be seen: a filter or a
+      // collapsed section would hide the name about to be edited.
+      set((s) => {
+        s.folders.data = [folder, ...s.folders.data];
+        s.queriesCollapsed = false;
+        s.queryFilterOpen = false;
+        s.queryFilter = "";
+        s.renamingFolder = folder.id;
+      });
+      void folderAdd(folder).catch((err) => {
+        console.error("folder add failed", err);
+        void actions.loadQueries();
+      });
+    },
+    beginFolderRename: (id) =>
+      set((s) => {
+        s.renamingFolder = id;
+      }),
+    commitFolderRename: (id, name) => {
+      const trimmed = name.trim();
+      const current = get().folders.data.find((f) => f.id === id);
+      set((s) => {
+        if (s.renamingFolder === id) s.renamingFolder = null;
+        const f = s.folders.data.find((x) => x.id === id);
+        if (f && trimmed !== "") f.name = trimmed;
+      });
+      if (!current || trimmed === "" || trimmed === current.name) return;
+      void folderRename({ id, name: trimmed }).catch((err) => {
+        console.error("folder rename failed", err);
+        void actions.loadQueries();
+      });
+    },
+    cancelFolderRename: () =>
+      set((s) => {
+        s.renamingFolder = null;
+      }),
+    deleteFolder: (id) => {
+      const { queries, folders } = get();
+      const placements = dissolvePlacements(
+        buildTree(queries.data, folders.data),
+        storedPositions(queries.data, folders.data),
+        id,
+      );
+      applyPlacementsLocally(placements);
+      set((s) => {
+        s.folders.data = s.folders.data.filter((f) => f.id !== id);
+      });
+      if (get().expandedFolders.has(id)) actions.toggleFolderExpanded(id);
+      // Contents out first, so a failed delete leaves an empty folder rather
+      // than orphans.
+      void (async () => {
+        if (placements.length > 0) await queryArrange({ placements });
+        await folderDelete({ id });
+      })().catch((err) => {
+        console.error("folder delete failed", err);
+        void actions.loadQueries();
+      });
+    },
+    moveTreeItem: (item, target) => {
+      const { queries, folders } = get();
+      const placements = movePlacements(
+        buildTree(queries.data, folders.data),
+        storedPositions(queries.data, folders.data),
+        item,
+        target,
+      );
+      if (placements.length === 0) return;
+      applyPlacementsLocally(placements);
+      void queryArrange({ placements }).catch((err) => {
+        console.error("query arrange failed", err);
+        void actions.loadQueries();
+      });
+    },
     toggleOpenedCollapsed: () =>
       set((s) => {
         s.openedCollapsed = !s.openedCollapsed;
@@ -1470,6 +1613,8 @@ export function createAppActions(
           modifiedAt: now,
         }).catch((err) => console.error("query save failed", err));
       } else {
+        // A new query goes in at the top of the Queries tree.
+        const { queries, folders } = get();
         void queryAdd({
           id: tabId,
           name: t.name,
@@ -1477,6 +1622,8 @@ export function createAppActions(
           modifiedAt: now,
           lastPlay: now,
           definition,
+          parent: null,
+          position: topPosition(queries.data, folders.data),
         }).catch((err) => console.error("query save failed", err));
       }
       editQueryTab(tabId, (x) => {

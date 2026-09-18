@@ -8,9 +8,10 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams,
-    Query, QueryDeleteParams, QueryRecordPlayParams, QueryRenameParams,
-    QueryUpdateDefinitionParams, Setting, SettingDeleteParams,
+    AppVersion, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
+    Placement, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryArrangeParams,
+    QueryDeleteParams, QueryFolder, QueryRecordPlayParams, QueryRenameParams,
+    QueryUpdateDefinitionParams, Setting, SettingDeleteParams, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -191,6 +192,35 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 Ok(Value::Null)
             })
         }
+        "query.arrange" => {
+            let p: QueryArrangeParams = from_params(params)?;
+            state.write_mut(|conn| arrange(conn, &p.placements).map(|()| Value::Null))
+        }
+        "folder.list" => state.read(|conn| -> Result<Value, String> {
+            let folders = list_folders(conn)?;
+            serde_json::to_value(folders).map_err(|e| e.to_string())
+        }),
+        "folder.add" => {
+            let folder: QueryFolder = from_params(params)?;
+            state.write(|conn| {
+                add_folder(conn, &folder)?;
+                Ok(Value::Null)
+            })
+        }
+        "folder.rename" => {
+            let p: FolderRenameParams = from_params(params)?;
+            state.write(|conn| {
+                rename_folder(conn, &p.id, &p.name)?;
+                Ok(Value::Null)
+            })
+        }
+        "folder.delete" => {
+            let p: FolderDeleteParams = from_params(params)?;
+            state.write(|conn| {
+                delete_folder(conn, &p.id)?;
+                Ok(Value::Null)
+            })
+        }
         "preset.list" => state.read(|conn| -> Result<Value, String> {
             let presets = list_presets(conn)?;
             serde_json::to_value(presets).map_err(|e| e.to_string())
@@ -274,8 +304,9 @@ fn list_queries(conn: &Connection) -> Result<Vec<Query>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id::text, name, epoch(created_at)::bigint, \
-             epoch(modified_at)::bigint, epoch(last_play)::bigint, definition \
-             FROM query ORDER BY created_at DESC",
+             epoch(modified_at)::bigint, epoch(last_play)::bigint, definition, \
+             parent::text, coalesce(position, 0) \
+             FROM query ORDER BY position, created_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -287,6 +318,8 @@ fn list_queries(conn: &Connection) -> Result<Vec<Query>, String> {
                 modified_at: row.get(3)?,
                 last_play: row.get(4)?,
                 definition: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                parent: row.get(6)?,
+                position: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -295,9 +328,10 @@ fn list_queries(conn: &Connection) -> Result<Vec<Query>, String> {
 
 fn add_query(conn: &Connection, query: &Query) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO query (id, name, created_at, modified_at, last_play, definition) \
+        "INSERT INTO query (id, name, created_at, modified_at, last_play, definition, parent, position) \
          VALUES (TRY_CAST(? AS UUID), ?, make_timestamp(? * 1000000)::timestamp_s, \
-         make_timestamp(? * 1000000)::timestamp_s, make_timestamp(? * 1000000)::timestamp_s, ?)",
+         make_timestamp(? * 1000000)::timestamp_s, make_timestamp(? * 1000000)::timestamp_s, ?, \
+         TRY_CAST(? AS UUID), ?)",
         duckdb::params![
             query.id,
             query.name,
@@ -305,6 +339,8 @@ fn add_query(conn: &Connection, query: &Query) -> Result<(), String> {
             query.modified_at,
             query.last_play,
             query.definition,
+            query.parent,
+            query.position,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -333,6 +369,75 @@ fn rename_query(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
     conn.execute(
         "UPDATE query SET name = ? WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Writes every placement in one transaction, so a move that renumbers two
+/// folders' worth of siblings lands whole or not at all.
+fn arrange(conn: &mut Connection, placements: &[Placement]) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for p in placements {
+        let sql = match p.kind {
+            TreeItemKind::Query => {
+                "UPDATE query SET parent = TRY_CAST(? AS UUID), position = ? \
+                 WHERE id = TRY_CAST(? AS UUID)"
+            }
+            TreeItemKind::Folder => {
+                "UPDATE query_folder SET parent = TRY_CAST(? AS UUID), position = ? \
+                 WHERE id = TRY_CAST(? AS UUID)"
+            }
+        };
+        tx.execute(sql, duckdb::params![p.parent, p.position, p.id])
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn list_folders(conn: &Connection) -> Result<Vec<QueryFolder>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id::text, name, parent::text, position \
+             FROM query_folder ORDER BY position, name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(QueryFolder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent: row.get(2)?,
+                position: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+fn add_folder(conn: &Connection, folder: &QueryFolder) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO query_folder (id, name, parent, position) \
+         VALUES (TRY_CAST(? AS UUID), ?, TRY_CAST(? AS UUID), ?)",
+        duckdb::params![folder.id, folder.name, folder.parent, folder.position],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn rename_folder(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE query_folder SET name = ? WHERE id = TRY_CAST(? AS UUID)",
+        duckdb::params![name, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn delete_folder(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM query_folder WHERE id = TRY_CAST(? AS UUID)",
+        duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -489,4 +594,112 @@ fn update_definition(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const Q1: &str = "00000000-0000-0000-0000-000000000001";
+    const Q2: &str = "00000000-0000-0000-0000-000000000002";
+    const F1: &str = "00000000-0000-0000-0000-0000000000f1";
+
+    /// A fresh in-memory database with the real migration schema applied.
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        for sql in [
+            include_str!("migrations/0001.sql"),
+            include_str!("migrations/0002.sql"),
+            include_str!("migrations/0003.sql"),
+            include_str!("migrations/0004.sql"),
+            include_str!("migrations/0005.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn
+    }
+
+    fn query(id: &str, name: &str, position: i32) -> Query {
+        Query {
+            id: id.to_string(),
+            name: name.to_string(),
+            created_at: 1_700_000_000,
+            modified_at: 1_700_000_000,
+            last_play: 1_700_000_000,
+            definition: "{}".to_string(),
+            parent: None,
+            position,
+        }
+    }
+
+    #[test]
+    fn queries_list_in_position_order() {
+        let conn = setup();
+        add_query(&conn, &query(Q1, "second", 5)).unwrap();
+        add_query(&conn, &query(Q2, "first", -1)).unwrap();
+        let names: Vec<_> = list_queries(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|q| q.name)
+            .collect();
+        assert_eq!(names, ["first", "second"]);
+    }
+
+    #[test]
+    fn arrange_moves_queries_and_folders() {
+        let mut conn = setup();
+        add_query(&conn, &query(Q1, "a", 0)).unwrap();
+        add_folder(
+            &conn,
+            &QueryFolder {
+                id: F1.to_string(),
+                name: "folder".to_string(),
+                parent: None,
+                position: 1,
+            },
+        )
+        .unwrap();
+        arrange(
+            &mut conn,
+            &[
+                Placement {
+                    kind: TreeItemKind::Query,
+                    id: Q1.to_string(),
+                    parent: Some(F1.to_string()),
+                    position: 0,
+                },
+                Placement {
+                    kind: TreeItemKind::Folder,
+                    id: F1.to_string(),
+                    parent: None,
+                    position: 0,
+                },
+            ],
+        )
+        .unwrap();
+        let q = &list_queries(&conn).unwrap()[0];
+        assert_eq!(q.parent.as_deref(), Some(F1));
+        assert_eq!(q.position, 0);
+        let f = &list_folders(&conn).unwrap()[0];
+        assert_eq!((f.parent.as_deref(), f.position), (None, 0));
+    }
+
+    #[test]
+    fn folders_rename_and_delete() {
+        let conn = setup();
+        add_folder(
+            &conn,
+            &QueryFolder {
+                id: F1.to_string(),
+                name: "old".to_string(),
+                parent: None,
+                position: 0,
+            },
+        )
+        .unwrap();
+        rename_folder(&conn, F1, "new").unwrap();
+        assert_eq!(list_folders(&conn).unwrap()[0].name, "new");
+        delete_folder(&conn, F1).unwrap();
+        assert!(list_folders(&conn).unwrap().is_empty());
+    }
 }

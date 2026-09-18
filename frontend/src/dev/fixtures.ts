@@ -13,6 +13,8 @@ import type { QueryDefinition } from "../query/definition";
 export const QUERIES_FIXTURE: Query[] = [
   {
     id: "00000000-0000-0000-0000-000000000001",
+    parent: null,
+    position: 0,
     name: "Lemonade",
     createdAt: 1_700_000_300,
     modifiedAt: 1_700_000_300,
@@ -21,6 +23,8 @@ export const QUERIES_FIXTURE: Query[] = [
   },
   {
     id: "00000000-0000-0000-0000-000000000002",
+    parent: null,
+    position: 1,
     name: "Deep Cuts",
     createdAt: 1_700_000_200,
     modifiedAt: 1_700_000_200,
@@ -29,6 +33,8 @@ export const QUERIES_FIXTURE: Query[] = [
   },
   {
     id: "00000000-0000-0000-0000-000000000003",
+    parent: null,
+    position: 2,
     name: "Workout Mix",
     createdAt: 1_700_000_100,
     modifiedAt: 1_700_000_100,

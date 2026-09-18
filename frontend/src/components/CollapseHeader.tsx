@@ -1,20 +1,21 @@
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { Icons } from "../icons";
 
 /** A collapsible section heading (chevron + title) spanning the sidebar width,
- * toggling the section when clicked. The "Queries" header additionally shows a
- * refresh button at the right edge (its own click doesn't toggle the section). */
+ * toggling the section when clicked. `children` are controls set at the right
+ * edge (the Queries section's filter, "+" and refresh buttons); clicking one
+ * doesn't toggle the section. */
 export default function CollapseHeader(props: {
   title: string;
   collapsed: boolean;
   onToggle: () => void;
-  onRefresh?: () => void;
+  children?: ReactNode;
 }): JSX.Element {
   return (
-    <div className="relative">
+    <div className="hover:bg-hover flex h-7 items-center pr-0.5">
       <button
         type="button"
-        className="hover:bg-hover flex h-7 w-full items-center gap-1.5 pr-8 pl-2.5 text-left"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-2.5 text-left"
         onClick={() => props.onToggle()}
       >
         <span className="text-ink-weak flex size-[18px] items-center justify-center">
@@ -22,16 +23,7 @@ export default function CollapseHeader(props: {
         </span>
         <span className="text-ink text-base">{props.title}</span>
       </button>
-      {props.onRefresh && (
-        <button
-          type="button"
-          aria-label="Refresh queries"
-          className="text-ink-weak hover:text-ink absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center"
-          onClick={() => props.onRefresh?.()}
-        >
-          <Icons.Refresh className="size-[18px]" />
-        </button>
-      )}
+      {props.children}
     </div>
   );
 }

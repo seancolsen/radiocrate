@@ -104,7 +104,9 @@ test("Full Querydown flattens the query into one editable field", async ({
 
   // The section toggles are gone, replaced by one Querydown toggle over the
   // whole-query editor, which holds the flattened query.
-  await expect(page.getByRole("button", { name: "Filter" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Filter", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Querydown" })).toBeVisible();
   await expect(page.getByPlaceholder("Querydown")).toHaveValue(
     "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate} file.deletion:@null",
@@ -124,7 +126,9 @@ test("Full Querydown flattens the query into one editable field", async ({
     sort: { custom: "" },
     display: { custom: "" },
   });
-  await expect(page.getByRole("button", { name: "Filter" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Filter", exact: true }),
+  ).toBeVisible();
 });
 
 test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { isPointerClaimed } from "./pointerClaim";
 
 /** Static-friction scale (ORGANIZER_DRAG_FRICTION): small finger movements barely
  * move the drawer, so a vertical scroll inside it isn't read as a close-swipe. */
@@ -53,6 +54,16 @@ export function useSwipeToClose(onClose: () => void, getWidth: () => number) {
 
   function onMove(e: globalThis.PointerEvent) {
     if (!active.current) return;
+    // Another gesture (the explorer's drag-to-rearrange) took this pointer
+    // over: let go, and put the drawer back where it was.
+    if (isPointerClaimed(e.pointerId)) {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      active.current = false;
+      setDragging(false);
+      setOffsetTracked(0);
+      return;
+    }
     const width = getWidthRef.current();
     const o = Math.max(
       -width,

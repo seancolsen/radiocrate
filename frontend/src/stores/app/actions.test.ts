@@ -3,8 +3,8 @@ import { createAppStore, type AppStoreBundle } from "./index";
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
 
-// `settingSet`/`settingDelete`/`dml` are the only api-client calls the tests
-// below exercise directly; every other export is used as-is (its return value
+// `settingSet`/`settingDelete`/`dml` and the query-tree writes are the only
+// api-client calls the tests below exercise directly; every other export is used as-is (its return value
 // is never awaited by the assertions here).
 vi.mock("api-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("api-client")>();
@@ -13,6 +13,10 @@ vi.mock("api-client", async (importOriginal) => {
     settingSet: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
+    folderAdd: vi.fn(() => Promise.resolve(null)),
+    folderDelete: vi.fn(() => Promise.resolve(null)),
+    folderRename: vi.fn(() => Promise.resolve(null)),
+    queryArrange: vi.fn(() => Promise.resolve(null)),
   };
 });
 // The rating vocabulary's query, so `loadRatings` can be exercised without a
@@ -58,7 +62,16 @@ vi.mock("../../query/lineage", () => ({
   recordKeyColumns: vi.fn(() => []),
 }));
 
-import { dml, settingDelete, settingSet } from "api-client";
+import {
+  dml,
+  folderAdd,
+  folderDelete,
+  folderRename,
+  queryArrange,
+  settingDelete,
+  settingSet,
+  type Query,
+} from "api-client";
 import { fetchRatings } from "../../query/ratings";
 import { compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources } from "../../query/lineage";
@@ -758,5 +771,104 @@ describe("a refresh", () => {
     const page = bundle.store.getState().pages["a"];
     expect(page?.resultIsRefresh).toBe(true);
     expect([...(page?.selection ?? [])]).toEqual([0, 1]);
+  });
+});
+
+describe("the query tree", () => {
+  let bundle: AppStoreBundle;
+  const query = (id: string, position: number): Query => ({
+    id,
+    name: id,
+    createdAt: 0,
+    modifiedAt: 0,
+    lastPlay: 0,
+    definition: "{}",
+    parent: null,
+    position,
+  });
+  beforeEach(() => {
+    vi.mocked(queryArrange).mockClear();
+    vi.mocked(folderAdd).mockClear();
+    vi.mocked(folderDelete).mockClear();
+    vi.mocked(folderRename).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.store.setState((s) => {
+      s.queries = { status: "ready", data: [query("a", 0), query("b", 1)] };
+      s.folders = { status: "ready", data: [] };
+    });
+  });
+
+  it("adds a new folder at the top and starts renaming it", () => {
+    bundle.actions.toggleQueryFilter();
+    bundle.actions.setQueryFilter("zzz");
+    bundle.actions.newFolder();
+    const s = bundle.store.getState();
+    const [folder] = s.folders.data;
+    expect(folder.position).toBe(-1);
+    expect(folder.parent).toBeNull();
+    expect(s.renamingFolder).toBe(folder.id);
+    // …where it can be seen.
+    expect(s.queryFilter).toBe("");
+    expect(vi.mocked(folderAdd)).toHaveBeenCalledWith(folder);
+
+    bundle.actions.commitFolderRename(folder.id, "  Mixes ");
+    expect(bundle.store.getState().folders.data[0].name).toBe("Mixes");
+    expect(bundle.store.getState().renamingFolder).toBeNull();
+    expect(vi.mocked(folderRename)).toHaveBeenCalledWith({
+      id: folder.id,
+      name: "Mixes",
+    });
+  });
+
+  it("clears the filter when the filter input is hidden", () => {
+    bundle.actions.toggleQueryFilter();
+    bundle.actions.setQueryFilter("lemon");
+    bundle.actions.toggleQueryFilter();
+    const s = bundle.store.getState();
+    expect(s.queryFilterOpen).toBe(false);
+    expect(s.queryFilter).toBe("");
+  });
+
+  it("moves an item, locally and in the backend", () => {
+    bundle.actions.newFolder();
+    const folder = bundle.store.getState().folders.data[0].id;
+    bundle.actions.moveTreeItem(
+      { kind: "query", id: "b" },
+      { kind: "into", folder },
+    );
+    const b = bundle.store.getState().queries.data.find((q) => q.id === "b");
+    expect(b).toMatchObject({ parent: folder, position: 0 });
+    expect(vi.mocked(queryArrange)).toHaveBeenCalledWith({
+      placements: [{ kind: "query", id: "b", parent: folder, position: 0 }],
+    });
+  });
+
+  it("deletes a folder, moving its contents into its place", async () => {
+    bundle.actions.newFolder();
+    const folder = bundle.store.getState().folders.data[0].id;
+    bundle.actions.moveTreeItem(
+      { kind: "query", id: "b" },
+      { kind: "into", folder },
+    );
+    bundle.actions.deleteFolder(folder);
+    const s = bundle.store.getState();
+    expect(s.folders.data).toEqual([]);
+    expect(s.queries.data.map((q) => [q.id, q.parent, q.position])).toEqual([
+      ["a", null, 1],
+      ["b", null, 0],
+    ]);
+    await vi.waitFor(() =>
+      expect(vi.mocked(folderDelete)).toHaveBeenCalledWith({ id: folder }),
+    );
+  });
+
+  it("remembers which folders are expanded", () => {
+    const env = fakeEnv();
+    const first = createAppStore(env);
+    first.actions.toggleFolderExpanded("f");
+    expect(first.store.getState().expandedFolders.has("f")).toBe(true);
+    expect(createAppStore(env).store.getState().expandedFolders).toEqual(
+      new Set(["f"]),
+    );
   });
 });
