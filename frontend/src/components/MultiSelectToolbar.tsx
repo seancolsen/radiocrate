@@ -2,6 +2,8 @@ import { forwardRef, useMemo } from "react";
 import { Icons } from "../icons";
 import {
   recordsForRows,
+  selectRatings,
+  selectRatingsLoading,
   selectRowSelection,
   selectTableRecordsForRows,
 } from "../stores/app";
@@ -38,8 +40,13 @@ function selectionLabel(n: number): string {
 const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
   function MultiSelectToolbar(props, ref) {
     const stores = useStores();
-    const { setMultiSelect, setRecordEditorRecords, showChildRecords } =
-      useAppActions();
+    const {
+      loadRatings,
+      rateTracks,
+      setMultiSelect,
+      setRecordEditorRecords,
+      showChildRecords,
+    } = useAppActions();
     // Three references already in state, combined here rather than through a
     // selector that would build a fresh array on every store write (state
     // management rule 2).
@@ -50,6 +57,8 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
       () => recordsForRows(result, lineage, selection),
       [result, lineage, selection],
     );
+    const ratings = useApp(selectRatings);
+    const ratingsLoading = useApp(selectRatingsLoading);
 
     return (
       <div
@@ -70,7 +79,12 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
               label="Selection actions"
               active={api.open}
               disabled={records.length === 0}
-              onClick={() => api.toggle()}
+              onClick={() => {
+                // Same as the row context menu: the rating vocabulary is
+                // fetched as the menu that offers it opens.
+                if (!api.open) loadRatings();
+                api.toggle();
+              }}
             />
           )}
         >
@@ -99,6 +113,20 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
                   "album",
                 ),
                 "track",
+              )
+            }
+            ratings={ratings}
+            ratingsLoading={ratingsLoading}
+            onRate={(ratingId) =>
+              rateTracks(
+                props.tabId,
+                selectTableRecordsForRows(
+                  stores.app.store.getState(),
+                  props.tabId,
+                  selection,
+                  "track",
+                ),
+                ratingId,
               )
             }
           />

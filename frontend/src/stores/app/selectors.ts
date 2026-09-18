@@ -9,6 +9,7 @@ import {
   type AppState,
   type PresetEdit,
   type QueryTab,
+  type Rating,
   type RecordEditorTarget,
   type RecordRef,
   type Tab,
@@ -225,6 +226,16 @@ export const selectPresetEdit = (
  * override (`setSchemaJson`) counts too, independently of `schema.status`. */
 export const selectSchemaReady = (s: AppState): boolean =>
   s.schema.json !== undefined;
+
+/** The rating vocabulary the "Rate track" submenu lists, in `value` order — a
+ * reference already in state, safe to subscribe to directly. Empty until
+ * `loadRatings` has landed (and after a load that failed). */
+export const selectRatings = (s: AppState): readonly Rating[] => s.ratings.data;
+
+/** Whether the rating vocabulary is still on its way — what the submenu shows a
+ * note instead of rows for. */
+export const selectRatingsLoading = (s: AppState): boolean =>
+  s.ratings.status === "loading";
 
 /** Whether presets have loaded (compiles can proceed without spuriously
  * throwing "this query references a preset that no longer exists"). */

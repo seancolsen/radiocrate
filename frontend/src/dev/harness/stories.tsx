@@ -1,5 +1,10 @@
 import type { JSX } from "react";
-import type { CurrentTrack, PlaybackState, RecordRef } from "../../stores/app";
+import type {
+  CurrentTrack,
+  PlaybackState,
+  Rating,
+  RecordRef,
+} from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
 import { SETTINGS } from "../../state/settings";
 import {
@@ -134,6 +139,43 @@ const trackRecord = (n: number): RecordRef => ({
   table: "track",
   key: [{ column: "id", value: `track-${n}` }],
 });
+
+/** The rating vocabulary the "Rate track" submenu lists — migration 0003's
+ * seeded ratings, which is what a real database answers the ratings query with.
+ * Canned rather than loaded: the menu body takes its rows as a prop, so the
+ * story needs no store and no stand-in backend. */
+const RATINGS_FIXTURE: readonly Rating[] = [
+  { id: "rating-1", value: "1", symbol: "🗑️", description: "Skip" },
+  { id: "rating-2", value: "2", symbol: "👍", description: "Like" },
+  { id: "rating-3", value: "3", symbol: "⭐", description: "Prefer" },
+  { id: "rating-4", value: "4", symbol: "❤️", description: "Love" },
+];
+
+/** A row context-menu story: the menu raised on a row carrying a track and its
+ * album, with `ratings` in its "Rate track" submenu. */
+function rowActionsMenu(
+  ratings: readonly Rating[],
+  ratingsLoading = false,
+): Story {
+  return {
+    render: () => (
+      <ContextMenu x={8} y={8} onClose={() => {}}>
+        <RowActionsMenu
+          records={[
+            trackRecord(1),
+            { table: "album", key: [{ column: "id", value: "album-1" }] },
+          ]}
+          onEdit={() => {}}
+          onShowTracks={() => {}}
+          ratings={ratings}
+          ratingsLoading={ratingsLoading}
+          onRate={() => {}}
+          onSelectMultiple={() => {}}
+        />
+      </ContextMenu>
+    ),
+  };
+}
 
 /** A record-editor story: the panel alone, on the tracks `ns` names, over the
  * canned schema and record data (`recordFixture.ts`) that stand in for a
@@ -536,21 +578,13 @@ export const STORIES: Record<string, Story> = {
   },
   // A row's context menu: one entry per table whose primary key the row
   // carries, over the entry that turns multi-select mode on.
-  "result-row/context-menu": {
-    render: () => (
-      <ContextMenu x={8} y={8} onClose={() => {}}>
-        <RowActionsMenu
-          records={[
-            trackRecord(1),
-            { table: "album", key: [{ column: "id", value: "album-1" }] },
-          ]}
-          onEdit={() => {}}
-          onShowTracks={() => {}}
-          onSelectMultiple={() => {}}
-        />
-      </ContextMenu>
-    ),
-  },
+  "result-row/context-menu": rowActionsMenu(RATINGS_FIXTURE),
+  // Its "Rate track" submenu, opened out (the test does the opening): one entry
+  // per record of the `rating` table, lowest value first.
+  "result-row/rate-submenu": rowActionsMenu(RATINGS_FIXTURE),
+  // The same submenu before its query has come back — what a menu raised in the
+  // first moments of a session shows.
+  "result-row/rate-submenu-loading": rowActionsMenu([], true),
 
   // ── The record editor ────────────────────────────────────────────────────
   // As the form lands: every field of `track`, values and counts loaded,

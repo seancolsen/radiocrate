@@ -180,12 +180,15 @@ for (const colorScheme of SCHEMES) {
     await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
       "Edit track",
       "Edit album",
+      "Show album tracks",
+      "Rate track",
     ]);
   });
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
-  // the row carries, "Show album tracks" for an album, then "Select multiple". Shot through the menu (it portals
-  // out of the stage).
+  // the row carries, "Show album tracks" for an album, "Rate track" for a
+  // track, then "Select multiple". Shot through the menu (it portals out of the
+  // stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
     const menu = page.getByRole("menu");
@@ -193,10 +196,46 @@ for (const colorScheme of SCHEMES) {
       "Edit track",
       "Edit album",
       "Show album tracks",
+      "Rate track",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
       snapshot("result-row/context-menu", colorScheme),
+    );
+  });
+
+  // The "Rate track" submenu opened out: one entry per rating, lowest value
+  // first, each reading value, symbol and description. Shot through the nested
+  // panel — it sits beside the menu that holds it, outside its box.
+  test(`result-row/rate-submenu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/rate-submenu", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Rate track" }).click();
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Edit track",
+      "Edit album",
+      "Show album tracks",
+      "Rate track",
+      "1: 🗑️ (Skip)",
+      "2: 👍 (Like)",
+      "3: ⭐ (Prefer)",
+      "4: ❤️ (Love)",
+      "Select multiple",
+    ]);
+    await expect(menu.getByRole("menu")).toHaveScreenshot(
+      snapshot("result-row/rate-submenu", colorScheme),
+    );
+  });
+
+  // The same submenu with the rating query still in flight: the note that
+  // stands in for rows that aren't there yet.
+  test(`result-row/rate-submenu-loading - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/rate-submenu-loading", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Rate track" }).click();
+    await expect(menu.getByText("Loading…")).toBeVisible();
+    await expect(menu.getByRole("menu")).toHaveScreenshot(
+      snapshot("result-row/rate-submenu-loading", colorScheme),
     );
   });
 }

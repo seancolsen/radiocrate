@@ -90,3 +90,25 @@ export function playInsert(trackId: string): DmlOperation {
     values: { track: trackId, timestamp: nowTimestamp() },
   };
 }
+
+/** The DML operations giving every track in `keys` the rating `ratingId` — the
+ * results row menu's "Rate track", which acts on the whole row selection.
+ *
+ * Built rather than sent, for the same reason {@link playInsert} is: the store
+ * runs them against the result rows those tracks sit on, so the rows show the
+ * new rating (and anything the query derives from it) as soon as the write
+ * lands. One operation per track, each with an id of its own — `DmlResult` is
+ * keyed by operation id, so two operations sharing one would collide.
+ */
+export function ratingUpdates(
+  keys: readonly (readonly { column: string; value: string }[])[],
+  ratingId: string,
+): DmlOperation[] {
+  return keys.map((key, index) => ({
+    id: `rating${index + 1}`,
+    operation: "update",
+    table: "track",
+    where: Object.fromEntries(key.map((part) => [part.column, part.value])),
+    values: { rating: ratingId },
+  }));
+}

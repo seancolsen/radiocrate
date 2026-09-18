@@ -19,7 +19,7 @@ import {
   type Preset,
 } from "api-client";
 import { runSql, runSqlScalar } from "../../api/query";
-import { fetchTrackMetadata, playInsert } from "../../api/track";
+import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
 import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
 import {
   addInferredLinks,
@@ -42,6 +42,7 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import { querydownReady } from "../../query/querydown";
+import { fetchRatings } from "../../query/ratings";
 import { childRecordsTabQuery, embedSpec } from "../../query/embeddedRecord";
 import { buildFormFields, type RecordQuery } from "../../query/recordForm";
 import {
@@ -147,6 +148,13 @@ export interface AppActions {
   loadSettings: () => Promise<void>;
   /** Re-runs `loadQueries` and `loadPresets` — the Explorer's manual refresh. */
   refetchQueries: () => void;
+
+  /** Loads the rating vocabulary (the whole `rating` table), unless it's
+   * already loaded or in flight. Not a boot load: it compiles a Querydown
+   * query, so it needs the schema, and it's wanted only once a menu offering
+   * ratings is raised — which is where it's called from. A load that couldn't
+   * run (no schema yet) or that failed leaves the next raise to try again. */
+  loadRatings: () => void;
 
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
@@ -259,6 +267,16 @@ export interface AppActions {
     records: readonly RecordRef[],
     operations: DmlOperation[],
   ) => Promise<DmlResult>;
+  /** Gives every track in `records` the rating `ratingId` — the results row
+   * menu's "Rate track", over the whole row selection. One `track.rating`
+   * update per record, run in the context of the rows those records sit on, so
+   * each row shows its new rating as soon as the write lands. A failure is
+   * reported and swallowed: the menu is already gone by then. */
+  rateTracks: (
+    tabId: string,
+    records: readonly RecordRef[],
+    ratingId: string,
+  ) => void;
   /** Set the record-editor sidebar's width while dragging the resize handle;
    * clamped, not persisted. */
   setRecordSidebarWidth: (px: number) => void;
@@ -461,6 +479,12 @@ export function createAppActions(
       }, RUN_DEBOUNCE_MS),
     );
   };
+
+  // Whether a rating-vocabulary load is in flight, so raising the menu twice
+  // before the first answer lands doesn't run the query twice. Non-reactive:
+  // `ratings.status` is what renders, and it can't tell "in flight" from
+  // "hasn't started".
+  let ratingsLoading = false;
 
   let rowPatchSeq = 0;
   let revealSeq = 0;
@@ -1095,6 +1119,32 @@ export function createAppActions(
         });
       }
     },
+    loadRatings: () => {
+      // Loaded once and kept: the table is a fixed vocabulary, not a query
+      // result. "In flight" is indistinguishable from "hasn't started" in a
+      // `ResourceStatus`, so the guard is a local flag — and it's cleared on a
+      // failure, leaving the next raise of the menu free to try again.
+      const s = get();
+      if (ratingsLoading || s.ratings.status === "ready") return;
+      const schemaJson = s.schema.json;
+      if (schemaJson === undefined) return;
+      ratingsLoading = true;
+      void fetchRatings(schemaJson)
+        .then((data) => {
+          set((draft) => {
+            draft.ratings = { status: "ready", data: castDraft(data) };
+          });
+        })
+        .catch((err) => {
+          console.error("rating list failed", err);
+          set((draft) => {
+            draft.ratings.status = "error";
+          });
+        })
+        .finally(() => {
+          ratingsLoading = false;
+        });
+    },
     loadSettings: async () => {
       try {
         const list = await settingList();
@@ -1330,6 +1380,25 @@ export function createAppActions(
         operations,
         [...indexes].map((index) => ({ tabId, index })),
       );
+    },
+    rateTracks: (tabId, records, ratingId) => {
+      // A row can carry the same track twice (a query joining a track to
+      // itself), and a record with no key names nothing to update.
+      const targets: RecordRef[] = [];
+      for (const record of records) {
+        if (record.key.length === 0) continue;
+        if (!targets.some((seen) => sameRecord(seen, record))) {
+          targets.push(record);
+        }
+      }
+      if (targets.length === 0) return;
+      const operations = ratingUpdates(
+        targets.map((record) => record.key),
+        ratingId,
+      );
+      void actions
+        .runRecordDml(tabId, targets, operations)
+        .catch((err) => console.error("rating update failed", err));
     },
     setRecordSidebarWidth: (px) =>
       set((s) => {

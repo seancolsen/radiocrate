@@ -2,6 +2,7 @@ import type { DmlOperation, DmlResult, Preset, Query } from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
+import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
 import type { SchemaTable } from "../../query/schema";
 import type { SettingKey, SettingOverrides } from "../../state/settings";
@@ -298,6 +299,12 @@ export interface AppState {
   playback: PlaybackState;
   /** The saved-query list (loads via `query.list`; `refetchQueries` reloads). */
   queries: ResourceState<readonly Query[]>;
+  /** The rating vocabulary the results row menu offers (the whole `rating`
+   * table, lowest value first). Loaded on demand — the first time a menu that
+   * offers it is raised — rather than at boot: it needs the schema the
+   * Querydown query compiles against, and a session that never rates anything
+   * never asks for it. */
+  ratings: ResourceState<readonly Rating[]>;
   /** The enriched introspection schema (loads via one `runSqlScalar`). */
   schema: SchemaState;
   /** The user-customized settings, loaded once via `setting.list`. A missing
@@ -367,6 +374,7 @@ export function initialState(env: AppEnv): AppState {
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
     queries: { status: "loading", data: [] },
+    ratings: { status: "loading", data: [] },
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
     audioQuality: storedAudioQuality(env),
@@ -380,3 +388,6 @@ export function initialState(env: AppEnv): AppState {
 // Re-exported so `stores/app/actions.ts` and its tests don't have to reach into
 // `api-client` themselves just to name these DML types.
 export type { DmlOperation, DmlResult, Preset, Query };
+// …and so the menu surfaces can name a rating through the store, as they name
+// every other thing they render.
+export type { Rating };

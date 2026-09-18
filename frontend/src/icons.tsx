@@ -42,6 +42,7 @@ import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
 import SelectMultiple from "~icons/material-symbols/select-check-box";
+import Rate from "~icons/material-symbols/star";
 import OpenInTab from "~icons/material-symbols/open-in-new";
 import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
@@ -101,6 +102,7 @@ export const Icons = {
   Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)
   SelectMultiple, // results row menu: enter multi-select mode
+  Rate, // results row menu: the "Rate track" submenu
   OpenInTab, // record editor: open a multi-record field's records as a query tab
   Play, // now-playing bar: resume
   Pause, // now-playing bar: pause

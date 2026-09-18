@@ -3,16 +3,23 @@ import { createAppStore, type AppStoreBundle } from "./index";
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
 
-// `settingSet`/`settingDelete` are the only api-client calls the tests below
-// exercise directly; every other export is used as-is (its return value is
-// never awaited by the assertions here).
+// `settingSet`/`settingDelete`/`dml` are the only api-client calls the tests
+// below exercise directly; every other export is used as-is (its return value
+// is never awaited by the assertions here).
 vi.mock("api-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("api-client")>();
   return {
     ...actual,
     settingSet: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
+    dml: vi.fn(() => Promise.resolve({})),
   };
+});
+// The rating vocabulary's query, so `loadRatings` can be exercised without a
+// compiler or a backend.
+vi.mock("../../query/ratings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../query/ratings")>();
+  return { ...actual, fetchRatings: vi.fn() };
 });
 
 // The run pipeline (`querydownReady` → `compileSavedQuery` → `runSql` →
@@ -51,7 +58,8 @@ vi.mock("../../query/lineage", () => ({
   recordKeyColumns: vi.fn(() => []),
 }));
 
-import { settingDelete, settingSet } from "api-client";
+import { dml, settingDelete, settingSet } from "api-client";
+import { fetchRatings } from "../../query/ratings";
 import { compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
@@ -464,6 +472,106 @@ describe("showChildRecords", () => {
     const bundle = withSchema();
     bundle.actions.showChildRecords("a", "album", [album("x")], "credit");
     expect(bundle.store.getState().tabs).toHaveLength(1);
+  });
+});
+
+describe("loadRatings", () => {
+  const loaded = [
+    { id: "r1", value: "1", symbol: "🗑️", description: "Skip" },
+    { id: "r4", value: "4", symbol: "❤️", description: "Love" },
+  ];
+  const withSchema = () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson("{}");
+    return bundle;
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchRatings).mockReset();
+    vi.mocked(fetchRatings).mockResolvedValue(loaded);
+  });
+
+  it("loads the vocabulary once, however often the menu is raised", async () => {
+    const bundle = withSchema();
+    bundle.actions.loadRatings();
+    bundle.actions.loadRatings();
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().ratings).toEqual({
+        status: "ready",
+        data: loaded,
+      }),
+    );
+    bundle.actions.loadRatings();
+    expect(fetchRatings).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the schema the query compiles against", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.loadRatings();
+    expect(fetchRatings).not.toHaveBeenCalled();
+    expect(bundle.store.getState().ratings.status).toBe("loading");
+  });
+
+  it("lets the next raise retry after a failure", async () => {
+    vi.mocked(fetchRatings).mockRejectedValueOnce(new Error("nope"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bundle = withSchema();
+    bundle.actions.loadRatings();
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().ratings.status).toBe("error"),
+    );
+    bundle.actions.loadRatings();
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().ratings.status).toBe("ready"),
+    );
+    expect(fetchRatings).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("rateTracks", () => {
+  const track = (id: string) => ({
+    table: "track",
+    key: [{ column: "id", value: id }],
+  });
+
+  beforeEach(() => {
+    vi.mocked(dml).mockClear();
+  });
+
+  it("updates every selected track, each record once", async () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.rateTracks(
+      "a",
+      [track("t1"), track("t2"), track("t1")],
+      "r4",
+    );
+    await vi.waitFor(() => expect(dml).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(dml).mock.calls[0][0]).toEqual({
+      operations: [
+        {
+          id: "rating1",
+          operation: "update",
+          table: "track",
+          where: { id: "t1" },
+          values: { rating: "r4" },
+        },
+        {
+          id: "rating2",
+          operation: "update",
+          table: "track",
+          where: { id: "t2" },
+          values: { rating: "r4" },
+        },
+      ],
+    });
+  });
+
+  it("writes nothing for records that identify nothing", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.rateTracks("a", [{ table: "track", key: [] }], "r4");
+    expect(dml).not.toHaveBeenCalled();
   });
 });
 

@@ -133,6 +133,8 @@ test("the toolbar's actions menu acts on the whole selection", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Edit track",
     "Edit album",
+    "Show album tracks",
+    "Rate track",
   ]);
 
   await menu.getByRole("menuitem", { name: "Edit track" }).click();

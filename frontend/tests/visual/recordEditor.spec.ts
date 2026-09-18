@@ -110,6 +110,7 @@ test("a row's context menu offers one entry per table it identifies", async ({
     "Edit track",
     "Edit album",
     "Show album tracks",
+    "Rate track",
     "Select multiple",
   ]);
   // Right-clicking a row also selects it, so the menu's target is visible.
@@ -124,6 +125,52 @@ test("rows with no primary key offer only multi-select", async ({ page }) => {
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Select multiple",
   ]);
+});
+
+test("the row menu rates a track through its submenu", async ({ page }) => {
+  await openGrid(page);
+  // The DML the click sends, recorded on its way to `mockRpc`'s stand-in
+  // answer (a later route handler runs first, and `fallback` hands over).
+  const writes: unknown[] = [];
+  await page.route("**/api/rpc", async (route) => {
+    const body = route.request().postDataJSON() as {
+      method: string;
+      params: unknown;
+    };
+    if (body.method === "dml") writes.push(body.params);
+    await route.fallback();
+  });
+
+  await rightClickRow(page);
+  const menu = page.getByRole("menu").first();
+  await menu.getByRole("menuitem", { name: "Rate track" }).click();
+  // One entry per record of the `rating` table, lowest value first — the
+  // fixture's ratings carry no symbol or description, so each reads as its
+  // value alone.
+  await expect(menu.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "3.5",
+    "4",
+    "4.5",
+  ]);
+
+  await menu.getByRole("menuitem", { name: "4.5", exact: true }).click();
+  // Choosing a rating dismisses the whole stack, submenu and menu alike.
+  await expect(menu).toBeHidden();
+  await expect
+    .poll(() => writes)
+    .toEqual([
+      {
+        operations: [
+          {
+            id: "rating1",
+            operation: "update",
+            table: "track",
+            where: { id: "track-1" },
+            values: { rating: "rating-45" },
+          },
+        ],
+      },
+    ]);
 });
 
 test("choosing an entry opens the record editor on that record", async ({

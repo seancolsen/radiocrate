@@ -10,6 +10,8 @@ import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
   selectMultiSelect,
+  selectRatings,
+  selectRatingsLoading,
   selectRecordsForRows,
   selectResultCount,
   selectResultIsRefresh,
@@ -124,12 +126,19 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   const {
     clickRow,
     doubleClickRow,
+    loadRatings,
+    rateTracks,
     setMultiSelect,
     setRecordEditorRecords,
     showChildRecords,
     setResultsScroll,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
+  // The "Rate track" submenu's rows. Read here rather than in the menu body so
+  // that body stays a function of its props — the multi-select toolbar renders
+  // the same one.
+  const ratings = useApp(selectRatings);
+  const ratingsLoading = useApp(selectRatingsLoading);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -205,6 +214,10 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         // Nothing editable in the targeted rows leaves the menu with only
         // "Select multiple" — and nothing at all once that mode is already on.
         if (records.length === 0 && multiMode) return;
+        // The rating vocabulary is fetched the first time a menu that offers it
+        // is raised, which is here — an event handler, so no effect has to
+        // chase the menu's open state.
+        if (records.some((record) => record.table === "track")) loadRatings();
         setRowMenu({ x, y, rows, records });
       },
     });
@@ -319,7 +332,14 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       // and come back with the tab if the user switched away and back.
       setRowMenu(undefined);
     };
-  }, [props.tabId, stores, clickRow, doubleClickRow, setResultsScroll]);
+  }, [
+    props.tabId,
+    stores,
+    clickRow,
+    doubleClickRow,
+    loadRatings,
+    setResultsScroll,
+  ]);
 
   // The floating multi-select toolbar covers the first rows, so the grid gets
   // that much room to scroll up into — the toolbar's own height plus the
@@ -385,6 +405,20 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
                   "album",
                 ),
                 "track",
+              )
+            }
+            ratings={ratings}
+            ratingsLoading={ratingsLoading}
+            onRate={(ratingId) =>
+              rateTracks(
+                props.tabId,
+                selectTableRecordsForRows(
+                  stores.app.store.getState(),
+                  props.tabId,
+                  rowMenu.rows,
+                  "track",
+                ),
+                ratingId,
               )
             }
             onSelectMultiple={
