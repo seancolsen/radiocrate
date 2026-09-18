@@ -91,7 +91,7 @@ export default function RecordForm(props: {
      *
      * The context menu is the same exception `onPointerDown` makes for a click:
      * it's raised *on* the selection, is portaled outside `root`, and (per
-     * `ui/useMenuKeyboard`) grabs real focus for its own trap the moment it
+     * `ui/useMenu`) grabs real focus for its own trap the moment it
      * opens — which must not read as focus leaving the form. */
     const onFocusOut = (e: FocusEvent) => {
       const next = e.relatedTarget;

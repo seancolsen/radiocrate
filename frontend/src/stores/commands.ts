@@ -463,7 +463,7 @@ export function createCommandsStore(
    * stands down. The shortcuts editor's *tab* does not count — the app keeps
    * running behind it — but its chord capture does, so a chord typed at it
    * rebinds instead of firing. An open dropdown/context menu counts too: its
-   * own Up/Down/Enter handling (`ui/useMenuKeyboard`) must be the
+   * own Up/Down/Enter handling (`ui/useMenu`) must be the
    * only thing acting on those keys, not also a page command like row
    * selection underneath it. */
   const suppressed = (): boolean => {

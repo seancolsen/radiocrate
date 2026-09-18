@@ -2,7 +2,7 @@ import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 
 // The keyboard contract every dropdown/context menu shares
-// (`ui/useMenuKeyboard.ts`) registers itself here while it's open, so
+// (`ui/useMenu.ts`) registers itself here while it's open, so
 // the global shortcut pass (`stores/commands.ts`'s `suppressed`) can stand
 // down while a menu owns the keyboard — otherwise a bare Up/Down/Delete bound
 // to a page command (e.g. row selection) would fire *underneath* the menu at
@@ -28,7 +28,7 @@ function createMenusVanillaStore() {
 
 export type MenusVanillaStore = ReturnType<typeof createMenusVanillaStore>;
 
-/** Whether any menu using `useMenuKeyboard` is currently open — checked by the
+/** Whether any menu using `useMenuRoot` is currently open — checked by the
  * global shortcut pass so it stands down while a menu owns the keyboard. */
 export const selectAnyMenuOpen = (s: MenusState): boolean => s.open.size > 0;
 
@@ -62,7 +62,7 @@ function createMenusActions(store: MenusVanillaStore): MenusActions {
 }
 
 /** Builds the menu-open registry: a tiny vanilla store, so both the
- * `useMenuKeyboard` hook (React) and `stores/commands.ts` (plain) can use it
+ * `useMenuRoot` hook (React) and `stores/commands.ts` (plain) can use it
  * without either depending on the other. */
 export function createMenusStore(): {
   store: MenusVanillaStore;

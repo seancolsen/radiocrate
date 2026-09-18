@@ -41,7 +41,7 @@ import { CaptureDialog } from "../../components/ShortcutsPage";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ContextMenu } from "../../components/ui/ContextMenu";
-import { Menu } from "../../components/ui/Menu";
+import { Menu, MenuItem, MenuSubmenu } from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
 import SidebarLeft from "../../components/ui/SidebarLeft";
 
@@ -229,6 +229,31 @@ function Lorem(props: { heading: string; lines: number }): JSX.Element {
         </p>
       ))}
     </div>
+  );
+}
+
+/** A menu body with a submenu beside a plain row, a sibling submenu, and a
+ * submenu nested inside the first — the shapes the menu specs drive the
+ * pointer and the keyboard through. */
+function NestedMenuBody(): JSX.Element {
+  return (
+    <>
+      <MenuItem label="Alpha" />
+      <MenuSubmenu label="Colors">
+        <MenuItem label="Red" />
+        <MenuItem label="Green" />
+        <MenuItem label="Blue" />
+        <MenuSubmenu label="More">
+          <MenuItem label="Cyan" />
+          <MenuItem label="Magenta" />
+        </MenuSubmenu>
+      </MenuSubmenu>
+      <MenuSubmenu label="Sizes">
+        <MenuItem label="Small" />
+        <MenuItem label="Large" />
+      </MenuSubmenu>
+      <MenuItem label="Omega" />
+    </>
   );
 }
 
@@ -665,5 +690,46 @@ export const STORIES: Record<string, Story> = {
     // from it.
     frame: "flex p-2",
     render: () => <EmbeddedRecord cells={["Beyoncé"]} focusable selected />,
+  },
+
+  // ── Menus, on their own ──────────────────────────────────────────────────
+  // The menu system's behavior, with filler rows: `menu.spec.ts` drives these
+  // with the pointer and the keyboard rather than shooting them.
+  "menu/nested": {
+    width: 520,
+    height: 300,
+    frame: "p-4",
+    render: () => (
+      <Menu defaultOpen width="160px" trigger={() => null}>
+        <NestedMenuBody />
+      </Menu>
+    ),
+  },
+  // A context menu raised in the viewport's bottom-right corner, where the
+  // menu and every submenu have to pull back inside the edges.
+  "menu/context-corner": {
+    render: () => (
+      <ContextMenu x={1275} y={895} onClose={() => {}}>
+        <NestedMenuBody />
+      </ContextMenu>
+    ),
+  },
+  // A dropdown whose trigger sits in the bottom-right corner: it asks to drop
+  // below and left-aligned, and has room for neither.
+  "menu/dropdown-corner": {
+    render: () => (
+      <div className="fixed right-2 bottom-2">
+        <Menu
+          width="160px"
+          trigger={(api) => (
+            <button type="button" onClick={() => api.toggle()}>
+              Open
+            </button>
+          )}
+        >
+          <NestedMenuBody />
+        </Menu>
+      </div>
+    ),
   },
 };
