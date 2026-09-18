@@ -545,6 +545,7 @@ export const STORIES: Record<string, Story> = {
             { table: "album", key: [{ column: "id", value: "album-1" }] },
           ]}
           onEdit={() => {}}
+          onShowTracks={() => {}}
           onSelectMultiple={() => {}}
         />
       </ContextMenu>

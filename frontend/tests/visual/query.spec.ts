@@ -184,7 +184,7 @@ for (const colorScheme of SCHEMES) {
   });
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
-  // the row carries, then "Select multiple". Shot through the menu (it portals
+  // the row carries, "Show album tracks" for an album, then "Select multiple". Shot through the menu (it portals
   // out of the stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
@@ -192,6 +192,7 @@ for (const colorScheme of SCHEMES) {
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Edit track",
       "Edit album",
+      "Show album tracks",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(

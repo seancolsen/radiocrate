@@ -42,7 +42,8 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import { querydownReady } from "../../query/querydown";
-import type { RecordQuery } from "../../query/recordForm";
+import { childRecordsTabQuery, embedSpec } from "../../query/embeddedRecord";
+import { buildFormFields, type RecordQuery } from "../../query/recordForm";
 import {
   analyzeColumnSources,
   recordKeyColumns,
@@ -298,6 +299,17 @@ export interface AppActions {
    * preset when there is one, and `query`'s otherwise. The tab goes in to the
    * right of `besideTabId` and becomes the active one. */
   openRecordsTab: (besideTabId: string, query: RecordQuery) => void;
+  /** Open `childTable`'s records for `parents` (records of `parentTable`, as
+   * result rows identify them) in a new query tab beside `tabId` — what the
+   * record editor's "open in a new tab" does on the `childTable` field, without
+   * opening the editor. A no-op when the schema has no such field, or no parent
+   * has an `id` to point at. */
+  showChildRecords: (
+    tabId: string,
+    parentTable: string,
+    parents: readonly RecordRef[],
+    childTable: string,
+  ) => void;
 
   /** Begin renaming query `id`, seeding the buffer with its current name. */
   beginRename: (id: string) => void;
@@ -1428,6 +1440,28 @@ export function createAppActions(
       if (!("preset" in def.display)) def.display = { custom: query.display };
       const beside = get().tabs.findIndex((t) => t.id === besideTabId);
       openEphemeralTab(def, beside === -1 ? undefined : beside + 1);
+    },
+    showChildRecords: (tabId, parentTable, parents, childTable) => {
+      const { tables } = get().schema;
+      const field = buildFormFields(tables, parentTable).find(
+        (f) => f.kind === "multiRecord" && f.table === childTable,
+      );
+      if (field?.kind !== "multiRecord") return;
+      // What the children point back at is the parent's `id`, whatever its key.
+      const ids = new Set<string>();
+      for (const parent of parents) {
+        const id = parent.key.find((k) => k.column === "id")?.value;
+        if (id) ids.add(id);
+      }
+      if (ids.size === 0) return;
+      actions.openRecordsTab(
+        tabId,
+        childRecordsTabQuery(
+          field,
+          [...ids],
+          embedSpec(tables, field.table, field.column),
+        ),
+      );
     },
 
     // Only a query has a name of its own to rename; a settings tab's handle text

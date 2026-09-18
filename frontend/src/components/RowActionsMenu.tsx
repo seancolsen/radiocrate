@@ -5,7 +5,7 @@ import { MenuItem, MenuSeparator } from "./ui/Menu";
 
 /** A result row's context-menu body: one "Edit {table}" entry per table whose
  * primary key the row carries in full — a track row joined to its album offers
- * both — over the "Select multiple" entry that turns multi-select mode on.
+ * both — then "Show album tracks" when one of those is an album, over the "Select multiple" entry that turns multi-select mode on.
  *
  * The same body backs the multi-select toolbar's actions menu, which acts on
  * the whole selection; it passes no `onSelectMultiple`, because that mode is
@@ -15,6 +15,8 @@ import { MenuItem, MenuSeparator } from "./ui/Menu";
 export default function RowActionsMenu(props: {
   records: readonly RecordRef[];
   onEdit: (record: RecordRef) => void;
+  /** Opens the tracks of the album records in a new tab. */
+  onShowTracks: () => void;
   /** Omitted when multi-select mode is already on, which hides the entry. */
   onSelectMultiple?: () => void;
 }): JSX.Element {
@@ -28,6 +30,13 @@ export default function RowActionsMenu(props: {
           onClick={() => props.onEdit(record)}
         />
       ))}
+      {props.records.some((record) => record.table === "album") && (
+        <MenuItem
+          icon={Icons.Query}
+          label="Show album tracks"
+          onClick={props.onShowTracks}
+        />
+      )}
       {props.onSelectMultiple && (
         <>
           {props.records.length > 0 && <MenuSeparator />}

@@ -38,7 +38,8 @@ function selectionLabel(n: number): string {
 const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
   function MultiSelectToolbar(props, ref) {
     const stores = useStores();
-    const { setMultiSelect, setRecordEditorRecords } = useAppActions();
+    const { setMultiSelect, setRecordEditorRecords, showChildRecords } =
+      useAppActions();
     // Three references already in state, combined here rather than through a
     // selector that would build a fresh array on every store write (state
     // management rule 2).
@@ -85,6 +86,19 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
                   selection,
                   record.table,
                 ),
+              )
+            }
+            onShowTracks={() =>
+              showChildRecords(
+                props.tabId,
+                "album",
+                selectTableRecordsForRows(
+                  stores.app.store.getState(),
+                  props.tabId,
+                  selection,
+                  "album",
+                ),
+                "track",
               )
             }
           />

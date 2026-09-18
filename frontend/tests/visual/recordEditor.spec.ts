@@ -109,6 +109,7 @@ test("a row's context menu offers one entry per table it identifies", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Edit track",
     "Edit album",
+    "Show album tracks",
     "Select multiple",
   ]);
   // Right-clicking a row also selects it, so the menu's target is visible.

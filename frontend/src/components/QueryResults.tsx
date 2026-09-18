@@ -126,6 +126,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     doubleClickRow,
     setMultiSelect,
     setRecordEditorRecords,
+    showChildRecords,
     setResultsScroll,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
@@ -371,6 +372,19 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
                   rowMenu.rows,
                   record.table,
                 ),
+              )
+            }
+            onShowTracks={() =>
+              showChildRecords(
+                props.tabId,
+                "album",
+                selectTableRecordsForRows(
+                  stores.app.store.getState(),
+                  props.tabId,
+                  rowMenu.rows,
+                  "album",
+                ),
+                "track",
               )
             }
             onSelectMultiple={

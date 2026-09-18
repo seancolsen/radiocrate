@@ -408,6 +408,65 @@ describe("openRecordsTab", () => {
   });
 });
 
+describe("showChildRecords", () => {
+  const col = (name: string, type: string) => ({
+    name,
+    type,
+    nullable: false,
+  });
+  const album = (id: string) => ({
+    table: "album",
+    key: [{ column: "id", value: id }],
+  });
+
+  function withSchema() {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.store.setState((s) => {
+      s.schema.tables = [
+        {
+          name: "album",
+          columns: [col("id", "UUID"), col("title", "VARCHAR")],
+          uniqueConstraints: [["id"]],
+        },
+        {
+          name: "track",
+          columns: [
+            col("id", "UUID"),
+            col("album", "UUID"),
+            col("title", "VARCHAR"),
+          ],
+          uniqueConstraints: [["id"]],
+        },
+      ];
+    });
+    return bundle;
+  }
+
+  it("opens the albums' tracks in a tab beside the given one", () => {
+    const bundle = withSchema();
+    bundle.actions.showChildRecords(
+      "a",
+      "album",
+      [album("x"), album("y"), album("x")],
+      "track",
+    );
+    const s = bundle.store.getState();
+    const tab = s.tabs[1];
+    expect(s.activeTabId).toBe(tab.id);
+    expect(tab.kind === "query" && tab.live.base).toBe("track");
+    expect(tab.kind === "query" && tab.live.filter.custom).toBe(
+      `[\n  album:="x"\n  album:="y"\n]`,
+    );
+  });
+
+  it("does nothing when the schema has no such field", () => {
+    const bundle = withSchema();
+    bundle.actions.showChildRecords("a", "album", [album("x")], "credit");
+    expect(bundle.store.getState().tabs).toHaveLength(1);
+  });
+});
+
 describe("saveSetting", () => {
   it("stores a real customization with settingSet, and re-runs open query tabs", () => {
     const bundle = createAppStore(fakeEnv());
