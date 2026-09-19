@@ -176,7 +176,7 @@ describe("movePlacements", () => {
     ]);
   });
 
-  it("moves into a folder, at the end of its children", () => {
+  it("moves into a folder, as the first of its children", () => {
     const placements = movePlacements(
       tree,
       positions,
@@ -185,7 +185,7 @@ describe("movePlacements", () => {
     );
     const moved = applyPlacements(QUERIES, FOLDERS, placements);
     expect(shape(buildTree(moved.queries, moved.folders))).toEqual([
-      { F: ["q2", { G: ["q3", "q1"] }] },
+      { F: ["q2", { G: ["q1", "q3"] }] },
       "q4",
     ]);
   });
@@ -257,8 +257,11 @@ describe("dissolvePlacements", () => {
 });
 
 describe("topPosition", () => {
-  it("sits above the first top-level item", () => {
-    expect(topPosition(QUERIES, FOLDERS)).toBe(-1);
-    expect(topPosition([], [])).toBe(0);
+  it("sits above the first item of the folder asked for", () => {
+    expect(topPosition(QUERIES, FOLDERS, null)).toBe(-1);
+    expect(topPosition(QUERIES, FOLDERS, "F")).toBe(-1);
+    expect(topPosition(QUERIES, FOLDERS, "G")).toBe(-1);
+    expect(topPosition([], [], null)).toBe(0);
+    expect(topPosition(QUERIES, FOLDERS, "empty")).toBe(0);
   });
 });

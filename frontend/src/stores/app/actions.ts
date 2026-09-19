@@ -192,20 +192,24 @@ export interface AppActions {
   toggleQueryFilter: () => void;
   /** Show or hide explorer folder `id`'s contents. */
   toggleFolderExpanded: (id: string) => void;
-  /** Create a folder at the top of the Queries tree and start renaming it. */
+  /** Create a folder at the top of the Queries tree (expanded, being empty)
+   * and start renaming it. */
   newFolder: () => void;
-  /** Start editing folder `id`'s name in place. */
-  beginFolderRename: (id: string) => void;
-  /** Finish the in-place folder rename with `name` (`folder.rename`); a blank
-   * or unchanged name just ends it. */
-  commitFolderRename: (id: string, name: string) => void;
-  cancelFolderRename: () => void;
+  /** Create and save a new query at the top of folder `parent` (null: the top
+   * level of the tree), and open it in a tab. */
+  addQuery: (parent: string | null) => void;
+  /** Start editing an explorer item's name in place. */
+  beginTreeRename: (item: TreeItemRef) => void;
+  /** Finish the in-place rename with `name` (`folder.rename` or
+   * `query.rename`, which an open tab of the query follows); a blank or
+   * unchanged name just ends it. */
+  commitTreeRename: (item: TreeItemRef, name: string) => void;
+  cancelTreeRename: () => void;
   /** Delete folder `id`, moving its contents out into its place. */
   deleteFolder: (id: string) => void;
-  /** Move an explorer-tree item to `target` (a drag-and-drop's drop). */
-  moveTreeItem: (item: TreeItemRef, target: DropTarget) => void;
-  toggleOpenedCollapsed: () => void;
-  toggleQueriesCollapsed: () => void;
+  /** Move an explorer-tree item to `target` (a drag-and-drop's drop). Returns
+   * whether anything moved. Dropping into an empty folder expands it. */
+  moveTreeItem: (item: TreeItemRef, target: DropTarget) => boolean;
   /** Install an introspection document directly (dev/test seam — lets the
    * harness render schema-driven UI, the record editor above all, without a
    * backend). Takes the *enriched* JSON, as `schema.json` holds. */
@@ -1096,6 +1100,11 @@ export function createAppActions(
     }
   };
 
+  /** Shows folder `id`'s contents, if they aren't already. */
+  const expandFolder = (id: string) => {
+    if (!get().expandedFolders.has(id)) actions.toggleFolderExpanded(id);
+  };
+
   /** Moves tree items in the loaded lists ahead of the backend's copy — the
    * optimistic half of `query.arrange`. */
   const applyPlacementsLocally = (placements: readonly Placement[]) => {
@@ -1296,43 +1305,91 @@ export function createAppActions(
         id: newUuid(),
         name: "New folder",
         parent: null,
-        position: topPosition(s0.queries.data, s0.folders.data),
+        position: topPosition(s0.queries.data, s0.folders.data, null),
       };
-      // Inserted optimistically, and put where it can be seen: a filter or a
-      // collapsed section would hide the name about to be edited.
+      // Inserted optimistically, and put where it can be seen: a filter would
+      // hide the name about to be edited.
       set((s) => {
         s.folders.data = [folder, ...s.folders.data];
-        s.queriesCollapsed = false;
         s.queryFilterOpen = false;
         s.queryFilter = "";
-        s.renamingFolder = folder.id;
+        s.renamingTreeItem = { kind: "folder", id: folder.id };
       });
+      expandFolder(folder.id);
       void folderAdd(folder).catch((err) => {
         console.error("folder add failed", err);
         void actions.loadQueries();
       });
     },
-    beginFolderRename: (id) =>
+    addQuery: (parent) => {
+      const s0 = get();
+      const definition = definitionToStored(
+        definitionForBase("track", selectEffectivePresets(s0)),
+      );
+      const now = nowEpoch();
+      const query = {
+        id: newUuid(),
+        name: nowName(),
+        createdAt: now,
+        modifiedAt: now,
+        lastPlay: now,
+        definition,
+        parent,
+        position: topPosition(s0.queries.data, s0.folders.data, parent),
+      };
       set((s) => {
-        s.renamingFolder = id;
+        s.queries.data = [query, ...s.queries.data];
+      });
+      if (parent !== null) expandFolder(parent);
+      void queryAdd(query).catch((err) => {
+        console.error("query add failed", err);
+        void actions.loadQueries();
+      });
+      actions.openTab(query);
+    },
+    beginTreeRename: (item) =>
+      set((s) => {
+        s.renamingTreeItem = item;
       }),
-    commitFolderRename: (id, name) => {
+    commitTreeRename: (item, name) => {
       const trimmed = name.trim();
-      const current = get().folders.data.find((f) => f.id === id);
+      const list =
+        item.kind === "folder" ? get().folders.data : get().queries.data;
+      const current = list.find((x) => x.id === item.id);
       set((s) => {
-        if (s.renamingFolder === id) s.renamingFolder = null;
-        const f = s.folders.data.find((x) => x.id === id);
-        if (f && trimmed !== "") f.name = trimmed;
+        if (
+          s.renamingTreeItem?.kind === item.kind &&
+          s.renamingTreeItem.id === item.id
+        ) {
+          s.renamingTreeItem = null;
+        }
       });
       if (!current || trimmed === "" || trimmed === current.name) return;
-      void folderRename({ id, name: trimmed }).catch((err) => {
-        console.error("folder rename failed", err);
+      set((s) => {
+        const entry =
+          item.kind === "folder"
+            ? s.folders.data.find((x) => x.id === item.id)
+            : s.queries.data.find((x) => x.id === item.id);
+        if (entry) entry.name = trimmed;
+      });
+      const renamed =
+        item.kind === "folder"
+          ? folderRename({ id: item.id, name: trimmed })
+          : queryRename({ id: item.id, name: trimmed });
+      // An open tab of the query goes by its name too.
+      if (item.kind === "query") {
+        editQueryTab(item.id, (t) => {
+          t.name = trimmed;
+        });
+      }
+      void renamed.catch((err) => {
+        console.error(`${item.kind} rename failed`, err);
         void actions.loadQueries();
       });
     },
-    cancelFolderRename: () =>
+    cancelTreeRename: () =>
       set((s) => {
-        s.renamingFolder = null;
+        s.renamingTreeItem = null;
       }),
     deleteFolder: (id) => {
       const { queries, folders } = get();
@@ -1364,21 +1421,21 @@ export function createAppActions(
         item,
         target,
       );
-      if (placements.length === 0) return;
+      if (placements.length === 0) return false;
+      // Dropped into a folder that had nothing to show: open it, so the item
+      // doesn't vanish from sight.
+      const emptyFolder =
+        target.kind === "into" &&
+        !queries.data.some((q) => q.parent === target.folder) &&
+        !folders.data.some((f) => f.parent === target.folder);
       applyPlacementsLocally(placements);
+      if (emptyFolder) expandFolder(target.folder);
       void queryArrange({ placements }).catch((err) => {
         console.error("query arrange failed", err);
         void actions.loadQueries();
       });
+      return true;
     },
-    toggleOpenedCollapsed: () =>
-      set((s) => {
-        s.openedCollapsed = !s.openedCollapsed;
-      }),
-    toggleQueriesCollapsed: () =>
-      set((s) => {
-        s.queriesCollapsed = !s.queriesCollapsed;
-      }),
     setSchemaJson: (json) =>
       set((s) => {
         s.schema = { status: "ready", json, tables: parseSchemaTables(json) };
@@ -1623,7 +1680,7 @@ export function createAppActions(
           lastPlay: now,
           definition,
           parent: null,
-          position: topPosition(queries.data, folders.data),
+          position: topPosition(queries.data, folders.data, null),
         }).catch((err) => console.error("query save failed", err));
       }
       editQueryTab(tabId, (x) => {
@@ -1633,13 +1690,19 @@ export function createAppActions(
       void actions.loadQueries();
     },
     duplicateQuery: (id) => {
-      const source = selectQueryTab(get(), id);
-      if (!source) return;
       // Open a new *ephemeral* (unsaved) tab copied from the source's working
       // copy — carrying any unsaved edits. Nothing is written to the backend
       // until the user saves it; the tab reads
       // as unsaved (its ✱ shows) meanwhile, and it stays out of the Queries list.
-      openEphemeralTab(cloneDefinition(source.live));
+      // A query that isn't open (duplicated from the explorer) is copied as
+      // saved.
+      const source = selectQueryTab(get(), id);
+      if (source) {
+        openEphemeralTab(cloneDefinition(source.live));
+        return;
+      }
+      const saved = get().queries.data.find((q) => q.id === id);
+      if (saved) openEphemeralTab(definitionFromStored(saved.definition));
     },
     newQueryTab: () => {
       openEphemeralTab(
@@ -1716,26 +1779,35 @@ export function createAppActions(
       }),
 
     requestDelete: (id) => {
-      const t = selectQueryTab(get(), id);
-      if (!t) return;
+      // The query may be open in a tab, or only listed in the explorer.
+      const name =
+        selectQueryTab(get(), id)?.name ??
+        get().queries.data.find((q) => q.id === id)?.name;
+      if (name === undefined) return;
       const unsaved = selectIsUnsaved(get(), id);
       set((s) => {
-        s.pendingDelete = { id, name: t.name, unsaved };
+        s.pendingDelete = { id, name, unsaved };
       });
     },
     confirmDelete: () => {
       const pending = get().pendingDelete;
       if (!pending) return;
-      const persisted = selectQueryTab(get(), pending.id)?.persisted ?? false;
+      const persisted =
+        selectQueryTab(get(), pending.id)?.persisted ??
+        get().queries.data.some((q) => q.id === pending.id);
       set((s) => {
         s.pendingDelete = null;
+        s.queries.data = s.queries.data.filter((q) => q.id !== pending.id);
       });
       // An ephemeral (never-saved) query has no backend record to delete — just
       // drop its tab.
       if (persisted) {
-        void queryDelete({ id: pending.id })
-          .then(() => actions.loadQueries())
-          .catch((err) => console.error("query delete failed", err));
+        // Already gone from the list (above); only a failure needs the
+        // backend's copy back.
+        void queryDelete({ id: pending.id }).catch((err) => {
+          console.error("query delete failed", err);
+          void actions.loadQueries();
+        });
       }
       closeTab(pending.id);
     },

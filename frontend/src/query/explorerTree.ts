@@ -29,8 +29,8 @@ export interface TreeRow {
   expanded: boolean;
 }
 
-/** Where a drag over the rows would put the dragged item: *into* a folder (at
- * the end of its children), or *between* two rows at a given nesting `depth` —
+/** Where a drag over the rows would put the dragged item: *into* a folder (as
+ * the first of its children), or *between* two rows at a given nesting `depth` —
  * into `parent`, just after its child `after` (null: first). `gap` is the index
  * of the row the line is drawn above (`rows.length`: below the last). */
 export type DropTarget =
@@ -321,9 +321,7 @@ export function movePlacements(
   const source = childrenOf(tree, from).filter((n) => !same(n, item));
   const dest = from === to ? source : [...childrenOf(tree, to)];
   let index: number;
-  if (target.kind === "into") {
-    index = dest.length;
-  } else if (target.after === null) {
+  if (target.kind === "into" || target.after === null) {
     index = 0;
   } else {
     const after = dest.findIndex((n) => n.id === target.after);
@@ -360,17 +358,20 @@ export function dissolvePlacements(
   return renumber(next, parent, positions, new Set(node.children.map(keyOf)));
 }
 
-/** The position that puts a new item first at the top level: one above the
- * current first item. */
+/** The position that puts a new item first in folder `parent` (null: the top
+ * level): one above its current first item. */
 export function topPosition(
   queries: readonly Query[],
   folders: readonly QueryFolder[],
+  parent: string | null,
 ): number {
   const folderIds = new Set(folders.map((f) => f.id));
-  const atTop = (p: string | null) => p === null || !folderIds.has(p);
+  // An item whose parent is gone sits at the top level (see `buildTree`).
+  const inParent = (p: string | null) =>
+    parent === null ? p === null || !folderIds.has(p) : p === parent;
   const positions = [
-    ...queries.filter((q) => atTop(q.parent)).map((q) => q.position),
-    ...folders.filter((f) => atTop(f.parent)).map((f) => f.position),
+    ...queries.filter((q) => inParent(q.parent)).map((q) => q.position),
+    ...folders.filter((f) => inParent(f.parent)).map((f) => f.position),
   ];
   return positions.length === 0 ? 0 : Math.min(...positions) - 1;
 }

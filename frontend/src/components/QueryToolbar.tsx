@@ -18,7 +18,6 @@ import SectionOptionsMenu from "./builder/SectionOptionsMenu";
 import QueryBuilder from "./builder/QueryBuilder";
 import PresetSaveModal from "./PresetSaveModal";
 import ViewSqlModal from "./ViewSqlModal";
-import DeleteConfirmModal from "./DeleteConfirmModal";
 import { cx } from "./ui/cx";
 import { useElementWidth } from "./ui/useElementWidth";
 
@@ -136,7 +135,6 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
 
       <PresetSaveModal tabId={props.tabId} />
       <ViewSqlModal />
-      <DeleteConfirmModal />
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { emptyDefinition, type QueryDefinition } from "../../query/definition";
 import { AboutDialog } from "../../components/AboutModal";
 import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
+import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
 import PageActionsMenu from "../../components/PageActionsMenu";
@@ -328,13 +329,20 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <Explorer />,
   },
-  // The saved queries arranged in folders, one open and two closed.
+  // The saved queries arranged in folders, one open and two closed. The
+  // delete confirmation (an app-wide dialog) comes along for the explorer's
+  // own "Delete", and draws nothing until it's raised.
   "explorer/tree": {
     width: 220,
     height: 360,
     frame: "flex flex-col",
     setup: arrangeQueryTree,
-    render: () => <Explorer />,
+    render: () => (
+      <>
+        <Explorer />
+        <DeleteConfirmModal />
+      </>
+    ),
   },
   // A filter that matches one query deep inside a closed folder: the folders
   // above it open to show it, and nothing else shows.
@@ -356,7 +364,7 @@ export const STORIES: Record<string, Story> = {
     frame: "flex flex-col",
     setup: (stores) => {
       arrangeQueryTree(stores);
-      stores.app.actions.beginFolderRename(ROAD_TRIP);
+      stores.app.actions.beginTreeRename({ kind: "folder", id: ROAD_TRIP });
     },
     render: () => <Explorer />,
   },

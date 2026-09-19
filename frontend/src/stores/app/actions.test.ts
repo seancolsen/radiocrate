@@ -17,6 +17,9 @@ vi.mock("api-client", async (importOriginal) => {
     folderDelete: vi.fn(() => Promise.resolve(null)),
     folderRename: vi.fn(() => Promise.resolve(null)),
     queryArrange: vi.fn(() => Promise.resolve(null)),
+    queryAdd: vi.fn(() => Promise.resolve(null)),
+    queryRename: vi.fn(() => Promise.resolve(null)),
+    queryDelete: vi.fn(() => Promise.resolve(null)),
   };
 });
 // The rating vocabulary's query, so `loadRatings` can be exercised without a
@@ -67,7 +70,10 @@ import {
   folderAdd,
   folderDelete,
   folderRename,
+  queryAdd,
   queryArrange,
+  queryDelete,
+  queryRename,
   settingDelete,
   settingSet,
   type Query,
@@ -798,7 +804,7 @@ describe("the query tree", () => {
     });
   });
 
-  it("adds a new folder at the top and starts renaming it", () => {
+  it("adds a new folder at the top, expanded, and starts renaming it", () => {
     bundle.actions.toggleQueryFilter();
     bundle.actions.setQueryFilter("zzz");
     bundle.actions.newFolder();
@@ -806,14 +812,18 @@ describe("the query tree", () => {
     const [folder] = s.folders.data;
     expect(folder.position).toBe(-1);
     expect(folder.parent).toBeNull();
-    expect(s.renamingFolder).toBe(folder.id);
+    expect(s.renamingTreeItem).toEqual({ kind: "folder", id: folder.id });
+    expect(s.expandedFolders.has(folder.id)).toBe(true);
     // …where it can be seen.
     expect(s.queryFilter).toBe("");
     expect(vi.mocked(folderAdd)).toHaveBeenCalledWith(folder);
 
-    bundle.actions.commitFolderRename(folder.id, "  Mixes ");
+    bundle.actions.commitTreeRename(
+      { kind: "folder", id: folder.id },
+      "  Mixes ",
+    );
     expect(bundle.store.getState().folders.data[0].name).toBe("Mixes");
-    expect(bundle.store.getState().renamingFolder).toBeNull();
+    expect(bundle.store.getState().renamingTreeItem).toBeNull();
     expect(vi.mocked(folderRename)).toHaveBeenCalledWith({
       id: folder.id,
       name: "Mixes",
@@ -860,6 +870,79 @@ describe("the query tree", () => {
     await vi.waitFor(() =>
       expect(vi.mocked(folderDelete)).toHaveBeenCalledWith({ id: folder }),
     );
+  });
+
+  it("expands an empty folder that something is dropped into", () => {
+    bundle.actions.newFolder();
+    const folder = bundle.store.getState().folders.data[0].id;
+    bundle.actions.toggleFolderExpanded(folder); // collapse it
+    expect(
+      bundle.actions.moveTreeItem(
+        { kind: "query", id: "a" },
+        { kind: "into", folder },
+      ),
+    ).toBe(true);
+    expect(bundle.store.getState().expandedFolders.has(folder)).toBe(true);
+
+    // A drop that moves nothing says so.
+    expect(
+      bundle.actions.moveTreeItem(
+        { kind: "query", id: "a" },
+        { kind: "into", folder },
+      ),
+    ).toBe(false);
+  });
+
+  it("adds a saved query at the top of a folder and opens it", () => {
+    bundle.actions.newFolder();
+    const folder = bundle.store.getState().folders.data[0].id;
+    bundle.actions.moveTreeItem(
+      { kind: "query", id: "a" },
+      { kind: "into", folder },
+    );
+    bundle.actions.toggleFolderExpanded(folder); // collapse it
+    bundle.actions.addQuery(folder);
+    const s = bundle.store.getState();
+    const added = s.queries.data[0];
+    expect(added).toMatchObject({ parent: folder, position: -1 });
+    expect(vi.mocked(queryAdd)).toHaveBeenCalledWith(added);
+    expect(s.activeTabId).toBe(added.id);
+    expect(s.tabs.find((t) => t.id === added.id)).toMatchObject({
+      persisted: true,
+    });
+    expect(s.expandedFolders.has(folder)).toBe(true);
+  });
+
+  it("renames a query in place, and the tab that has it open", () => {
+    openQueryTab(bundle, "a");
+    bundle.actions.beginTreeRename({ kind: "query", id: "a" });
+    bundle.actions.commitTreeRename({ kind: "query", id: "a" }, "Renamed");
+    const s = bundle.store.getState();
+    expect(s.queries.data.find((q) => q.id === "a")?.name).toBe("Renamed");
+    expect(s.tabs.find((t) => t.id === "a")?.name).toBe("Renamed");
+    expect(vi.mocked(queryRename)).toHaveBeenCalledWith({
+      id: "a",
+      name: "Renamed",
+    });
+  });
+
+  it("duplicates and deletes a query that isn't open", () => {
+    bundle.actions.duplicateQuery("b");
+    const s = bundle.store.getState();
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ kind: "query", persisted: false });
+
+    bundle.actions.requestDelete("b");
+    expect(bundle.store.getState().pendingDelete).toEqual({
+      id: "b",
+      name: "b",
+      unsaved: false,
+    });
+    bundle.actions.confirmDelete();
+    expect(vi.mocked(queryDelete)).toHaveBeenCalledWith({ id: "b" });
+    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+      "a",
+    ]);
   });
 
   it("remembers which folders are expanded", () => {

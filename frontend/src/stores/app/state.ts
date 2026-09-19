@@ -6,6 +6,7 @@ import type {
   QueryFolder,
 } from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
+import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
 import type { Rating } from "../../query/ratings";
@@ -281,10 +282,9 @@ export interface AppState {
   /** The explorer folders showing their contents (persisted). Replaced
    * wholesale on every change, like a page's `selection`. */
   expandedFolders: ReadonlySet<string>;
-  /** The folder whose name is being edited in place in the explorer, if any. */
-  renamingFolder: string | null;
-  openedCollapsed: boolean; // "Opened" section disclosure
-  queriesCollapsed: boolean; // "Queries" section disclosure
+  /** The explorer item (folder or saved query) whose name is being edited in
+   * place, if any. */
+  renamingTreeItem: TreeItemRef | null;
   /** Each query tab's page state, keyed by tab id. An entry is created by the
    * first write for its tab and dropped whole when the tab closes. */
   pages: Record<string, QueryPageState>;
@@ -380,9 +380,7 @@ export function initialState(env: AppEnv): AppState {
     queryFilter: "",
     queryFilterOpen: false,
     expandedFolders: storedExpandedFolders(env),
-    renamingFolder: null,
-    openedCollapsed: false,
-    queriesCollapsed: false,
+    renamingTreeItem: null,
     pages: {},
     presetsStatus: "loading",
     presets: [],

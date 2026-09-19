@@ -2,13 +2,13 @@ import { useLayoutEffect, useRef, type JSX } from "react";
 import { Icons } from "../icons";
 import { selectIsUnsaved, type TabKind } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
-import CollapseHeader from "./CollapseHeader";
+import SectionHeading from "./SectionHeading";
 import OpenedRow from "./OpenedRow";
 import QueryTree from "./QueryTree";
 import SettingsFooter from "./SettingsFooter";
 import { tabIcon } from "./tabKind";
 import IconButton from "./ui/IconButton";
-import { Menu, MenuItem } from "./ui/Menu";
+import { Menu, MenuItem, MenuToggleItem } from "./ui/Menu";
 
 /** One "Opened" row, wired to the store. Split out from {@link Explorer} so its
  * unsaved-star subscription (`selectIsUnsaved`) is narrow to this one tab — an
@@ -62,18 +62,17 @@ function QueryFilterInput(): JSX.Element {
   );
 }
 
-/** The explorer: an "Opened" section (every open tab, whatever page it holds),
+/** The explorer: an "Opened" section (every open tab, whatever page it holds —
+ * left out altogether while none is open),
  * a "Queries" section (the saved queries, in the folders the user arranges them
- * in, with a filter, a "+" menu and refresh), and the Settings menu footer
- * pinned to the bottom.
+ * in, with an actions menu to add a query or folder, filter or refresh), and
+ * the Settings menu footer pinned to the bottom.
  *
  * This is only the contents. The panel it fills — its surface, width, and
  * persistent-column / modal-drawer behavior — belongs to `ui/SidebarLeft`, so
  * the explorer says nothing about being in a sidebar at all. */
 export default function Explorer(): JSX.Element {
   const filterOpen = useApp((s) => s.queryFilterOpen);
-  const openedCollapsed = useApp((s) => s.openedCollapsed);
-  const queriesCollapsed = useApp((s) => s.queriesCollapsed);
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
   const actions = useAppActions();
@@ -82,15 +81,11 @@ export default function Explorer(): JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        {/* Opened */}
-        <CollapseHeader
-          title="Opened"
-          collapsed={openedCollapsed}
-          onToggle={actions.toggleOpenedCollapsed}
-        />
-        {!openedCollapsed &&
-          (tabs.length > 0 ? (
-            tabs.map((tab) => (
+        {/* Opened — only while something is. */}
+        {tabs.length > 0 && (
+          <>
+            <SectionHeading title="Opened" spaced={false} />
+            {tabs.map((tab) => (
               <OpenedTabRow
                 key={tab.id}
                 tabId={tab.id}
@@ -98,38 +93,19 @@ export default function Explorer(): JSX.Element {
                 kind={tab.kind}
                 active={tab.id === activeTabId}
               />
-            ))
-          ) : (
-            <div className="text-ink-weak flex h-[26px] items-center pl-8 text-sm">
-              No open queries
-            </div>
-          ))}
+            ))}
+          </>
+        )}
 
         {/* Queries */}
-        <CollapseHeader
-          title="Queries"
-          collapsed={queriesCollapsed}
-          onToggle={actions.toggleQueriesCollapsed}
-        >
-          <IconButton
-            icon={Icons.Filter}
-            label="Filter queries"
-            active={filterOpen}
-            onClick={() => {
-              // Filtering a hidden list would show nothing to filter.
-              if (!filterOpen && queriesCollapsed) {
-                actions.toggleQueriesCollapsed();
-              }
-              actions.toggleQueryFilter();
-            }}
-          />
+        <SectionHeading title="Queries" spaced={tabs.length > 0}>
           <Menu
             align="end"
             width="170px"
             trigger={(api) => (
               <IconButton
-                icon={Icons.Add}
-                label="New query or folder"
+                icon={Icons.More}
+                label="Query list actions"
                 active={api.open}
                 onClick={() => api.toggle()}
               />
@@ -137,27 +113,30 @@ export default function Explorer(): JSX.Element {
           >
             <MenuItem
               icon={Icons.Query}
-              label="New query"
-              onClick={actions.newQueryTab}
+              label="Add query"
+              onClick={() => actions.addQuery(null)}
             />
             <MenuItem
               icon={Icons.NewFolder}
-              label="New folder"
+              label="Add folder"
               onClick={actions.newFolder}
             />
+            <MenuToggleItem
+              kind="checkbox"
+              icon={Icons.Filter}
+              label="Filter"
+              checked={filterOpen}
+              onClick={actions.toggleQueryFilter}
+            />
+            <MenuItem
+              icon={Icons.Refresh}
+              label="Refresh"
+              onClick={actions.refetchQueries}
+            />
           </Menu>
-          <IconButton
-            icon={Icons.Refresh}
-            label="Refresh queries"
-            onClick={actions.refetchQueries}
-          />
-        </CollapseHeader>
-        {!queriesCollapsed && (
-          <>
-            {filterOpen && <QueryFilterInput />}
-            <QueryTree scrollRef={scrollRef} />
-          </>
-        )}
+        </SectionHeading>
+        {filterOpen && <QueryFilterInput />}
+        <QueryTree scrollRef={scrollRef} />
       </div>
 
       <SettingsFooter />

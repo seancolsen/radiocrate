@@ -12,6 +12,7 @@ import CommandPalette from "./components/CommandPalette";
 import RpcErrorBanner from "./components/RpcErrorBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import AboutModal from "./components/AboutModal";
+import DeleteConfirmModal from "./components/DeleteConfirmModal";
 import SettingModal from "./components/SettingModal";
 
 /** One tab's page: the one its kind calls for. The one place tab kinds fan out
@@ -103,6 +104,9 @@ export default function App(): JSX.Element {
       <CommandPalette />
       <AboutModal />
       <SettingModal />
+      {/* Raised from a query page's actions menu or from the explorer, whose
+          query need not be open. */}
+      <DeleteConfirmModal />
     </div>
   );
 }

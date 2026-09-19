@@ -22,6 +22,10 @@ import { claimPointer, releasePointer } from "./pointerClaim";
 export const TREE_PAD = 8;
 export const TREE_INDENT = 16;
 
+/** How far (px) a touch may travel after picking a row up and still count as a
+ * long press — when its drop has moved nothing — rather than a drag that went
+ * nowhere useful. */
+const HOLD_SLOP = 32;
 /** Mouse/pen movement (px) before a press becomes a drag rather than a click. */
 const DRAG_THRESHOLD = 5;
 /** How long a touch has to rest on a row before it picks the row up (ms)… */
@@ -40,6 +44,12 @@ export interface TreeDragState {
   item: TreeItemRef;
   target: DropTarget | null;
   lineTop: number;
+}
+
+/** Whether a session that moved nothing stayed close enough to where it began
+ * to be a long press. */
+function isHold(s: Session): boolean {
+  return Math.hypot(s.x - s.startX, s.y - s.startY) < HOLD_SLOP;
 }
 
 interface Session {
@@ -71,7 +81,9 @@ interface Session {
  * A mouse or pen picks a row up by moving past a threshold; a touch picks it up
  * by resting on it (a long press), so an ordinary swipe still scrolls the list.
  * Once a touch drag is under way the list stops scrolling under the finger, and
- * the drag scrolls it instead near its edges.
+ * the drag scrolls it instead near its edges. A touch that picks a row up and
+ * lets go without having moved it anywhere is a long press, not a drag: it
+ * raises the row's context menu (`onHold`) instead.
  *
  * `listRef` is the element holding the rows (each marked `data-tree-row`, in
  * `rows` order); `scrollRef` is the element that scrolls them. */
@@ -80,7 +92,11 @@ export function useTreeDrag(opts: {
   scrollRef: RefObject<HTMLElement | null>;
   tree: readonly TreeNode[];
   rows: readonly TreeRow[];
-  onDrop: (item: TreeItemRef, target: DropTarget) => void;
+  /** Makes the drop; returns whether anything actually moved. */
+  onDrop: (item: TreeItemRef, target: DropTarget) => boolean;
+  /** A touch held on the row and let go without moving it — the touch
+   * equivalent of a right-click, at viewport point (x, y). */
+  onHold: (item: TreeItemRef, x: number, y: number) => void;
 }) {
   const [drag, setDrag] = useState<TreeDragState | null>(null);
 
@@ -195,7 +211,9 @@ export function useTreeDrag(opts: {
     window.addEventListener("click", swallow, { capture: true, once: true });
     setTimeout(() => window.removeEventListener("click", swallow, true), 0);
     setDrag(null);
-    if (drop && s.target) latest.current.onDrop(s.item, s.target);
+    if (!drop) return;
+    const moved = s.target !== null && latest.current.onDrop(s.item, s.target);
+    if (s.touch && !moved && isHold(s)) latest.current.onHold(s.item, s.x, s.y);
   }
 
   function onMove(e: globalThis.PointerEvent) {

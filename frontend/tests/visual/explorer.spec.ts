@@ -57,14 +57,14 @@ for (const colorScheme of SCHEMES) {
     });
   }
 
-  test(`explorer/tree-new-menu - ${colorScheme}`, async ({ page }) => {
+  test(`explorer/tree-actions-menu - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "explorer/tree", colorScheme);
-    await page.getByRole("button", { name: "New query or folder" }).click();
+    await page.getByRole("button", { name: "Query list actions" }).click();
     await expect(
-      page.getByRole("menuitem", { name: "New folder" }),
+      page.getByRole("menuitem", { name: "Add folder" }),
     ).toBeVisible();
     await expect(stage).toHaveScreenshot(
-      snapshot("explorer/tree-new-menu", colorScheme),
+      snapshot("explorer/tree-actions-menu", colorScheme),
     );
   });
 
@@ -122,25 +122,88 @@ test.describe("the query tree", () => {
     await expect(treeRow(page, "Old stuff")).toBeVisible();
   });
 
-  test("the + menu adds a folder at the top, ready to name", async ({
+  test("the actions menu adds a folder at the top, open and ready to name", async ({
     page,
   }) => {
-    await page.getByRole("button", { name: "New query or folder" }).click();
-    await page.getByRole("menuitem", { name: "New folder" }).click();
+    await page.getByRole("button", { name: "Query list actions" }).click();
+    await page.getByRole("menuitem", { name: "Add folder" }).click();
     const field = page.getByRole("textbox", { name: "Folder name" });
     await expect(field).toBeFocused();
     await field.fill("Mixes");
     await field.press("Enter");
     expect((await treeRows(page))[0]).toBe("0:Mixes");
+    await expect(treeRow(page, "Mixes")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
-  test("the filter button shows the filter, and hiding it clears it", async ({
+  test("the actions menu adds a saved query at the top and opens it", async ({
     page,
   }) => {
-    const toggle = page.getByRole("button", { name: "Filter queries" });
+    await page.getByRole("button", { name: "Query list actions" }).click();
+    await page.getByRole("menuitem", { name: "Add query" }).click();
+    const [first] = await treeRows(page);
+    const name = first.slice(2);
+    expect(name).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    // Opened: listed under "Opened" as well as in the tree.
+    await expect(page.getByText(name, { exact: true })).toHaveCount(2);
+  });
+
+  test("a folder's context menu adds a query at the top of it", async ({
+    page,
+  }) => {
+    await treeRow(page, "Archive").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Add query" }).click();
+    const rows = await treeRows(page);
+    expect(rows.slice(-2)[0]).toBe("0:Archive");
+    const name = rows.slice(-1)[0].slice(2);
+    expect(rows.slice(-1)[0]).toMatch(/^1:/);
+    await expect(page.getByText(name, { exact: true })).toHaveCount(2);
+  });
+
+  test("a query's context menu renames it in place", async ({ page }) => {
+    await treeRow(page, "Deep Cuts").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const field = page.getByRole("textbox", { name: "Query name" });
+    await expect(field).toBeFocused();
+    await field.fill("Deeper Cuts");
+    await field.press("Enter");
+    await expect(treeRow(page, "Deeper Cuts")).toBeVisible();
+    // Renaming doesn't open it.
+    await expect(page.getByText("Deeper Cuts", { exact: true })).toHaveCount(1);
+  });
+
+  test("a query's context menu duplicates it into an unsaved tab", async ({
+    page,
+  }) => {
+    await treeRow(page, "Deep Cuts").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Duplicate" }).click();
+    // The copy is open, and stays out of the tree until it's saved.
+    await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
+    expect(await treeRows(page)).toHaveLength(5);
+  });
+
+  test("a query's context menu deletes it, once confirmed", async ({
+    page,
+  }) => {
+    await treeRow(page, "Deep Cuts").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect(page.getByText("Delete “Deep Cuts”?")).toBeVisible();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    expect(await treeRows(page)).not.toContain("0:Deep Cuts");
+  });
+
+  test("the Filter action shows the filter, and hiding it clears it", async ({
+    page,
+  }) => {
+    const toggle = async () => {
+      await page.getByRole("button", { name: "Query list actions" }).click();
+      await page.getByRole("menuitemcheckbox", { name: "Filter" }).click();
+    };
     const input = page.getByRole("textbox", { name: "Filter queries" });
     await expect(input).toHaveCount(0);
-    await toggle.click();
+    await toggle();
     await expect(input).toBeFocused();
     await input.fill("trip");
     // A folder's name matches too, and shows what's inside it.
@@ -149,10 +212,10 @@ test.describe("the query tree", () => {
       "1:Road trip",
       "2:Workout Mix",
     ]);
-    await toggle.click();
+    await toggle();
     await expect(input).toHaveCount(0);
     expect(await treeRows(page)).toContain("0:Deep Cuts");
-    await toggle.click();
+    await toggle();
     await expect(input).toHaveValue("");
   });
 
@@ -181,10 +244,23 @@ test.describe("the query tree", () => {
     ]);
   });
 
-  test("dropping onto a folder moves an item into it", async ({ page }) => {
+  test("dropping onto a folder moves an item to the top of it", async ({
+    page,
+  }) => {
+    await dragOver(page, "Deep Cuts", "Favorites", 60, 0.5);
+    await page.mouse.up();
+    expect(await treeRows(page)).toEqual([
+      "0:Favorites",
+      "1:Deep Cuts",
+      "1:Lemonade",
+      "1:Road trip",
+      "0:Archive",
+    ]);
+  });
+
+  test("dropping into an empty folder opens it", async ({ page }) => {
     await dragOver(page, "Lemonade", "Archive", 60, 0.5);
     await page.mouse.up();
-    await page.getByRole("button", { name: "Expand Archive" }).click();
     expect(await treeRows(page)).toEqual([
       "0:Favorites",
       "1:Road trip",
@@ -244,7 +320,36 @@ test.describe("the query tree", () => {
       "1:Road trip",
       "0:Deep Cuts",
       "0:Archive",
+      "1:Lemonade",
     ]);
+  });
+
+  test("a touch held and let go without a move raises the context menu", async ({
+    page,
+  }) => {
+    const cdp = await page.context().newCDPSession(page);
+    const row = (await treeRow(page, "Deep Cuts").boundingBox())!;
+    const x = row.x + 60;
+    const y = row.y + row.height / 2;
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y }],
+    });
+    await page.waitForTimeout(700);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: x + 4, y: y + 4 }],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await expect(
+      page.getByRole("menuitem", { name: "Duplicate" }),
+    ).toBeVisible();
+    // Nothing moved, and the release didn't open the query.
+    expect(await treeRows(page)).toContain("0:Deep Cuts");
+    await expect(page.getByRole("heading", { name: "Opened" })).toHaveCount(0);
   });
 
   test("a touch that moves straight away is a scroll, not a drag", async ({
