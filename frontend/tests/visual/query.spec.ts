@@ -217,7 +217,7 @@ for (const colorScheme of SCHEMES) {
       "Show album tracks",
       "Rate track",
       "1: 🗑️ (Skip)",
-      "2: 👍 (Like)",
+      "2: ✔️ (Like)",
       "3: ⭐ (Prefer)",
       "4: ❤️ (Love)",
       "Select multiple",

@@ -172,7 +172,7 @@ const trackRecord = (n: number): RecordRef => ({
  * story needs no store and no stand-in backend. */
 const RATINGS_FIXTURE: readonly Rating[] = [
   { id: "rating-1", value: "1", symbol: "🗑️", description: "Skip" },
-  { id: "rating-2", value: "2", symbol: "👍", description: "Like" },
+  { id: "rating-2", value: "2", symbol: "✔️", description: "Like" },
   { id: "rating-3", value: "3", symbol: "⭐", description: "Prefer" },
   { id: "rating-4", value: "4", symbol: "❤️", description: "Love" },
 ];

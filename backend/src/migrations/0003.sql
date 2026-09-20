@@ -59,7 +59,7 @@ create table rating (
 
 insert into rating (id, value, symbol, description) values
 ('ed9a010a-124b-4aee-bce4-4889875142e8', 1, '🗑️', 'Skip'),
-('ddd714b8-2d6a-4ff0-b280-74d8472116a7', 2, '👍', 'Like'),
+('ddd714b8-2d6a-4ff0-b280-74d8472116a7', 2, '✔️', 'Like'),
 ('7f592dd0-be55-4ef8-a946-1a11cd0d03b5', 3, '⭐', 'Prefer'),
 ('3e056915-37fc-4660-8db5-06c15572591a', 4, '❤️', 'Love');
 
