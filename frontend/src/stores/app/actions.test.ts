@@ -20,6 +20,7 @@ vi.mock("api-client", async (importOriginal) => {
     queryAdd: vi.fn(() => Promise.resolve(null)),
     queryRename: vi.fn(() => Promise.resolve(null)),
     queryDelete: vi.fn(() => Promise.resolve(null)),
+    collectionRescan: vi.fn(() => Promise.resolve(null)),
   };
 });
 // The rating vocabulary's query, so `loadRatings` can be exercised without a
@@ -66,6 +67,7 @@ vi.mock("../../query/lineage", () => ({
 }));
 
 import {
+  collectionRescan,
   dml,
   folderAdd,
   folderDelete,
@@ -625,6 +627,57 @@ describe("saveSetting", () => {
     expect(
       bundle.store.getState().settingOverrides["querydown_prelude"],
     ).toBeUndefined();
+  });
+});
+
+describe("rescanCollection", () => {
+  it("holds `rescanning` for the length of the call, then clears it", async () => {
+    let finish!: () => void;
+    vi.mocked(collectionRescan).mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        finish = () => resolve(null);
+      }),
+    );
+    const bundle = createAppStore(fakeEnv());
+
+    const done = bundle.actions.rescanCollection();
+    expect(bundle.store.getState().rescanning).toBe(true);
+
+    finish();
+    await done;
+    expect(bundle.store.getState().rescanning).toBe(false);
+  });
+
+  it("ignores a second request while one is in flight", async () => {
+    let finish!: () => void;
+    vi.mocked(collectionRescan).mockClear();
+    vi.mocked(collectionRescan).mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        finish = () => resolve(null);
+      }),
+    );
+    const bundle = createAppStore(fakeEnv());
+
+    const done = bundle.actions.rescanCollection();
+    await bundle.actions.rescanCollection();
+    expect(collectionRescan).toHaveBeenCalledTimes(1);
+    // The one that did nothing still resolved, and left the running scan alone.
+    expect(bundle.store.getState().rescanning).toBe(true);
+
+    finish();
+    await done;
+  });
+
+  it("resolves and clears `rescanning` when the scan fails", async () => {
+    vi.mocked(collectionRescan).mockRejectedValueOnce(new Error("no such dir"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bundle = createAppStore(fakeEnv());
+
+    // Resolves rather than rejects: the menu closes on a failed scan too (the
+    // error bar is what reports it).
+    await bundle.actions.rescanCollection();
+
+    expect(bundle.store.getState().rescanning).toBe(false);
   });
 });
 

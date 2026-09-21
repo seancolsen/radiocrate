@@ -307,6 +307,10 @@ export interface AppState {
   aboutOpen: boolean;
   /** The setting whose editor dialog is open (null when none is). */
   settingEditor: SettingKey | null;
+  /** Whether a `collection.rescan` call is in flight. One at a time, and only
+   * from the Settings menu's "Re-scan collection" — which stays open, with the
+   * row disabled and spinning, for as long as this is true. */
+  rescanning: boolean;
   /** The failed RPC call the error bar shows (null when there's none, or it was
    * dismissed). */
   rpcError: RpcErrorNotice | null;
@@ -391,6 +395,7 @@ export function initialState(env: AppEnv): AppState {
     pendingDelete: null,
     aboutOpen: false,
     settingEditor: null,
+    rescanning: false,
     rpcError: null,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },

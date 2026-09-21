@@ -381,6 +381,12 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "collection.rescan",
+        func: "collectionRescan",
+        params: None,
+        result: "null",
+    },
+    Method {
         wire: "dml",
         func: "dml",
         params: Some("DmlRequest"),

@@ -16,6 +16,7 @@ import {
   queryRecordPlay,
   queryRename,
   queryUpdateDefinition,
+  collectionRescan,
   settingDelete,
   settingList,
   settingSet,
@@ -440,6 +441,15 @@ export interface AppActions {
   /** Open a setting's editor dialog (the Settings menu's entries). */
   openSetting: (key: SettingKey) => void;
   closeSetting: () => void;
+  /** Re-scan the collection on the server ("Re-scan collection" in the Settings
+   * menu). Resolves when the scan has finished — the menu waits on it to close
+   * itself — whether it succeeded or failed; a failure is the error bar's to
+   * report, as it is for every other call. Nothing on screen is reloaded
+   * afterwards: the open queries hold the rows they ran against, and re-running
+   * them is the user's to ask for.
+   *
+   * A second call while one is in flight resolves immediately, doing nothing. */
+  rescanCollection: () => Promise<void>;
   /** Records a failed RPC call for the error bar. `createStores()` feeds every
    * failure the generated client sees (`onRpcFailure`) through here. A repeat of
    * the failure already showing counts up rather than replacing it, and methods
@@ -2101,6 +2111,21 @@ export function createAppActions(
       set((s) => {
         s.settingEditor = null;
       }),
+    rescanCollection: async () => {
+      if (get().rescanning) return;
+      set((s) => {
+        s.rescanning = true;
+      });
+      try {
+        await collectionRescan();
+      } catch (err) {
+        console.error("collection rescan failed", err);
+      } finally {
+        set((s) => {
+          s.rescanning = false;
+        });
+      }
+    },
 
     reportRpcFailure: (method, error) => {
       if (UNREPORTED_METHODS.has(method)) return;

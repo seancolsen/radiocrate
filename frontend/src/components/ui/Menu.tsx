@@ -64,7 +64,7 @@ function MenuPanel(props: {
       ),
   );
   return (
-    <MenuContext.Provider value={{ menu, depth: 0 }}>
+    <MenuContext.Provider value={{ menu, depth: 0, closeRoot: props.close }}>
       <div
         ref={contentRef}
         role="menu"
@@ -140,13 +140,19 @@ export function Menu(props: {
 }
 
 /** A plain, clickable menu row: optional leading icon + label. `danger` tints it
- * red; `disabled` dims it and swallows the click. */
+ * red; `disabled` dims it and swallows the click.
+ *
+ * `keepOpen` leaves the menu up when the row is clicked — for a row whose action
+ * happens *in* the menu (one that runs long enough to report on itself there)
+ * rather than by dismissing it. Closing then belongs to the action: a row that
+ * keeps the menu open has to be given the way to close it. */
 export function MenuItem(props: {
   icon?: IconComponent;
   label: string;
   onClick?: () => void;
   disabled?: boolean;
   danger?: boolean;
+  keepOpen?: boolean;
 }): JSX.Element {
   const Icon = props.icon;
   return (
@@ -162,7 +168,11 @@ export function MenuItem(props: {
           "text-ink-weak/40": props.disabled,
         },
       )}
-      onClick={() => props.onClick?.()}
+      onClick={(e) => {
+        // The panel dismisses the menu on any click that reaches it.
+        if (props.keepOpen) e.stopPropagation();
+        props.onClick?.();
+      }}
     >
       {Icon && (
         <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
@@ -247,7 +257,7 @@ export function MenuSubmenu(props: {
   width?: string;
   children: ReactNode;
 }): JSX.Element {
-  const { menu, depth } = useMenuLevel();
+  const { menu, depth, closeRoot } = useMenuLevel();
   const [id] = useState(() => Symbol("submenu"));
   const open = useSyncExternalStore(menu.tree.subscribe, () =>
     menu.tree.isOpen(depth, id),
@@ -309,6 +319,7 @@ export function MenuSubmenu(props: {
           id={panelId}
           menu={menu}
           depth={depth + 1}
+          closeRoot={closeRoot}
           row={rowRef}
           width={props.width}
         >
@@ -325,6 +336,7 @@ function SubmenuPanel(props: {
   id: string;
   menu: MenuController;
   depth: number;
+  closeRoot: () => void;
   row: RefObject<HTMLElement | null>;
   width?: string;
   children: ReactNode;
@@ -358,7 +370,7 @@ function SubmenuPanel(props: {
   );
 
   return (
-    <MenuContext.Provider value={{ menu, depth }}>
+    <MenuContext.Provider value={{ menu, depth, closeRoot: props.closeRoot }}>
       <div
         ref={ref}
         id={props.id}

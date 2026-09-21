@@ -274,6 +274,10 @@ export interface MenuLevel {
   menu: MenuController;
   /** 0 for the root menu, 1 for a submenu of it, and so on. */
   depth: number;
+  /** Dismisses the whole menu, submenus and all — what the root's owner does
+   * when a row is clicked, offered here for the rows that don't close by being
+   * clicked (see `MenuItem`'s `keepOpen`) and have to close it themselves. */
+  closeRoot: () => void;
 }
 
 export const MenuContext = createContext<MenuLevel | null>(null);
@@ -283,6 +287,12 @@ export function useMenuLevel(): MenuLevel {
   const level = useContext(MenuContext);
   if (!level) throw new Error("A submenu must sit inside a menu.");
   return level;
+}
+
+/** Dismisses the menu the calling row sits in — for a row that stays open past
+ * its own click and closes the menu when whatever it started has finished. */
+export function useCloseMenu(): () => void {
+  return useMenuLevel().closeRoot;
 }
 
 /** Wires the shared menu behavior onto a root menu's panel, returning the

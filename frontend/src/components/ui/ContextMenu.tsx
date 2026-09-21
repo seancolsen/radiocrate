@@ -66,7 +66,9 @@ export function ContextMenu(props: {
       // Nothing behind the layer may scroll while the menu is up.
       onWheel={(e) => e.preventDefault()}
     >
-      <MenuContext.Provider value={{ menu, depth: 0 }}>
+      <MenuContext.Provider
+        value={{ menu, depth: 0, closeRoot: props.onClose }}
+      >
         <div
           ref={menuRef}
           role="menu"

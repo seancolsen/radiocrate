@@ -9,6 +9,7 @@ import {
   MenuSeparator,
   MenuToggleItem,
 } from "./ui/Menu";
+import { useCloseMenu } from "./ui/useMenu";
 
 const THEME_OPTIONS: { pref: ThemePref; label: string; icon: IconComponent }[] =
   [
@@ -28,12 +29,14 @@ const AUDIO_QUALITY_OPTIONS: {
 
 /** The Settings menu body: a Light/Dark/System theme picker, a Higher
  * quality/Lower bandwidth audio streaming picker, one entry per configurable
- * setting (each opening its editor dialog), and the Keyboard shortcuts and About
- * entries. */
+ * setting (each opening its editor dialog), the Keyboard shortcuts and About
+ * entries, and the collection re-scan. */
 export default function SettingsMenu(): JSX.Element {
   const theme = useApp((s) => s.theme);
   const audioQuality = useApp((s) => s.audioQuality);
+  const rescanning = useApp((s) => s.rescanning);
   const actions = useAppActions();
+  const closeMenu = useCloseMenu();
   return (
     <>
       <MenuHeading text="Theme" />
@@ -79,6 +82,17 @@ export default function SettingsMenu(): JSX.Element {
         icon={Icons.About}
         label="About RadioCrate"
         onClick={() => actions.openAbout()}
+      />
+      <MenuSeparator />
+      {/* The one row that outlives its own click: the menu stays up, with this
+          row disabled and its icon spinning, until the scan comes back — and
+          then it dismisses the menu itself. */}
+      <MenuItem
+        icon={rescanning ? Icons.Spinner : Icons.AudioFile}
+        label="Re-scan collection"
+        disabled={rescanning}
+        keepOpen
+        onClick={() => void actions.rescanCollection().then(closeMenu)}
       />
     </>
   );

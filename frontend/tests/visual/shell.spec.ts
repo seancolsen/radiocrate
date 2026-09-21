@@ -56,6 +56,20 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  test(`settings/menu-rescanning - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "settings/menu-rescanning",
+      colorScheme,
+    );
+    await expect(
+      page.getByRole("menuitem", { name: "Re-scan collection" }),
+    ).toBeDisabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("settings/menu-rescanning", colorScheme),
+    );
+  });
+
   // The Querydown prelude in its setting editor, at the default value: the
   // monospace field and the disabled "Reset to default" it opens with. Shot
   // through the dialog — it portals out of the stage.

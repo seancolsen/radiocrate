@@ -292,6 +292,19 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 Ok(Value::Null)
             })
         }
+        // Re-scans the collection the server was started against — the same
+        // pass `radiocrate-server scan` runs, and the one `serve` runs at boot
+        // unless `--no-scan` is given. It takes no params: which directory to
+        // scan is the server's to know, not the client's.
+        //
+        // The scan runs under the connection lock (like every other write), so
+        // a large collection blocks the other API methods for as long as it
+        // takes. Acceptable while this is a deliberate, one-at-a-time action a
+        // person takes from the Settings menu and waits on.
+        "collection.rescan" => state.write(|conn| {
+            crate::scanner::scan(&state.collection_path, conn).map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }),
         other => Err(format!("method not found: {other}")),
     }
 }

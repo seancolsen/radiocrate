@@ -89,6 +89,10 @@ export async function settingDelete(params: SettingDeleteParams): Promise<null> 
   return (await rpcCall("setting.delete", params)) as null;
 }
 
+export async function collectionRescan(): Promise<null> {
+  return (await rpcCall("collection.rescan", null)) as null;
+}
+
 export async function dml(params: DmlRequest): Promise<DmlResult> {
   return (await rpcCall("dml", params)) as DmlResult;
 }

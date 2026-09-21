@@ -11,6 +11,8 @@
 
 import type { ComponentType, SVGProps } from "react";
 
+import { cx } from "./components/ui/cx";
+
 import Query from "~icons/material-symbols/manage-search";
 import Folder from "~icons/material-symbols/folder";
 import FolderOpen from "~icons/material-symbols/folder-open";
@@ -68,11 +70,20 @@ import DarkMode from "~icons/material-symbols/dark-mode";
 import SystemTheme from "~icons/material-symbols/settings-brightness";
 import HigherQuality from "~icons/material-symbols/high-quality";
 import LowerBandwidth from "~icons/material-symbols/data-saver-on";
+import AudioFile from "~icons/material-symbols/audio-file";
+import ProgressActivity from "~icons/material-symbols/progress-activity";
 
 /** What every icon in {@link Icons} is: a component taking ordinary SVG props
  * (`className` chief among them — every call site sizes and colors an icon
  * that way) and rendering the glyph. */
 export type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
+
+/** The one icon that isn't a bare glyph: the busy indicator carries its own
+ * rotation, so a surface that only gets to *name* an icon — a menu row swapping
+ * its leading icon while its action runs — gets a spinning one. */
+const Spinner: IconComponent = ({ className, ...props }) => (
+  <ProgressActivity className={cx("animate-spin", className)} {...props} />
+);
 
 export const Icons = {
   Query, // query rows + tab handle icon
@@ -130,4 +141,6 @@ export const Icons = {
   SystemTheme, // Settings footer: System theme option
   HigherQuality, // Settings footer: Higher quality streaming option
   LowerBandwidth, // Settings footer: Lower bandwidth streaming option
+  AudioFile, // Settings footer: "Re-scan collection"
+  Spinner, // an action in flight (the re-scan, while it runs)
 } satisfies Record<string, IconComponent>;

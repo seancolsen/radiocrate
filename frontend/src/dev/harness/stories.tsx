@@ -372,9 +372,26 @@ export const STORIES: Record<string, Story> = {
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
     width: 200,
-    // Tall enough to clear the menu's bottom edge (its last row is "About
-    // RadioCrate"), so the snapshot isn't cropping the panel.
-    height: 350,
+    // Tall enough to clear the menu's bottom edge (its last row is "Re-scan
+    // collection"), so the snapshot isn't cropping the panel.
+    height: 400,
+    render: () => (
+      <Menu defaultOpen width="180px" trigger={() => null}>
+        <SettingsMenu />
+      </Menu>
+    ),
+  },
+  // The same menu with a re-scan in flight: the row disabled, its icon replaced
+  // by the spinner, and the menu still up — which is what a click on it leaves
+  // behind until the call comes back.
+  "settings/menu-rescanning": {
+    width: 200,
+    height: 400,
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.rescanning = true;
+      });
+    },
     render: () => (
       <Menu defaultOpen width="180px" trigger={() => null}>
         <SettingsMenu />
