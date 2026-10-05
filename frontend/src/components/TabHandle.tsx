@@ -41,7 +41,8 @@ function RenameInput(props: {
   );
 }
 
-/** One tab handle: the page kind's icon, the name (ellipsis when crowded), an
+/** One tab handle: the page kind's icon, the name (ellipsis when crowded; an
+ * unsaved query, which has none, reads "new" in gray italics), an
  * unsaved-changes ✱ marker, and a close ×. Only the top corners are rounded so it
  * sits flush with the content below.
  *  - Active: filled with the content-panel color + a 4px accent-blue top edge,
@@ -50,7 +51,8 @@ function RenameInput(props: {
  *
  * `renameable` is what a non-query page turns off: a settings tab's handle text
  * is fixed, so double-clicking it does nothing (the query-only affordances
- * stand down for a non-query `TabKind`). A query tab double-click starts an
+ * stand down for a non-query `TabKind`), and an unsaved query turns it off
+ * too, being named as it's saved. A saved query tab double-click starts an
  * inline rename, replacing the name with a text field. */
 export default function TabHandle(props: {
   id: string;
@@ -114,7 +116,13 @@ export default function TabHandle(props: {
         />
       ) : (
         <>
-          <span className="min-w-0 flex-1 truncate text-sm">{props.name}</span>
+          <span
+            className={cx("min-w-0 flex-1 truncate text-sm", {
+              "text-ink-weak italic": props.name === "",
+            })}
+          >
+            {props.name || "new"}
+          </span>
           {props.unsaved && (
             <Icons.Unsaved
               className="text-danger size-3 shrink-0"
@@ -125,7 +133,7 @@ export default function TabHandle(props: {
       )}
       <button
         type="button"
-        aria-label={`Close ${props.name}`}
+        aria-label={`Close ${props.name || "new query"}`}
         className="hover:bg-hover flex size-[18px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();

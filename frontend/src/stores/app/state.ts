@@ -53,20 +53,36 @@ export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
  * surface (the tab bar, the explorer's "Opened" list) reads one field. */
 export const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
 
-/** An open query tab. Tab id == query id. Carries both the saved query
- * definition and an independent working (`live`) copy the builder mutates; the
- * two diverging is what shows the unsaved-changes indicator.
+/** An open query tab. Tab id == query id. Carries the working (`live`) query
+ * definition the builder edits, and the `saved` one the backend is known to
+ * hold.
  *
- * `persisted` is false for an ephemeral query — a never-saved tab (e.g. a
- * Duplicate) that exists only in this session until Save writes it to the
- * backend. An ephemeral tab always reads as unsaved. */
+ * A query is *unsaved* (`persisted: false`) from when it's created — a new
+ * query, a Duplicate — until the user saves it: until then it exists only in
+ * this tab, it has no name (`name` is empty), and its edits stay here.
+ *
+ * A saved query saves itself. Every change to its working definition is
+ * written to the backend lazily, once the app has gone quiet (see
+ * `api/idleQueue.ts`), and `saved` catches up with `live` as each write is
+ * acknowledged. Only a write that *fails* surfaces (`saveFailed`): that's what
+ * brings back the Save button and the unsaved-changes ✱. */
 export interface QueryTab {
   kind: "query";
   id: string;
+  /** The query's name; empty while it's unsaved. */
   name: string;
   saved: QueryDefinition;
   live: QueryDefinition;
   persisted: boolean;
+  /** Whether the last attempt to save the working definition failed. Cleared
+   * by the next one that succeeds. Not restored after a reload: a restored tab
+   * whose working definition the backend never acknowledged is just saved
+   * again. */
+  saveFailed: boolean;
+  /** Where an unsaved query goes in the explorer when it's saved: the folder
+   * it was created in, or `null` for the top level. Not consulted once it's
+   * saved — the explorer tree is where a saved query's place is kept. */
+  folder: string | null;
 }
 
 /** The keyboard-shortcuts editor tab. There is at most one, and its transient UI
@@ -195,6 +211,18 @@ export interface RpcErrorNotice {
   count: number;
 }
 
+/** A query page's undo history: every query definition the page has run, in
+ * the order it ran them (consecutive repeats collapsed), and which of them the
+ * page stands on. Undo and redo move `index` and put that entry back as the
+ * working definition; a run of anything else drops whatever lies past `index`
+ * and appends. Unbounded, and kept only as long as the page is: closing the tab
+ * forgets it. Replaced wholesale on every push, like a page's `selection`. */
+export interface UndoHistory {
+  entries: readonly QueryDefinition[];
+  /** The entry the page stands on; -1 while `entries` is empty. */
+  index: number;
+}
+
 /** Everything a query tab's page holds beyond the tab itself: its results and
  * how the user is looking at them. */
 export interface QueryPageState {
@@ -254,7 +282,13 @@ export interface QueryPageState {
   fullEditorOpen: boolean;
   /** The expanded preset id (null = none expanded). */
   expandedPreset: string | null;
+  /** The page's undo history, checkpointed at every run of its query. */
+  undo: UndoHistory;
 }
+
+/** An undo history with nothing in it — what a page starts with. Shared and
+ * never written through: a page's history is replaced, not mutated. */
+export const EMPTY_UNDO: UndoHistory = { entries: [], index: -1 };
 
 /** A page with nothing in it yet — what a tab's first page write starts from. */
 export function emptyPage(): QueryPageState {
@@ -267,6 +301,7 @@ export function emptyPage(): QueryPageState {
     builderSection: null,
     fullEditorOpen: false,
     expandedPreset: null,
+    undo: EMPTY_UNDO,
   };
 }
 
@@ -366,7 +401,7 @@ function restoredTabs(env: AppEnv): {
   const tabs = stored.tabs.map((t): Tab =>
     t.kind === "shortcuts"
       ? { kind: "shortcuts", id: SHORTCUTS_TAB_ID, name: SHORTCUTS_TAB_NAME }
-      : { ...t },
+      : { ...t, saveFailed: false },
   );
   const activeTabId = tabs.some((t) => t.id === stored.activeTabId)
     ? stored.activeTabId

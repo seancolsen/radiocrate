@@ -34,7 +34,10 @@ import More from "~icons/material-symbols/more-vert";
 import Custom from "~icons/material-symbols/auto-fix-high";
 import Preset from "~icons/material-symbols/link";
 import Unsaved from "~icons/material-symbols/emergency";
+// One glyph, two concepts: `Revert` and `Undo` share the same icon.
 import Revert from "~icons/material-symbols/undo";
+import Undo from "~icons/material-symbols/undo";
+import Redo from "~icons/material-symbols/redo";
 import Clear from "~icons/material-symbols/backspace";
 import Shuffle from "~icons/material-symbols/shuffle";
 import Delete from "~icons/material-symbols/delete";
@@ -98,7 +101,9 @@ export const Icons = {
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron
   Settings, // static Settings footer
-  Save, // toolbar save (shown while unsaved)
+  Save, // toolbar save (shown while unsaved, or after a failed save)
+  Undo, // toolbar undo (step the query back)
+  Redo, // toolbar redo (step it forward again)
   Build, // wrench: query-actions menu trigger
   Filter, // Filter section toggle
   Sort, // Sort section toggle

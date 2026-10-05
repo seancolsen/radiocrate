@@ -64,15 +64,17 @@ describe("commands store", () => {
 
   describe('run("tabs.save_all")', () => {
     it("saves only tabs that are actually unsaved", () => {
+      // A saved query's edit is saved lazily, on its own: nothing to do here.
       app.actions.openTab({ id: "saved", name: "saved", definition: "{}" });
-      app.actions.openTab({ id: "dirty", name: "dirty", definition: "{}" });
-      app.actions.setFilterCustom("dirty", "artist:queen");
+      app.actions.setFilterCustom("saved", "artist:queen");
+      app.actions.newQueryTab();
+      const unsaved = app.store.getState().activeTabId;
 
       const saveQuery = vi.spyOn(app.actions, "saveQuery");
       commands.actions.run("tabs.save_all");
 
       expect(saveQuery).toHaveBeenCalledTimes(1);
-      expect(saveQuery).toHaveBeenCalledWith("dirty");
+      expect(saveQuery).toHaveBeenCalledWith(unsaved);
     });
   });
 

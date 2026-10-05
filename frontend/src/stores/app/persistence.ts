@@ -151,6 +151,7 @@ export type StoredTab =
       saved: QueryDefinition;
       live: QueryDefinition;
       persisted: boolean;
+      folder: string | null;
     }
   | { kind: "shortcuts" };
 
@@ -179,6 +180,8 @@ interface OpenTabsRecord {
         saved: string;
         live: string;
         persisted: boolean;
+        /** Absent from records written before unsaved queries kept one. */
+        folder?: string | null;
       }
     | { kind: "shortcuts" }
   >;
@@ -220,13 +223,16 @@ export function storedTabs(env: AppEnv): StoredTabs {
       !ids.has(t.id)
     ) {
       ids.add(t.id);
+      const persisted = t.persisted !== false;
       tabs.push({
         kind: "query",
         id: t.id,
-        name: t.name,
+        // An unsaved query has no name (an older record may have given it one).
+        name: persisted ? t.name : "",
         saved: definitionFromStored(t.saved),
         live: definitionFromStored(t.live),
-        persisted: t.persisted !== false,
+        persisted,
+        folder: typeof t.folder === "string" ? t.folder : null,
       });
     }
   }
@@ -257,6 +263,7 @@ export function persistTabs(
               saved: definitionToStored(t.saved),
               live: definitionToStored(t.live),
               persisted: t.persisted,
+              folder: t.folder,
             }
           : { kind: "shortcuts" },
       ),

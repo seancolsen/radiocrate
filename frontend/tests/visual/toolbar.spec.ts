@@ -234,3 +234,105 @@ test("the Refresh icon spins while the run it starts is in flight", async ({
   release();
   await expect(icon).not.toHaveClass(/animate-spin/);
 });
+
+test("Undo and Redo step the query through what it has run, each shown only while it applies", async ({
+  page,
+}) => {
+  await openQueryPage(
+    page,
+    `clean=1&count=12&recordFixture=1&expose=1&section=filter&def=${def(FILTER_DEF)}`,
+  );
+  const toolbar = page.getByTestId("query-toolbar");
+  const undo = toolbar.getByRole("button", { name: "Undo", exact: true });
+  const redo = toolbar.getByRole("button", { name: "Redo", exact: true });
+  const filter = async () => (await liveDefinition(page))?.filter.custom;
+  await expect(undo).toHaveCount(0);
+  await expect(redo).toHaveCount(0);
+
+  // An edit can be undone at once, before its debounced run has even fired.
+  await page.getByPlaceholder("Filter").fill("blues");
+  await expect(undo).toBeVisible();
+
+  await undo.click();
+  expect(await filter()).toBe("jazz playcount:<100");
+  await expect(undo).toHaveCount(0);
+  await expect(redo).toBeVisible();
+
+  await redo.click();
+  expect(await filter()).toBe("blues");
+  await expect(redo).toHaveCount(0);
+  await expect(undo).toBeVisible();
+
+  // A saved query saves itself: there's never a Save button for its edits.
+  await expect(toolbar.getByRole("button", { name: "Save" })).toHaveCount(0);
+});
+
+test("a saved query's edit is saved once the app goes quiet; a failed save brings back Save and the ✱", async ({
+  page,
+}) => {
+  await mockRpc(page);
+  // Registered after `mockRpc`, so it's consulted first: the first save is
+  // turned down, every later one accepted.
+  const saves: string[] = [];
+  await page.route("**/api/rpc", async (route) => {
+    const body = route.request().postDataJSON() as {
+      method: string;
+      params: { definition: string };
+      id: number;
+    };
+    if (body.method !== "query.update_definition") return route.fallback();
+    saves.push(body.params.definition);
+    const reply =
+      saves.length === 1
+        ? { error: { code: -32000, message: "database is locked" } }
+        : { result: null };
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ jsonrpc: "2.0", ...reply, id: body.id }),
+    });
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(
+    `/?tabs=Lemonade&clean=1&count=12&recordFixture=1&section=filter&def=${def(FILTER_DEF)}`,
+  );
+  const toolbar = page.getByTestId("query-toolbar");
+  const save = toolbar.getByRole("button", { name: "Save" });
+  const star = page.getByLabel("Unsaved changes");
+
+  await page.getByPlaceholder("Filter").fill("blues");
+  // Nothing to show while the save waits for quiet…
+  await expect(save).toHaveCount(0);
+  await expect(star).toHaveCount(0);
+  // …and once it has been tried and failed, the backend's answer, the Save
+  // button and the ✱.
+  await expect(page.getByText("database is locked")).toBeVisible({
+    timeout: 10_000,
+  });
+  expect(saves).toHaveLength(1);
+  await expect(save).toBeVisible();
+  await expect(star.first()).toBeVisible();
+
+  // Save sends it again, now.
+  await save.click();
+  await expect(save).toHaveCount(0);
+  await expect(star).toHaveCount(0);
+  expect(saves).toHaveLength(2);
+  expect(JSON.parse(saves[1]).filter.custom).toBe("blues");
+});
+
+test("a new query has no name and a Save button until it's saved", async ({
+  page,
+}) => {
+  await openQueryPage(page, `clean=1&count=12&def=${def(FILTER_DEF)}`);
+  await page.getByRole("button", { name: "New tab" }).click();
+  const tabBar = page.locator("[data-tab-id]");
+  await expect(tabBar.last()).toHaveText(/^new$/);
+
+  const save = page
+    .getByTestId("query-toolbar")
+    .filter({ visible: true })
+    .getByRole("button", { name: "Save" });
+  await save.click();
+  await expect(save).toHaveCount(0);
+  await expect(tabBar.last()).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+});

@@ -1,4 +1,4 @@
-import { onRpcFailure } from "api-client";
+import { onRequest, onRpcFailure } from "api-client";
 import { shallow } from "zustand/vanilla/shallow";
 import { browserEnv, type AppEnv } from "./env";
 import { createAppStore, type AppState, type AppStoreBundle } from "./app";
@@ -19,8 +19,9 @@ export interface Stores {
   commands: CommandsStoreBundle;
   update: UpdateStoreBundle;
   /** Tears down everything `createStores()` installed: the cross-store
-   * subscriptions below, the global keydown pass, and the app store's own
-   * `dispose` (the "system" theme listener, pending debounce timers). */
+   * subscriptions below, the global keydown and visibility listeners, and the
+   * app store's own `dispose` (the "system" theme listener, pending debounce
+   * timers, saves waiting for the app to go quiet). */
   dispose: () => void;
 }
 
@@ -118,6 +119,21 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     app.actions.reportRpcFailure(method, error);
   });
 
+  // A saved query's edits are written once the app has gone quiet — and every
+  // request the app sends, whichever action sent it, is the app not being
+  // quiet.
+  const unsubscribeRequests = onRequest(({ settled }) => {
+    app.actions.noteRequest(settled);
+  });
+
+  // A page being hidden may never be shown again (a closed browser tab, a
+  // mobile OS reclaiming a backgrounded PWA), so whatever saves are waiting go
+  // out now rather than when the app would have gone quiet.
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") app.actions.flushSaves();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   // The global shortcut pass. Capture phase, so a chord is claimed before a
   // focused widget acts on it.
   const onKeyDown = (e: KeyboardEvent) => commands.actions.handleKeyDown(e);
@@ -127,6 +143,8 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     unsubscribeRetain();
     unsubscribeResync();
     unsubscribeRpcFailures();
+    unsubscribeRequests();
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("keydown", onKeyDown, true);
     app.dispose();
   }

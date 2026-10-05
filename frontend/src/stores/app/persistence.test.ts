@@ -31,7 +31,11 @@ describe("open tabs", () => {
     expect(restored.kind === "query" && restored.live.filter.custom).toBe(
       "year:1999",
     );
-    expect(duplicate).toMatchObject({ kind: "query", persisted: false });
+    expect(duplicate).toMatchObject({
+      kind: "query",
+      name: "",
+      persisted: false,
+    });
     expect(shortcuts.id).toBe(SHORTCUTS_TAB_ID);
     after.dispose();
   });

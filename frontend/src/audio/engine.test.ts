@@ -83,6 +83,7 @@ function setup() {
     onPlayCompleted: vi.fn(),
     onQueueDry: vi.fn(),
     onTransport: vi.fn(),
+    onStreamRequest: vi.fn(),
   };
   const engine = new AudioEngine(events, () => quality);
   return { engine, events };
@@ -175,6 +176,24 @@ describe("the next track", () => {
     expect(standby!.src).not.toContain("/api/");
     finishDownload(active!);
     expect(standby!.src).toBe("/api/tracks/t6/stream?quality=opus128");
+  });
+});
+
+describe("stream requests", () => {
+  it("are reported as each fetch starts: the track, then the next one primed", () => {
+    const { engine, events } = setup();
+    engine.setPlaylist([], "t1", ["t2"]);
+    expect(events.onStreamRequest).toHaveBeenCalledTimes(1);
+    finishDownload(created[0]!);
+    expect(events.onStreamRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("are reported for a restart, too", () => {
+    const { engine, events } = setup();
+    playTranscode(engine);
+    events.onStreamRequest.mockClear();
+    engine.seek(60);
+    expect(events.onStreamRequest).toHaveBeenCalledTimes(1);
   });
 });
 

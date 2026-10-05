@@ -15,6 +15,7 @@ import {
   VETTED_PRESET_ID,
 } from "../fixtures";
 import { failDml, STUB_VERSION } from "./mockApi";
+import { useApp } from "../../stores/react";
 import { emptyCountResult, lemonadeGridResult } from "../gridFixture";
 import {
   FIXTURE_SCHEMA_JSON,
@@ -34,6 +35,7 @@ import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
 import QueryBuilder from "../../components/builder/QueryBuilder";
 import QueryResults from "../../components/QueryResults";
 import QueryToolbar from "../../components/QueryToolbar";
+import TabBar from "../../components/TabBar";
 import RecordEditorPanel from "../../components/RecordEditorPanel";
 import RecordPicker from "../../components/RecordPicker";
 import RowActionsMenu from "../../components/RowActionsMenu";
@@ -113,21 +115,37 @@ function openLemonade(stores: Stores): string {
   return LEMONADE.id;
 }
 
-/** Opens "Lemonade" carrying `def` as its working query. Unless it's `saved`,
- * the tab reads as having unsaved changes (an empty baseline), which is what
- * puts the Save button in the toolbar. */
-function openWithDefinition(
-  stores: Stores,
-  def: QueryDefinition,
-  saved = false,
-): string {
+/** Opens "Lemonade" carrying `def` as its (saved) query. */
+function openWithDefinition(stores: Stores, def: QueryDefinition): string {
   const id = openLemonade(stores);
-  stores.app.actions.setTabDefinitions(
-    id,
-    saved ? def : emptyDefinition(),
-    def,
-  );
+  stores.app.actions.setTabDefinitions(id, def, def);
   return id;
+}
+
+/** Puts the toolbar's whole conditional group on screen for tab `id`, showing
+ * `def`: an undo history standing between the query as it was opened and an
+ * edit that's since been undone (so both Undo and Redo apply), and a last save
+ * that failed (so Save is back). Written straight into the store — reaching it
+ * through the actions would take real runs and a real save. */
+function undoableFailedSave(
+  stores: Stores,
+  id: string,
+  def: QueryDefinition,
+): void {
+  const undone: QueryDefinition = {
+    ...def,
+    filter: { ...def.filter, custom: "" },
+  };
+  stores.app.store.setState((s) => {
+    const page = s.pages[id];
+    if (page)
+      page.undo = { entries: [emptyDefinition(), def, undone], index: 1 };
+    const tab = s.tabs.find((t) => t.id === id);
+    if (tab?.kind === "query") {
+      tab.saved = emptyDefinition();
+      tab.saveFailed = true;
+    }
+  });
 }
 
 /** The filter builder with the "vetted" preset's inline editor open. */
@@ -238,6 +256,13 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
     },
     render: () => <RecordEditorPanel tabId={LEMONADE.id} />,
   };
+}
+
+/** The toolbar of whichever query tab is active — for a story about a tab whose
+ * id is minted as it opens (a new query's). */
+function ActiveQueryToolbar(): JSX.Element | null {
+  const id = useApp((s) => s.activeTabId);
+  return id === null ? null : <QueryToolbar tabId={id} />;
 }
 
 /** Filler for the stories about a component's own layout rather than about
@@ -367,6 +392,20 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.beginTreeRename({ kind: "folder", id: ROAD_TRIP });
     },
     render: () => <Explorer />,
+  },
+
+  // ── The tab bar ──────────────────────────────────────────────────────────
+  // A saved query beside a new one, active: the new query has no name yet, so
+  // its handle reads "new" in gray italics, with the ✱ of a query the backend
+  // doesn't have.
+  "tab-bar/new-query": {
+    width: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      openLemonade(stores);
+      stores.app.actions.newQueryTab();
+    },
+    render: () => <TabBar />,
   },
 
   // ── Settings ─────────────────────────────────────────────────────────────
@@ -519,37 +558,52 @@ export const STORIES: Record<string, Story> = {
   },
 
   // ── The query toolbar ────────────────────────────────────────────────────
-  // Saved (clean) query, no builder open: no Save button, the section toggles
-  // inactive, "12 results" at the far right.
+  // Saved query with nothing to undo, redo or save, no builder open: the
+  // wrench, the section toggles (inactive), and "12 results" with Refresh at
+  // the far right.
   "query-builder/collapsed": {
     width: 1280,
     setup: (stores) => {
-      const id = openWithDefinition(stores, FILTER_DEF, true);
+      const id = openWithDefinition(stores, FILTER_DEF);
       stores.app.actions.setResults(id, emptyCountResult(12));
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
-  // Filter section open + unsaved: the Save button, the active split button
-  // with its ⋮, and the builder line below it.
+  // Filter section open on a query with a step to undo, one to redo, and a
+  // failed save: the whole conditional group (separator, Undo, Redo, Save)
+  // after the section toggles, the active split button with its ⋮, and the
+  // builder line below it.
   "query-builder/filter-open": {
     width: 1280,
     setup: (stores) => {
       const id = openWithDefinition(stores, FILTER_DEF);
       stores.app.actions.setResults(id, emptyCountResult(12));
       stores.app.actions.toggleBuilderSection(id, "filter");
+      undoableFailedSave(stores, id, FILTER_DEF);
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
-  // Compact (≤ 500px): the section buttons drop their labels and the
-  // run/filter separator is hidden.
+  // Compact (≤ 500px): the section buttons drop their labels.
   "query-builder/filter-open-narrow": {
     width: 460,
     setup: (stores) => {
       const id = openWithDefinition(stores, FILTER_DEF);
       stores.app.actions.setResults(id, emptyCountResult(12));
       stores.app.actions.toggleBuilderSection(id, "filter");
+      undoableFailedSave(stores, id, FILTER_DEF);
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // A new query, never saved and not yet edited: of the conditional group,
+  // just Save.
+  "query-builder/new": {
+    width: 1280,
+    setup: (stores) => {
+      stores.app.actions.newQueryTab();
+      const id = stores.app.store.getState().activeTabId!;
+      stores.app.actions.setResults(id, emptyCountResult(12));
+    },
+    render: () => <ActiveQueryToolbar />,
   },
   // Full-Querydown mode: the three section toggles collapse into one
   // "Querydown" toggle (no ⋮ — there are no sections to configure) over the
@@ -557,7 +611,7 @@ export const STORIES: Record<string, Story> = {
   "query-builder/querydown": {
     width: 1280,
     setup: (stores) => {
-      const id = openWithDefinition(stores, FULL_DEF, true);
+      const id = openWithDefinition(stores, FULL_DEF);
       stores.app.actions.setResults(id, emptyCountResult(12));
       stores.app.actions.toggleFullEditor(id);
     },
@@ -571,7 +625,7 @@ export const STORIES: Record<string, Story> = {
     height: 300,
     setup: (stores) => {
       stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-      openWithDefinition(stores, FILTER_DEF, true);
+      openWithDefinition(stores, FILTER_DEF);
     },
     render: () => (
       <Menu defaultOpen width="210px" trigger={() => null}>

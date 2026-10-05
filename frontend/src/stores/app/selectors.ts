@@ -1,6 +1,10 @@
 import type { Preset } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
-import { defsEqual, type Section } from "../../query/definition";
+import {
+  defsEqual,
+  type QueryDefinition,
+  type Section,
+} from "../../query/definition";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryResult } from "../../query/result";
 import type { RowContext } from "../../query/rowDml";
@@ -39,20 +43,50 @@ export const selectQueryTab = (
   return t?.kind === "query" ? t : undefined;
 };
 
-/** Whether a tab has unsaved changes: an ephemeral (never-saved) query tab
- * always, else a persisted one whose working def differs from its saved def.
- * Never true for a non-query tab — the shortcuts editor writes its bindings
- * through immediately. */
+/** Whether a tab has changes the backend doesn't: an unsaved query always, and
+ * a saved one whose last save failed. What shows the Save button and the ✱. A
+ * saved query's edits waiting to be written lazily don't count — they're on
+ * their way. Never true for a non-query tab — the shortcuts editor writes its
+ * bindings through immediately. */
 export const selectIsUnsaved = (s: AppState, tabId: string): boolean => {
   const t = selectQueryTab(s, tabId);
-  return t ? !t.persisted || !defsEqual(t.saved, t.live) : false;
+  return t ? !t.persisted || t.saveFailed : false;
 };
 
-/** Whether "Revert changes" applies: a persisted tab with edits to discard (an
- * ephemeral tab has no saved baseline to revert to). */
+/** Whether `tabId` is a saved query — one with a name to rename. */
+export const selectIsPersisted = (s: AppState, tabId: string): boolean =>
+  selectQueryTab(s, tabId)?.persisted ?? false;
+
+/** Whether "Revert changes" applies: a saved query whose working definition
+ * couldn't be saved, and so differs from what the backend holds. (An unsaved
+ * query has nothing to revert to.) */
 export const selectCanRevert = (s: AppState, tabId: string): boolean => {
   const t = selectQueryTab(s, tabId);
-  return t ? t.persisted && !defsEqual(t.saved, t.live) : false;
+  return t ? t.persisted && t.saveFailed && !defsEqual(t.saved, t.live) : false;
+};
+
+/** Whether `a` and `b` are the same definition — by reference first, which is
+ * the common case (the history holds the very objects the tab ran). */
+const sameDef = (a: QueryDefinition, b: QueryDefinition): boolean =>
+  a === b || defsEqual(a, b);
+
+/** Whether `tabId`'s Undo applies: there's a run to step back to, or an edit
+ * made since the last run (a debounced one, still waiting) to step back out
+ * of. */
+export const selectCanUndo = (s: AppState, tabId: string): boolean => {
+  const t = selectQueryTab(s, tabId);
+  const undo = s.pages[tabId]?.undo;
+  if (!t || !undo || undo.index < 0) return false;
+  return undo.index > 0 || !sameDef(undo.entries[undo.index], t.live);
+};
+
+/** Whether `tabId`'s Redo applies: something has been undone, and nothing
+ * edited since. */
+export const selectCanRedo = (s: AppState, tabId: string): boolean => {
+  const t = selectQueryTab(s, tabId);
+  const undo = s.pages[tabId]?.undo;
+  if (!t || !undo || undo.index >= undo.entries.length - 1) return false;
+  return sameDef(undo.entries[undo.index], t.live);
 };
 
 export const selectResultCount = (

@@ -15,8 +15,15 @@ export default function DeleteConfirmModal(): JSX.Element | null {
     <Modal onClose={() => cancelDelete()} width="300px">
       <h2 className="text-ink mb-3 text-base font-semibold">Delete query</h2>
       <p className="text-ink text-sm">
-        Delete <span className="font-medium">&ldquo;{pending.name}&rdquo;</span>
-        ?
+        {pending.name === "" ? (
+          // An unsaved query has no name to quote.
+          "Delete this new query?"
+        ) : (
+          <>
+            Delete{" "}
+            <span className="font-medium">&ldquo;{pending.name}&rdquo;</span>?
+          </>
+        )}
       </p>
       {pending.unsaved && (
         <p className="text-accent mt-1 text-sm">

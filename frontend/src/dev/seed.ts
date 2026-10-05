@@ -32,9 +32,10 @@ import type { Stores } from "../stores/createStores";
 //                      bypassing Querydown / /api/query so the rows are there
 //                      without a backend
 //   ?def=<json>      ← the active tab's working definition (URL-encoded JSON);
-//                      the saved baseline is left empty so the tab reads as
-//                      unsaved, unless `clean=1` makes saved == working
-//   ?clean=1         ← save the given `def` as the baseline too (no Save button)
+//                      the saved baseline is left empty — edits the backend
+//                      hasn't acknowledged — unless `clean=1` makes saved ==
+//                      working
+//   ?clean=1         ← save the given `def` as the baseline too
 //   ?count=12        ← seed an empty result of N rows ("12 results")
 //   ?section=filter  ← open a builder section (filter|sort|display)
 //   ?tracks=id1,id2  ← per-row track ids for the seeded grid, so double-click
@@ -181,8 +182,8 @@ export function applySeed(stores: Stores): void {
         app.actions.setResults(activeId, result, lineage);
       }
 
-      // Override the active tab's working definition (unsaved unless
-      // `clean=1`).
+      // Override the active tab's working definition (over an empty saved
+      // baseline unless `clean=1`).
       if (defParam) {
         const def = JSON.parse(defParam) as QueryDefinition;
         const saved = params.get("clean") === "1" ? def : emptyDefinition();

@@ -68,6 +68,10 @@ export interface EngineEvents {
    * re-reads the getters below; deliberately coarse, since the bar only shows a
    * play-pause glyph and a progress bar. */
   onTransport: () => void;
+  /** An element has just started fetching a stream from the backend — a
+   * request the owner may want to stay out of the way of (see
+   * `api/idleQueue.ts`). */
+  onStreamRequest: () => void;
 }
 
 /** Artwork for the lock screen and notification shade. The collection has no
@@ -343,8 +347,7 @@ export class AudioEngine {
     if (id !== this.current) this.knownDuration = null;
     this.offset = 0;
     this.activeQuality = streamQualityParam(this.getQuality());
-    this.audio.src = trackStreamUrl(id, this.activeQuality);
-    this.audio.load();
+    this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
     this.wantPlaying = true;
     void this.audio.play().catch(() => {});
     this.current = id;
@@ -354,6 +357,13 @@ export class AudioEngine {
     if (!this.mediaHandlersInstalled) this.installMediaActionHandlers();
     // The next track is primed once this one has downloaded (see `suspend`).
     this.yieldStandby();
+  }
+
+  /** Points `el` at the stream `url` and starts fetching it. */
+  private fetchStream(el: HTMLAudioElement, url: string): void {
+    el.src = url;
+    el.load();
+    this.events.onStreamRequest();
   }
 
   /** Makes way for a fresh fetch on the active element. A prime still
@@ -395,8 +405,7 @@ export class AudioEngine {
     if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
     this.primedQuality = streamQualityParam(this.getQuality());
-    el.src = trackStreamUrl(next, this.primedQuality);
-    el.load();
+    this.fetchStream(el, trackStreamUrl(next, this.primedQuality));
     this.primed = next;
   }
 
@@ -578,8 +587,7 @@ export class AudioEngine {
     const start = Math.round(target * 1000) / 1000;
     const el = this.audio;
     this.offset = start;
-    el.src = trackStreamUrl(id, this.activeQuality, start);
-    el.load();
+    this.fetchStream(el, trackStreamUrl(id, this.activeQuality, start));
     this.yieldStandby();
     if (this.wantPlaying) void el.play().catch(() => {});
     this.updatePositionState();

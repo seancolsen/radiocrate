@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { SCHEMES, openStory, snapshot } from "./harness";
 
 // The app's furniture, each piece on its own: the left sidebar in both of its
-// layouts, the explorer that fills it, the settings menu with the prelude and
+// layouts, the explorer that fills it, the tab bar, the settings menu with the prelude and
 // rebind dialogs it raises,
 // the client-update and failed-RPC bars and the About dialog, the now-playing bar
 // and its menu,
@@ -43,6 +43,16 @@ for (const colorScheme of SCHEMES) {
     await expect(stage.getByText("Workout Mix")).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("explorer/basic", colorScheme),
+    );
+  });
+
+  // A saved query's handle beside a new query's, which has no name yet and
+  // reads "new" in gray italics.
+  test(`tab-bar/new-query - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "tab-bar/new-query", colorScheme);
+    await expect(stage.getByText("new", { exact: true })).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("tab-bar/new-query", colorScheme),
     );
   });
 

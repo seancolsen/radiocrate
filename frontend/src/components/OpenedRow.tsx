@@ -5,7 +5,9 @@ import { cx } from "./ui/cx";
 /** A row in the "Opened" section: an open tab of any kind, its icon taken from
  * that kind. Clicking the body selects it; a close (×) sits at the right. The
  * active row is marked with a left accent bar (matching the tab bar's blue top
- * edge), not a fill. A red ✱ marks an open tab with unsaved edits. */
+ * edge), not a fill. A red ✱ marks an open tab with unsaved edits. An unsaved
+ * query, which has no name yet, reads "new" in gray italics, as its tab
+ * handle does. */
 export default function OpenedRow(props: {
   name: string;
   icon: IconComponent;
@@ -34,8 +36,13 @@ export default function OpenedRow(props: {
         onClick={() => props.onSelect()}
       >
         <Icon className="text-ink-weak size-[14px] shrink-0" />
-        <span className="text-ink ml-2 min-w-0 truncate text-sm">
-          {props.name}
+        <span
+          className={cx("ml-2 min-w-0 truncate text-sm", {
+            "text-ink": props.name !== "",
+            "text-ink-weak italic": props.name === "",
+          })}
+        >
+          {props.name || "new"}
         </span>
         {props.unsaved && (
           <Icons.Unsaved
@@ -46,7 +53,7 @@ export default function OpenedRow(props: {
       </button>
       <button
         type="button"
-        aria-label={`Close ${props.name}`}
+        aria-label={`Close ${props.name || "new query"}`}
         className="text-ink-weak hover:bg-hover hover:text-ink ml-1 flex size-[22px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();

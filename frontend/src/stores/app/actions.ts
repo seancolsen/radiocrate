@@ -24,7 +24,9 @@ import {
   type DmlResult,
   type Placement,
   type Preset,
+  type Query,
 } from "api-client";
+import { IdleQueue } from "../../api/idleQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
 import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
@@ -38,6 +40,7 @@ import { overridesFromEntries, withSetting } from "../../state/settings";
 import type { SettingKey } from "../../state/settings";
 import {
   cloneDefinition,
+  defsEqual,
   definitionForBase,
   definitionFromStored,
   definitionToStored,
@@ -83,6 +86,7 @@ import {
 } from "./persistence";
 import {
   selectEffectivePresets,
+  selectCanRedo,
   selectIsUnsaved,
   selectLocateRow,
   selectPlaylistAround,
@@ -97,6 +101,7 @@ import {
 } from "./selectors";
 import {
   EMPTY_SELECTION,
+  EMPTY_UNDO,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
   emptyPage,
@@ -149,6 +154,11 @@ function oneRowListVector(items: readonly string[]): arrow.Vector {
  * keystroke. */
 const RUN_DEBOUNCE_MS = 300;
 
+/** How long the app has to have been idle — no request to the backend, and no
+ * edit to the query — before a saved query's edits are written (see
+ * `api/idleQueue.ts`). */
+const AUTOSAVE_IDLE_MS = 5000;
+
 /** RPC methods whose failures never reach the error bar. `app.version` is the
  * update controller's background poll, which handles its own failures: a server
  * that's briefly unreachable shouldn't raise a bar. */
@@ -196,8 +206,8 @@ export interface AppActions {
   /** Create a folder at the top of the Queries tree (expanded, being empty)
    * and start renaming it. */
   newFolder: () => void;
-  /** Create and save a new query at the top of folder `parent` (null: the top
-   * level of the tree), and open it in a tab. */
+  /** Open a new, unsaved query in a tab, to be saved at the top of folder
+   * `parent` (null: the top level of the tree). */
   addQuery: (parent: string | null) => void;
   /** Start editing an explorer item's name in place. */
   beginTreeRename: (item: TreeItemRef) => void;
@@ -340,16 +350,31 @@ export interface AppActions {
    * lets the harness snapshot the bar with no backend or audio). */
   seedNowPlaying: (track: CurrentTrack, playback: AppState["playback"]) => void;
 
-  /** Persist the tab's working definition (`query.update_definition`), then mark
-   * it saved so the unsaved indicator clears. */
+  /** The Save button: save an unsaved query (`query.add`), naming it for the
+   * current moment, or — for a saved query whose last save failed — send its
+   * working definition again now, rather than once the app goes quiet. */
   saveQuery: (tabId: string) => void;
-  /** Create a persisted copy of query `id` (from its live definition) and open
-   * it in a new tab. */
+  /** Open an unsaved copy of query `id` (from its working definition, when
+   * it's open) in a new tab. */
   duplicateQuery: (id: string) => void;
-  /** Open a new ephemeral (unsaved) query tab based on "track", seeded with
-   * that base's default filter/sort/display presets. */
+  /** Open a new unsaved query tab based on "track", seeded with that base's
+   * default filter/sort/display presets. */
   newQueryTab: () => void;
-  /** Open a new ephemeral query tab on exactly the records `query` finds — the
+  /** Step `tabId`'s query back to the definition it ran before this one (see
+   * `UndoHistory`). An edit not yet run is a step of its own, so it's what goes
+   * first. */
+  undo: (tabId: string) => void;
+  /** Step `tabId`'s query forward again, after an undo. */
+  redo: (tabId: string) => void;
+  /** Note a request to the backend, in flight until `settled` settles: a saved
+   * query's edits aren't written until the app has been quiet for a while.
+   * `createStores()` feeds every request the generated client sends
+   * (`onRequest`) through here. */
+  noteRequest: (settled: Promise<unknown>) => void;
+  /** Write every saved query's pending edits now, quiet or not — for when the
+   * page is being hidden, and may not get another chance. */
+  flushSaves: () => void;
+  /** Open a new unsaved query tab on exactly the records `query` finds — the
    * record editor's "open in a new tab" on a multi-record field. Its filter and
    * sort are `query`'s own; its display is the base table's default display
    * preset when there is one, and `query`'s otherwise. The tab goes in to the
@@ -527,6 +552,10 @@ export function createAppActions(
     );
   };
 
+  // Saved queries' edits, waiting for the app to go quiet before they're
+  // written — one write per tab id, carrying its latest definition.
+  const saves = new IdleQueue(AUTOSAVE_IDLE_MS);
+
   // Whether a rating-vocabulary load is in flight, so raising the menu twice
   // before the first answer lands doesn't run the query twice. Non-reactive:
   // `ratings.status` is what renders, and it can't tell "in flight" from
@@ -695,11 +724,32 @@ export function createAppActions(
     }
   };
 
+  /** Records `tabId`'s working definition in its undo history — unless it's
+   * the entry the history already stands on. Anything undone past is dropped:
+   * the history branches here. */
+  const checkpoint = (tabId: string) => {
+    const live = selectQueryTab(get(), tabId)?.live;
+    if (!live) return;
+    const { entries, index } = get().pages[tabId]?.undo ?? EMPTY_UNDO;
+    const current = entries[index];
+    if (current !== undefined && (current === live || defsEqual(current, live)))
+      return;
+    set((s) => {
+      pageDraft(s, tabId).undo = castDraft({
+        entries: [...entries.slice(0, index + 1), live],
+        index: index + 1,
+      });
+    });
+  };
+
   const runQuery = (tabId: string) => {
     const t = selectQueryTab(get(), tabId);
     if (!t) return;
     // An immediate run supersedes any run this tab had pending on the debounce.
     cancelScheduledRun(tabId);
+    // Every run is an undo checkpoint: what the user can step back to is what
+    // they've seen the rows of.
+    checkpoint(tabId);
     autoRun.add(tabId);
     const token = ++runTokenSeq;
     runTokens.set(tabId, token);
@@ -765,9 +815,9 @@ export function createAppActions(
    * lands immediately (so the controlled input stays in sync) while the run
    * waits for a pause in the typing.
    *
-   * The one way a query's definition changes — every edit, rebase and revert
-   * comes through here — so whatever has to follow a change of definition
-   * follows it from here. */
+   * The one way a query's definition changes — every edit, rebase, revert,
+   * undo and redo comes through here — so a saved query's save is deferred
+   * from here too. */
   const changeLive = (
     tabId: string,
     change: (t: QueryTab) => void,
@@ -775,8 +825,58 @@ export function createAppActions(
   ) => {
     if (!selectQueryTab(get(), tabId)) return;
     editQueryTab(tabId, change);
+    deferSave(tabId);
     if (run === "now") runQuery(tabId);
     else scheduleRun(tabId);
+  };
+
+  /** Formulates the save of saved query `tabId`'s working definition as it
+   * stands, and holds it until the app goes quiet — replacing any save of it
+   * already waiting. An unsaved query's edits stay in its tab. */
+  const deferSave = (tabId: string) => {
+    const t = selectQueryTab(get(), tabId);
+    if (!t?.persisted) return;
+    const def = t.live;
+    saves.defer(tabId, () => writeDefinition(tabId, def));
+  };
+
+  /** Writes `def` as saved query `tabId`'s definition. Once the backend has
+   * it, it's the tab's `saved` baseline and the explorer's copy (which is what
+   * opening the query again reads); a failure is flagged on the tab, and the
+   * error bar has already reported it (`onRpcFailure`). */
+  const writeDefinition = async (tabId: string, def: QueryDefinition) => {
+    const definition = definitionToStored(def);
+    const modifiedAt = nowEpoch();
+    try {
+      await queryUpdateDefinition({ id: tabId, definition, modifiedAt });
+    } catch (err) {
+      console.error("query save failed", err);
+      editQueryTab(tabId, (x) => {
+        x.saveFailed = true;
+      });
+      return;
+    }
+    editQueryTab(tabId, (x) => {
+      x.saved = def;
+      x.saveFailed = false;
+    });
+    set((s) => {
+      const query = s.queries.data.find((q) => q.id === tabId);
+      if (query) Object.assign(query, { definition, modifiedAt });
+    });
+  };
+
+  /** Steps `tabId`'s undo history to entry `to`, making it the working
+   * definition (which re-runs, and is saved like any other change). */
+  const stepHistory = (tabId: string, to: number) => {
+    const def = get().pages[tabId]?.undo.entries[to];
+    if (!def) return;
+    set((s) => {
+      const page = pageDraft(s, tabId);
+      page.undo.index = to;
+      page.expandedPreset = null;
+    });
+    replaceLive(tabId, def);
   };
 
   /** {@link changeLive} through a mutator of the working definition. */
@@ -829,6 +929,9 @@ export function createAppActions(
         s.currentTrack.rowIndex = null;
       }
     });
+    // There's nothing left to wait for: no more edits are coming to fold into
+    // a closed tab's save.
+    saves.flush(id);
     autoRun.delete(id);
     cancelScheduledRun(id);
     rowClickAnchor.delete(id);
@@ -837,19 +940,24 @@ export function createAppActions(
     lastRunSql.delete(id);
   };
 
-  /** Opens `def` in a new ephemeral (never-saved) query tab named for the
-   * current moment, and makes it the active tab. It goes in at `index` in the
-   * tab bar, or at the end without one. */
-  const openEphemeralTab = (def: QueryDefinition, index?: number) => {
+  /** Opens `def` in a new unsaved (and so nameless) query tab, and makes it
+   * the active tab. It goes in at `index` in the tab bar, or at the end without
+   * one; saving it puts it in `folder`. */
+  const openUnsavedTab = (
+    def: QueryDefinition,
+    { index, folder = null }: { index?: number; folder?: string | null } = {},
+  ) => {
     const newId = newUuid();
     set((s) => {
       s.tabs.splice(index ?? s.tabs.length, 0, {
         kind: "query",
         id: newId,
-        name: nowName(),
+        name: "",
         saved: cloneDefinition(def),
         live: def,
         persisted: false,
+        saveFailed: false,
+        folder,
       });
       s.activeTabId = newId;
     });
@@ -937,6 +1045,7 @@ export function createAppActions(
         onPlayCompleted: (id) => logPlay(id),
         onQueueDry: () => clearNowPlaying(),
         onTransport: () => syncTransport(),
+        onStreamRequest: () => saves.touch(),
       },
       () => get().audioQuality,
     ));
@@ -1000,7 +1109,7 @@ export function createAppActions(
   };
 
   /** Records a play against `tabId`'s saved query (bumps `last_play`). Skipped
-   * for an ephemeral tab, which has no backend row yet. */
+   * for an unsaved tab, which has no backend row yet. */
   const recordQueryPlay = (tabId: string) => {
     if (!selectQueryTab(get(), tabId)?.persisted) return;
     void queryRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
@@ -1276,6 +1385,8 @@ export function createAppActions(
             saved,
             live: cloneDefinition(saved),
             persisted: true,
+            saveFailed: false,
+            folder: null,
           });
         }
         s.activeTabId = query.id;
@@ -1349,30 +1460,10 @@ export function createAppActions(
       });
     },
     addQuery: (parent) => {
-      const s0 = get();
-      const definition = definitionToStored(
-        definitionForBase("track", selectEffectivePresets(s0)),
+      openUnsavedTab(
+        definitionForBase("track", selectEffectivePresets(get())),
+        { folder: parent },
       );
-      const now = nowEpoch();
-      const query = {
-        id: newUuid(),
-        name: nowName(),
-        createdAt: now,
-        modifiedAt: now,
-        lastPlay: now,
-        definition,
-        parent,
-        position: topPosition(s0.queries.data, s0.folders.data, parent),
-      };
-      set((s) => {
-        s.queries.data = [query, ...s.queries.data];
-      });
-      if (parent !== null) expandFolder(parent);
-      void queryAdd(query).catch((err) => {
-        console.error("query add failed", err);
-        void actions.loadQueries();
-      });
-      actions.openTab(query);
     },
     beginTreeRename: (item) =>
       set((s) => {
@@ -1683,58 +1774,69 @@ export function createAppActions(
     saveQuery: (tabId) => {
       const t = selectQueryTab(get(), tabId);
       if (!t) return;
-      const live = t.live;
-      const definition = definitionToStored(live);
-      const now = nowEpoch();
-      // A never-saved (ephemeral) tab is inserted; an existing one has just its
-      // definition updated. Either way, adopt the working copy as the new saved
-      // baseline and mark the tab persisted so the unsaved indicator clears
-      // immediately (optimistic), then refresh the Queries list.
       if (t.persisted) {
-        void queryUpdateDefinition({
-          id: tabId,
-          definition,
-          modifiedAt: now,
-        }).catch((err) => console.error("query save failed", err));
-      } else {
-        // A new query goes in at the top of the Queries tree.
-        const { queries, folders } = get();
-        void queryAdd({
-          id: tabId,
-          name: t.name,
-          createdAt: now,
-          modifiedAt: now,
-          lastPlay: now,
-          definition,
-          parent: null,
-          position: topPosition(queries.data, folders.data, null),
-        }).catch((err) => console.error("query save failed", err));
+        // A retry: the edits would be saved anyway once the app went quiet,
+        // but the user has asked for it now.
+        deferSave(tabId);
+        saves.flush(tabId);
+        return;
       }
+      // An unsaved query is added to the top of its folder, named for the
+      // moment it was saved. Optimistically: it's in the explorer and saved
+      // from here on, and back to unsaved if the backend turns it down. The
+      // add goes through the same queue as the saves that follow it, so none
+      // of those can overtake it.
+      const now = nowEpoch();
+      const { queries, folders } = get();
+      const query: Query = {
+        id: tabId,
+        name: nowName(),
+        createdAt: now,
+        modifiedAt: now,
+        lastPlay: now,
+        definition: definitionToStored(t.live),
+        parent: t.folder,
+        position: topPosition(queries.data, folders.data, t.folder),
+      };
+      set((s) => {
+        s.queries.data = [query, ...s.queries.data];
+      });
+      if (t.folder !== null) expandFolder(t.folder);
       editQueryTab(tabId, (x) => {
-        x.saved = cloneDefinition(live);
+        x.name = query.name;
+        x.saved = t.live;
         x.persisted = true;
       });
-      void actions.loadQueries();
+      saves.defer(tabId, () =>
+        queryAdd(query).catch((err) => {
+          console.error("query save failed", err);
+          saves.cancel(tabId);
+          set((s) => {
+            s.queries.data = s.queries.data.filter((q) => q.id !== tabId);
+          });
+          editQueryTab(tabId, (x) => {
+            x.name = "";
+            x.persisted = false;
+          });
+        }),
+      );
+      saves.flush(tabId);
     },
     duplicateQuery: (id) => {
-      // Open a new *ephemeral* (unsaved) tab copied from the source's working
-      // copy — carrying any unsaved edits. Nothing is written to the backend
-      // until the user saves it; the tab reads
-      // as unsaved (its ✱ shows) meanwhile, and it stays out of the Queries list.
-      // A query that isn't open (duplicated from the explorer) is copied as
-      // saved.
+      // Open a new *unsaved* tab copied from the source's working copy.
+      // Nothing is written to the backend until the user saves it; it stays
+      // out of the Queries list meanwhile. A query that isn't open (duplicated
+      // from the explorer) is copied as saved.
       const source = selectQueryTab(get(), id);
       if (source) {
-        openEphemeralTab(cloneDefinition(source.live));
+        openUnsavedTab(cloneDefinition(source.live));
         return;
       }
       const saved = get().queries.data.find((q) => q.id === id);
-      if (saved) openEphemeralTab(definitionFromStored(saved.definition));
+      if (saved) openUnsavedTab(definitionFromStored(saved.definition));
     },
     newQueryTab: () => {
-      openEphemeralTab(
-        definitionForBase("track", selectEffectivePresets(get())),
-      );
+      openUnsavedTab(definitionForBase("track", selectEffectivePresets(get())));
     },
     openRecordsTab: (besideTabId, query) => {
       // Seeded from the table's defaults only for the display: the filter and
@@ -1745,7 +1847,7 @@ export function createAppActions(
       def.sort = { custom: query.sort };
       if (!("preset" in def.display)) def.display = { custom: query.display };
       const beside = get().tabs.findIndex((t) => t.id === besideTabId);
-      openEphemeralTab(def, beside === -1 ? undefined : beside + 1);
+      openUnsavedTab(def, { index: beside === -1 ? undefined : beside + 1 });
     },
     showChildRecords: (tabId, parentTable, parents, childTable) => {
       const { tables } = get().schema;
@@ -1770,11 +1872,12 @@ export function createAppActions(
       );
     },
 
-    // Only a query has a name of its own to rename; a settings tab's handle text
-    // is fixed, so the rename affordances stand down for it.
+    // Only a saved query has a name of its own to rename; a settings tab's
+    // handle text is fixed, and an unsaved query is named as it's saved, so
+    // the rename affordances stand down for both.
     beginRename: (id) => {
       const t = selectQueryTab(get(), id);
-      if (t) {
+      if (t?.persisted) {
         set((s) => {
           s.renaming = { id, buffer: t.name };
         });
@@ -1826,8 +1929,9 @@ export function createAppActions(
         s.pendingDelete = null;
         s.queries.data = s.queries.data.filter((q) => q.id !== pending.id);
       });
-      // An ephemeral (never-saved) query has no backend record to delete — just
-      // drop its tab.
+      // Its pending edits would only be written to a query that's gone.
+      saves.cancel(pending.id);
+      // An unsaved query has no backend record to delete — just drop its tab.
       if (persisted) {
         // Already gone from the list (above); only a failure needs the
         // backend's copy back.
@@ -1987,6 +2091,18 @@ export function createAppActions(
         pageDraft(s, tabId).expandedPreset = null;
       });
       replaceLive(tabId, cloneDefinition(t.saved));
+    },
+
+    undo: (tabId) => {
+      // An edit still waiting on its debounced run is undone first: record it,
+      // so it's there to redo.
+      checkpoint(tabId);
+      const index = get().pages[tabId]?.undo.index ?? -1;
+      if (index > 0) stepHistory(tabId, index - 1);
+    },
+    redo: (tabId) => {
+      if (!selectCanRedo(get(), tabId)) return;
+      stepHistory(tabId, (get().pages[tabId]?.undo.index ?? -1) + 1);
     },
 
     beginPresetEdit,
@@ -2164,13 +2280,23 @@ export function createAppActions(
       set((s) => {
         s.rpcError = null;
       }),
+    noteRequest: (settled) => saves.track(settled),
+    flushSaves: () => saves.flushAll(),
   };
+
+  // A saved query restored with edits the backend never acknowledged (the
+  // page went away before they were written, or the write failed) has them
+  // saved now, as if they had just been made.
+  for (const t of get().tabs) {
+    if (t.kind === "query" && !defsEqual(t.saved, t.live)) deferSave(t.id);
+  }
 
   const dispose = () => {
     stopWatchingSystemTheme();
     stopPersistingTabs();
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();
+    saves.dispose();
   };
 
   return { actions, dispose };

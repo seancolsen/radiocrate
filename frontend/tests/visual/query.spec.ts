@@ -1,22 +1,25 @@
 import { test, expect } from "@playwright/test";
 import { SCHEMES, openStory, snapshot } from "./harness";
 
-// The query page's parts, each on its own: the toolbar in its four states, the
+// The query page's parts, each on its own: the toolbar in its five states, the
 // section builders without the toolbar above them, the results grid, and a
 // row's context menu.
 
 for (const colorScheme of SCHEMES) {
-  // Saved (clean) query, no builder open: no Save button, the section toggles
-  // inactive, "12 results" at the far right.
+  // Saved query with nothing to undo, redo or save, no builder open: the
+  // section toggles inactive, "12 results" and Refresh at the far right.
   test(`query-builder/collapsed - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "query-builder/collapsed", colorScheme);
     await expect(stage.getByText("12 results")).toBeVisible();
+    await expect(stage.getByRole("button", { name: "Undo" })).toHaveCount(0);
+    await expect(stage.getByRole("button", { name: "Save" })).toHaveCount(0);
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/collapsed", colorScheme),
     );
   });
 
-  // Filter section open + unsaved: the Save button, the active blue split
+  // Filter section open on a query that can step both ways and whose last save
+  // failed: Undo, Redo and Save behind their separator, the active blue split
   // button with its ⋮, and the builder line (custom input + "vetted" tab).
   test(`query-builder/filter-open - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
@@ -25,13 +28,15 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.getByRole("button", { name: "vetted" })).toBeVisible();
+    for (const name of ["Undo", "Redo", "Save"]) {
+      await expect(stage.getByRole("button", { name })).toBeVisible();
+    }
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/filter-open", colorScheme),
     );
   });
 
-  // Compact (≤ 500px): the section buttons drop their labels and the
-  // run/filter separator is hidden.
+  // Compact (≤ 500px): the section buttons drop their labels.
   test(`query-builder/filter-open-narrow - ${colorScheme}`, async ({
     page,
   }) => {
@@ -43,6 +48,16 @@ for (const colorScheme of SCHEMES) {
     await expect(stage.getByRole("button", { name: "vetted" })).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/filter-open-narrow", colorScheme),
+    );
+  });
+
+  // A new query, never saved: Save alone, with nothing yet to undo.
+  test(`query-builder/new - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "query-builder/new", colorScheme);
+    await expect(stage.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(stage.getByRole("button", { name: "Undo" })).toHaveCount(0);
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/new", colorScheme),
     );
   });
 

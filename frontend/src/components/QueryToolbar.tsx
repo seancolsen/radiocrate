@@ -3,6 +3,8 @@ import { Icons, type IconComponent } from "../icons";
 import { sectionLabel, type Section } from "../query/definition";
 import {
   selectBuilderSection,
+  selectCanRedo,
+  selectCanUndo,
   selectFullEditorOpen,
   selectIsFullQuery,
   selectIsUnsaved,
@@ -21,8 +23,7 @@ import ViewSqlModal from "./ViewSqlModal";
 import { cx } from "./ui/cx";
 import { useElementWidth } from "./ui/useElementWidth";
 
-/** Width at/below which the bar drops the section buttons' text labels and the
- * run/filter separator. */
+/** Width at/below which the bar drops the section buttons' text labels. */
 const COMPACT_WIDTH = 500;
 
 const SECTIONS: { section: Section; icon: IconComponent }[] = [
@@ -36,12 +37,20 @@ function resultCountLabel(n: number): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? "result" : "results"}`;
 }
 
-/** The query-page toolbar: a top control line (Save while unsaved · Refresh ·
- * the wrench query-actions menu · a separator · the Filter/Sort/Display section
- * toggles · the result count) over a conditionally-shown builder line for the
- * open section. */
+function Separator(): JSX.Element {
+  return <div className="bg-edge mx-1 h-5 w-px shrink-0" />;
+}
+
+/** The query-page toolbar: a top control line over a conditionally-shown
+ * builder line for the open section. The control line runs, left to right: the
+ * wrench query-actions menu · a separator · the Filter/Sort/Display section
+ * toggles · then, each only while it applies, Undo, Redo and Save (behind a
+ * separator of their own while any of them shows) — and, at the far right, the
+ * result count and Refresh. */
 export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.tabId));
+  const canUndo = useApp((s) => selectCanUndo(s, props.tabId));
+  const canRedo = useApp((s) => selectCanRedo(s, props.tabId));
   const count = useApp((s) => selectResultCount(s, props.tabId));
   // Full mode swaps the three section toggles for one Querydown toggle, so what
   // "the builder is open" means swaps with it.
@@ -50,8 +59,14 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const section = useApp((s) => selectBuilderSection(s, props.tabId));
   const running = useApp((s) => selectRunning(s, props.tabId));
   const builderOpen = fullMode ? fullEditorOpen : section !== null;
-  const { saveQuery, runQuery, toggleFullEditor, toggleBuilderSection } =
-    useAppActions();
+  const {
+    saveQuery,
+    runQuery,
+    undo,
+    redo,
+    toggleFullEditor,
+    toggleBuilderSection,
+  } = useAppActions();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const compact = useElementWidth(containerRef) <= COMPACT_WIDTH;
@@ -64,23 +79,6 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           "border-edge border-b": !builderOpen,
         })}
       >
-        {unsaved && (
-          <IconButton
-            icon={Icons.Save}
-            label="Save"
-            onClick={() => saveQuery(props.tabId)}
-          />
-        )}
-        {/* The glyph turns while the run it starts is in flight. Its circular
-            arrow is drawn centred in the icon's own box, so the default
-            transform origin already spins it about the centre of the circle
-            rather than about the arrowhead that juts out past it. */}
-        <IconButton
-          icon={Icons.Refresh}
-          label="Refresh"
-          iconClassName={cx({ "animate-spin": running })}
-          onClick={() => runQuery(props.tabId)}
-        />
         <Menu
           align="start"
           width="210px"
@@ -96,7 +94,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <PageActionsMenu tabId={props.tabId} />
         </Menu>
 
-        {!compact && <div className="bg-edge mx-1 h-5 w-px shrink-0" />}
+        <Separator />
 
         {fullMode ? (
           <SplitButton
@@ -123,12 +121,45 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           ))
         )}
 
+        {(canUndo || canRedo || unsaved) && <Separator />}
+        {canUndo && (
+          <IconButton
+            icon={Icons.Undo}
+            label="Undo"
+            onClick={() => undo(props.tabId)}
+          />
+        )}
+        {canRedo && (
+          <IconButton
+            icon={Icons.Redo}
+            label="Redo"
+            onClick={() => redo(props.tabId)}
+          />
+        )}
+        {unsaved && (
+          <IconButton
+            icon={Icons.Save}
+            label="Save"
+            onClick={() => saveQuery(props.tabId)}
+          />
+        )}
+
         <div className="flex-1" />
         {count !== undefined && (
-          <span className="text-ink-weak pr-2 text-xs whitespace-nowrap">
+          <span className="text-ink-weak px-1 text-xs whitespace-nowrap">
             {resultCountLabel(count)}
           </span>
         )}
+        {/* The glyph turns while the run it starts is in flight. Its circular
+            arrow is drawn centred in the icon's own box, so the default
+            transform origin already spins it about the centre of the circle
+            rather than about the arrowhead that juts out past it. */}
+        <IconButton
+          icon={Icons.Refresh}
+          label="Refresh"
+          iconClassName={cx({ "animate-spin": running })}
+          onClick={() => runQuery(props.tabId)}
+        />
       </div>
 
       {builderOpen && <QueryBuilder tabId={props.tabId} />}

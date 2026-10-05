@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppStore, type AppStoreBundle } from "./index";
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
@@ -19,6 +19,7 @@ vi.mock("api-client", async (importOriginal) => {
     queryArrange: vi.fn(() => Promise.resolve(null)),
     queryAdd: vi.fn(() => Promise.resolve(null)),
     queryRename: vi.fn(() => Promise.resolve(null)),
+    queryUpdateDefinition: vi.fn(() => Promise.resolve(null)),
     queryDelete: vi.fn(() => Promise.resolve(null)),
     collectionRescan: vi.fn(() => Promise.resolve(null)),
   };
@@ -76,6 +77,7 @@ import {
   queryArrange,
   queryDelete,
   queryRename,
+  queryUpdateDefinition,
   settingDelete,
   settingSet,
   type Query,
@@ -85,6 +87,12 @@ import { compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
 import { SETTINGS } from "../../state/settings";
+import {
+  selectCanRedo,
+  selectCanUndo,
+  selectIsUnsaved,
+  selectQueryTab,
+} from "./selectors";
 
 function openQueryTab(bundle: AppStoreBundle, id: string) {
   bundle.actions.openTab({ id, name: id, definition: "{}" });
@@ -399,7 +407,8 @@ describe("openRecordsTab", () => {
     expect(s.tabs.map((t) => t.id)).toEqual(["a", "b", opened.id, "c"]);
     expect(s.activeTabId).toBe(opened.id);
     expect(opened.kind === "query" && opened.persisted).toBe(false);
-    expect(opened.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+    // Unsaved, so nameless until it's saved.
+    expect(opened.name).toBe("");
   });
 
   it("uses the query's own filter, sort and display when the table has no default display", () => {
@@ -946,7 +955,8 @@ describe("the query tree", () => {
     ).toBe(false);
   });
 
-  it("adds a saved query at the top of a folder and opens it", () => {
+  it("opens a new query unsaved, and saves it at the top of its folder", () => {
+    vi.mocked(queryAdd).mockClear();
     bundle.actions.newFolder();
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
@@ -955,15 +965,48 @@ describe("the query tree", () => {
     );
     bundle.actions.toggleFolderExpanded(folder); // collapse it
     bundle.actions.addQuery(folder);
+    const id = bundle.store.getState().activeTabId!;
+    // Nothing is written, and nothing shows in the tree, until it's saved.
+    expect(selectQueryTab(bundle.store.getState(), id)).toMatchObject({
+      name: "",
+      persisted: false,
+    });
+    expect(selectIsUnsaved(bundle.store.getState(), id)).toBe(true);
+    expect(vi.mocked(queryAdd)).not.toHaveBeenCalled();
+    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+      "a",
+      "b",
+    ]);
+
+    bundle.actions.saveQuery(id);
     const s = bundle.store.getState();
     const added = s.queries.data[0];
-    expect(added).toMatchObject({ parent: folder, position: -1 });
+    expect(added).toMatchObject({ id, parent: folder, position: -1 });
+    expect(added.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
     expect(vi.mocked(queryAdd)).toHaveBeenCalledWith(added);
-    expect(s.activeTabId).toBe(added.id);
-    expect(s.tabs.find((t) => t.id === added.id)).toMatchObject({
+    expect(selectQueryTab(s, id)).toMatchObject({
+      name: added.name,
       persisted: true,
     });
+    expect(selectIsUnsaved(s, id)).toBe(false);
     expect(s.expandedFolders.has(folder)).toBe(true);
+  });
+
+  it("puts a new query back to unsaved when the backend turns it down", async () => {
+    vi.mocked(queryAdd).mockRejectedValueOnce(new Error("500 nope"));
+    bundle.actions.newQueryTab();
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.saveQuery(id);
+    await vi.waitFor(() =>
+      expect(selectQueryTab(bundle.store.getState(), id)).toMatchObject({
+        name: "",
+        persisted: false,
+      }),
+    );
+    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+      "a",
+      "b",
+    ]);
   });
 
   it("renames a query in place, and the tab that has it open", () => {
@@ -1006,5 +1049,214 @@ describe("the query tree", () => {
     expect(createAppStore(env).store.getState().expandedFolders).toEqual(
       new Set(["f"]),
     );
+  });
+});
+
+describe("autosave", () => {
+  const IDLE = 5000;
+  let bundle: AppStoreBundle;
+
+  /** The definitions written so far, as their filter text. */
+  const written = () =>
+    vi
+      .mocked(queryUpdateDefinition)
+      .mock.calls.map(
+        ([p]) =>
+          (JSON.parse(p.definition) as { filter: { custom: string } }).filter
+            .custom,
+      );
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(queryUpdateDefinition).mockReset();
+    vi.mocked(queryUpdateDefinition).mockResolvedValue(null);
+    bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("writes a saved query's edit once the app has been idle for a while", async () => {
+    bundle.actions.setFilterCustom("a", "jazz");
+    await vi.advanceTimersByTimeAsync(IDLE - 1);
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    // No Save button, no ✱: the edit is on its way.
+    expect(selectIsUnsaved(bundle.store.getState(), "a")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(written()).toEqual(["jazz"]);
+    expect(selectQueryTab(bundle.store.getState(), "a")?.saved.filter).toEqual({
+      custom: "jazz",
+      presets: [],
+    });
+  });
+
+  it("writes only the last of a burst of edits", async () => {
+    bundle.actions.setFilterCustom("a", "j");
+    await vi.advanceTimersByTimeAsync(IDLE - 1000);
+    bundle.actions.setFilterCustom("a", "ja");
+    await vi.advanceTimersByTimeAsync(IDLE - 1000);
+    bundle.actions.setFilterCustom("a", "jazz");
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(written()).toEqual(["jazz"]);
+  });
+
+  it("waits for requests to the backend to settle, then for quiet after them", async () => {
+    bundle.actions.setFilterCustom("a", "jazz");
+    let settle = () => {};
+    bundle.actions.noteRequest(
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(IDLE * 3);
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    settle();
+    await vi.advanceTimersByTimeAsync(IDLE - 1);
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(written()).toEqual(["jazz"]);
+  });
+
+  it("keeps an unsaved query's edits in its tab", async () => {
+    bundle.actions.newQueryTab();
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.setFilterCustom(id, "jazz");
+    await vi.advanceTimersByTimeAsync(IDLE * 2);
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("shows Save after a failed write, and Save tries again at once", async () => {
+    vi.mocked(queryUpdateDefinition).mockRejectedValueOnce(new Error("500"));
+    bundle.actions.setFilterCustom("a", "jazz");
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(selectIsUnsaved(bundle.store.getState(), "a")).toBe(true);
+    expect(selectQueryTab(bundle.store.getState(), "a")?.saveFailed).toBe(true);
+
+    bundle.actions.saveQuery("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(written()).toEqual(["jazz", "jazz"]);
+    expect(selectIsUnsaved(bundle.store.getState(), "a")).toBe(false);
+  });
+
+  it("sends a closed tab's pending write at once", async () => {
+    bundle.actions.setFilterCustom("a", "jazz");
+    bundle.actions.closeTab("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(written()).toEqual(["jazz"]);
+  });
+
+  it("drops a deleted query's pending write", async () => {
+    bundle.actions.setFilterCustom("a", "jazz");
+    bundle.actions.requestDelete("a");
+    bundle.actions.confirmDelete();
+    await vi.advanceTimersByTimeAsync(IDLE * 2);
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("saves a restored tab's edits the backend never acknowledged", async () => {
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    openQueryTab(before, "a");
+    before.actions.setFilterCustom("a", "jazz");
+    before.dispose(); // the page goes away before the write is sent
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+
+    const after = createAppStore(env);
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(written()).toEqual(["jazz"]);
+    after.dispose();
+  });
+});
+
+describe("undo and redo", () => {
+  let bundle: AppStoreBundle;
+  const filter = () =>
+    selectQueryTab(bundle.store.getState(), "a")?.live.filter.custom;
+  const can = () => ({
+    undo: selectCanUndo(bundle.store.getState(), "a"),
+    redo: selectCanRedo(bundle.store.getState(), "a"),
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.ensureRun("a"); // the first checkpoint: the query as opened
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("steps back and forth through the definitions the page has run", () => {
+    expect(can()).toEqual({ undo: false, redo: false });
+    bundle.actions.clearFilterCustom("a"); // runs, but changes nothing
+    expect(can()).toEqual({ undo: false, redo: false });
+    bundle.actions.toggleFilterPreset("a", "p1");
+    bundle.actions.toggleFilterPreset("a", "p2");
+    expect(can()).toEqual({ undo: true, redo: false });
+
+    bundle.actions.undo("a");
+    expect(
+      selectQueryTab(bundle.store.getState(), "a")?.live.filter.presets,
+    ).toEqual(["p1"]);
+    expect(can()).toEqual({ undo: true, redo: true });
+    bundle.actions.undo("a");
+    expect(
+      selectQueryTab(bundle.store.getState(), "a")?.live.filter.presets,
+    ).toEqual([]);
+    expect(can()).toEqual({ undo: false, redo: true });
+
+    bundle.actions.redo("a");
+    bundle.actions.redo("a");
+    expect(
+      selectQueryTab(bundle.store.getState(), "a")?.live.filter.presets,
+    ).toEqual(["p1", "p2"]);
+    expect(can()).toEqual({ undo: true, redo: false });
+  });
+
+  it("drops what was undone once something else runs", () => {
+    bundle.actions.toggleFilterPreset("a", "p1");
+    bundle.actions.undo("a");
+    bundle.actions.toggleFilterPreset("a", "p2");
+    expect(can()).toEqual({ undo: true, redo: false });
+    bundle.actions.undo("a");
+    expect(
+      selectQueryTab(bundle.store.getState(), "a")?.live.filter.presets,
+    ).toEqual([]);
+  });
+
+  it("undoes an edit still waiting on its run first, and can redo it", () => {
+    bundle.actions.setFilterCustom("a", "jazz"); // debounced: not run yet
+    expect(can()).toEqual({ undo: true, redo: false });
+    bundle.actions.undo("a");
+    expect(filter()).toBe("");
+    expect(can()).toEqual({ undo: false, redo: true });
+    bundle.actions.redo("a");
+    expect(filter()).toBe("jazz");
+  });
+
+  it("checkpoints a debounced edit when its run fires", async () => {
+    bundle.actions.setFilterCustom("a", "j");
+    bundle.actions.setFilterCustom("a", "jazz");
+    await vi.advanceTimersByTimeAsync(300);
+    bundle.actions.undo("a");
+    // One step: the keystrokes ran once, as one edit.
+    expect(filter()).toBe("");
+  });
+
+  it("saves the definition it steps to, lazily", async () => {
+    vi.mocked(queryUpdateDefinition).mockReset();
+    vi.mocked(queryUpdateDefinition).mockResolvedValue(null);
+    bundle.actions.toggleFilterPreset("a", "p1");
+    bundle.actions.undo("a");
+    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(queryUpdateDefinition).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(vi.mocked(queryUpdateDefinition).mock.calls[0][0].definition),
+    ).toMatchObject({ filter: { custom: "", presets: [] } });
   });
 });

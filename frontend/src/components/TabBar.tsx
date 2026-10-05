@@ -1,7 +1,11 @@
 import { useRef, type JSX, type PointerEvent } from "react";
 import { Icons } from "../icons";
 import { useApp, useAppActions } from "../stores/react";
-import { selectIsUnsaved, type TabKind } from "../stores/app";
+import {
+  selectIsPersisted,
+  selectIsUnsaved,
+  type TabKind,
+} from "../stores/app";
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
 import TabHandle from "./TabHandle";
 import { tabIcon } from "./tabKind";
@@ -19,6 +23,8 @@ function WiredTabHandle(props: {
   onPointerDown: (e: PointerEvent<HTMLElement>, id: string) => void;
 }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.id));
+  // Only a saved query has a name to rename.
+  const renameable = useApp((s) => selectIsPersisted(s, props.id));
   const renaming = useApp((s) => s.renaming?.id === props.id);
   const renameBuffer = useApp((s) =>
     s.renaming?.id === props.id ? s.renaming.buffer : "",
@@ -31,7 +37,7 @@ function WiredTabHandle(props: {
       icon={tabIcon(props.kind)}
       active={props.active}
       unsaved={unsaved}
-      renameable={props.kind === "query"}
+      renameable={renameable}
       dragging={props.dragging}
       translate={props.translate}
       renaming={renaming}
@@ -95,7 +101,7 @@ export default function TabBar(): JSX.Element {
         />
       ))}
 
-      {/* New tab (+): opens a fresh ephemeral "track" query. */}
+      {/* New tab (+): opens a fresh, unsaved "track" query. */}
       <button
         type="button"
         aria-label="New tab"

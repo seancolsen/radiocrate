@@ -138,28 +138,24 @@ test.describe("the query tree", () => {
     );
   });
 
-  test("the actions menu adds a saved query at the top and opens it", async ({
-    page,
-  }) => {
+  test("the actions menu opens a new, unsaved query", async ({ page }) => {
+    const before = await treeRows(page);
     await page.getByRole("button", { name: "Query list actions" }).click();
     await page.getByRole("menuitem", { name: "Add query" }).click();
-    const [first] = await treeRows(page);
-    const name = first.slice(2);
-    expect(name).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-    // Opened: listed under "Opened" as well as in the tree.
-    await expect(page.getByText(name, { exact: true })).toHaveCount(2);
+    // Opened, nameless — and out of the tree until it's saved.
+    await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
+    await expect(page.getByText("new", { exact: true })).toBeVisible();
+    expect(await treeRows(page)).toEqual(before);
   });
 
-  test("a folder's context menu adds a query at the top of it", async ({
+  test("a folder's context menu opens a new, unsaved query", async ({
     page,
   }) => {
+    const before = await treeRows(page);
     await treeRow(page, "Archive").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Add query" }).click();
-    const rows = await treeRows(page);
-    expect(rows.slice(-2)[0]).toBe("0:Archive");
-    const name = rows.slice(-1)[0].slice(2);
-    expect(rows.slice(-1)[0]).toMatch(/^1:/);
-    await expect(page.getByText(name, { exact: true })).toHaveCount(2);
+    await expect(page.getByText("new", { exact: true })).toBeVisible();
+    expect(await treeRows(page)).toEqual(before);
   });
 
   test("a query's context menu renames it in place", async ({ page }) => {
