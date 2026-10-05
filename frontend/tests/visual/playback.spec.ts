@@ -207,8 +207,10 @@ test("the bar's Locate action returns to the playing track's row", async ({
   await page.goto(
     "/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&tracks=track-a,track-b&expose=1",
   );
-  await expect(page.locator("canvas[data-rows]")).toBeVisible();
-  await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
+  await expect(page.locator("canvas[data-rows]:visible")).toBeVisible();
+  await page
+    .locator("canvas:visible")
+    .dblclick({ position: { x: 200, y: 10 } });
   await expect(page.getByTestId("now-playing")).toBeVisible();
   const playingTab = await page.evaluate(
     () => (window as unknown as AppWindow).__appStore.state.activeTabId,
