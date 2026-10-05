@@ -4,5 +4,5 @@
 
 export * from "./types";
 export * from "./client";
-export type { RpcError, RpcFailure } from "./rpc";
-export { AuthRedirectError, onRpcFailure } from "./rpc";
+export type { ApiRequest, RpcError, RpcFailure } from "./rpc";
+export { AuthRedirectError, onRequest, onRpcFailure } from "./rpc";

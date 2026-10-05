@@ -3,7 +3,7 @@
 // changing it, and commit the result.
 
 import type { AppVersion, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryArrangeParams, QueryDeleteParams, QueryFolder, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams, Setting, SettingDeleteParams } from "./types";
-import { handleAuthRedirect, rpcCall } from "./rpc";
+import { handleAuthRedirect, rpcCall, trackRequest } from "./rpc";
 
 export async function queryList(): Promise<Query[]> {
   return (await rpcCall("query.list", null)) as Query[];
@@ -106,9 +106,15 @@ export async function appVersion(): Promise<AppVersion> {
 /**
  * POSTs a raw SQL string to `/api/query` and returns the Arrow IPC response
  * bytes. Decoding (via apache-arrow) stays in the frontend. Throws on a non-2xx
- * response (a bad SQL string returns 400 + a plain-text DuckDB error).
+ * response (a bad SQL string returns 400 + a plain-text DuckDB error). Reported
+ * to `onRequest`'s listeners as it goes out, as every RPC call is.
  */
-export async function postQuery(sql: string): Promise<ArrayBuffer> {
+export function postQuery(sql: string): Promise<ArrayBuffer> {
+  return trackRequest("/api/query", sendQuery(sql));
+}
+
+/** The request itself, for {@link postQuery}. */
+async function sendQuery(sql: string): Promise<ArrayBuffer> {
   const res = await fetch("/api/query", {
     method: "POST",
     headers: { "content-type": "text/plain" },

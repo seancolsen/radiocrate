@@ -760,24 +760,41 @@ export function createAppActions(
     })();
   };
 
-  /** Mutate a tab's working definition through a mutator, then re-run. */
-  const editLive = (tabId: string, mutate: (def: QueryDefinition) => void) => {
-    if (!selectQueryTab(get(), tabId)) return;
-    editQueryTab(tabId, (t) => mutate(t.live));
-    runQuery(tabId);
-  };
-
-  /** Like {@link editLive}, but the state update is applied immediately (so the
-   * controlled input and the unsaved indicator stay in sync) while the query
-   * re-run is debounced. For the builder's free-text editors. */
-  const editLiveDebounced = (
+  /** Changes a tab's working definition, then re-runs its query: `"now"`, or
+   * `"debounced"` for the builder's free-text editors, whose state update still
+   * lands immediately (so the controlled input stays in sync) while the run
+   * waits for a pause in the typing.
+   *
+   * The one way a query's definition changes — every edit, rebase and revert
+   * comes through here — so whatever has to follow a change of definition
+   * follows it from here. */
+  const changeLive = (
     tabId: string,
-    mutate: (def: QueryDefinition) => void,
+    change: (t: QueryTab) => void,
+    run: "now" | "debounced",
   ) => {
     if (!selectQueryTab(get(), tabId)) return;
-    editQueryTab(tabId, (t) => mutate(t.live));
-    scheduleRun(tabId);
+    editQueryTab(tabId, change);
+    if (run === "now") runQuery(tabId);
+    else scheduleRun(tabId);
   };
+
+  /** {@link changeLive} through a mutator of the working definition. */
+  const editLive = (
+    tabId: string,
+    mutate: (def: QueryDefinition) => void,
+    run: "now" | "debounced" = "now",
+  ) => changeLive(tabId, (t) => mutate(t.live), run);
+
+  /** {@link changeLive} to a whole new working definition. */
+  const replaceLive = (tabId: string, def: QueryDefinition) =>
+    changeLive(
+      tabId,
+      (t) => {
+        t.live = def;
+      },
+      "now",
+    );
 
   const beginPresetEdit = (id: string) => {
     const preset = get().presets.find((p) => p.id === id);
@@ -1881,14 +1898,11 @@ export function createAppActions(
         table,
         selectEffectivePresets(get()),
       );
-      editQueryTab(tabId, (x) => {
-        x.live = rebased;
-      });
       set((s) => {
         pageDraft(s, tabId).expandedPreset = null;
         pageDraft(s, tabId).fullEditorOpen = false;
       });
-      runQuery(tabId);
+      replaceLive(tabId, rebased);
     },
     convertToFull: (tabId) => {
       const t = selectQueryTab(get(), tabId);
@@ -1909,13 +1923,21 @@ export function createAppActions(
       });
     },
     setFullText: (tabId, text) =>
-      editLiveDebounced(tabId, (def) => {
-        def.full = text;
-      }),
+      editLive(
+        tabId,
+        (def) => {
+          def.full = text;
+        },
+        "debounced",
+      ),
     setFilterCustom: (tabId, text) =>
-      editLiveDebounced(tabId, (def) => {
-        def.filter.custom = text;
-      }),
+      editLive(
+        tabId,
+        (def) => {
+          def.filter.custom = text;
+        },
+        "debounced",
+      ),
     clearFilterCustom: (tabId) =>
       editLive(tabId, (def) => {
         def.filter.custom = "";
@@ -1947,9 +1969,13 @@ export function createAppActions(
       });
     },
     setSectionCustomText: (tabId, section, text) =>
-      editLiveDebounced(tabId, (def) => {
-        def[section] = { custom: text };
-      }),
+      editLive(
+        tabId,
+        (def) => {
+          def[section] = { custom: text };
+        },
+        "debounced",
+      ),
     reshuffle: (tabId, section) =>
       editLive(tabId, (def) => {
         def[section] = shuffleContent();
@@ -1957,14 +1983,10 @@ export function createAppActions(
     revertLive: (tabId) => {
       const t = selectQueryTab(get(), tabId);
       if (!t) return;
-      const saved = cloneDefinition(t.saved);
-      editQueryTab(tabId, (x) => {
-        x.live = saved;
-      });
       set((s) => {
         pageDraft(s, tabId).expandedPreset = null;
       });
-      runQuery(tabId);
+      replaceLive(tabId, cloneDefinition(t.saved));
     },
 
     beginPresetEdit,

@@ -42,6 +42,42 @@ export function onRpcFailure(
   };
 }
 
+/** A request either transport has just sent: the RPC method it calls, or a
+ * non-RPC transport's path (`/api/query`), and a promise that settles once it
+ * has been answered or has failed. `settled` never rejects. */
+export interface ApiRequest {
+  endpoint: string;
+  settled: Promise<void>;
+}
+
+const requestListeners = new Set<(request: ApiRequest) => void>();
+
+/**
+ * Subscribes to every request either transport sends, as it goes out: the one
+ * place all of an app's traffic to the backend can be seen, so an app can tell
+ * when it has gone quiet — to hold back a write that can wait until then, say.
+ * Returns the function that unsubscribes.
+ */
+export function onRequest(listener: (request: ApiRequest) => void): () => void {
+  requestListeners.add(listener);
+  return () => {
+    requestListeners.delete(listener);
+  };
+}
+
+/** Reports `request`, just sent to `endpoint`, to {@link onRequest}'s
+ * listeners, and hands it back. */
+export function trackRequest<T>(endpoint: string, request: Promise<T>): Promise<T> {
+  if (requestListeners.size > 0) {
+    const settled = request.then(
+      () => undefined,
+      () => undefined,
+    );
+    for (const listener of requestListeners) listener({ endpoint, settled });
+  }
+  return request;
+}
+
 /**
  * Where to send the browser to renew a session the proxy in front of us has
  * expired: a path under `/api`, which the service worker is configured never to
@@ -96,15 +132,16 @@ export function handleAuthRedirect(res: Response, url: string): void {
  * is already camelCase (the server renames via serde), so callers can cast the
  * result to the generated type directly. Same-origin in production; in dev Vite
  * proxies `/api` to the backend. Throws on a transport error, an RPC `error`, or
- * an intercepted request (see {@link handleAuthRedirect}). Every failure but an
- * intercepted request is reported to {@link onRpcFailure}'s listeners first.
+ * an intercepted request (see {@link handleAuthRedirect}). Every call is
+ * reported to {@link onRequest}'s listeners as it goes out, and every failure but
+ * an intercepted request to {@link onRpcFailure}'s listeners before it rejects.
  */
 export async function rpcCall(
   method: string,
   params: unknown = null,
 ): Promise<unknown> {
   try {
-    return await send(method, params);
+    return await trackRequest(method, send(method, params));
   } catch (error) {
     if (!(error instanceof AuthRedirectError)) {
       for (const listener of failureListeners) listener({ method, error });
