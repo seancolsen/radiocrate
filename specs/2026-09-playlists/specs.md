@@ -22,8 +22,8 @@ These are the features we need to support:
 - Select and remove tracks from a playlist
 - Manually re-arrange tracks within a playlist
 - Modify the display fields of a playlist, as with a query
-- Sort/filter the tracks in a playlist (as done within a query) with the sorting/filtering applied ephemerally and easy to restore to the saved order/set as defined within the playlist.
-- Commit the ephemeral track sorting/filtering to the defined track order/set as stored in a playlist (thus removing all ephemeral sorting/filtering).
+- Use the same "Sort" and "Filter" UI present for queries in order to apply additional sorting and filtering conditions on top of the list of tracks as stored in the playlist.
+- Commit the sorting and/or filtering conditions to modify the defined list of tracks as stored in a playlist (thus removing the sorting and/or filtering conditions).
 
 ## Data model changes
 
@@ -32,12 +32,12 @@ Currently in the database we have a table named "query". Most of the fields in t
 ```sql
 create table query (
   id uuid primary key,
-  definition text -- Structured JSON holding Querydown DSL code, authored by the user
+  definition text
 );
 
 create table playlist (
   id uuid primary key,
-  display text, -- Structured JSON holding Querydown display definition, for tracks
+  definition text
 );
 
 create table playlist_track (
@@ -59,9 +59,11 @@ create table source (
 );
 ```
 
-## CRUD on playlists
+The `playlist.definition` column is a JSON column with a similar structure to `query.definition` except for the fact that it will not have a field for the base table.
 
-TODO
+## No ephemeral playlists
+
+Unlike queries, playlists will need to be saved before they can become usable by the user. This is due to the requirement that `playlist_track` records be present in the database.
 
 ## Converting a query into a playlist
 
@@ -70,20 +72,25 @@ TODO
 - A new playlist should be created with the same name as its originating query.
 - When creating a new playlist, we should add `playlist_track` records for all the tracks in the playlist, and we should initialize the `order` value with sequential integers. (This is a `double` so that we can easily re-sort entries by modifying only the entries being rearranged.)
 
-## Changes within the explorer
+## Listing playlists and queries in the explorer
 
 - The Explorer sidebar has a section labeled "Queries". Change the terminology for this section to "Sources". Make the change in the code and the UI.
-- In the dropdown menu, add a "Add playlist" option.
 - Display queries and playlists alongside one another, as different kinds of "source" items within the same tree of sources.
 - Use different icons to distinguish visually between the different kinds of sources.
 
-## Changes within the tab bar
+## Creating a new playlist from scratch
 
-- Modify the new tab button Such that it opens a drop down allowing the user to select a new query or new playlist.
+- In the explorer, in the dropdown menu as well as the context menu for folders, add a "Add playlist" option.
+- In the application tab bar, modify the new tab button Such that it opens a drop down allowing the user to select a new query or new playlist.
+- When the user creates a new playlist,the playlist should be immediately saved using a timestamp as its name, and it should be placed at the top of the sources list. The playlist should become open as a tab.
+
+## Other CRUD on playlists from the explorer
+
+- As with queries, the user should be able to rename, delete, and duplicate playlists from the explorer sidebar. Follow the same UX that we already have for queries.
 
 ## Adding tracks to a playlist
 
-After selecting tracks within a playlist or query, the user can do either:
+The user should be able to add one or multiple track(s) to a specific playlist from any query or playlist result set. After selecting the track(s) within the results, the user should be able to perform either of the following actions:
 
 - Drag selected tracks into the playlist entry in the sources tree.
 
@@ -93,12 +100,13 @@ After selecting tracks within a playlist or query, the user can do either:
 
     Single-clicking a playlist selects the playlist, adds the tracks to it, and closes the modal.
 
+Note that the overall playlist feature design currently lacks a flow for adding new tracks to a playlist from directly within the playlist page itself. This is okay. (Basically the user needs to open a new query tab and drag tracks between tabs.)
+
 When adding tracks to a playlist, they are added with `order` values computed as follows:
 
 1. The application first reads the `playlist_track` entries for the playlist to determine the max.
 1. New `playlist_track` records are inserted with integer values set to increment from the integer ceiling of the maximum preexisting `order` value for the playlist. (This effectively adds tracks at the _end_ of the playlist.)
 1. When multiple tracks are added, they get distinct `order` values, incremented by sequential integers, with their respective order as defined relative to one another where they were originally selected.
-
 
 ## The playlist page
 
@@ -136,31 +144,60 @@ As you can see we have slots in this query template for filter, sort and display
 
 ### Filtering a playlist
 
-- Filtering a playlist should work much in the same way as filtering a query of tracks. Some differences are noted below...
+Filtering a playlist should work much in the same way as filtering a query of tracks. Some differences are noted below...
+
 - No filtering presets should be applied by default initially.
 - All filtering presets defined for queries of tracks should be available for playlists.
-- When no filters are applied, the user should see all of the tracks in the playlist. 
-- Any filters the user configures for a playlist should be stored ephemerally only in the playlist tab. The filters should not be saved to the playlist record stored in the database.
+- When no filters are applied, the user should see all of the tracks as stored in the playlist via the `playlist_track` entries.
+- After the user has modified the filter conditions, immediately re-run the query (with debouncing). Then queue a lazy network request to auto-save the playlist record (just like we do for queries).
+- When any filter is applied, render the following buttons at the bottom of the filter builder UI:
+    - "Delete these tracks" (with a `delete` icon)
+    - "Keep only these tracks" (with a `check` icon)
 
-### Sorting a playlist
+### Sorting a playlist via sorting conditions
 
-- Sorting a playlist should work much in the same way as sorting a query of tracks. Some differences are noted below...
+Sorting a playlist should work much in the same way as sorting a query of tracks. Some differences are noted below...
+
 - No sorting preset should be applied by default initially.
 - All sorting presets defined for queries of tracks should be available for playlists.
 - When no sorting conditions are applied, the user should see all of the tracks in the playlist, in the order in which they are stored in the playlist.
-- Any sorting conditions the user configures for a playlist should be stored ephemerally only in the playlist tab. The sorting conditions should not be saved to the playlist record stored in the database.
 - In the sort strategy drop down menu, display a new radio button at the top labeled "Playlist order". Make this the default sorting strategy.
+- After the user has modified the sorting conditions, immediately re-run the query (with debouncing). Then queue a lazy network request to auto-save the playlist record (just like we do for queries).
+- When any sorting conditions are applied, render the following button at the bottom of the sort builder UI:
+    - "Commit this track order to playlist" (with a `check` icon)
 
 ### Customizing the display of track fields within a playlist
 
-- Unlike filtering and sorting, we do actually want to store the user's customized display options for playlists. That is why we have a field for this in the playlist data model. Thus, the display UI and UX should function identically for playlists to that of track queries. When a user modifies the display configuration for a playlist, the playlist should become unsaved, giving the user the option to save it.
+The "Display" builder should function identically to a query of `track` records.
 
-TODO: revisit "save"
+### Manually removing tracks from a playlist
 
-### Modifying and saving a playlist
+When one or more tracks are selected, the user should be able to remove them from the playlist using any of the following actions:
 
-TODO
+- A command pallette action "Playlist: remove selected tracks". By default this should be bound to the `Delete` key when the results have focus (but that should be configurable through our keyboard shortcut system).
 
+- A "Remove from playlist" entry on the result row context menu (with a `delete` icon).
+
+### Manually rearranging tracks in a playlist
+
+- The user should be able to drag to re-arrange tracks within a playlist.
+- The drag-and-drop UX should be as similar as possible to the UX we already have for rearranging source items within the explorer.
+- When tracks are rearranged, the frontend should do the following:
+    1. Immediately mutate the saved query result set to commit the order as the user intended. This will update the UI optimistically and instantaneously.
+    2. Use the API to immediately update the `playlist_track.order` values for all the tracks being dragged. We should look at the order value for the tracks before and after the drop position and update the order values for the tracks being dragged such that they fit in between the values. For example, if we're dragging three tracks in between two tracks that have orders `6` and `7` then the three tracks should get updated such that their orders become `6.25`, `6.5`, and `6.75`. Do this with a single API request. Wait until it's complete before proceeding.
+    3. Reload the playlist results.
+- To avoid race conditions, the frontend should block re-ordering operations while a re-ordering operation is currently in progress (i.e. if any of the steps above are still running.)
+- If the user manually reorders tracks when the playlist query has sorting conditions applied, then the sorting conditions should be committed to the playlist first and then the user's desired manual rearrangement change should be applied thereafter.
+
+### Undo/redo within playlists
+
+- Within the playlist page, a single undo stack should store all of the changes to the playlist as state transformations which can be applied and un-applied. This should include all DML on the `playlist` and `playlist_track` tables that the user performs from within the playlist page. For example, if the user deletes tracks from the playlist, we'll need to store the state of those `playlist_track` records in the undo stack so that the track entries can be restored.
+
+- Note that it's possible (perhaps even likely) that the undo/redo mechanics within the query builder is built upon a snapshot-based state sequence. If that's the case, then it likely won't be the optimal approach here due to the fact that we'll be mutating `playlist_track` entries in addition to `playlist` and `source` entries. Consider ways of refactoring the undo/redo system as necessary to reuse code in a clean way across the "playlist" and "query" abstractions.
+
+### The record editor within the playlist page
+
+Because the playlist query is listing `playlist_track` records, editing one of these records in the query page would show a tree of fields with `id`, `playlist`, `track`, and `order` at the top level. Within the playlist page, we'd like to make it more intuitive for the user to edit the related `track` record without the additional indirection of expanding that field within the record editor. There is no need for the user to edit any of the other `playlist_track` fields from the record editor. So within the playlist page, the record editor should "begin" at the related `track` record, not the `playlist_track` record. Make sure to find a clean way to implement this so that we share as much code as possible across the query page and the playlist page.
 
 ## Changes to touch interactions for query record rows
 
