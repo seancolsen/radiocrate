@@ -23,7 +23,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 3 — One undo abstraction | done | |
 | 4 — Playlist tabs and the playlist page | done | |
 | 5 — Creating and managing playlists | done | |
-| 6 — Removing tracks and committing conditions | not started | |
+| 6 — Removing tracks and committing conditions | done | |
 | 7 — "Add to playlist…" | not started | |
 | 8 — Dragging result rows | not started | |
 | 9 — Rearranging tracks within a playlist | not started | |
@@ -673,6 +673,44 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Reload** after each write as new rows (see "The results after a write").
 - **Stories** (intended additions): the filter builder with its two buttons, and the sort builder with its commit button.
 
+#### As built
+
+- **Keymap** (`commands/keymap.ts`, `commands/registry.ts`):
+  - A chord may now belong to several commands whose contexts can't hold at once. `whensOverlap(a, b)` reads a short explicit list of disjoint pairs (`DISJOINT_WHENS`), and any pair not listed overlaps.
+  - `commandForChord(overrides, chord, ctx)` returns the first command bound to the chord whose `when` holds. The keydown pass now goes through it, and `resolveBindings` is gone.
+  - `conflictsFor(overrides, id, chord)` returns **every** command that binding the chord to `id` would steal it from: those bound to it whose contexts overlap `id`'s. It's a list because a chord shared by two disjoint commands conflicts with both when a third command could run alongside either. `setBinding` unbinds them all, and the capture dialog names them all ("Currently bound to “A” and “B”").
+  - The registry test "no two commands share a default chord" now reads "no two *overlapping* commands share one".
+- **Command:** `playlist.remove_selected_tracks` ("Playlist: Remove selected tracks", default `Delete`), gated by a new `When`, `"playlistResults"` (context field `playlistResultsActive`, shown as "playlist results"). It holds on a playlist page with rows, **while no record form has focus**. That makes it disjoint from `recordForm` by construction, so the form's `Delete` always wins when the form has focus. The palette assembles the same field.
+- **Store** (`stores/app/actions.ts`, under "Writing to a playlist's entries"):
+  - `writeStep` is now an internal function as well as an action, so the new actions share it.
+  - **Departure:** a prepared step whose `apply` is empty sends no request. It records its definition edit as a step on its own, or nothing at all if there's no edit. This covers "Keep only these tracks" when every entry matches, and committing an order that's already stored.
+  - `removeRows(tabId, rows)` backs the command, the row menu and the multi-select menu. It takes the rows' entry ids (`rowEntry`) when it's called. Inside the queue it reads the playlist's entries and removes the ones still there, so a removal queued behind another skips the entries already gone.
+  - `removeMatching` / `keepMatching` (through `pruneByFilter`) take the matched entry ids from the rows on screen (column 0), read the full entries in the queue, delete one side, and clear the filter (custom text and presets) in the same step.
+  - `commitSort` keeps the sort the user is looking at (the definition when it was clicked). In the queue, `sortedEntries` compiles the playlist query with `withFilter: false` **and an empty display**, since only the entry columns are read, then runs it and reads columns 0 and 1. It then writes `renumberMoves` (1…n, leaving out entries already in place) and resets the sort to "Playlist order". The filter is left as it was.
+- **Selectors:** `selectFilterApplied`, `selectSortApplied` (anything but "Playlist order" or a blank custom sort) and `selectCanWriteFromRows`.
+- **Disabled states (`selectCanWriteFromRows`):** a playlist page with rows, not running, not failed, not writing, and with **no edit waiting on its debounced run** (`hasUnrunEdit` in `state/undoHistory.ts`).
+  - **Additions:** the spec lists running, failed, and (for "Remove") matched nothing. The last two conditions here were added for a reason. Without the unrun-edit check, during the 300 ms debounce after typing, the buttons would act on the previous filter's rows. Without the writing check, a queued write would reload the rows under them.
+  - The commit button uses the same guard. The spec doesn't list disabled states for it, and this was the conservative choice.
+  - "Remove from playlist" and `Delete` aren't gated. They queue, and their read in the queue keeps them correct.
+  - "Keep only these tracks" stays enabled when the filter matched nothing, as the spec says. It then removes every entry, as one undoable step.
+- **UI:**
+  - `components/builder/EntryActions.tsx` holds `FilterEntryActions` (at the foot of `FilterBuilder`) and `SortEntryActions` (at the foot of `SingleBuilder`'s sort). Both render only on a playlist whose condition applies.
+  - Their labeled button is framed like Reshuffle.
+  - A new `Icons.Check` (`check`) is used for "Keep only" and the commit button.
+  - `RowActionsMenu` takes an optional `onRemoveFromPlaylist`. "Remove from playlist" (delete icon) sits after "Rate track", above the separator.
+  - The multi-select toolbar's menu button stays enabled on a playlist even when the rows identify no record, since removal still applies.
+- **Tests:**
+  - `commands/registry.test.ts`: dispatch of the shared `Delete` by context, and `conflictsFor`.
+  - `stores/commands.test.ts`: `Delete` through the keydown pass on a playlist (with a stubbed `HTMLElement`, since vitest has no DOM), the record form taking it, a query page ignoring it, and `setBinding` stealing from both holders.
+  - `state/undoHistory.test.ts`: `hasUnrunEdit`.
+  - `stores/app/actions.test.ts`: a `removing tracks and committing conditions` block with 15 tests covering removal and its undo (full records re-inserted), already-gone entries, both filter buttons and their undo, the no-request case, every stand-down, and the commit (unfiltered read without a display, minimal moves, sort reset, filter kept, undo).
+- **Probe:** a "commit read (no filter, no display)" case, which must return all 5 entries with only the entry columns. A `noTrackId` flag replaces the probe's special case for "empty display".
+- **Gate:** typecheck, lint, format:check, test:unit (499), build and test:visual (242: the 236 existing plus 6 new) all pass. The probe exits 0. No Rust was touched.
+- **Baselines** (light and dark, all looked at):
+  - Added: `filter-builder/playlist`, `sort-builder/playlist`, and `result-row/playlist-context-menu`.
+  - Regenerated: `settings/keyboard-shortcuts/list`, which gains the "Playlist: Remove selected tracks" row. Everything below that row shifts down by one.
+- **For phase 7:** adds from another tab go through `entryWrites.run(sourceId, …)` directly, **not** `writeStep`, since they mustn't touch the target's history. Mark the target's rows as new by deleting its `lastRunSql` before `runQuery`, as `landHistory` does. While such an add is queued, the target page's `writing` is true, which disables its Undo/Redo and the buttons above.
+
 ### Phase 7 — "Add to playlist…"
 
 **Goal:** add selected tracks to any playlist from a menu.
@@ -749,6 +787,12 @@ Every check that needs a real server or a real device is collected here. The use
 - [ ] Filter, sort, change the display and play on the playlists created above.
 
 **Removing tracks and committing conditions** (phase 6)
+
+- [ ] On a playlist page, select tracks (one, several, and a track that appears twice) and remove them with `Delete`, with the row menu's "Remove from playlist", and from the multi-select toolbar's menu. Undo puts them back in their places. Redo removes them again.
+- [ ] With the record editor focused on a playlist page, `Delete` acts in the form and removes no tracks.
+- [ ] Filter a playlist. "Remove these tracks" removes every match, not only the selected rows. "Keep only these tracks" removes the rest. Either one clears the filter, and undo brings back both the tracks and the filter.
+- [ ] Sort a filtered playlist (a custom sort, a preset, Shuffle), then "Commit this track order to playlist". Clear the filter: the hidden entries were reordered too. The sort is back on "Playlist order", the filter stayed, and undo restores both the order and the sort.
+- [ ] In the shortcuts editor, assigning `Delete` to "Results: Edit selected rows" names both current holders and unbinds both. Resetting them restores the shared `Delete`.
 
 **"Add to playlist…"** (phase 7)
 

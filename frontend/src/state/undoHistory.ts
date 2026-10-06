@@ -135,6 +135,17 @@ export function stepForward<D>(history: UndoHistory<D>): UndoHistory<D> {
 /** Whether undo applies to a page whose working definition is `live`: there's
  * a step to unapply, or an edit since the last checkpoint (one still waiting on
  * its debounced run) to step back out of. */
+/** Whether `live` has moved on from the definition `history` last recorded,
+ * an edit not yet run (a debounced one, still waiting): the rows on screen are
+ * then an earlier definition's. False before anything is recorded. */
+export function hasUnrunEdit<D>(
+  history: UndoHistory<D>,
+  live: D,
+  equals: DefinitionEquals<D>,
+): boolean {
+  return history.current !== undefined && !atCurrent(history, live, equals);
+}
+
 export function canUndo<D>(
   history: UndoHistory<D>,
   live: D,

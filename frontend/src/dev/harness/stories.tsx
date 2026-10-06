@@ -135,6 +135,21 @@ function openRoadTrip(stores: Stores): string {
   return PLAYLIST_SOURCE.id;
 }
 
+/** Opens "Road Trip" on `sections` (a stored playlist definition's) with
+ * twelve rows on screen, and opens its builder's `section`. */
+function openRoadTripOn(
+  stores: Stores,
+  sections: object,
+  section: "filter" | "sort",
+): void {
+  stores.app.actions.openTab({
+    ...PLAYLIST_SOURCE,
+    definition: JSON.stringify(sections),
+  });
+  stores.app.actions.setResults(PLAYLIST_SOURCE.id, emptyCountResult(12));
+  stores.app.actions.toggleBuilderSection(PLAYLIST_SOURCE.id, section);
+}
+
 /** "Road Trip"'s sort options menu, open — mounted only once the story's setup
  * has opened the playlist, as a real menu is only ever opened on an open tab.
  * The setup runs in the harness's layout effect, after the story's own have
@@ -730,6 +745,37 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
+  // A playlist's filter, applying a condition: "Remove these tracks" and "Keep
+  // only these tracks" at the builder's foot.
+  "filter-builder/playlist": {
+    width: 1280,
+    setup: (stores) =>
+      openRoadTripOn(
+        stores,
+        {
+          filter: { custom: "artist:queen", presets: [] },
+          sort: { builtin: { preset: "playlist_order" } },
+          display: { custom: "" },
+        },
+        "filter",
+      ),
+    render: () => <QueryBuilder tabId={PLAYLIST_SOURCE.id} />,
+  },
+  // A playlist's custom sort: "Commit this track order to playlist" under it.
+  "sort-builder/playlist": {
+    width: 1280,
+    setup: (stores) =>
+      openRoadTripOn(
+        stores,
+        {
+          filter: { custom: "", presets: [] },
+          sort: { custom: "\\\\year \\\\title" },
+          display: { custom: "" },
+        },
+        "sort",
+      ),
+    render: () => <QueryBuilder tabId={PLAYLIST_SOURCE.id} />,
+  },
   // Sort built-in: the Shuffle preset tab beside its Reshuffle button.
   "sort-builder/shuffle": {
     width: 1280,
@@ -823,6 +869,24 @@ export const STORIES: Record<string, Story> = {
   // A row's context menu: one entry per table whose primary key the row
   // carries, over the entry that turns multi-select mode on.
   "result-row/context-menu": rowActionsMenu(RATINGS_FIXTURE),
+  // A row's context menu on a playlist's page: "Edit track" (never the entry
+  // itself), and "Remove from playlist" before "Select multiple".
+  "result-row/playlist-context-menu": {
+    render: () => (
+      <ContextMenu x={8} y={8} onClose={() => {}}>
+        <RowActionsMenu
+          records={[trackRecord(1)]}
+          onEdit={() => {}}
+          onShowTracks={() => {}}
+          ratings={RATINGS_FIXTURE}
+          ratingsLoading={false}
+          onRate={() => {}}
+          onRemoveFromPlaylist={() => {}}
+          onSelectMultiple={() => {}}
+        />
+      </ContextMenu>
+    ),
+  },
   // Its "Rate track" submenu, opened out (the test does the opening): one entry
   // per record of the `rating` table, lowest value first.
   "result-row/rate-submenu": rowActionsMenu(RATINGS_FIXTURE),

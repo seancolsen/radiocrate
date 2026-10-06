@@ -3,11 +3,17 @@ import { chordToStorage, parseChord } from "./chord";
 import {
   bindingFor,
   commandForChord,
+  conflictsFor,
   overridesFromEntries,
-  resolveBindings,
   withOverride,
 } from "./keymap";
-import { ALL_COMMANDS, commandDef, commandDefById } from "./registry";
+import {
+  ALL_COMMANDS,
+  commandDef,
+  commandDefById,
+  whensOverlap,
+  type CommandContext,
+} from "./registry";
 import { rankCommands } from "./rank";
 
 // The registry invariants.
@@ -37,15 +43,16 @@ describe("the command registry", () => {
     }
   });
 
-  it("gives no two commands the same default chord", () => {
-    const seen = new Set<string>();
-    for (const def of ALL_COMMANDS) {
-      if (!def.defaultChord) continue;
-      const s = chordToStorage(def.defaultChord);
-      expect(seen.has(s), `duplicate default chord ${s} on ${def.id}`).toBe(
-        false,
-      );
-      seen.add(s);
+  it("gives no two commands whose contexts overlap the same default chord", () => {
+    for (const [i, a] of ALL_COMMANDS.entries()) {
+      for (const b of ALL_COMMANDS.slice(i + 1)) {
+        if (!a.defaultChord || !b.defaultChord) continue;
+        if (!whensOverlap(a.when, b.when)) continue;
+        expect(
+          chordToStorage(a.defaultChord),
+          `${a.id} and ${b.id} share a default chord`,
+        ).not.toBe(chordToStorage(b.defaultChord));
+      }
     }
   });
 
@@ -62,6 +69,28 @@ describe("the command registry", () => {
   });
 });
 
+/** A context in which no command but an `always` one applies. */
+const NOWHERE: CommandContext = {
+  activeTab: false,
+  queryTabActive: false,
+  queryTracksActive: false,
+  playlistResultsActive: false,
+  resultsAvailable: false,
+  trackLoaded: false,
+  recordFormFocused: false,
+};
+
+/** A context in which every command applies (which no real state is). */
+const EVERYWHERE: CommandContext = {
+  activeTab: true,
+  queryTabActive: true,
+  queryTracksActive: true,
+  playlistResultsActive: true,
+  resultsAvailable: true,
+  trackLoaded: true,
+  recordFormFocused: true,
+};
+
 describe("the keymap", () => {
   it("falls back to the default when there's no override", () => {
     expect(bindingFor({}, "explorer.toggle")).toEqual(
@@ -73,8 +102,8 @@ describe("the keymap", () => {
     const overrides = withOverride({}, "explorer.toggle", null);
     expect(bindingFor(overrides, "explorer.toggle")).toBeNull();
     expect(
-      resolveBindings(overrides).some((b) => b.command === "explorer.toggle"),
-    ).toBe(false);
+      commandForChord(overrides, parseChord("mod+B")!, EVERYWHERE),
+    ).toBeNull();
   });
 
   it("clears the override when a command is rebound to its default", () => {
@@ -88,14 +117,48 @@ describe("the keymap", () => {
   });
 
   it("finds the command holding a chord, override or default", () => {
-    expect(commandForChord({}, parseChord("mod+shift+P")!)).toBe(
+    expect(commandForChord({}, parseChord("mod+shift+P")!, EVERYWHERE)).toBe(
       "palette.open",
     );
     const overrides = withOverride({}, "palette.open", parseChord("mod+J")!);
-    expect(commandForChord(overrides, parseChord("mod+J")!)).toBe(
+    expect(commandForChord(overrides, parseChord("mod+J")!, EVERYWHERE)).toBe(
       "palette.open",
     );
-    expect(commandForChord(overrides, parseChord("mod+shift+P")!)).toBeNull();
+    expect(
+      commandForChord(overrides, parseChord("mod+shift+P")!, EVERYWHERE),
+    ).toBeNull();
+  });
+
+  it("runs a shared chord's command whose context holds", () => {
+    const del = parseChord("Delete")!;
+    expect(
+      commandForChord({}, del, { ...NOWHERE, recordFormFocused: true }),
+    ).toBe("selection.delete");
+    expect(
+      commandForChord({}, del, { ...NOWHERE, playlistResultsActive: true }),
+    ).toBe("playlist.remove_selected_tracks");
+    expect(commandForChord({}, del, NOWHERE)).toBeNull();
+  });
+
+  it("finds conflicts only in commands whose contexts can overlap", () => {
+    const del = parseChord("Delete")!;
+    // The record form's Delete and a playlist's never compete.
+    expect(conflictsFor({}, "playlist.remove_selected_tracks", del)).toEqual(
+      [],
+    );
+    expect(conflictsFor({}, "selection.delete", del)).toEqual([]);
+    // A results command competes with both: it holds wherever either does.
+    expect(conflictsFor({}, "results.edit_selected", del)).toEqual([
+      "playlist.remove_selected_tracks",
+      "selection.delete",
+    ]);
+    // Rebinding a command to its own chord is no conflict.
+    expect(conflictsFor({}, "explorer.toggle", parseChord("mod+B")!)).toEqual(
+      [],
+    );
+    expect(conflictsFor({}, "tabs.next", parseChord("mod+B")!)).toEqual([
+      "explorer.toggle",
+    ]);
   });
 
   it("loads persisted rows, skipping unknown ids and bad chords", () => {

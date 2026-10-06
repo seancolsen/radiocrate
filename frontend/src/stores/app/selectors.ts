@@ -7,7 +7,7 @@ import {
   type Sections,
 } from "../../query/playlist";
 import { rowEntry } from "../../query/playlistEntries";
-import { canRedo, canUndo } from "../../state/undoHistory";
+import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryResult } from "../../query/result";
 import type { RowContext } from "../../query/rowDml";
@@ -151,6 +151,46 @@ export const selectCanConvertToPlaylist = (
     page.lineage?.trackIdColumn !== undefined &&
     !page.running &&
     !page.runFailed
+  );
+};
+
+/** Whether page `tabId`'s filter applies any condition: custom text, or at
+ * least one preset. On a playlist, what puts "Remove these tracks" and "Keep
+ * only these tracks" under the filter builder. */
+export const selectFilterApplied = (s: AppState, tabId: string): boolean => {
+  const filter = selectPageSections(s, tabId)?.filter;
+  return filter
+    ? filter.custom.trim() !== "" || filter.presets.length > 0
+    : false;
+};
+
+/** Whether page `tabId`'s sort applies any condition: anything but "Playlist
+ * order" or an empty custom sort, both of which leave a playlist's entries in
+ * their stored order. On a playlist, what puts "Commit this track order to
+ * playlist" under the sort builder. */
+export const selectSortApplied = (s: AppState, tabId: string): boolean => {
+  const sort = selectPageSections(s, tabId)?.sort;
+  if (!sort) return false;
+  if ("custom" in sort) return sort.custom.trim() !== "";
+  return !("builtin" in sort && sort.builtin.preset === "playlist_order");
+};
+
+/** Whether playlist page `tabId` can start a write worked out from the rows on
+ * screen ("Remove these tracks", "Keep only these tracks", committing a sort):
+ * its rows have landed, and they're its working definition's — its last run is
+ * neither still going nor failed, and no edit is waiting on a debounced run —
+ * and no write to its entries is in flight or waiting (which would reload the
+ * rows under it). */
+export const selectCanWriteFromRows = (s: AppState, tabId: string): boolean => {
+  const t = selectPageTab(s, tabId);
+  const page = s.pages[tabId];
+  return (
+    t?.kind === "playlist" &&
+    page?.result !== undefined &&
+    !page.running &&
+    !page.runFailed &&
+    !page.writing &&
+    !hasUnrunEdit(page.undo, t.live, pageDefsEqual)
   );
 };
 

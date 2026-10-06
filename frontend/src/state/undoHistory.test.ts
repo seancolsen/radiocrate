@@ -4,6 +4,7 @@ import {
   canUndo,
   checkpoint,
   EMPTY_HISTORY,
+  hasUnrunEdit,
   pushStep,
   stepBack,
   stepForward,
@@ -33,6 +34,13 @@ const ran = (...defs: string[]) =>
   defs.reduce((h, d) => checkpoint(h, d, equals), empty);
 
 describe("undo history", () => {
+  it("tells an edit not yet run from the definition last run", () => {
+    expect(hasUnrunEdit(empty, "a", equals)).toBe(false);
+    const h = ran("a", "b");
+    expect(hasUnrunEdit(h, "b", equals)).toBe(false);
+    expect(hasUnrunEdit(h, "c", equals)).toBe(true);
+  });
+
   it("records the first checkpoint as where it starts, not as a step", () => {
     const h = ran("a");
     expect(h).toEqual({ current: "a", steps: [], index: 0 });

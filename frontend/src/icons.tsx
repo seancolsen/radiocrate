@@ -42,6 +42,7 @@ import Redo from "~icons/material-symbols/redo";
 import Clear from "~icons/material-symbols/backspace";
 import Shuffle from "~icons/material-symbols/shuffle";
 import Delete from "~icons/material-symbols/delete";
+import Check from "~icons/material-symbols/check";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
@@ -117,7 +118,8 @@ export const Icons = {
   Revert, // undo: revert changes / revert preset edit
   Clear, // clear custom input
   Shuffle, // Shuffle built-in preset
-  Delete, // delete (stubbed this session)
+  Delete, // delete or remove: sources, folders, records, a playlist's tracks
+  Check, // a playlist's "Keep only these tracks" and "Commit this track order"
   ViewSql, // View SQL menu entry
   Base, // Change-base menu entry
   Table, // a table row in the base submenu

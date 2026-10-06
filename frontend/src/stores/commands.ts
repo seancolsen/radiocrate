@@ -2,18 +2,13 @@ import { keybindingDelete, keybindingList, keybindingSet } from "api-client";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import {
-  chordFromEvent,
-  chordToStorage,
-  chordsEqual,
-  type Chord,
-} from "../commands/chord";
+import { chordFromEvent, chordToStorage, type Chord } from "../commands/chord";
 import {
   bindingFor,
   commandForChord,
+  conflictsFor,
   isOverridden,
   overridesFromEntries,
-  resolveBindings,
   withOverride,
   type Overrides,
 } from "../commands/keymap";
@@ -121,10 +116,13 @@ export const selectBinding = (s: CommandsState, cmd: CommandId): Chord | null =>
   bindingFor(s.overrides, cmd);
 export const selectOverridden = (s: CommandsState, cmd: CommandId): boolean =>
   isOverridden(s.overrides, cmd);
-export const selectCommandForChord = (
+/** The commands binding `chord` to `cmd` would take it from (see
+ * `conflictsFor`). A fresh array: a component wraps it in `useShallow`. */
+export const selectConflicts = (
   s: CommandsState,
+  cmd: CommandId,
   chord: Chord,
-): CommandId | null => commandForChord(s.overrides, chord);
+): CommandId[] => conflictsFor(s.overrides, cmd, chord);
 
 /** The `When` predicates' inputs, read from the app and forms stores. A plain
  * function: the keydown pass calls it with a fresh `getState()` at keypress
@@ -136,15 +134,22 @@ export function selectCommandContext(
   forms: FormsState,
 ): CommandContext {
   const active = app.activeTabId;
+  const resultsAvailable =
+    active !== null && (selectResultCount(app, active) ?? 0) > 0;
+  const recordFormFocused = selectFocusedForm(forms) !== undefined;
   return {
     activeTab: active !== null,
     queryTabActive: active !== null && selectPageTab(app, active) !== undefined,
     queryTracksActive:
       active !== null && selectCanConvertToPlaylist(app, active),
-    resultsAvailable:
-      active !== null && (selectResultCount(app, active) ?? 0) > 0,
+    playlistResultsActive:
+      active !== null &&
+      resultsAvailable &&
+      !recordFormFocused &&
+      selectPageTab(app, active)?.kind === "playlist",
+    resultsAvailable,
     trackLoaded: app.currentTrack !== null,
-    recordFormFocused: selectFocusedForm(forms) !== undefined,
+    recordFormFocused,
   };
 }
 
@@ -188,7 +193,8 @@ export interface CommandsActions {
    * mocked RPC returning null) simply leaves every command on its default. */
   loadKeymap: () => Promise<void>;
   /** Rebind (or, with `null`, explicitly unbind) a command, stealing the
-   * chord from whichever command holds it. Persists both changes. */
+   * chord from every command that holds it in a context that can overlap the
+   * command's (`conflictsFor`). Persists every change. */
   setBinding: (cmd: CommandId, chord: Chord | null) => void;
   /** Revert a command to its built-in default, dropping the override. */
   resetBinding: (cmd: CommandId) => void;
@@ -257,9 +263,10 @@ export function createCommandsStore(
 
   const setBinding = (cmd: CommandId, chord: Chord | null) => {
     if (chord) {
-      const other = commandForChord(store.getState().overrides, chord);
-      // A chord belongs to one command: whoever held it becomes unbound.
-      if (other && other !== cmd) applyBinding(other, null);
+      // A chord runs one command in any given context: whoever held it where
+      // `cmd` could also run becomes unbound.
+      for (const other of conflictsFor(store.getState().overrides, cmd, chord))
+        applyBinding(other, null);
     }
     applyBinding(cmd, chord);
   };
@@ -365,6 +372,14 @@ export function createCommandsStore(
       case "query.convert_to_playlist":
         // The action checks that the rows are the query's tracks.
         if (tabId) app.actions.convertToPlaylist(tabId);
+        break;
+      case "playlist.remove_selected_tracks":
+        // The action checks that the tab is a playlist's.
+        if (tabId)
+          app.actions.removeRows(
+            tabId,
+            selectRowSelection(app.store.getState(), tabId),
+          );
         break;
       // Up/Down move the row selection — unless the user is inside a record
       // editor form, where they move between its items instead (the form is
@@ -492,21 +507,18 @@ export function createCommandsStore(
     if (suppressed()) return;
     const pressed = chordFromEvent(e);
     if (!pressed) return;
-    const typing = isTypingTarget(e.target);
-    const ctx = context();
-    for (const { chord, command } of resolveBindings(
+    // A text field keeps its own plain / shift-only keys.
+    if (isTypingTarget(e.target) && !(pressed.mod || pressed.alt)) return;
+    const command = commandForChord(
       store.getState().overrides,
-    )) {
-      // A text field keeps its own plain / shift-only keys.
-      if (typing && !(chord.mod || chord.alt)) continue;
-      if (!whenSatisfied(commandDef(command).when, ctx)) continue;
-      if (!chordsEqual(chord, pressed)) continue;
-      // Matched: the key belongs to the command, not to the page.
-      e.preventDefault();
-      e.stopPropagation();
-      run(command);
-      return;
-    }
+      pressed,
+      context(),
+    );
+    if (command === null) return;
+    // Matched: the key belongs to the command, not to the page.
+    e.preventDefault();
+    e.stopPropagation();
+    run(command);
   };
 
   const actions: CommandsActions = {

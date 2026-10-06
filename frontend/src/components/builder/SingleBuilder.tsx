@@ -8,13 +8,15 @@ import {
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
+import { SortEntryActions } from "./EntryActions";
 import PresetEditor from "./PresetEditor";
 import PresetTab from "./PresetTab";
 import { useBuilderFocus } from "./useBuilderFocus";
 
 /** The sort/display builder. The section holds exactly one thing: a custom
  * Querydown block, a single (expandable) preset, or a built-in preset —
- * Shuffle, or a playlist's "Playlist order". */
+ * Shuffle, or a playlist's "Playlist order". On a playlist, a sort that
+ * applies puts "Commit this track order to playlist" at the foot. */
 export default function SingleBuilder(props: {
   tabId: string;
   section: "sort" | "display";
@@ -87,6 +89,7 @@ export default function SingleBuilder(props: {
             <PresetTab builtin name="Playlist order" />
           </div>
         )}
+      {props.section === "sort" && <SortEntryActions tabId={props.tabId} />}
     </div>
   );
 }

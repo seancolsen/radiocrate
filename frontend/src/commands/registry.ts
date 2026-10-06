@@ -34,6 +34,7 @@ export type CommandId =
   | "query.focus_sort"
   | "query.focus_display"
   | "query.convert_to_playlist"
+  | "playlist.remove_selected_tracks"
   | "results.select_next"
   | "results.select_previous"
   | "results.extend_selection_down"
@@ -57,6 +58,7 @@ export type When =
   | "activeTab"
   | "queryTab"
   | "queryTracks"
+  | "playlistResults"
   | "results"
   | "trackLoaded"
   | "recordForm";
@@ -73,6 +75,10 @@ export interface CommandContext {
    * tracks: they carry a track id column, and its last run is neither still
    * going nor failed (`selectCanConvertToPlaylist`). */
   queryTracksActive: boolean;
+  /** The active tab is a playlist with result rows, and the user isn't working
+   * in a record editor form: the rows' own keys, which the form's give way
+   * to. */
+  playlistResultsActive: boolean;
   /** The active tab has result rows. */
   resultsAvailable: boolean;
   /** A track is loaded in the now-playing bar. */
@@ -160,6 +166,15 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Query: Convert to playlist",
     when: "queryTracks",
     defaultChord: null,
+  },
+  {
+    // Shares `Delete` with `selection.delete`: their contexts never hold at
+    // once (`playlistResults` stands down while a record form has focus), so
+    // the record form's Delete stays its own.
+    id: "playlist.remove_selected_tracks",
+    title: "Playlist: Remove selected tracks",
+    when: "playlistResults",
+    defaultChord: chordOf("Delete"),
   },
   {
     id: "results.select_next",
@@ -291,6 +306,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.queryTabActive;
     case "queryTracks":
       return ctx.queryTracksActive;
+    case "playlistResults":
+      return ctx.playlistResultsActive;
     case "results":
       return ctx.resultsAvailable;
     case "trackLoaded":
@@ -298,6 +315,24 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
     case "recordForm":
       return ctx.recordFormFocused;
   }
+}
+
+/** Pairs of contexts that can never hold at once, whatever the app's state.
+ * Kept short and explicit: any pair not listed is assumed to overlap. */
+const DISJOINT_WHENS: readonly (readonly [When, When])[] = [
+  // `playlistResults` stands down while a record form has focus.
+  ["playlistResults", "recordForm"],
+  // One is a query's page, the other a playlist's.
+  ["playlistResults", "queryTracks"],
+];
+
+/** Whether contexts `a` and `b` can hold at the same time. Two commands may
+ * share a chord only when they can't, since then a keypress never has to
+ * choose between them. */
+export function whensOverlap(a: When, b: When): boolean {
+  return !DISJOINT_WHENS.some(
+    ([x, y]) => (x === a && y === b) || (x === b && y === a),
+  );
 }
 
 /** A short label for the shortcuts editor's "When" column. Empty for `always`. */
@@ -311,6 +346,8 @@ export function whenLabel(when: When): string {
       return "query tab active";
     case "queryTracks":
       return "query of tracks";
+    case "playlistResults":
+      return "playlist results";
     case "results":
       return "results";
     case "trackLoaded":

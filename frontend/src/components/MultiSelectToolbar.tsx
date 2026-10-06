@@ -2,6 +2,7 @@ import { forwardRef, useMemo } from "react";
 import { Icons } from "../icons";
 import {
   recordsForRows,
+  selectPageTab,
   selectRatings,
   selectRatingsLoading,
   selectRowSelection,
@@ -43,6 +44,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
     const {
       loadRatings,
       rateTracks,
+      removeRows,
       setMultiSelect,
       setRecordEditorRecords,
       showChildRecords,
@@ -59,6 +61,11 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
     );
     const ratings = useApp(selectRatings);
     const ratingsLoading = useApp(selectRatingsLoading);
+    // A playlist's rows can be removed from it, whether or not they identify
+    // a record to edit.
+    const playlist = useApp(
+      (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
+    );
 
     return (
       <div
@@ -78,7 +85,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
               icon={Icons.More}
               label="Selection actions"
               active={api.open}
-              disabled={records.length === 0}
+              disabled={records.length === 0 && !playlist}
               onClick={() => {
                 // Same as the row context menu: the rating vocabulary is
                 // fetched as the menu that offers it opens.
@@ -128,6 +135,9 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
                 ),
                 ratingId,
               )
+            }
+            onRemoveFromPlaylist={
+              playlist ? () => removeRows(props.tabId, selection) : undefined
             }
           />
         </Menu>

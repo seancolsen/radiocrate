@@ -103,9 +103,13 @@ $year @{width:35}
 $rating.symbol @{width:20 align:center}`;
 
 /** Each case's Querydown, whether it leads with the hidden playlist columns (the
- * entry's `$id` and `$position`, or none for a plain track query), and the row
- * count it must return, where that's fixed. */
-const cases: Record<string, { text: string; entryColumns: boolean; rows?: number }> = {
+ * entry's `$id` and `$position`, or none for a plain track query), the row
+ * count it must return, where that's fixed, and whether it shows no track id
+ * (an empty display). */
+const cases: Record<
+  string,
+  { text: string; entryColumns: boolean; rows?: number; noTrackId?: boolean }
+> = {
   "no conditions": { text: playlistQuerydown("", "", DISPLAY), entryColumns: true },
   "playlist order": {
     text: generate(
@@ -137,7 +141,19 @@ const cases: Record<string, { text: string; entryColumns: boolean; rows?: number
     text: playlistQuerydown("", "\\\\id|concat('seed')|md5", DISPLAY),
     entryColumns: true,
   },
-  "empty display": { text: playlistQuerydown("", "", ""), entryColumns: true },
+  // What committing a sort reads (phase 6): every entry, in the sort's order,
+  // with only the entry columns.
+  "commit read (no filter, no display)": {
+    text: playlistQuerydown('artist:"a"', "\\\\artists", "", { withFilter: false }),
+    entryColumns: true,
+    rows: 5,
+    noTrackId: true,
+  },
+  "empty display": {
+    text: playlistQuerydown("", "", ""),
+    entryColumns: true,
+    noTrackId: true,
+  },
   "one entry (row re-read)": {
     text: playlistQuerydown('artist:"a"', "\\\\artists", DISPLAY, { entryId: ENTRY }),
     entryColumns: true,
@@ -152,7 +168,9 @@ const cases: Record<string, { text: string; entryColumns: boolean; rows?: number
 };
 
 let failed = false;
-for (const [name, { text, entryColumns, rows: expectedRows }] of Object.entries(cases)) {
+for (const [name, { text, entryColumns, rows: expectedRows, noTrackId }] of Object.entries(
+  cases,
+)) {
   try {
     const { sql } = compile(schema, "duckdb", `${DEFAULT_PRELUDE}\n${text}`);
     const rows = (JSON.parse(duckdb(db, sql, true) || "[]") as unknown[]).length;
@@ -163,7 +181,7 @@ for (const [name, { text, entryColumns, rows: expectedRows }] of Object.entries(
     const lineageOk =
       (!entryColumns ||
         (traces(0, "playlist_track", "id") && traces(1, "playlist_track", "position"))) &&
-      (name === "empty display" ? trackIdCols.length === 0 : trackIdCols.length === 1);
+      (noTrackId ? trackIdCols.length === 0 : trackIdCols.length === 1);
     const ok = lineageOk && (expectedRows === undefined || rows === expectedRows);
     if (!ok) failed = true;
     console.log(

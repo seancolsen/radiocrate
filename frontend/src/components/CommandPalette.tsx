@@ -104,6 +104,11 @@ function PaletteDialog(): JSX.Element {
     (s) =>
       s.activeTabId !== null && (selectResultCount(s, s.activeTabId) ?? 0) > 0,
   );
+  const playlistActive = useApp(
+    (s) =>
+      s.activeTabId !== null &&
+      selectPageTab(s, s.activeTabId)?.kind === "playlist",
+  );
   const trackLoaded = useApp((s) => s.currentTrack !== null);
   const recordFormFocused = useForms((s) => selectFocusedForm(s) !== undefined);
   const context = useMemo<CommandContext>(
@@ -111,6 +116,8 @@ function PaletteDialog(): JSX.Element {
       activeTab: activeTabId !== null,
       queryTabActive,
       queryTracksActive,
+      playlistResultsActive:
+        playlistActive && resultsAvailable && !recordFormFocused,
       resultsAvailable,
       trackLoaded,
       recordFormFocused,
@@ -119,6 +126,7 @@ function PaletteDialog(): JSX.Element {
       activeTabId,
       queryTabActive,
       queryTracksActive,
+      playlistActive,
       resultsAvailable,
       trackLoaded,
       recordFormFocused,

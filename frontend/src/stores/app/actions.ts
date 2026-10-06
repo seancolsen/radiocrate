@@ -55,9 +55,14 @@ import {
 import {
   createPlaylistWrites,
   deletePlaylistWrites,
+  removeEntriesWrites,
+  renumberMoves,
+  rowEntry,
   sequentialPositions,
+  setPositionsWrites,
   type EntryWrites,
   type PlaylistEntry,
+  type RowEntry,
 } from "../../query/playlistEntries";
 import {
   isQueryDefinition,
@@ -76,6 +81,7 @@ import {
   definitionForBase,
   definitionFromStored,
   definitionToStored,
+  playlistOrderContent,
   rebasedDefinition,
   shuffleContent,
   toFullQuery,
@@ -120,6 +126,8 @@ import {
   selectEffectivePresets,
   selectCanConvertToPlaylist,
   selectCanRedo,
+  selectCanWriteFromRows,
+  selectFilterApplied,
   selectIsUnsaved,
   selectIsPersisted,
   selectIsWriting,
@@ -132,6 +140,7 @@ import {
   selectRowContext,
   selectRowForRecord,
   selectRowRecords,
+  selectSortApplied,
   selectTab,
   selectTrackIdAt,
   sameRecord,
@@ -441,13 +450,34 @@ export interface AppActions {
    * settled, so what it reads is current. It resolves to the writes to send,
    * with an optional edit of the working definition that goes with them (or to
    * `undefined`, for nothing to do). Once the writes have landed, the step is
-   * recorded, the edit applied, and the results reloaded as new rows. Resolves
-   * to whether the writes landed. A failed request leaves the history alone,
-   * and the error bar has already reported it. */
+   * recorded, the edit applied, and the results reloaded as new rows. Writes
+   * that come to nothing send no request, and leave a step of the edit alone
+   * (or no step, without one). Resolves to whether the writes landed. A failed
+   * request leaves the history alone, and the error bar has already reported
+   * it. */
   writeStep: (
     tabId: string,
     prepare: () => Promise<PreparedStep | undefined>,
   ) => Promise<boolean>;
+  /** "Playlist: Remove selected tracks" and "Remove from playlist": removes
+   * the entries that rows `rows` of playlist page `tabId` list, as one step. A
+   * no-op on any other page, or for rows that list no entry. */
+  removeRows: (tabId: string, rows: Iterable<number>) => void;
+  /** "Remove these tracks": removes every entry playlist page `tabId`'s
+   * filter matches (all its rows, not just the selected ones), then clears the
+   * filter, as one step. Does nothing unless a filter applies, the rows on
+   * screen are the filter's (`selectCanWriteFromRows`), and it matched
+   * something. */
+  removeMatching: (tabId: string) => void;
+  /** "Keep only these tracks": {@link removeMatching} for every entry the
+   * filter *doesn't* match. */
+  keepMatching: (tabId: string) => void;
+  /** "Commit this track order to playlist": renumbers every entry of playlist
+   * page `tabId` 1…n in the order its sort puts them (entries its filter hides
+   * included), then resets the sort to "Playlist order", leaving the filter as
+   * it is, as one step. Does nothing unless a sort applies and the page could
+   * write from its rows (`selectCanWriteFromRows`). */
+  commitSort: (tabId: string) => void;
   /** Note a request to the backend, in flight until `settled` settles: a saved
    * query's edits aren't written until the app has been quiet for a while.
    * `createStores()` feeds every request the generated client sends
@@ -1566,6 +1596,122 @@ export function createAppActions(
     return get().sources.data.find((x) => x.id === id)?.playlistId ?? undefined;
   };
 
+  // ── Writing to a playlist's entries ─────────────────────────────────────────
+  //
+  // Every change to a playlist's entries made from its page is one undoable
+  // step, sent as one request through the playlist's write queue (see
+  // `writeStep`). What the request holds is worked out inside the queue, from a
+  // fresh read, so that writes queued before it have landed by then.
+
+  /** See {@link AppActions.writeStep}. */
+  const writeStep = (
+    tabId: string,
+    prepare: () => Promise<PreparedStep | undefined>,
+  ): Promise<boolean> =>
+    entryWrites.run(tabId, async () => {
+      let prepared: PreparedStep | undefined;
+      try {
+        prepared = await prepare();
+        if (!prepared) return false;
+        if (prepared.writes.apply.length > 0)
+          await sendPlaylistWrites(prepared.writes.apply);
+      } catch (err) {
+        console.error("playlist write failed", err);
+        return false;
+      }
+      // Whether anything was sent. A step can come to no writes at all ("Keep
+      // only these tracks" when every entry matches, a commit of an order
+      // already stored), and is then its definition edit alone.
+      const wrote = prepared.writes.apply.length > 0;
+      // Re-read after the awaits: the tab may have closed, or its definition
+      // moved on, while the writes were in flight.
+      if (!selectPageTab(get(), tabId)) return true;
+      // An edit made while the writes were in flight went unrecorded
+      // (`checkpoint` waits on them). It came first, so it's a step of its
+      // own, before this one.
+      recordLive(tabId);
+      const before = selectPageTab(get(), tabId)?.live;
+      const history = get().pages[tabId]?.undo;
+      if (!before || !history) return true;
+      const { edit } = prepared;
+      const after = edit ? produce(before, (d) => edit(d)) : before;
+      const definition = pageDefsEqual(before, after)
+        ? undefined
+        : { before, after };
+      if (!wrote && !definition) return true;
+      landHistory(
+        tabId,
+        pushStep(history, {
+          writes: wrote ? prepared.writes : undefined,
+          definition,
+        }),
+        wrote,
+      );
+      return true;
+    });
+
+  /** "Remove these tracks" (`keep` false) or "Keep only these tracks" (`keep`
+   * true) on playlist page `tabId`: removes every entry its filtered rows list,
+   * or every entry they don't, then clears the filter, as one step. The rows on
+   * screen say which entries match, so this stands down while they might not
+   * be the filter's ({@link selectCanWriteFromRows}). */
+  const pruneByFilter = (tabId: string, keep: boolean) => {
+    const s = get();
+    const t = selectPageTab(s, tabId);
+    const result = s.pages[tabId]?.result;
+    if (t?.kind !== "playlist" || !result) return;
+    if (!selectCanWriteFromRows(s, tabId) || !selectFilterApplied(s, tabId))
+      return;
+    const matched = new Set<string>();
+    for (let row = 0; row < result.rowCount; row++) {
+      const entry = rowEntry(result, row);
+      if (entry) matched.add(entry.id);
+    }
+    if (!keep && matched.size === 0) return;
+    const { playlistId } = t;
+    void writeStep(tabId, async () => {
+      const doomed = (await fetchPlaylistEntries(playlistId)).filter(
+        (e) => matched.has(e.id) !== keep,
+      );
+      return {
+        writes: removeEntriesWrites(playlistId, doomed),
+        edit: (def) => {
+          def.filter = { custom: "", presets: [] };
+        },
+      };
+    });
+  };
+
+  /** Every entry of playlist `playlistId` (its id and position), in the order
+   * `def`'s sort puts them — with no filter, so the entries it hides are put in
+   * order too. What committing a sort renumbers. */
+  const sortedEntries = async (
+    playlistId: string,
+    def: PlaylistDefinition,
+  ): Promise<RowEntry[]> => {
+    await querydownReady();
+    // Re-read after the await: the schema is what the query compiles against.
+    const schemaJson = get().schema.json;
+    if (schemaJson === undefined) throw new Error("No schema to compile with.");
+    const { sql, columnAnnotations } = compilePlaylist(
+      playlistId,
+      // Only the entry columns are read, so the display is left out.
+      { ...def, display: { custom: "" } },
+      selectEffectivePresets(get()),
+      schemaJson,
+      selectPrelude(get()),
+      { withFilter: false },
+    );
+    const result = buildResultFromArrow(await runSql(sql), columnAnnotations);
+    const entries: RowEntry[] = [];
+    for (let row = 0; row < result.rowCount; row++) {
+      const entry = rowEntry(result, row);
+      if (!entry) throw new Error(`Playlist row ${row} lists no entry.`);
+      entries.push(entry);
+    }
+    return entries;
+  };
+
   const actions: AppActions = {
     loadSources: async () => {
       // Sources and folders load together: the explorer builds one tree of
@@ -2497,41 +2643,48 @@ export function createAppActions(
         traverseStep(tabId, from, step, stepForward(from), "apply");
       }
     },
-    writeStep: (tabId, prepare) =>
-      entryWrites.run(tabId, async () => {
-        let prepared: PreparedStep | undefined;
-        try {
-          prepared = await prepare();
-          if (!prepared) return false;
-          await sendPlaylistWrites(prepared.writes.apply);
-        } catch (err) {
-          console.error("playlist write failed", err);
-          return false;
-        }
-        // Re-read after the awaits: the tab may have closed, or its definition
-        // moved on, while the writes were in flight.
-        if (!selectPageTab(get(), tabId)) return true;
-        // An edit made while the writes were in flight went unrecorded
-        // (`checkpoint` waits on them). It came first, so it's a step of its
-        // own, before this one.
-        recordLive(tabId);
-        const before = selectPageTab(get(), tabId)?.live;
-        const history = get().pages[tabId]?.undo;
-        if (!before || !history) return true;
-        const { edit } = prepared;
-        const after = edit ? produce(before, (d) => edit(d)) : before;
-        landHistory(
-          tabId,
-          pushStep(history, {
-            writes: prepared.writes,
-            definition: pageDefsEqual(before, after)
-              ? undefined
-              : { before, after },
-          }),
-          true,
+    writeStep,
+    removeRows: (tabId, rows) => {
+      const s = get();
+      const t = selectPageTab(s, tabId);
+      const result = s.pages[tabId]?.result;
+      if (t?.kind !== "playlist" || !result) return;
+      const ids = new Set<string>();
+      for (const row of rows) {
+        const entry = rowEntry(result, row);
+        if (entry) ids.add(entry.id);
+      }
+      if (ids.size === 0) return;
+      const { playlistId } = t;
+      void writeStep(tabId, async () => {
+        // Read inside the queue: a removal queued before this one may already
+        // have taken some of these entries.
+        const doomed = (await fetchPlaylistEntries(playlistId)).filter((e) =>
+          ids.has(e.id),
         );
-        return true;
-      }),
+        if (doomed.length === 0) return undefined;
+        return { writes: removeEntriesWrites(playlistId, doomed) };
+      });
+    },
+    removeMatching: (tabId) => pruneByFilter(tabId, false),
+    keepMatching: (tabId) => pruneByFilter(tabId, true),
+    commitSort: (tabId) => {
+      const s = get();
+      const t = selectPageTab(s, tabId);
+      if (t?.kind !== "playlist") return;
+      if (!selectCanWriteFromRows(s, tabId) || !selectSortApplied(s, tabId))
+        return;
+      // The sort the user is looking at, which is what they asked to keep.
+      const { playlistId, live } = t;
+      void writeStep(tabId, async () => ({
+        writes: setPositionsWrites(
+          renumberMoves(await sortedEntries(playlistId, live)),
+        ),
+        edit: (def) => {
+          def.sort = playlistOrderContent();
+        },
+      }));
+    },
 
     beginPresetEdit,
     patchPresetEdit: (id, patch) => {

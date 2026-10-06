@@ -7,6 +7,7 @@ import {
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
+import { FilterEntryActions } from "./EntryActions";
 import PresetEditor from "./PresetEditor";
 import PresetTab from "./PresetTab";
 import { useBuilderFocus } from "./useBuilderFocus";
@@ -33,7 +34,8 @@ function FilterPresetTab(props: { tabId: string; id: string }): JSX.Element {
  * with any number of presets, the latter shown as right-aligned tabs beside
  * the input. When the input would grow too narrow the tabs wrap to their own
  * right-aligned row below it (flex-wrap). Expanding a preset reveals its
- * inline editor full-width below the row. */
+ * inline editor full-width below the row. On a playlist, a filter that applies
+ * puts "Remove these tracks" and "Keep only these tracks" at the foot. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const canSave = useApp((s) => selectPageBase(s, props.tabId) !== "");
@@ -79,6 +81,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
       {expandedInFilter && (
         <PresetEditor tabId={props.tabId} presetId={expandedInFilter} />
       )}
+      <FilterEntryActions tabId={props.tabId} />
     </div>
   );
 }

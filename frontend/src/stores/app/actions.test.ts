@@ -94,6 +94,7 @@ import {
   type Source,
 } from "api-client";
 import { fetchPlaylistEntries } from "../../api/playlist";
+import { runSql } from "../../api/query";
 import { fetchRatings } from "../../query/ratings";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
@@ -104,10 +105,13 @@ import {
   selectCanConvertToPlaylist,
   selectCanRedo,
   selectCanUndo,
+  selectCanWriteFromRows,
+  selectFilterApplied,
   selectIsUnsaved,
   selectPageTab,
   selectQueryTab,
   selectRowContext,
+  selectSortApplied,
 } from "./selectors";
 
 function openQueryTab(bundle: AppStoreBundle, id: string) {
@@ -1929,5 +1933,333 @@ describe("creating and managing playlists", () => {
       );
       expect(can("p")).toBe(false);
     });
+  });
+});
+
+describe("removing tracks and committing conditions", () => {
+  const SOURCE = "00000000-0000-0000-0000-0000000000c1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  let bundle: AppStoreBundle;
+
+  /** The playlist's entries as stored: e1…e4, holding tracks t1…t4 (t2 twice,
+   * in e2 and e4), at positions 1…4. */
+  const ENTRIES = [
+    { id: "e1", track: "t1", position: 1 },
+    { id: "e2", track: "t2", position: 2 },
+    { id: "e3", track: "t3", position: 3 },
+    { id: "e4", track: "t2", position: 4 },
+  ];
+  /** The rows the page shows: its entries' `$id` and `$position` columns, then
+   * the track. */
+  let pageRows: string[][];
+  /** The rows a commit's read gets back: the entries in sorted order. */
+  let sortedRows: string[][];
+
+  const page = () => bundle.store.getState().pages[SOURCE];
+  const live = () => selectPageTab(bundle.store.getState(), SOURCE)?.live;
+  /** Each `dml` request's operations, as `operation:id` (and `=position` for
+   * an update). */
+  const sent = () =>
+    vi
+      .mocked(dml)
+      .mock.calls.map(([req]) =>
+        req.operations.map((op) =>
+          op.operation === "insert"
+            ? `insert:${String(op.values.id)}@${String(op.values.position)}`
+            : op.operation === "update"
+              ? `update:${op.where.id}=${String(op.values.position)}`
+              : `delete:${op.where.id}`,
+        ),
+      );
+  /** Waits for the page's writes and its run to settle. */
+  const settled = () =>
+    vi.waitFor(() => {
+      expect(page()?.writing).toBe(false);
+      expect(page()?.running).toBe(false);
+    });
+
+  /** Opens the playlist on `def` and runs it, with `rows` on screen. */
+  async function open(def: object, rows: string[][]) {
+    pageRows = rows;
+    bundle.actions.openTab({
+      id: SOURCE,
+      name: "Road trip",
+      definition: JSON.stringify(def),
+      kind: "playlist",
+      playlistId: PLAYLIST,
+    });
+    bundle.actions.ensureRun(SOURCE);
+    await settled();
+  }
+
+  const PLAIN = {
+    filter: { custom: "", presets: [] },
+    sort: { builtin: { preset: "playlist_order" } },
+    display: { custom: "$title" },
+  };
+  const FILTERED = { ...PLAIN, filter: { custom: "jazz", presets: [] } };
+  const SORTED = { ...FILTERED, sort: { custom: "\\\\title" } };
+
+  beforeEach(() => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(fetchPlaylistEntries).mockReset();
+    vi.mocked(fetchPlaylistEntries).mockResolvedValue(ENTRIES);
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    // The page's run and a commit's read are told apart by their SQL, which
+    // `runSql` hands on as the "table" the result is built from.
+    vi.mocked(compilePlaylist).mockReset();
+    vi.mocked(compilePlaylist).mockImplementation(
+      (_id, _def, _presets, _schema, _prelude, options) => ({
+        sql: options?.withFilter === false ? "sorted" : "page",
+        columnAnnotations: [],
+      }),
+    );
+    vi.mocked(runSql).mockImplementation((sql) =>
+      Promise.resolve({ sql } as never),
+    );
+    vi.mocked(buildResultFromArrow).mockImplementation((table) =>
+      buildResultFromStringRows(
+        (table as unknown as { sql: string }).sql === "sorted"
+          ? sortedRows
+          : pageRows,
+      ),
+    );
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson("{}");
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.mocked(runSql).mockReset();
+    vi.mocked(runSql).mockResolvedValue({} as never);
+    vi.mocked(buildResultFromArrow).mockReset();
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["r"]]),
+    );
+  });
+
+  describe("removing rows", () => {
+    const ALL_ROWS = ENTRIES.map((e) => [e.id, String(e.position), e.track]);
+
+    it("deletes the rows' entries in one request, and undoes it", async () => {
+      await open(PLAIN, ALL_ROWS);
+      bundle.actions.clickRow(SOURCE, 1, { shift: false, ctrl: false });
+      bundle.actions.clickRow(SOURCE, 3, { shift: false, ctrl: true });
+      bundle.actions.removeRows(SOURCE, [1, 3]);
+      await settled();
+      expect(sent()).toEqual([["delete:e2", "delete:e4"]]);
+      // Reloaded as new rows.
+      expect(page()?.selection).toBeUndefined();
+
+      bundle.actions.undo(SOURCE);
+      await settled();
+      // Re-inserted whole, with their ids and positions.
+      expect(sent()[1]).toEqual(["insert:e2@2", "insert:e4@4"]);
+      expect(inserted(1)).toEqual([
+        { id: "e2", playlist: PLAYLIST, track: "t2", position: 2 },
+        { id: "e4", playlist: PLAYLIST, track: "t2", position: 4 },
+      ]);
+    });
+
+    it("skips entries that are already gone", async () => {
+      await open(PLAIN, ALL_ROWS);
+      vi.mocked(fetchPlaylistEntries).mockResolvedValue(
+        ENTRIES.filter((e) => e.id !== "e2"),
+      );
+      bundle.actions.removeRows(SOURCE, [0, 1]);
+      await settled();
+      expect(sent()).toEqual([["delete:e1"]]);
+
+      bundle.actions.removeRows(SOURCE, [1]); // e2 alone: nothing to do
+      await settled();
+      expect(sent()).toHaveLength(1);
+      expect(page()?.undo.steps).toHaveLength(1);
+    });
+
+    it("does nothing on a query's page", async () => {
+      openQueryTab(bundle, "q");
+      bundle.actions.setResults("q", buildResultFromStringRows(ALL_ROWS));
+      bundle.actions.removeRows("q", [0]);
+      await Promise.resolve();
+      expect(fetchPlaylistEntries).not.toHaveBeenCalled();
+      expect(dml).not.toHaveBeenCalled();
+    });
+  });
+
+  /** The values of the inserts in `dml` request `n`. */
+  const inserted = (n: number) =>
+    vi
+      .mocked(dml)
+      .mock.calls[n][0].operations.flatMap((op) =>
+        op.operation === "insert" ? [op.values] : [],
+      );
+
+  describe("the filter's buttons", () => {
+    /** "jazz" matches e1 and e3. */
+    const MATCHED = [
+      ["e1", "1", "t1"],
+      ["e3", "3", "t3"],
+    ];
+
+    it("removes every matching entry, then clears the filter, as one step", async () => {
+      await open(FILTERED, MATCHED);
+      bundle.actions.removeMatching(SOURCE);
+      await settled();
+      expect(sent()).toEqual([["delete:e1", "delete:e3"]]);
+      expect(live()?.filter).toEqual({ custom: "", presets: [] });
+
+      bundle.actions.undo(SOURCE);
+      await settled();
+      expect(sent()[1]).toEqual(["insert:e1@1", "insert:e3@3"]);
+      expect(live()?.filter.custom).toBe("jazz");
+    });
+
+    it("keeps only the matching entries", async () => {
+      await open(FILTERED, MATCHED);
+      bundle.actions.keepMatching(SOURCE);
+      await settled();
+      expect(sent()).toEqual([["delete:e2", "delete:e4"]]);
+      expect(live()?.filter.custom).toBe("");
+    });
+
+    it("clears the filter without a request when there's nothing to remove", async () => {
+      await open(
+        FILTERED,
+        ENTRIES.map((e) => [e.id, String(e.position), e.track]),
+      );
+      bundle.actions.keepMatching(SOURCE);
+      await vi.waitFor(() => expect(live()?.filter.custom).toBe(""));
+      await settled();
+      expect(dml).not.toHaveBeenCalled();
+      bundle.actions.undo(SOURCE);
+      expect(live()?.filter.custom).toBe("jazz");
+    });
+
+    /** Neither button wrote, or even read the entries. */
+    const stoodDown = async () => {
+      bundle.actions.removeMatching(SOURCE);
+      bundle.actions.keepMatching(SOURCE);
+      await Promise.resolve();
+      expect(fetchPlaylistEntries).not.toHaveBeenCalled();
+      expect(dml).not.toHaveBeenCalled();
+    };
+
+    it("stand down when no filter applies", async () => {
+      await open(PLAIN, MATCHED);
+      await stoodDown();
+    });
+
+    it("stand down after a failed run", async () => {
+      await open(FILTERED, MATCHED);
+      bundle.store.setState((s) => {
+        s.pages[SOURCE]!.runFailed = true;
+      });
+      await stoodDown();
+    });
+
+    it("stand down while a run is going", async () => {
+      await open(FILTERED, MATCHED);
+      bundle.actions.runQuery(SOURCE);
+      expect(page()?.running).toBe(true);
+      await stoodDown();
+      await settled();
+    });
+
+    it("stand down while an edit waits on its run", async () => {
+      await open(FILTERED, MATCHED);
+      bundle.actions.setFilterCustom(SOURCE, "jazz fusion"); // debounced
+      await stoodDown();
+      await vi.waitFor(() =>
+        expect(selectCanWriteFromRows(bundle.store.getState(), SOURCE)).toBe(
+          true,
+        ),
+      );
+    });
+
+    it("don't remove what matched nothing", async () => {
+      await open(FILTERED, []);
+      bundle.actions.removeMatching(SOURCE);
+      await Promise.resolve();
+      expect(fetchPlaylistEntries).not.toHaveBeenCalled();
+      // Keeping only nothing is still something.
+      bundle.actions.keepMatching(SOURCE);
+      await settled();
+      expect(sent()).toEqual([
+        ["delete:e1", "delete:e2", "delete:e3", "delete:e4"],
+      ]);
+    });
+  });
+
+  describe("committing a sort", () => {
+    it("renumbers every entry in the sorted order, unfiltered, then resets the sort", async () => {
+      await open(SORTED, [["e3", "3", "t3"]]);
+      sortedRows = [
+        ["e3", "3"],
+        ["e1", "1"],
+        ["e4", "4"],
+        ["e2", "2"],
+      ];
+      bundle.actions.commitSort(SOURCE);
+      await settled();
+      // Read without the filter, and without the display.
+      const read = vi
+        .mocked(compilePlaylist)
+        .mock.calls.find((call) => call[5]?.withFilter === false);
+      expect(read?.[1].display).toEqual({ custom: "" });
+      expect(read?.[1].sort).toEqual({ custom: "\\\\title" });
+      expect(sent()).toEqual([
+        ["update:e3=1", "update:e1=2", "update:e4=3", "update:e2=4"],
+      ]);
+      expect(live()?.sort).toEqual({ builtin: { preset: "playlist_order" } });
+      expect(live()?.filter.custom).toBe("jazz");
+
+      bundle.actions.undo(SOURCE);
+      await settled();
+      expect(sent()[1]).toEqual([
+        "update:e3=3",
+        "update:e1=1",
+        "update:e4=4",
+        "update:e2=2",
+      ]);
+      expect(live()?.sort).toEqual({ custom: "\\\\title" });
+    });
+
+    it("leaves out entries already in their place", async () => {
+      await open(SORTED, [["e3", "3", "t3"]]);
+      sortedRows = [
+        ["e1", "1"],
+        ["e3", "3"],
+        ["e2", "2"],
+        ["e4", "4"],
+      ];
+      bundle.actions.commitSort(SOURCE);
+      await settled();
+      expect(sent()).toEqual([["update:e3=2", "update:e2=3"]]);
+    });
+
+    it("does nothing without a sort", async () => {
+      await open(FILTERED, [["e3", "3", "t3"]]);
+      bundle.actions.commitSort(SOURCE);
+      await Promise.resolve();
+      expect(
+        vi
+          .mocked(compilePlaylist)
+          .mock.calls.some((call) => call[5]?.withFilter === false),
+      ).toBe(false);
+      expect(dml).not.toHaveBeenCalled();
+    });
+  });
+
+  it("reads which conditions apply", async () => {
+    await open(PLAIN, []);
+    const s = () => bundle.store.getState();
+    expect(selectFilterApplied(s(), SOURCE)).toBe(false);
+    expect(selectSortApplied(s(), SOURCE)).toBe(false);
+    bundle.actions.toggleFilterPreset(SOURCE, "p1");
+    expect(selectFilterApplied(s(), SOURCE)).toBe(true);
+    bundle.actions.setSectionCustomText(SOURCE, "sort", "  ");
+    expect(selectSortApplied(s(), SOURCE)).toBe(false);
+    bundle.actions.setSectionCustomText(SOURCE, "sort", "\\\\title");
+    expect(selectSortApplied(s(), SOURCE)).toBe(true);
   });
 });

@@ -7,6 +7,9 @@ import {
   ALL_COMMANDS,
   commandDef,
   commandDefById,
+  whenSatisfied,
+  whensOverlap,
+  type CommandContext,
   type CommandId,
 } from "./registry";
 
@@ -26,29 +29,40 @@ export function isOverridden(overrides: Overrides, id: CommandId): boolean {
   return id in overrides;
 }
 
-/** The active bindings in registry order. Chords are unique (assignment steals
- * conflicts), so a first match is unambiguous. */
-export function resolveBindings(
-  overrides: Overrides,
-): { chord: Chord; command: CommandId }[] {
-  const out: { chord: Chord; command: CommandId }[] = [];
-  for (const def of ALL_COMMANDS) {
-    const chord = bindingFor(overrides, def.id);
-    if (chord) out.push({ chord, command: def.id });
-  }
-  return out;
-}
-
-/** The command currently bound to `chord`, if any. */
+/** The command that `chord` runs in context `ctx`: the first, in registry
+ * order, that's bound to it and whose `when` holds. A chord can belong to
+ * several commands whose contexts never overlap (see {@link conflictsFor}), so
+ * which one it runs depends on the context. `null` when none applies. */
 export function commandForChord(
   overrides: Overrides,
   chord: Chord,
+  ctx: CommandContext,
 ): CommandId | null {
   for (const def of ALL_COMMANDS) {
     const bound = bindingFor(overrides, def.id);
-    if (bound && chordsEqual(bound, chord)) return def.id;
+    if (!bound || !chordsEqual(bound, chord)) continue;
+    if (whenSatisfied(def.when, ctx)) return def.id;
   }
   return null;
+}
+
+/** The commands that binding `chord` to `id` would take it from: those bound
+ * to it whose contexts can overlap `id`'s, so that one keypress would have two
+ * commands to choose between. Commands whose contexts can't overlap share a
+ * chord instead (as `Delete` is both the record form's and a playlist's
+ * results'), which is also why there can be more than one. Empty when nothing
+ * conflicts. */
+export function conflictsFor(
+  overrides: Overrides,
+  id: CommandId,
+  chord: Chord,
+): CommandId[] {
+  const when = commandDef(id).when;
+  return ALL_COMMANDS.filter((def) => {
+    if (def.id === id || !whensOverlap(def.when, when)) return false;
+    const bound = bindingFor(overrides, def.id);
+    return bound !== null && chordsEqual(bound, chord);
+  }).map((def) => def.id);
 }
 
 /** The overrides map with `id` rebound. Setting a command's *default* chord

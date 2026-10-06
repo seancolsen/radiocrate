@@ -6,9 +6,9 @@ import { MenuItem, MenuNote, MenuSeparator, MenuSubmenu } from "./ui/Menu";
 
 /** A result row's context-menu body: one "Edit {table}" entry per table whose
  * primary key the row carries in full — a track row joined to its album offers
- * both — then "Show album tracks" when one of those is an album and "Rate track"
- * when one of them is a track, over the "Select multiple" entry that turns
- * multi-select mode on.
+ * both — then "Show album tracks" when one of those is an album, "Rate track"
+ * when one of them is a track, and "Remove from playlist" on a playlist's page,
+ * over the "Select multiple" entry that turns multi-select mode on.
  *
  * The same body backs the multi-select toolbar's actions menu, which acts on
  * the whole selection; it passes no `onSelectMultiple`, because that mode is
@@ -27,6 +27,9 @@ export default function RowActionsMenu(props: {
   ratingsLoading: boolean;
   /** Gives the row's track(s) that rating. */
   onRate: (ratingId: string) => void;
+  /** Removes the rows' entries from the playlist whose page they're on.
+   * Omitted anywhere else, which hides the entry. */
+  onRemoveFromPlaylist?: () => void;
   /** Omitted when multi-select mode is already on, which hides the entry. */
   onSelectMultiple?: () => void;
 }): JSX.Element {
@@ -61,9 +64,18 @@ export default function RowActionsMenu(props: {
           )}
         </MenuSubmenu>
       )}
+      {props.onRemoveFromPlaylist && (
+        <MenuItem
+          icon={Icons.Delete}
+          label="Remove from playlist"
+          onClick={props.onRemoveFromPlaylist}
+        />
+      )}
       {props.onSelectMultiple && (
         <>
-          {props.records.length > 0 && <MenuSeparator />}
+          {(props.records.length > 0 || props.onRemoveFromPlaylist) && (
+            <MenuSeparator />
+          )}
           <MenuItem
             icon={Icons.SelectMultiple}
             label="Select multiple"

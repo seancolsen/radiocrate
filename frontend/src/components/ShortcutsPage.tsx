@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
+import { useShallow } from "zustand/shallow";
 import {
   chordFromEvent,
   chordsEqual,
@@ -16,7 +17,7 @@ import {
 import { Icons } from "../icons";
 import {
   selectBinding,
-  selectCommandForChord,
+  selectConflicts,
   selectOverridden,
 } from "../stores/commands";
 import { useCommandActions, useCommands } from "../stores/react";
@@ -81,13 +82,13 @@ export function CaptureDialog(props: {
   onReset: () => void;
   onCancel: () => void;
 }): JSX.Element {
-  /** The command that currently holds the pending chord, when it's some *other*
-   * command — assigning would steal it away. */
-  const conflictId = useCommands((s) =>
-    props.pending ? selectCommandForChord(s, props.pending) : null,
+  /** The other commands that hold the pending chord where this one could also
+   * run — assigning would steal it away from them. */
+  const conflicts = useCommands(
+    useShallow((s) =>
+      props.pending ? selectConflicts(s, props.cmd, props.pending) : [],
+    ),
   );
-  const conflict =
-    conflictId && conflictId !== props.cmd ? commandDef(conflictId) : null;
 
   return (
     <Modal onClose={() => props.onCancel()} width="380px">
@@ -102,9 +103,10 @@ export function CaptureDialog(props: {
             : "Press desired key combination…"
         }
       />
-      {conflict && (
+      {conflicts.length > 0 && (
         <p className="text-accent mt-2 text-xs">
-          Currently bound to “{conflict.title}”
+          Currently bound to{" "}
+          {conflicts.map((id) => `“${commandDef(id).title}”`).join(" and ")}
         </p>
       )}
       <div className="mt-4 flex flex-wrap justify-end gap-2">

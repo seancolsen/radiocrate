@@ -170,6 +170,30 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A playlist's filter, applying a condition: its two buttons at the foot.
+  test(`filter-builder/playlist - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "filter-builder/playlist", colorScheme);
+    for (const name of ["Remove these tracks", "Keep only these tracks"]) {
+      await expect(stage.getByRole("button", { name })).toBeEnabled();
+    }
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/playlist", colorScheme),
+    );
+  });
+
+  // A playlist's custom sort: the commit button under it.
+  test(`sort-builder/playlist - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "sort-builder/playlist", colorScheme);
+    await expect(
+      stage.getByRole("button", {
+        name: "Commit this track order to playlist",
+      }),
+    ).toBeEnabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("sort-builder/playlist", colorScheme),
+    );
+  });
+
   // The canned Lemonade rows: the grid's columns, artist pills, per-column
   // fonts/colors/alignment, formatters and separators. The rows are canvas
   // paint, so the wait is on the engine's readiness marker, not on row text.
@@ -241,6 +265,24 @@ for (const colorScheme of SCHEMES) {
     ]);
     await expect(menu).toHaveScreenshot(
       snapshot("result-row/context-menu", colorScheme),
+    );
+  });
+
+  // The same menu on a playlist's page: "Remove from playlist" before
+  // "Select multiple".
+  test(`result-row/playlist-context-menu - ${colorScheme}`, async ({
+    page,
+  }) => {
+    await openStory(page, "result-row/playlist-context-menu", colorScheme);
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Edit track",
+      "Rate track",
+      "Remove from playlist",
+      "Select multiple",
+    ]);
+    await expect(menu).toHaveScreenshot(
+      snapshot("result-row/playlist-context-menu", colorScheme),
     );
   });
 

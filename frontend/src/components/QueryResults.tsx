@@ -10,6 +10,7 @@ import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
   selectMultiSelect,
+  selectPageTab,
   selectRatings,
   selectRatingsLoading,
   selectRecordsForRows,
@@ -128,12 +129,17 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     doubleClickRow,
     loadRatings,
     rateTracks,
+    removeRows,
     setMultiSelect,
     setRecordEditorRecords,
     showChildRecords,
     setResultsScroll,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
+  // A playlist's rows can be removed from it.
+  const playlist = useApp(
+    (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
+  );
   // The "Rate track" submenu's rows. Read here rather than in the menu body so
   // that body stays a function of its props — the multi-select toolbar renders
   // the same one.
@@ -420,6 +426,9 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
                 ),
                 ratingId,
               )
+            }
+            onRemoveFromPlaylist={
+              playlist ? () => removeRows(props.tabId, rowMenu.rows) : undefined
             }
             onSelectMultiple={
               multiSelect ? undefined : () => setMultiSelect(props.tabId, true)
