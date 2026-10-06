@@ -486,7 +486,8 @@ export function createCommandsStore(
    * rebinds instead of firing. An open dropdown/context menu counts too: its
    * own Up/Down/Enter handling (`ui/useMenu`) must be the
    * only thing acting on those keys, not also a page command like row
-   * selection underneath it. */
+   * selection underneath it. So do result rows in hand: a key mustn't act on
+   * the rows being dragged (Escape, which calls the drag off, is the grid's). */
   const suppressed = (): boolean => {
     const s = store.getState();
     const a = app.store.getState();
@@ -495,6 +496,7 @@ export function createCommandsStore(
       capturingKeys() ||
       a.pendingDelete !== null ||
       a.pendingAddToPlaylist !== null ||
+      a.rowDrag !== null ||
       a.viewSql !== null ||
       a.presetSave !== null ||
       a.renaming !== null ||

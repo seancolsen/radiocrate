@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import type { JSX } from "react";
+import { createPortal } from "react-dom";
 import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
@@ -28,6 +29,7 @@ import { useApp, useAppActions, useStores } from "../stores/react";
 import { ContextMenu } from "./ui/ContextMenu";
 import MultiSelectToolbar, { MULTI_SELECT_INSET } from "./MultiSelectToolbar";
 import RowActionsMenu from "./RowActionsMenu";
+import RowDragChip from "./RowDragChip";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).
 // This component is a thin React shell: it owns the canvas element's lifecycle
@@ -47,8 +49,14 @@ import RowActionsMenu from "./RowActionsMenu";
 // What this shell owns beyond the canvas is the DOM over it (rows are painted
 // pixels; a menu or a toolbar needs to be hit-testable, styled and accessible):
 // the row context menu — while it's open the grid is frozen, so the rows
-// underneath hold still — and the floating multi-select toolbar, whose height
-// the grid is told to keep scrollable above its first row.
+// underneath hold still — the floating multi-select toolbar, whose height the
+// grid is told to keep scrollable above its first row, and the chip that
+// follows the pointer while rows are dragged.
+//
+// Rows that are tracks can be dragged onto a playlist in the explorer's tree.
+// The drag itself is plain data in the store (`rowDrag`), which the tree reads
+// to highlight the playlist that would take the rows; finding that playlist
+// under the pointer is this shell's, since it's a question about the DOM.
 
 /** An open row context menu: where it was raised, the rows it acts on, and the
  * records it offers to edit.
@@ -121,12 +129,30 @@ function subscribeModifiedRows(
   };
 }
 
+/** Puts the drag chip just below and right of viewport point (x, y), clear of
+ * what the pointer is over. */
+function placeChip(el: HTMLElement | null, x: number, y: number): void {
+  if (el) el.style.transform = `translate(${x + 12}px, ${y + 12}px)`;
+}
+
+/** The source whose explorer row is at viewport point (x, y), or `null`. Tree
+ * rows carry their source's id (see `SourceRow`). */
+function sourceAt(x: number, y: number): string | null {
+  const row = document
+    .elementFromPoint(x, y)
+    ?.closest<HTMLElement>("[data-tree-row][data-source-id]");
+  return row?.dataset.sourceId ?? null;
+}
+
 /** The results pane: the current tab's result set painted to a canvas grid. */
 export default function QueryResults(props: { tabId: string }): JSX.Element {
   const stores = useStores();
   const {
+    beginRowDrag,
     clickRow,
     doubleClickRow,
+    endRowDrag,
+    hoverRowDrag,
     loadRatings,
     rateTracks,
     removeRows,
@@ -150,11 +176,24 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   // the same one.
   const ratings = useApp(selectRatings);
   const ratingsLoading = useApp(selectRatingsLoading);
+  // How many tracks this page's rows have in hand, while they're being
+  // dragged (0 otherwise).
+  const dragCount = useApp((s) =>
+    s.rowDrag?.fromTabId === props.tabId ? s.rowDrag.trackIds.length : 0,
+  );
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [rowMenu, setRowMenu] = useState<RowMenu | undefined>(undefined);
   const closeMenu = useCallback(() => setRowMenu(undefined), []);
+  // The drag chip, and where the pointer last was: the chip mounts a render
+  // after the drag begins, and takes its first place from there.
+  const chipRef = useRef<HTMLDivElement | null>(null);
+  const dragPoint = useRef({ x: 0, y: 0 });
+  const chipMounted = useCallback((el: HTMLDivElement | null) => {
+    chipRef.current = el;
+    placeChip(el, dragPoint.current.x, dragPoint.current.y);
+  }, []);
 
   // The engine itself, created as the page is shown and destroyed as it's
   // hidden (each tab has its own page, and a hidden one runs its effects'
@@ -231,6 +270,19 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         // chase the menu's open state.
         if (records.some((record) => record.table === "track")) loadRatings();
         setRowMenu({ x, y, rows, records });
+      },
+      onRowDragStart: (index, x, y) => {
+        dragPoint.current = { x, y };
+        return beginRowDrag(tabId, index);
+      },
+      onRowDragMove: (x, y) => {
+        dragPoint.current = { x, y };
+        placeChip(chipRef.current, x, y);
+        hoverRowDrag(sourceAt(x, y));
+      },
+      onRowDragEnd: (x, y, drop) => {
+        if (drop) hoverRowDrag(sourceAt(x, y));
+        return endRowDrag(drop);
       },
     });
 
@@ -346,8 +398,11 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   }, [
     props.tabId,
     stores,
+    beginRowDrag,
     clickRow,
     doubleClickRow,
+    endRowDrag,
+    hoverRowDrag,
     loadRatings,
     setResultsScroll,
   ]);
@@ -389,6 +444,11 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       {multiSelect && (
         <MultiSelectToolbar ref={toolbarRef} tabId={props.tabId} />
       )}
+      {dragCount > 0 &&
+        createPortal(
+          <RowDragChip ref={chipMounted} count={dragCount} />,
+          document.body,
+        )}
       {rowMenu && (
         <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={closeMenu}>
           <RowActionsMenu

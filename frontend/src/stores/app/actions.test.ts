@@ -2421,3 +2421,168 @@ describe("adding tracks to a playlist", () => {
     expect(dml).not.toHaveBeenCalled();
   });
 });
+
+describe("dragging result rows", () => {
+  const SOURCE = "00000000-0000-0000-0000-0000000000c1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  const QUERY_SOURCE = "00000000-0000-0000-0000-0000000000c2";
+  let bundle: AppStoreBundle;
+
+  const playlist: Source = {
+    id: SOURCE,
+    kind: "playlist",
+    name: "Road trip",
+    createdAt: 0,
+    modifiedAt: 0,
+    lastPlay: 0,
+    definition: "{}",
+    parent: null,
+    position: 0,
+    queryId: null,
+    playlistId: PLAYLIST,
+  };
+  const query: Source = {
+    ...playlist,
+    id: QUERY_SOURCE,
+    kind: "query",
+    queryId: "00000000-0000-0000-0000-0000000000e2",
+    playlistId: null,
+  };
+  const TRACKS = { records: [], trackIdColumn: 0 };
+  const plain = { shift: false, ctrl: false };
+
+  const drag = () => bundle.store.getState().rowDrag;
+  const selection = (tabId: string) =>
+    [...(bundle.store.getState().pages[tabId]?.selection ?? [])].sort();
+
+  /** A query tab "q" whose four rows hold tracks t1…t4. */
+  function openTracks() {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults(
+      "q",
+      buildResultFromStringRows([["t1"], ["t2"], ["t3"], ["t4"]]),
+      TRACKS,
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(fetchMaxPosition).mockReset();
+    vi.mocked(fetchMaxPosition).mockResolvedValue(2);
+    bundle = createAppStore(fakeEnv());
+    bundle.store.setState((s) => {
+      s.sources = { status: "ready", data: [playlist, query] };
+    });
+  });
+  afterEach(() => bundle.dispose());
+
+  it("picks up the selection the held row belongs to, in the order shown", () => {
+    openTracks();
+    bundle.actions.clickRow("q", 2, plain);
+    bundle.actions.clickRow("q", 0, { shift: false, ctrl: true });
+    expect(bundle.actions.beginRowDrag("q", 2)).toBe(true);
+    expect(drag()).toEqual({
+      fromTabId: "q",
+      trackIds: ["t1", "t3"],
+      entryIds: [],
+      over: null,
+    });
+    expect(selection("q")).toEqual([0, 2]);
+  });
+
+  it("selects a held row outside the selection alone first", () => {
+    openTracks();
+    bundle.actions.clickRow("q", 0, plain);
+    bundle.actions.beginRowDrag("q", 3);
+    expect(selection("q")).toEqual([3]);
+    expect(drag()?.trackIds).toEqual(["t4"]);
+  });
+
+  it("adds a held row to the selection in multi-select mode", () => {
+    openTracks();
+    bundle.actions.setMultiSelect("q", true);
+    bundle.actions.clickRow("q", 0, plain);
+    bundle.actions.beginRowDrag("q", 2);
+    expect(selection("q")).toEqual([0, 2]);
+    expect(drag()?.trackIds).toEqual(["t1", "t3"]);
+  });
+
+  it("picks up nothing from rows that aren't tracks", () => {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults("q", buildResultFromStringRows([["x"]]), {
+      records: [],
+    });
+    expect(bundle.actions.beginRowDrag("q", 0)).toBe(false);
+    expect(drag()).toBeNull();
+    expect(selection("q")).toEqual([]);
+  });
+
+  it("is taken only by a playlist", () => {
+    openTracks();
+    bundle.actions.beginRowDrag("q", 0);
+    bundle.actions.hoverRowDrag(QUERY_SOURCE);
+    expect(drag()?.over).toBeNull();
+    bundle.actions.hoverRowDrag(SOURCE);
+    expect(drag()?.over).toBe(SOURCE);
+    bundle.actions.hoverRowDrag(null);
+    expect(drag()?.over).toBeNull();
+  });
+
+  it("adds its tracks to the end of the playlist it's dropped on", async () => {
+    openTracks();
+    bundle.actions.clickRow("q", 1, plain);
+    bundle.actions.clickRow("q", 3, { shift: true, ctrl: false });
+    bundle.actions.beginRowDrag("q", 2);
+    bundle.actions.hoverRowDrag(SOURCE);
+    expect(bundle.actions.endRowDrag(true)).toBe(true);
+    expect(drag()).toBeNull();
+    await vi.waitFor(() => expect(dml).toHaveBeenCalledTimes(1));
+    expect(fetchMaxPosition).toHaveBeenCalledWith(PLAYLIST);
+    const inserted = vi
+      .mocked(dml)
+      .mock.calls[0][0].operations.map((op) =>
+        op.operation === "insert"
+          ? `${String(op.values.track)}@${String(op.values.position)}`
+          : op.operation,
+      );
+    expect(inserted).toEqual(["t2@3", "t3@4", "t4@5"]);
+  });
+
+  it("adds nothing when called off, or let go over no playlist", () => {
+    openTracks();
+    bundle.actions.beginRowDrag("q", 0);
+    bundle.actions.hoverRowDrag(SOURCE);
+    expect(bundle.actions.endRowDrag(false)).toBe(false);
+    expect(drag()).toBeNull();
+
+    bundle.actions.beginRowDrag("q", 0);
+    expect(bundle.actions.endRowDrag(true)).toBe(false);
+    expect(fetchMaxPosition).not.toHaveBeenCalled();
+    expect(dml).not.toHaveBeenCalled();
+  });
+
+  it("carries a playlist's entries, and isn't taken by that playlist", () => {
+    bundle.actions.openTab(playlist);
+    bundle.actions.setResults(
+      SOURCE,
+      buildResultFromStringRows([
+        ["e1", "1", "t1"],
+        ["e2", "2", "t2"],
+        ["e3", "3", "t1"],
+      ]),
+      { records: [], trackIdColumn: 2 },
+    );
+    bundle.actions.clickRow(SOURCE, 0, plain);
+    bundle.actions.clickRow(SOURCE, 2, { shift: false, ctrl: true });
+    bundle.actions.beginRowDrag(SOURCE, 0);
+    expect(drag()).toEqual({
+      fromTabId: SOURCE,
+      trackIds: ["t1", "t1"],
+      entryIds: ["e1", "e3"],
+      over: null,
+    });
+    bundle.actions.hoverRowDrag(SOURCE);
+    expect(drag()?.over).toBeNull();
+  });
+});

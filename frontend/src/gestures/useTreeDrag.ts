@@ -15,6 +15,13 @@ import {
   type TreeRow,
 } from "../query/explorerTree";
 import { claimPointer, releasePointer } from "./pointerClaim";
+import {
+  DRAG_THRESHOLD,
+  HOLD_SLOP,
+  LONG_PRESS_MS,
+  LONG_PRESS_SLOP,
+  swallowReleaseClick,
+} from "./press";
 
 /** A tree row's left padding at depth 0, and the extra indent per level (px).
  * The rows lay themselves out with these, and the drop line is indented by
@@ -22,16 +29,6 @@ import { claimPointer, releasePointer } from "./pointerClaim";
 export const TREE_PAD = 8;
 export const TREE_INDENT = 16;
 
-/** How far (px) a touch may travel after picking a row up and still count as a
- * long press — when its drop has moved nothing — rather than a drag that went
- * nowhere useful. */
-const HOLD_SLOP = 32;
-/** Mouse/pen movement (px) before a press becomes a drag rather than a click. */
-const DRAG_THRESHOLD = 5;
-/** How long a touch has to rest on a row before it picks the row up (ms)… */
-const LONG_PRESS_MS = 450;
-/** …and how far it may wander meanwhile (px) — further, and it's a scroll. */
-const LONG_PRESS_SLOP = 8;
 /** Distance from the list's scrolling edge (px) inside which a drag scrolls it,
  * faster the closer it gets, up to this many px per frame. */
 const EDGE_ZONE = 32;
@@ -201,15 +198,8 @@ export function useTreeDrag(opts: {
     if (!s.started) return;
     releasePointer(s.pointerId);
     // The click this release produces ends the drag; it isn't a request to
-    // open the row (or toggle the chevron) under it. It's dispatched along
-    // with the release, so a click still pending once this task is over is
-    // another click altogether.
-    const swallow = (ev: MouseEvent) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-    };
-    window.addEventListener("click", swallow, { capture: true, once: true });
-    setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+    // open the row (or toggle the chevron) under it.
+    swallowReleaseClick();
     setDrag(null);
     if (!drop) return;
     const moved = s.target !== null && latest.current.onDrop(s.item, s.target);

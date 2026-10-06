@@ -145,6 +145,7 @@ import {
   selectRowContext,
   selectRowForRecord,
   selectRowRecords,
+  selectRowSelection,
   selectSortApplied,
   selectTab,
   selectTrackIdAt,
@@ -502,6 +503,19 @@ export interface AppActions {
     sourceId: string,
     trackIds: readonly string[],
   ) => Promise<void>;
+  /** A press picked up row `row` of page `tabId` to drag it: the selection
+   * when the row belongs to it, and otherwise the row alone, selected first
+   * (as a click on it would select it). Only rows that are tracks drag.
+   * Returns whether the rows were picked up, as {@link AppState.rowDrag}. */
+  beginRowDrag: (tabId: string, row: number) => boolean;
+  /** The rows being dragged are over source `sourceId` in the explorer, or
+   * over no source (`null`). Only a playlist other than the one they came
+   * from would take them. */
+  hoverRowDrag: (sourceId: string | null) => void;
+  /** The rows being dragged were let go (`drop`), or the drag was called off.
+   * Dropped over a playlist, their tracks are added to its end
+   * ({@link AppActions.addTracksToPlaylist}). Returns whether they were. */
+  endRowDrag: (drop: boolean) => boolean;
   /** Note a request to the backend, in flight until `settled` settles: a saved
    * query's edits aren't written until the app has been quiet for a while.
    * `createStores()` feeds every request the generated client sends
@@ -2758,6 +2772,59 @@ export function createAppActions(
         lastRunSql.delete(sourceId);
         runQuery(sourceId);
       });
+    },
+    beginRowDrag: (tabId, row) => {
+      if (get().pages[tabId]?.lineage?.trackIdColumn === undefined) {
+        return false;
+      }
+      // Holding a row outside the selection takes it alone (or, in
+      // multi-select mode, adds it, as a tap there does).
+      if (!selectRowSelection(get(), tabId).has(row)) {
+        actions.clickRow(tabId, row, { shift: false, ctrl: false });
+      }
+      const s = get();
+      const result = s.pages[tabId]?.result;
+      const playlist = selectPageTab(s, tabId)?.kind === "playlist";
+      const trackIds: string[] = [];
+      const entryIds: string[] = [];
+      // In the order shown, whatever order the rows were selected in.
+      const rows = [...selectRowSelection(s, tabId)].sort((a, b) => a - b);
+      for (const r of rows) {
+        const id = selectTrackIdAt(s, tabId, r);
+        if (id !== undefined) trackIds.push(id);
+        const entry = playlist && result ? rowEntry(result, r) : undefined;
+        if (entry) entryIds.push(entry.id);
+      }
+      if (trackIds.length === 0) return false;
+      set((d) => {
+        d.rowDrag = { fromTabId: tabId, trackIds, entryIds, over: null };
+      });
+      return true;
+    },
+    hoverRowDrag: (sourceId) => {
+      const drag = get().rowDrag;
+      if (!drag) return;
+      const takes =
+        sourceId !== null &&
+        sourceId !== drag.fromTabId &&
+        get().sources.data.some(
+          (x) => x.id === sourceId && x.kind === "playlist",
+        );
+      const over = takes ? sourceId : null;
+      if (over === drag.over) return;
+      set((d) => {
+        if (d.rowDrag) d.rowDrag.over = over;
+      });
+    },
+    endRowDrag: (drop) => {
+      const drag = get().rowDrag;
+      if (!drag) return false;
+      set((d) => {
+        d.rowDrag = null;
+      });
+      if (!drop || drag.over === null) return false;
+      void actions.addTracksToPlaylist(drag.over, drag.trackIds);
+      return true;
     },
 
     beginPresetEdit,

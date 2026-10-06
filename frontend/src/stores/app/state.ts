@@ -376,6 +376,9 @@ export interface AppState {
     fromTabId: string;
     trackIds: readonly string[];
   } | null;
+  /** The result rows being dragged, while a drag is under way (see
+   * {@link RowDrag}). */
+  rowDrag: RowDrag | null;
   /** Whether the About dialog (versions + the update actions) is open. */
   aboutOpen: boolean;
   /** The setting whose editor dialog is open (null when none is). */
@@ -424,6 +427,19 @@ export interface AppState {
   builderFocus: BuilderFocus | undefined;
 }
 
+/** Result rows picked up to be dragged: the tab they were picked up on, the
+ * tracks they hold and (on a playlist's page) the entries they list, each in
+ * the order shown, and the source in the explorer that would take them if they
+ * were dropped now (`null` when nothing would: the pointer isn't over a
+ * playlist, or is over the one they came from). Plain data, so the grid that
+ * picked the rows up and the explorer they're dropped on can both read it. */
+export interface RowDrag {
+  fromTabId: string;
+  trackIds: readonly string[];
+  entryIds: readonly string[];
+  over: string | null;
+}
+
 /** A shared frozen empty set for tabs with no selection, so a selector returns a
  * stable reference (no per-call allocation, no spurious re-renders). */
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
@@ -468,6 +484,7 @@ export function initialState(env: AppEnv): AppState {
     renaming: null,
     pendingDelete: null,
     pendingAddToPlaylist: null,
+    rowDrag: null,
     aboutOpen: false,
     settingEditor: null,
     rescanning: false,

@@ -451,6 +451,27 @@ export const STORIES: Record<string, Story> = {
     render: () => <Explorer />,
   },
 
+  // Result rows being dragged over a playlist in the tree: the playlist that
+  // would take them is outlined, as a folder taking a dragged item is.
+  "explorer/tracks-drop": {
+    width: 220,
+    height: 360,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      arrangeSourceTree(stores);
+      stores.app.store.setState((s) => {
+        s.sources.data = [...s.sources.data, PLAYLIST_SOURCE];
+        s.rowDrag = {
+          fromTabId: LEMONADE.id,
+          trackIds: ["t1", "t2"],
+          entryIds: [],
+          over: PLAYLIST_SOURCE.id,
+        };
+      });
+    },
+    render: () => <Explorer />,
+  },
+
   // ── The tab bar ──────────────────────────────────────────────────────────
   // A saved query beside a new one, active: the new query has no name yet, so
   // its handle reads "new" in gray italics, with the ✱ of a query the backend

@@ -27,12 +27,19 @@
 // back in via `setSelection` for painting — the grid renders selection, it
 // doesn't own it.
 //
+// A press on a row can also pick the rows up to drag them (`RowPress`): a mouse
+// or pen by moving past a small threshold, a touch by resting on the row. A
+// touch held still and let go raises the row's context menu instead, in place
+// of the platform's own long-press `contextmenu`. Where the rows can go is the
+// owner's business: the grid only reports the drag's start, moves and end.
+//
 // The owner can also freeze the grid (`setFrozen`) while a menu it opened is up:
 // scrolling, hovering and clicking all stop, so the rows under an open context
 // menu hold still. The DOM overlay above the canvas already swallows the events
 // that reach it; freezing covers what it can't (a wheel over the menu itself, a
 // pointer that was mid-gesture when the menu opened).
 
+import { swallowReleaseClick } from "../gestures/press";
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
 import {
@@ -44,6 +51,7 @@ import {
   SMALL_LINE_H,
   TEXT_PAD_X,
 } from "../query/rowGeometry";
+import { RowPress, type PressPoint } from "./rowPress";
 
 // ── Geometry (logical px == CSS px). The row metrics are shared with the record
 // editor's embedded record widget (see `query/rowGeometry.ts`); what's left here
@@ -123,9 +131,20 @@ export interface GridInteraction {
   onRowClick: (index: number, mods: { shift: boolean; ctrl: boolean }) => void;
   /** A row was double-clicked (row activation, e.g. play the track). */
   onRowDoubleClick: (index: number) => void;
-  /** A row was right-clicked (or long-pressed into a `contextmenu`), at the
+  /** A row was right-clicked (or held still under a touch and let go), at the
    * given viewport coordinates — where the owner anchors its DOM menu. */
   onRowContextMenu: (index: number, x: number, y: number) => void;
+  /** A press on row `index` would pick the rows up, at viewport point (x, y).
+   * Returns whether the owner took them: `false` (or leaving this out) means
+   * these rows don't drag, and the press stays a click — or, under a touch
+   * held still, a context menu. */
+  onRowDragStart?: (index: number, x: number, y: number) => boolean;
+  /** The rows being dragged moved to viewport point (x, y). */
+  onRowDragMove?: (x: number, y: number) => void;
+  /** The drag ended at (x, y): released (`drop`), or called off (Escape, a
+   * cancelled pointer, the grid freezing or going away). Returns whether the
+   * release dropped the rows somewhere. */
+  onRowDragEnd?: (x: number, y: number, drop: boolean) => boolean;
 }
 
 /** The width-dependent layout, recomputed only on resize or a new result (not
@@ -214,7 +233,8 @@ export class CanvasGrid {
   private velocity = 0; // logical px per ms
   private lastFrameT = 0;
 
-  // Active pointer gesture (touch pan or scrollbar drag).
+  // Active pointer gesture (touch pan or scrollbar drag). A press on a row is
+  // tracked alongside it (`press`): a touch pans and may also pick the row up.
   private gesture:
     | { kind: "pan"; id: number; lastY: number; lastT: number }
     | { kind: "scrollbar"; id: number; grabOffset: number }
@@ -223,6 +243,37 @@ export class CanvasGrid {
 
   // Last-drawn thumb geometry, for pointer hit-testing.
   private thumb: { y: number; h: number } | undefined;
+
+  /** The press on a row, which may pick the rows up (see `rowPress.ts`). */
+  private readonly press = new RowPress({
+    onPickUp: () => {
+      // The finger now holds the rows; it no longer scrolls them.
+      this.gesture = undefined;
+      this.stopFling();
+      navigator.vibrate?.(10);
+    },
+    onDragStart: (row, x, y) => {
+      const taken = this.interaction?.onRowDragStart?.(row, x, y) ?? false;
+      if (!taken) return false;
+      // The drag's moves keep coming here wherever the pointer goes.
+      const id = this.press.pointerId;
+      if (id !== undefined && !this.canvas.hasPointerCapture(id)) {
+        this.canvas.setPointerCapture(id);
+      }
+      window.addEventListener("keydown", this.onDragKey, true);
+      if (this.hoverRow !== undefined) {
+        this.hoverRow = undefined;
+        this.requestDraw();
+      }
+      return true;
+    },
+    onDragMove: (x, y) => this.interaction?.onRowDragMove?.(x, y),
+    onDragEnd: (x, y, drop) => {
+      window.removeEventListener("keydown", this.onDragKey, true);
+      return this.interaction?.onRowDragEnd?.(x, y, drop) ?? false;
+    },
+    onHold: (row, x, y) => this.interaction?.onRowContextMenu(row, x, y),
+  });
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -235,7 +286,7 @@ export class CanvasGrid {
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
     canvas.addEventListener("pointerup", this.onPointerUp);
-    canvas.addEventListener("pointercancel", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerCancel);
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("click", this.onClick);
     canvas.addEventListener("dblclick", this.onDblClick);
@@ -259,11 +310,13 @@ export class CanvasGrid {
     c.removeEventListener("pointerdown", this.onPointerDown);
     c.removeEventListener("pointermove", this.onPointerMove);
     c.removeEventListener("pointerup", this.onPointerUp);
-    c.removeEventListener("pointercancel", this.onPointerUp);
+    c.removeEventListener("pointercancel", this.onPointerCancel);
     c.removeEventListener("pointerleave", this.onPointerLeave);
     c.removeEventListener("click", this.onClick);
     c.removeEventListener("dblclick", this.onDblClick);
     c.removeEventListener("contextmenu", this.onContextMenu);
+    // A drag under way when the grid goes (its tab hidden) drops nothing.
+    this.press.cancel();
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
   }
@@ -279,6 +332,9 @@ export class CanvasGrid {
    * shorter, and the hover is re-derived rather than dropped — the pointer
    * hasn't moved, but the row under it may have. */
   setResult(result: QueryResult | undefined, preserveScroll = false): void {
+    // A press that hasn't picked its row up yet was on a row of the old rows.
+    // One that has holds what it picked up, whatever the rows are now.
+    if (!this.press.pickedUp) this.press.cancel();
     this.result = result;
     if (!preserveScroll) this.scrollTop = 0;
     this.flinging = false;
@@ -331,13 +387,15 @@ export class CanvasGrid {
   /** Freezes or thaws input. While frozen the grid neither scrolls, hovers, nor
    * reports clicks — the state the results pane sits in while a context menu it
    * raised is open. Freezing also drops the hover highlight and cancels any
-   * in-flight gesture or fling, so nothing keeps moving underneath the menu. */
+   * in-flight gesture, press or fling, so nothing keeps moving underneath the
+   * menu. */
   setFrozen(frozen: boolean): void {
     if (frozen === this.frozen) return;
     this.frozen = frozen;
     if (!frozen) return;
     this.stopFling();
     this.gesture = undefined;
+    this.press.cancel();
     this.lastMouseY = undefined;
     if (this.hoverRow !== undefined) {
       this.hoverRow = undefined;
@@ -588,19 +646,31 @@ export class CanvasGrid {
     e.preventDefault();
   };
 
-  // ── Pointer gestures: touch pan (+ fling) and scrollbar-thumb drag ──────────
+  // ── Pointer gestures: touch pan (+ fling), scrollbar-thumb drag, row press ──
 
   private localPoint(e: PointerEvent): { x: number; y: number } {
     if (!this.rect) this.rect = this.canvas.getBoundingClientRect();
     return { x: e.clientX - this.rect.left, y: e.clientY - this.rect.top };
   }
 
+  /** The event as a press reads it, in viewport coordinates. */
+  private static pressPoint(e: PointerEvent): PressPoint {
+    return {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      x: e.clientX,
+      y: e.clientY,
+    };
+  }
+
   private onPointerDown = (e: PointerEvent): void => {
-    if (this.frozen || this.gesture || this.scrollRange <= 0) return;
+    if (this.frozen || this.gesture || this.press.pointerId !== undefined) {
+      return;
+    }
     const { x, y } = this.localPoint(e);
 
     // A press on the scrollbar thumb starts a thumb drag (any pointer type).
-    if (this.thumb && this.hitThumb(x, y)) {
+    if (this.scrollRange > 0 && this.thumb && this.hitThumb(x, y)) {
       this.stopFling();
       this.gesture = {
         kind: "scrollbar",
@@ -612,9 +682,9 @@ export class CanvasGrid {
       return;
     }
 
-    // Touch anywhere else pans the content (mouse drag on content does nothing —
-    // mouse scrolls via wheel or the scrollbar, per the interaction spec).
-    if (e.pointerType === "touch") {
+    // Touch anywhere else pans the content (a mouse scrolls by wheel or the
+    // scrollbar instead) — and, on a row, may also pick it up.
+    if (e.pointerType === "touch" && this.scrollRange > 0) {
       this.stopFling();
       this.gesture = {
         kind: "pan",
@@ -626,15 +696,25 @@ export class CanvasGrid {
       this.canvas.setPointerCapture(e.pointerId);
       e.preventDefault();
     }
+
+    // A primary press on a row (not the scrollbar's column) may pick the rows
+    // up, or (under a touch held still) raise their menu.
+    if (e.button !== 0 || this.overScrollbar(x)) return;
+    const row = this.rowAt(y);
+    if (row !== undefined) this.press.down(CanvasGrid.pressPoint(e), row);
   };
 
   private onPointerMove = (e: PointerEvent): void => {
     if (this.frozen) return;
+    if (e.pointerId === this.press.pointerId) {
+      this.press.move(CanvasGrid.pressPoint(e));
+    }
     const g = this.gesture;
-    // Not mid-gesture: a mouse move only updates the hovered row. (Touch has no
-    // hover; a pan is handled below once its gesture is active.)
+    // Not mid-gesture: a mouse move only updates the hovered row — unless the
+    // rows are in hand, which leaves them as they were. (Touch has no hover; a
+    // pan is handled below once its gesture is active.)
     if (!g) {
-      if (e.pointerType === "mouse") {
+      if (e.pointerType === "mouse" && !this.press.dragging) {
         const { y } = this.localPoint(e);
         this.lastMouseY = y;
         this.updateHover(y);
@@ -673,6 +753,10 @@ export class CanvasGrid {
   };
 
   private onPointerUp = (e: PointerEvent): void => {
+    // A press that picked its rows up owns the click this release produces.
+    if (e.pointerId === this.press.pointerId) {
+      if (this.press.up(CanvasGrid.pressPoint(e))) swallowReleaseClick();
+    }
     const g = this.gesture;
     if (!g || e.pointerId !== g.id) return;
     if (this.canvas.hasPointerCapture(e.pointerId)) {
@@ -693,6 +777,19 @@ export class CanvasGrid {
     } else {
       this.velocity = 0;
     }
+  };
+
+  private onPointerCancel = (e: PointerEvent): void => {
+    if (e.pointerId === this.press.pointerId) this.press.cancel();
+    this.onPointerUp(e);
+  };
+
+  /** Escape, while the rows are being dragged, puts them down where they were. */
+  private onDragKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape" || !this.press.dragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.press.putDown();
   };
 
   private hitThumb(x: number, y: number): boolean {
@@ -740,13 +837,15 @@ export class CanvasGrid {
     this.interaction?.onRowDoubleClick(row);
   };
 
-  // A right-click (or the touch long-press the platform turns into one) asks the
-  // owner for a menu at the pointer, in viewport coordinates. The browser's own
-  // menu is always suppressed over the rows — the grid paints no selectable
-  // text, so there's nothing it could usefully offer — but only *there*: a
-  // right-click past the last row or over the scrollbar falls through untouched.
+  // A right-click asks the owner for a menu at the pointer, in viewport
+  // coordinates. The browser's own menu is always suppressed over the rows —
+  // the grid paints no selectable text, so there's nothing it could usefully
+  // offer — but only *there*: a right-click past the last row or over the
+  // scrollbar falls through untouched. A touch long-press, which the platform
+  // turns into a `contextmenu` too, is the press's to decide (`RowPress`): its
+  // menu comes with the release, if the rows weren't dropped anywhere.
   private onContextMenu = (e: MouseEvent): void => {
-    if (this.frozen) {
+    if (this.frozen || this.press.touching) {
       e.preventDefault();
       return;
     }

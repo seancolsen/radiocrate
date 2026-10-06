@@ -25,7 +25,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 5 — Creating and managing playlists | done | |
 | 6 — Removing tracks and committing conditions | done | |
 | 7 — "Add to playlist…" | done | |
-| 8 — Dragging result rows | not started | |
+| 8 — Dragging result rows | done | |
 | 9 — Rearranging tracks within a playlist | not started | |
 
 The "Owed by the user" column lists actions that sessions can't do themselves, such as a build or a decision (see "What a session can and can't run" below). They don't block later phases unless the phase says so.
@@ -772,6 +772,46 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - Unit tests cover the gesture state machine (hold, drag, release without moving) with synthetic pointer events if it can be factored out of the canvas class. Touch can't be screenshot-tested easily, so the user's device check covers it.
 - **Manual QA:** the touch-device checks, in the final checklist (see "Manual QA (after phase 9)").
 
+#### As built
+
+- **Shared press constants** (`gestures/press.ts`): `HOLD_SLOP`, `DRAG_THRESHOLD`, `LONG_PRESS_MS`, `LONG_PRESS_SLOP`, and `swallowReleaseClick()`, moved out of `useTreeDrag`, which now imports them. The tree behaves as before.
+- **The gesture state machine** (`grid/rowPress.ts`, framework-free): `RowPress` takes plain pointer points (viewport coordinates) and reports to a host through `onPickUp`, `onDragStart` (which may refuse), `onDragMove`, `onDragEnd` and `onHold`.
+  - A mouse or pen press becomes a drag past `DRAG_THRESHOLD`. A refused drag stays a click.
+  - A touch press picks up after `LONG_PRESS_MS` within `LONG_PRESS_SLOP`, and is a scroll if it moves further first.
+  - A touch that picked up and was released within `HOLD_SLOP` without dropping raises the menu. This also happens when the rows couldn't be dragged (the `held` phase), so a touch-hold still opens the menu on rows that aren't tracks.
+  - `putDown()` (Escape) ends the drag but keeps the press until release, so the release's click is still swallowed. `cancel()` ends it outright.
+- **`canvasGrid.ts`:**
+  - Every primary press on a row goes through `RowPress`, beside the touch pan. A pick-up stops the pan and fling, and vibrates.
+  - A drag captures the pointer, stops hover, and listens for Escape (capture phase).
+  - A release that ended a pick-up swallows its click, so a drop never also selects or opens what's under it.
+  - The platform's `contextmenu` is suppressed while a touch press is tracked.
+  - `setFrozen` and `destroy` cancel the press. `setResult` cancels it only before pick-up.
+  - `GridInteraction` gains the optional `onRowDragStart` / `onRowDragMove` / `onRowDragEnd`. `RecordPicker` passes none, so its rows never drag.
+  - **Fix along the way:** `onPointerDown` used to return at once when the rows didn't scroll (`scrollRange <= 0`). Only the thumb and the pan check that now, so a short result's rows can still be pressed.
+- **Store** (`stores/app/state.ts`, `actions.ts` after `addTracksToPlaylist`):
+  - `rowDrag: RowDrag | null` holds `{ fromTabId, trackIds, entryIds, over }`, all plain data.
+  - `beginRowDrag(tabId, row)` refuses rows without `lineage.trackIdColumn`. It selects a held row outside the selection with a plain `clickRow`, then collects the selection's track ids in display order (and, on a playlist page, the entry ids through `rowEntry`). It picks up nothing when no row holds a track.
+  - `hoverRowDrag(sourceId)` sets `over` only to a playlist in `sources` that isn't `fromTabId`.
+  - `endRowDrag(drop)` clears the slot and, when dropped over a playlist, calls `addTracksToPlaylist`.
+  - The keymap's `suppressed()` counts `rowDrag`, so no shortcut acts on rows in hand.
+- **UI:**
+  - `QueryResults` wires the three callbacks. It finds the source under the pointer with `document.elementFromPoint(…).closest("[data-tree-row][data-source-id]")`.
+  - `RowDragChip` ("1 track" / "3 tracks", playlist icon, accent fill) is portaled to `body`, positioned imperatively through `style.transform` so a move costs no render, and placed on mount by a callback ref.
+  - `SourceRow` carries `data-source-id` / `data-source-kind` and takes `dropTarget`: an inset accent ring, as `FolderRow` uses. `SourceTree` sets it from `rowDrag.over`. `AddToPlaylistModal` passes `dropTarget: false` in `STILL_ROW`.
+- **Departure (multi-select mode):** the spec says holding an unselected row "selects that row alone". In multi-select mode a plain `clickRow` *adds* the row instead, as a tap there does, and as the row menu already treats that mode. Collapsing the selection the user is assembling seemed the worse surprise. See Open questions.
+- **Narrow layouts:** with the explorer as a closed drawer there's nothing under the pointer to drop on. The chip follows the drag, the release adds nothing, and a touch released near where it began still raises the menu. Opening the drawer during a drag is under Deferred follow-ups.
+- **Not done:** edge auto-scrolling. Phase 9 owns it within the grid. Scrolling the explorer's tree during a row drag is deferred (a mouse can still wheel it).
+- **Tests:**
+  - `grid/rowPress.test.ts` (16 tests): mouse threshold, refusal, drop, Escape's `putDown`, cancel, other pointers; touch pick-up timing, slop, tap, hold → menu, drag with and without a drop, a refused drag still raising the menu.
+  - `stores/app/actions.test.ts`, a `dragging result rows` block (8 tests): selection kept or replaced, multi-select adding, non-track rows refused, only a playlist taking the drop, the drop's `dml` request, cancel and empty drops, and a playlist page's entry ids with that playlist refusing its own rows.
+  - `tests/visual/rowDrag.spec.ts` (5 behavioral tests, mouse, assembled app with `?expose=1`): drop on a playlist (the chip, the ring, the `dml` inserts after a mocked `max(position)` of 2, the selection kept, no tab opened), an unselected row dragged alone, a query row not taking the drop with a release over the rows not clicking, Escape, and non-track rows not dragging. `/api/query` answers `max(position)` with a real Arrow IPC stream built in the spec.
+- **Gate:** typecheck, lint, format:check, test:unit (532), build and test:visual (251: the 244 existing unchanged, plus 2 new snapshots and 5 behavioral tests) all pass. The probe exits 0. No Rust was touched.
+- **Baselines added** (light and dark, both looked at): `explorer/tracks-drop`, the tree with the "Road Trip" playlist ringed as a drop target.
+- **For phase 9:**
+  - The rows in hand never change during a drag (shortcuts are suppressed, and the pointer is captured), so the drop can read the moved rows from the page's selection. `rowDrag.entryIds` holds their entries in display order.
+  - `beginRowDrag` requires `trackIdColumn`. Widen it on a playlist page if rows without a track column should rearrange.
+  - Draw the in-grid drop line from `onRowDragMove` when the pointer is over this page's canvas, and add the edge auto-scroll there. `RowPress` stays as it is, and `endRowDrag`'s explorer drop should keep working.
+
 ### Phase 9 — Rearranging tracks within a playlist
 
 **Goal:** drag rows to a new place in a playlist.
@@ -829,6 +869,11 @@ Every check that needs a real server or a real device is collected here. The use
 
 - [ ] On a touch device: a touch-drag scrolls, a hold picks the rows up for a drag, and a hold released without moving opens the context menu.
 - [ ] On a touch device and with a mouse: dropping rows onto a playlist in the sources tree adds them to its end.
+- [ ] On a touch device: a hold on rows that aren't tracks (an album query) still opens the context menu on release, and no browser callout or text selection appears.
+- [ ] On a touch device in multi-select mode: a hold on an unselected row adds it to the selection, and the whole selection is dragged.
+- [ ] The chip follows the pointer, and the playlist row under it is ringed. Neither a query row nor the playlist whose own page the rows came from is ringed.
+- [ ] At a phone-width layout (explorer as a drawer): a drag finds nothing to drop on, adds nothing, and leaves the page working.
+- [ ] With the target playlist open in another tab, it reloads with the new tracks.
 
 **Rearranging tracks** (phase 9)
 
@@ -841,6 +886,8 @@ Every check that needs a real server or a real device is collected here. The use
 (Add entries as phases defer work.)
 
 - **Focus in the "Add to playlist…" dialog** (phase 7). The dialog doesn't take focus as it opens, so a keyboard user has to Tab into the tree. The delete dialog behaves the same way. Moving focus to the first playlist row on mount (a `useLayoutEffect`) would fix both, but expect a focus ring to show up in their snapshots.
+- **Scrolling the explorer during a row drag** (phase 8). Dragging result rows toward a playlist that's scrolled out of the explorer's view doesn't scroll the tree. A mouse can wheel it, but a touch can't. `useTreeDrag`'s `edgeScroll` is the model.
+- **Dropping rows at narrow widths** (phase 8). With the explorer as a closed drawer there's nothing to drop on. Opening the drawer when a drag nears the left edge would make the drop reachable on a phone.
 - **Builders stay live during an entry write** (phase 3). An edit made while a step's writes are in flight survives, unless the step's own definition half (or an undo's) overwrites it when the writes land. Disabling the builders while `writing` would close that gap, if it turns out to matter in practice.
 
 ## Open questions
@@ -848,4 +895,5 @@ Every check that needs a real server or a real device is collected here. The use
 - **Converting an unsaved query.** The spec gives the playlist "the same name as the query", but an unsaved query has no name yet. Phase 5 names that playlist for the moment it's created (`YYYY-MM-DD HH:MM`, as a new playlist is) and puts it at the top level, as the spec says for an unsaved query. Change it if a different name is wanted.
 
 - **Converting a full-mode query of tracks.** Its display section is stale (a full query ignores its sections), so phase 2's `playlistDefinitionFromQuery` gives the playlist the default `track` display rather than copying it. Parsing the display out of the hand-written query isn't possible. Change it if a stale display is preferable to the default.
+- **Holding an unselected row in multi-select mode** (phase 8). The spec says holding an unselected row "selects that row alone" before the drag. In multi-select mode phase 8 adds it to the selection instead, as a tap in that mode does, so the selection being assembled isn't thrown away. Change it in `beginRowDrag` if collapsing the selection is wanted.
 - **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 leaves it out (`AddToPlaylistModal`'s `keep` filter). Change it if adding a playlist's tracks to itself (duplicating entries at its end) is wanted.

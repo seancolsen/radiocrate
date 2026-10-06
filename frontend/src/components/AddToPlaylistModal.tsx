@@ -10,6 +10,7 @@ import { Modal } from "./ui/Modal";
 const STILL_ROW = {
   renaming: false,
   dragging: false,
+  dropTarget: false,
   onBeginRename: () => {},
   onCommitRename: () => {},
   onCancelRename: () => {},
@@ -92,6 +93,7 @@ function AddToPlaylistBody(props: {
           return node.kind === "source" ? (
             <SourceRow
               key={`source:${node.id}`}
+              id={node.id}
               kind={node.source.kind}
               name={node.name}
               depth={row.depth}
@@ -104,7 +106,6 @@ function AddToPlaylistBody(props: {
               name={node.name}
               depth={row.depth}
               expanded={row.expanded}
-              dropTarget={false}
               {...STILL_ROW}
               onToggle={() => toggle(node.id)}
             />

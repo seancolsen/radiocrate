@@ -100,6 +100,8 @@ export default function SourceTree(props: {
   const expanded = useApp((s) => s.expandedFolders);
   const filter = useApp((s) => s.sourceFilter);
   const renaming = useApp((s) => s.renamingTreeItem);
+  // The playlist result rows being dragged would be dropped on, if any.
+  const rowDropTarget = useApp((s) => s.rowDrag?.over ?? null);
   const actions = useAppActions();
 
   const tree = useMemo(() => buildTree(sources, folders), [sources, folders]);
@@ -153,10 +155,12 @@ export default function SourceTree(props: {
           return (
             <SourceRow
               key={`source:${node.id}`}
+              id={node.id}
               kind={node.source.kind}
               name={node.name}
               depth={row.depth}
               dragging={dragging}
+              dropTarget={rowDropTarget === node.id}
               {...rename}
               onPointerDown={(e) => dnd.onPointerDown(e, item)}
               onContextMenu={onContextMenu}

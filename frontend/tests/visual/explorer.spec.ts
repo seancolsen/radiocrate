@@ -85,6 +85,16 @@ for (const colorScheme of SCHEMES) {
       snapshot("explorer/tree-drop-into", colorScheme),
     );
   });
+
+  // Result rows dragged over the "Road Trip" playlist (the drag itself is
+  // `rowDrag.spec.ts`'s).
+  test(`explorer/tracks-drop - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "explorer/tracks-drop", colorScheme);
+    await expect(treeRow(page, "Road Trip")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("explorer/tracks-drop", colorScheme),
+    );
+  });
 }
 
 test.describe("the query tree", () => {
