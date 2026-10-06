@@ -80,7 +80,19 @@ Notes:
 
 Unlike queries, a playlist is saved before the user can use it, because its tracks only exist as `playlist_track` records in the database. Every operation that creates a playlist (adding one, duplicating one, converting a query) therefore persists it immediately, and a playlist tab never shows the "unsaved" state that a new query does.
 
+## Writing playlist entries
+
 Each operation that creates, deletes, or changes a playlist's tracks is sent as a single API request that applies all of its writes in one transaction. Examples are creating the `source`, `playlist` and `playlist_track` records together, or rewriting every `position` value at once.
+
+The frontend works out these writes and sends them through the existing generic `dml` method. We don't add playlist-specific endpoints. The frontend already has what it needs: to commit a sort, for example, it runs the sorted query anyway, so it holds every entry's id along with its old and new position. Undo needs those old values too.
+
+Each operation that can touch many entries lives behind a single frontend function, so that how its writes are sent can change later in one place. These operations are: converting a query, duplicating a playlist, committing a sort, "Remove these tracks", "Keep only these tracks", and undoing or redoing any of them.
+
+Scale:
+
+- We support playlists of up to about 5,000 tracks for now. At that size, every operation fits in one request under the server's default 2 MB request limit: an update is about 140 bytes and an insert about 230 bytes. We don't split operations across requests, and we don't raise the limit.
+- Larger playlists are out of scope. An operation whose request goes over the limit (for example, converting a query of 10,000 tracks) fails without writing anything, and the error is reported as any other failed request is.
+- `dml` runs one statement per row, about 0.6–0.75 ms each in a release build, and it holds the shared database connection for the whole transaction. Rewriting 5,000 positions therefore blocks other requests for a few seconds. We accept that for now. If it becomes a problem, the first fix is generic bulk operations in `dml` (a multi-row update run as one `UPDATE … FROM (VALUES …)`, and a bulk insert). Those stay driven by introspection, and the frontend functions above switch to them.
 
 ## Listing playlists and queries in the explorer
 
