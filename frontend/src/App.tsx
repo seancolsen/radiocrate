@@ -12,6 +12,7 @@ import CommandPalette from "./components/CommandPalette";
 import RpcErrorBanner from "./components/RpcErrorBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import AboutModal from "./components/AboutModal";
+import AddToPlaylistModal from "./components/AddToPlaylistModal";
 import DeleteConfirmModal from "./components/DeleteConfirmModal";
 import SettingModal from "./components/SettingModal";
 
@@ -111,6 +112,8 @@ export default function App(): JSX.Element {
       {/* Raised from a query page's actions menu or from the explorer, whose
           query need not be open. */}
       <DeleteConfirmModal />
+      {/* Raised from a result row's menu, on any page of tracks. */}
+      <AddToPlaylistModal />
     </div>
   );
 }

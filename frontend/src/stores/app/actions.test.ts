@@ -32,7 +32,11 @@ vi.mock("api-client", async (importOriginal) => {
 // exercised without a backend. Its writes still go through the mocked `dml`.
 vi.mock("../../api/playlist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/playlist")>();
-  return { ...actual, fetchPlaylistEntries: vi.fn(() => Promise.resolve([])) };
+  return {
+    ...actual,
+    fetchPlaylistEntries: vi.fn(() => Promise.resolve([])),
+    fetchMaxPosition: vi.fn(() => Promise.resolve(null)),
+  };
 });
 // The rating vocabulary's query, so `loadRatings` can be exercised without a
 // compiler or a backend.
@@ -93,7 +97,7 @@ import {
   settingSet,
   type Source,
 } from "api-client";
-import { fetchPlaylistEntries } from "../../api/playlist";
+import { fetchMaxPosition, fetchPlaylistEntries } from "../../api/playlist";
 import { runSql } from "../../api/query";
 import { fetchRatings } from "../../query/ratings";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
@@ -2261,5 +2265,159 @@ describe("removing tracks and committing conditions", () => {
     expect(selectSortApplied(s(), SOURCE)).toBe(false);
     bundle.actions.setSectionCustomText(SOURCE, "sort", "\\\\title");
     expect(selectSortApplied(s(), SOURCE)).toBe(true);
+  });
+});
+
+describe("adding tracks to a playlist", () => {
+  const SOURCE = "00000000-0000-0000-0000-0000000000c1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  let bundle: AppStoreBundle;
+
+  const playlist: Source = {
+    id: SOURCE,
+    kind: "playlist",
+    name: "Road trip",
+    createdAt: 0,
+    modifiedAt: 0,
+    lastPlay: 0,
+    definition: "{}",
+    parent: null,
+    position: 0,
+    queryId: null,
+    playlistId: PLAYLIST,
+  };
+  const TRACKS = { records: [], trackIdColumn: 0 };
+
+  const page = () => bundle.store.getState().pages[SOURCE];
+  const pending = () => bundle.store.getState().pendingAddToPlaylist;
+  /** Each `dml` request's inserts, as `track@position` into `playlist`. */
+  const sent = () =>
+    vi
+      .mocked(dml)
+      .mock.calls.map(([req]) =>
+        req.operations.map((op) =>
+          op.operation === "insert"
+            ? `${String(op.values.track)}@${String(op.values.position)} in ${String(op.values.playlist)}`
+            : op.operation,
+        ),
+      );
+  /** Waits for the playlist's page's writes and its run to settle. */
+  const settled = () =>
+    vi.waitFor(() => {
+      expect(page()?.writing).toBe(false);
+      expect(page()?.running).toBe(false);
+    });
+
+  beforeEach(() => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(fetchMaxPosition).mockReset();
+    vi.mocked(fetchMaxPosition).mockResolvedValue(4.5);
+    vi.mocked(compilePlaylist).mockClear();
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson("{}");
+    bundle.store.setState((s) => {
+      s.sources = { status: "ready", data: [playlist] };
+    });
+  });
+  afterEach(() => bundle.dispose());
+
+  it("adds the rows' tracks in the order shown, after the last entry", async () => {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults(
+      "q",
+      buildResultFromStringRows([["t2"], [""], ["t1"], ["t2"]]),
+      TRACKS,
+    );
+    // Selected out of order; the row without a track is left out.
+    bundle.actions.requestAddToPlaylist("q", new Set([3, 1, 0, 2]));
+    expect(pending()).toEqual({ fromTabId: "q", trackIds: ["t2", "t1", "t2"] });
+
+    bundle.actions.confirmAddToPlaylist(SOURCE);
+    expect(pending()).toBeNull();
+    await vi.waitFor(() => expect(dml).toHaveBeenCalledTimes(1));
+    expect(fetchMaxPosition).toHaveBeenCalledWith(PLAYLIST);
+    // One above the ceiling of 4.5, then consecutive.
+    expect(sent()).toEqual([
+      [`t2@6 in ${PLAYLIST}`, `t1@7 in ${PLAYLIST}`, `t2@8 in ${PLAYLIST}`],
+    ]);
+  });
+
+  it("raises no dialog for rows without tracks", () => {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults("q", buildResultFromStringRows([["x"]]), {
+      records: [],
+    });
+    bundle.actions.requestAddToPlaylist("q", [0]);
+    expect(pending()).toBeNull();
+  });
+
+  it("closes the dialog without adding anything when cancelled", () => {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults("q", buildResultFromStringRows([["t1"]]), TRACKS);
+    bundle.actions.requestAddToPlaylist("q", [0]);
+    bundle.actions.cancelAddToPlaylist();
+    expect(pending()).toBeNull();
+    bundle.actions.confirmAddToPlaylist(SOURCE);
+    expect(fetchMaxPosition).not.toHaveBeenCalled();
+    expect(dml).not.toHaveBeenCalled();
+  });
+
+  it("reloads the playlist's open page as new rows, outside its history", async () => {
+    bundle.actions.openTab(playlist);
+    bundle.actions.ensureRun(SOURCE);
+    await settled();
+    bundle.actions.clickRow(SOURCE, 0, { shift: false, ctrl: false });
+    const runs = vi.mocked(compilePlaylist).mock.calls.length;
+
+    const added = bundle.actions.addTracksToPlaylist(SOURCE, ["t9"]);
+    // Undo and the page's writes stand down meanwhile.
+    expect(page()?.writing).toBe(true);
+    await added;
+    await settled();
+    expect(sent()).toEqual([[`t9@6 in ${PLAYLIST}`]]);
+    expect(vi.mocked(compilePlaylist).mock.calls.length).toBe(runs + 1);
+    expect(page()?.selection).toBeUndefined();
+    expect(page()?.undo.steps).toHaveLength(0);
+  });
+
+  it("reloads nothing when the write fails", async () => {
+    bundle.actions.openTab(playlist);
+    bundle.actions.ensureRun(SOURCE);
+    await settled();
+    const runs = vi.mocked(compilePlaylist).mock.calls.length;
+    vi.mocked(dml).mockRejectedValueOnce(new Error("refused"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await bundle.actions.addTracksToPlaylist(SOURCE, ["t9"]);
+    await settled();
+    expect(vi.mocked(compilePlaylist).mock.calls.length).toBe(runs);
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("reads the last position only once the add ahead of it has landed", async () => {
+    let land!: () => void;
+    vi.mocked(dml).mockImplementationOnce(
+      () => new Promise((resolve) => (land = () => resolve({}))),
+    );
+    const first = bundle.actions.addTracksToPlaylist(SOURCE, ["t1"]);
+    const second = bundle.actions.addTracksToPlaylist(SOURCE, ["t2"]);
+    await vi.waitFor(() => expect(dml).toHaveBeenCalledTimes(1));
+    expect(fetchMaxPosition).toHaveBeenCalledTimes(1);
+
+    vi.mocked(fetchMaxPosition).mockResolvedValueOnce(6);
+    land();
+    await Promise.all([first, second]);
+    expect(sent()).toEqual([[`t1@6 in ${PLAYLIST}`], [`t2@7 in ${PLAYLIST}`]]);
+  });
+
+  it("does nothing for a source that isn't a playlist", async () => {
+    bundle.store.setState((s) => {
+      s.sources.data = [{ ...playlist, kind: "query", playlistId: null }];
+    });
+    await bundle.actions.addTracksToPlaylist(SOURCE, ["t1"]);
+    expect(fetchMaxPosition).not.toHaveBeenCalled();
+    expect(dml).not.toHaveBeenCalled();
   });
 });

@@ -45,6 +45,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
       loadRatings,
       rateTracks,
       removeRows,
+      requestAddToPlaylist,
       setMultiSelect,
       setRecordEditorRecords,
       showChildRecords,
@@ -61,8 +62,9 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
     );
     const ratings = useApp(selectRatings);
     const ratingsLoading = useApp(selectRatingsLoading);
-    // A playlist's rows can be removed from it, whether or not they identify
-    // a record to edit.
+    // Tracks can be added to a playlist, and a playlist's rows can be removed
+    // from it, whether or not they identify a record to edit.
+    const tracks = lineage?.trackIdColumn !== undefined;
     const playlist = useApp(
       (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
     );
@@ -85,7 +87,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
               icon={Icons.More}
               label="Selection actions"
               active={api.open}
-              disabled={records.length === 0 && !playlist}
+              disabled={records.length === 0 && !tracks && !playlist}
               onClick={() => {
                 // Same as the row context menu: the rating vocabulary is
                 // fetched as the menu that offers it opens.
@@ -135,6 +137,11 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
                 ),
                 ratingId,
               )
+            }
+            onAddToPlaylist={
+              tracks
+                ? () => requestAddToPlaylist(props.tabId, selection)
+                : undefined
             }
             onRemoveFromPlaylist={
               playlist ? () => removeRows(props.tabId, selection) : undefined

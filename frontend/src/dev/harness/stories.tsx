@@ -40,6 +40,7 @@ import {
 import { AboutDialog } from "../../components/AboutModal";
 import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
+import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
@@ -98,6 +99,8 @@ const [LEMONADE, DEEP_CUTS] = SOURCES_FIXTURE;
 const FAVORITES = "00000000-0000-0000-0000-0000000000f1";
 const ROAD_TRIP = "00000000-0000-0000-0000-0000000000f2";
 const ARCHIVE = "00000000-0000-0000-0000-0000000000f3";
+const QUERIES = "00000000-0000-0000-0000-0000000000f4";
+const PARTIES = "00000000-0000-0000-0000-0000000000f5";
 
 /** Arranges the fixture sources into folders: "Favorites" (open) holds
  * Lemonade and a "Road trip" folder (closed) holding Workout Mix; Deep Cuts and
@@ -267,6 +270,7 @@ function rowActionsMenu(
           ratings={ratings}
           ratingsLoading={ratingsLoading}
           onRate={() => {}}
+          onAddToPlaylist={() => {}}
           onSelectMultiple={() => {}}
         />
       </ContextMenu>
@@ -881,6 +885,7 @@ export const STORIES: Record<string, Story> = {
           ratings={RATINGS_FIXTURE}
           ratingsLoading={false}
           onRate={() => {}}
+          onAddToPlaylist={() => {}}
           onRemoveFromPlaylist={() => {}}
           onSelectMultiple={() => {}}
         />
@@ -893,6 +898,50 @@ export const STORIES: Record<string, Story> = {
   // The same submenu before its query has come back — what a menu raised in the
   // first moments of a session shows.
   "result-row/rate-submenu-loading": rowActionsMenu([], true),
+  // "Add to playlist…" for three tracks: the sources tree with only its
+  // playlists. "Favorites" is open and holds a nested, open "Road trip"; the
+  // closed "Parties" holds one more. The query Lemonade, and both "Archive"
+  // (empty) and "Queries" (only a query in it), are left out.
+  "add-to-playlist/modal": {
+    setup: (stores) => {
+      const [lemonade, deepCuts] = SOURCES_FIXTURE;
+      const playlist = (n: number, name: string, parent: string | null) => ({
+        ...PLAYLIST_SOURCE,
+        id: `00000000-0000-0000-0000-00000000000${n}`,
+        playlistId: `00000000-0000-0000-0000-0000000000d${n}`,
+        name,
+        parent,
+        position: n,
+      });
+      stores.app.store.setState((s) => {
+        s.folders.data = [
+          { id: FAVORITES, name: "Favorites", parent: null, position: 0 },
+          { id: ROAD_TRIP, name: "Road trip", parent: FAVORITES, position: 1 },
+          { id: ARCHIVE, name: "Archive", parent: null, position: 2 },
+          { id: QUERIES, name: "Queries", parent: null, position: 3 },
+          { id: PARTIES, name: "Parties", parent: null, position: 4 },
+        ];
+        s.sources.data = [
+          { ...lemonade, parent: FAVORITES, position: 0 },
+          playlist(4, "Coast drive", ROAD_TRIP),
+          playlist(5, "Desert night", ROAD_TRIP),
+          playlist(6, "Sunday morning", FAVORITES),
+          { ...deepCuts, parent: QUERIES, position: 0 },
+          playlist(7, "Birthday", PARTIES),
+          playlist(8, "Late night", null),
+        ];
+      });
+      stores.app.actions.toggleFolderExpanded(FAVORITES);
+      stores.app.actions.toggleFolderExpanded(ROAD_TRIP);
+      stores.app.store.setState((s) => {
+        s.pendingAddToPlaylist = {
+          fromTabId: lemonade.id,
+          trackIds: ["t1", "t2", "t3"],
+        };
+      });
+    },
+    render: () => <AddToPlaylistModal />,
+  },
 
   // ── The record editor ────────────────────────────────────────────────────
   // As the form lands: every field of `track`, values and counts loaded,

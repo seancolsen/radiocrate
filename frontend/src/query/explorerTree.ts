@@ -151,6 +151,20 @@ export function visibleRows(
   return walk(tree, 0, null, needle === "");
 }
 
+/** `tree` with only the sources `keep` accepts, and only the folders that
+ * still hold one of them somewhere below — the "Add to playlist…" dialog's
+ * tree of playlists. Order and nesting are kept. */
+export function pruneTree(
+  tree: readonly TreeNode[],
+  keep: (source: Source) => boolean,
+): TreeNode[] {
+  return tree.flatMap((node): TreeNode[] => {
+    if (node.kind === "source") return keep(node.source) ? [node] : [];
+    const children = pruneTree(node.children, keep);
+    return children.length > 0 ? [{ ...node, children }] : [];
+  });
+}
+
 /** The ids of `item` and — for a folder — everything inside it: the places a
  * dragged item can't be dropped into. */
 export function subtreeIds(

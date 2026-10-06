@@ -130,6 +130,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     loadRatings,
     rateTracks,
     removeRows,
+    requestAddToPlaylist,
     setMultiSelect,
     setRecordEditorRecords,
     showChildRecords,
@@ -139,6 +140,10 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   // A playlist's rows can be removed from it.
   const playlist = useApp(
     (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
+  );
+  // Rows that are tracks can be added to a playlist.
+  const tracks = useApp(
+    (s) => s.pages[props.tabId]?.lineage?.trackIdColumn !== undefined,
   );
   // The "Rate track" submenu's rows. Read here rather than in the menu body so
   // that body stays a function of its props — the multi-select toolbar renders
@@ -426,6 +431,11 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
                 ),
                 ratingId,
               )
+            }
+            onAddToPlaylist={
+              tracks
+                ? () => requestAddToPlaylist(props.tabId, rowMenu.rows)
+                : undefined
             }
             onRemoveFromPlaylist={
               playlist ? () => removeRows(props.tabId, rowMenu.rows) : undefined

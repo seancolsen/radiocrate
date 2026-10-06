@@ -494,6 +494,7 @@ export function createCommandsStore(
       s.paletteOpen ||
       capturingKeys() ||
       a.pendingDelete !== null ||
+      a.pendingAddToPlaylist !== null ||
       a.viewSql !== null ||
       a.presetSave !== null ||
       a.renaming !== null ||

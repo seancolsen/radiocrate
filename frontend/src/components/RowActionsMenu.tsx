@@ -7,8 +7,9 @@ import { MenuItem, MenuNote, MenuSeparator, MenuSubmenu } from "./ui/Menu";
 /** A result row's context-menu body: one "Edit {table}" entry per table whose
  * primary key the row carries in full — a track row joined to its album offers
  * both — then "Show album tracks" when one of those is an album, "Rate track"
- * when one of them is a track, and "Remove from playlist" on a playlist's page,
- * over the "Select multiple" entry that turns multi-select mode on.
+ * when one of them is a track, "Add to playlist…" when the rows are tracks, and
+ * "Remove from playlist" on a playlist's page, over the "Select multiple" entry
+ * that turns multi-select mode on.
  *
  * The same body backs the multi-select toolbar's actions menu, which acts on
  * the whole selection; it passes no `onSelectMultiple`, because that mode is
@@ -27,6 +28,9 @@ export default function RowActionsMenu(props: {
   ratingsLoading: boolean;
   /** Gives the row's track(s) that rating. */
   onRate: (ratingId: string) => void;
+  /** Opens the "Add to playlist…" dialog for the rows' tracks. Omitted when
+   * the rows aren't tracks (no `trackIdColumn`), which hides the entry. */
+  onAddToPlaylist?: () => void;
   /** Removes the rows' entries from the playlist whose page they're on.
    * Omitted anywhere else, which hides the entry. */
   onRemoveFromPlaylist?: () => void;
@@ -64,6 +68,13 @@ export default function RowActionsMenu(props: {
           )}
         </MenuSubmenu>
       )}
+      {props.onAddToPlaylist && (
+        <MenuItem
+          icon={Icons.Playlist}
+          label="Add to playlist…"
+          onClick={props.onAddToPlaylist}
+        />
+      )}
       {props.onRemoveFromPlaylist && (
         <MenuItem
           icon={Icons.Delete}
@@ -73,9 +84,9 @@ export default function RowActionsMenu(props: {
       )}
       {props.onSelectMultiple && (
         <>
-          {(props.records.length > 0 || props.onRemoveFromPlaylist) && (
-            <MenuSeparator />
-          )}
+          {(props.records.length > 0 ||
+            props.onAddToPlaylist ||
+            props.onRemoveFromPlaylist) && <MenuSeparator />}
           <MenuItem
             icon={Icons.SelectMultiple}
             label="Select multiple"

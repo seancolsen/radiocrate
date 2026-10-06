@@ -369,6 +369,13 @@ export interface AppState {
     name: string;
     unsaved: boolean;
   } | null;
+  /** The "Add to playlist…" dialog, when open: the tracks it adds (in the
+   * order their rows were shown), and the tab they were chosen on — which,
+   * on a playlist's page, is the playlist the dialog leaves out. */
+  pendingAddToPlaylist: {
+    fromTabId: string;
+    trackIds: readonly string[];
+  } | null;
   /** Whether the About dialog (versions + the update actions) is open. */
   aboutOpen: boolean;
   /** The setting whose editor dialog is open (null when none is). */
@@ -460,6 +467,7 @@ export function initialState(env: AppEnv): AppState {
     viewSql: null,
     renaming: null,
     pendingDelete: null,
+    pendingAddToPlaylist: null,
     aboutOpen: false,
     settingEditor: null,
     rescanning: false,

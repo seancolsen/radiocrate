@@ -8,6 +8,7 @@ import {
   dropInto,
   gapDepths,
   movePlacements,
+  pruneTree,
   storedPositions,
   subtreeIds,
   topPosition,
@@ -109,6 +110,35 @@ describe("visibleRows", () => {
       "  G",
       "    q3",
     ]);
+  });
+});
+
+describe("pruneTree", () => {
+  const playlist = (id: string, parent: string | null, position: number) => ({
+    ...query(id, parent, position),
+    kind: "playlist" as const,
+    queryId: null,
+    playlistId: `playlist-${id}`,
+  });
+
+  it("keeps the accepted sources and the folders above them", () => {
+    // top level: p1, F (q2, G (p3), H (q5)), E (empty), q4
+    const tree = buildTree(
+      [
+        ...QUERIES.slice(1),
+        playlist("p1", null, 0),
+        playlist("p3", "G", 1),
+        query("q5", "H", 0),
+      ],
+      [...FOLDERS, folder("H", "F", 2), folder("E", null, 3)],
+    );
+    expect(
+      shape(pruneTree(tree, (source) => source.kind === "playlist")),
+    ).toEqual(["p1", { F: [{ G: ["p3"] }] }]);
+  });
+
+  it("leaves no folder when nothing is accepted", () => {
+    expect(pruneTree(buildTree(QUERIES, FOLDERS), () => false)).toEqual([]);
   });
 });
 

@@ -28,7 +28,11 @@ import {
   type SourceKind,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
-import { fetchPlaylistEntries, sendPlaylistWrites } from "../../api/playlist";
+import {
+  fetchMaxPosition,
+  fetchPlaylistEntries,
+  sendPlaylistWrites,
+} from "../../api/playlist";
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
@@ -53,6 +57,7 @@ import {
   type UndoStep,
 } from "../../state/undoHistory";
 import {
+  addEntriesWrites,
   createPlaylistWrites,
   deletePlaylistWrites,
   removeEntriesWrites,
@@ -478,6 +483,25 @@ export interface AppActions {
    * it is, as one step. Does nothing unless a sort applies and the page could
    * write from its rows (`selectCanWriteFromRows`). */
   commitSort: (tabId: string) => void;
+  /** "Add to playlist…": opens the dialog that adds the tracks of rows `rows`
+   * of page `tabId` — in the order they're shown, leaving out rows without a
+   * track — to the playlist the user picks. A no-op when none of the rows
+   * holds a track. */
+  requestAddToPlaylist: (tabId: string, rows: Iterable<number>) => void;
+  /** The dialog's pick: closes it, and adds its tracks to playlist source
+   * `sourceId` ({@link AppActions.addTracksToPlaylist}). */
+  confirmAddToPlaylist: (sourceId: string) => void;
+  /** Dismiss the "Add to playlist…" dialog, adding nothing. */
+  cancelAddToPlaylist: () => void;
+  /** Adds `trackIds`, in that order, to the end of playlist source
+   * `sourceId`, as one request through its write queue, then reloads its page
+   * (as new rows) if it's open and has run. Not a step in that page's undo
+   * history, since it wasn't made from the page. Resolves once that's done, or
+   * once the write has failed, which the error bar reports. */
+  addTracksToPlaylist: (
+    sourceId: string,
+    trackIds: readonly string[],
+  ) => Promise<void>;
   /** Note a request to the backend, in flight until `settled` settles: a saved
    * query's edits aren't written until the app has been quiet for a while.
    * `createStores()` feeds every request the generated client sends
@@ -2684,6 +2708,56 @@ export function createAppActions(
           def.sort = playlistOrderContent();
         },
       }));
+    },
+    requestAddToPlaylist: (tabId, rows) => {
+      const s = get();
+      // In the order shown, whatever order the rows were selected in.
+      const trackIds: string[] = [];
+      for (const row of [...rows].sort((a, b) => a - b)) {
+        const id = selectTrackIdAt(s, tabId, row);
+        if (id !== undefined) trackIds.push(id);
+      }
+      if (trackIds.length === 0) return;
+      set((d) => {
+        d.pendingAddToPlaylist = { fromTabId: tabId, trackIds };
+      });
+    },
+    confirmAddToPlaylist: (sourceId) => {
+      const pending = get().pendingAddToPlaylist;
+      if (!pending) return;
+      set((s) => {
+        s.pendingAddToPlaylist = null;
+      });
+      void actions.addTracksToPlaylist(sourceId, pending.trackIds);
+    },
+    cancelAddToPlaylist: () =>
+      set((s) => {
+        s.pendingAddToPlaylist = null;
+      }),
+    addTracksToPlaylist: async (sourceId, trackIds) => {
+      const playlistId = playlistIdOf(sourceId);
+      if (playlistId === undefined || trackIds.length === 0) return;
+      await entryWrites.run(sourceId, async () => {
+        try {
+          // Read inside the queue, so that tracks added ahead of these are
+          // already stored, and these go after them.
+          const max = await fetchMaxPosition(playlistId);
+          await sendPlaylistWrites(
+            addEntriesWrites(playlistId, trackIds, max, newUuid).apply,
+          );
+        } catch (err) {
+          console.error("playlist add failed", err);
+          return;
+        }
+        // Re-read after the awaits: the playlist's page may have opened or
+        // closed meanwhile. One that hasn't run yet will see the new entries
+        // when it does.
+        if (!selectPageTab(get(), sourceId) || !autoRun.has(sourceId)) return;
+        // The same SQL, but not the same rows (see "The results after a
+        // write" in the playlists spec).
+        lastRunSql.delete(sourceId);
+        runQuery(sourceId);
+      });
     },
 
     beginPresetEdit,

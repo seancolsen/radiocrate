@@ -24,7 +24,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 4 — Playlist tabs and the playlist page | done | |
 | 5 — Creating and managing playlists | done | |
 | 6 — Removing tracks and committing conditions | done | |
-| 7 — "Add to playlist…" | not started | |
+| 7 — "Add to playlist…" | done | |
 | 8 — Dragging result rows | not started | |
 | 9 — Rearranging tracks within a playlist | not started | |
 
@@ -727,6 +727,31 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - Reloads the target's tab if it's open. The target's undo history gets no entry.
 - **Stories** (intended additions): the modal, with a nested folder and an omitted empty folder.
 
+#### As built
+
+- **Store** (`stores/app/actions.ts`, after `commitSort`, and `stores/app/state.ts`):
+  - A new `pendingAddToPlaylist` slot (`{ fromTabId, trackIds }`), handled like `pendingDelete`. The keymap's `suppressed()` (`stores/commands.ts`) counts it as an open dialog.
+  - `requestAddToPlaylist(tabId, rows)` collects the rows' track ids through `selectTrackIdAt`. It sorts the rows into display order (a selection `Set` holds click order), skips rows without a track, and raises nothing when no row holds one. The ids are captured when the dialog opens, so a reload of the source page can't change what gets added.
+  - `confirmAddToPlaylist(sourceId)` closes the dialog and calls `addTracksToPlaylist`. `cancelAddToPlaylist()` only closes it.
+  - **`addTracksToPlaylist(sourceId, trackIds)`** is phase 8's entry point for the drop. It resolves to `Promise<void>`. Inside `entryWrites.run(sourceId, …)` it reads `fetchMaxPosition`, then sends `addEntriesWrites(…).apply` as one request. It goes through the queue directly and not `writeStep`, so the target's history gets nothing. Afterwards it reloads the target's page as new rows (`lastRunSql.delete` then `runQuery`), but only if that page is open **and has run** (`autoRun`). A page that hasn't run yet will see the new entries when it does. A failure is logged, reloads nothing, and the error bar reports it through `onRpcFailure`.
+- **Tree** (`query/explorerTree.ts`): `pruneTree(tree, keep)` keeps the sources `keep` accepts and every folder that still holds one somewhere below it.
+- **Dialog** (`components/AddToPlaylistModal.tsx`, mounted in `App.tsx` beside `DeleteConfirmModal`):
+  - The outer component reads the pending slot and renders `Modal`. `AddToPlaylistBody` seeds its expansion in a `useState` initializer from the explorer's `expandedFolders`, and toggles a local copy after that.
+  - The rows are the explorer's own `SourceRow` / `FolderRow`, handed no-op drag and rename props (`STILL_ROW`). Clicking a playlist, or pressing Enter on it, adds the tracks. A folder opens from its chevron (or Enter / Space), as in the explorer.
+  - The heading says how many tracks are being added. "No playlists" shows when there are none. Escape and a click on the scrim close the dialog, as `Modal` already did.
+- **Additions** (not in the plan): a Cancel button, matching the delete dialog. It gives touch users an obvious way out.
+- **Open question settled conservatively:** on a playlist's page, the dialog leaves out the playlist the rows came from (`source.id !== fromTabId`). A folder that held only that playlist is left out too.
+- **Menus:** `RowActionsMenu` takes an optional `onAddToPlaylist`. "Add to playlist…" (playlist icon) sits after "Rate track" and before "Remove from playlist". `QueryResults` and `MultiSelectToolbar` pass it when `lineage.trackIdColumn` is defined. The toolbar's menu button is now also enabled for track rows that identify no record.
+- **Not done:** the dialog doesn't move focus into itself as it opens, and neither does the delete dialog. There's no palette command for "Add to playlist…", since the spec names only the menu. See Deferred follow-ups.
+- **Tests:**
+  - `query/explorerTree.test.ts`: `pruneTree`, with a nested folder kept, and an empty folder and a query-only folder both dropped.
+  - `stores/app/actions.test.ts`: an `adding tracks to a playlist` block with 7 tests. It covers display order with track-less rows skipped and positions after `ceil(max) + 1`, no dialog for rows without tracks, cancel, an open target reloading as new rows with its history untouched and `writing` set meanwhile, a failed write reloading nothing, a second add reading the maximum only after the first add lands, and a non-playlist source. `fetchMaxPosition` is now mocked beside `fetchPlaylistEntries`.
+- **Gate:** typecheck, lint, format:check, test:unit (508), build and test:visual (244: the 242 existing plus 2 new) all pass. The probe exits 0. No Rust was touched.
+- **Baselines** (light and dark, all looked at):
+  - Added: `add-to-playlist/modal`. It shows a nested open folder, a closed folder, and a top-level playlist, and leaves out an empty folder, a query-only folder, and a query.
+  - Regenerated: `result-row/context-menu` and `result-row/playlist-context-menu`, which gain the "Add to playlist…" row. The two `rate-submenu` shots only capture the submenu panel, so they didn't change, though their tests' item lists did.
+- **For phase 8:** drop onto a playlist with `addTracksToPlaylist(sourceId, trackIds)`, passing the dragged rows' track ids in display order. While the add is queued, the target page's `writing` is true.
+
 ### Phase 8 — Dragging result rows
 
 **Goal:** result rows respond to touch and pointer input as the explorer does, and can be dropped onto a playlist in the sources tree.
@@ -796,6 +821,10 @@ Every check that needs a real server or a real device is collected here. The use
 
 **"Add to playlist…"** (phase 7)
 
+- [ ] From a query of tracks, and from the multi-select toolbar's menu, "Add to playlist…" opens a dialog listing only playlists, with folders open as they are in the explorer. Clicking a playlist adds the tracks to its end in the order they were shown (check a selection made bottom-up), and closes the dialog. Escape, a click outside and Cancel add nothing.
+- [ ] With the target playlist open in another tab, its results reload with the new tracks, and its Undo doesn't remove them.
+- [ ] On a playlist's page, the dialog doesn't list that playlist.
+
 **Dragging result rows** (phase 8)
 
 - [ ] On a touch device: a touch-drag scrolls, a hold picks the rows up for a drag, and a hold released without moving opens the context menu.
@@ -811,6 +840,7 @@ Every check that needs a real server or a real device is collected here. The use
 
 (Add entries as phases defer work.)
 
+- **Focus in the "Add to playlist…" dialog** (phase 7). The dialog doesn't take focus as it opens, so a keyboard user has to Tab into the tree. The delete dialog behaves the same way. Moving focus to the first playlist row on mount (a `useLayoutEffect`) would fix both, but expect a focus ring to show up in their snapshots.
 - **Builders stay live during an entry write** (phase 3). An edit made while a step's writes are in flight survives, unless the step's own definition half (or an undo's) overwrites it when the writes land. Disabling the builders while `writing` would close that gap, if it turns out to matter in practice.
 
 ## Open questions
@@ -818,4 +848,4 @@ Every check that needs a real server or a real device is collected here. The use
 - **Converting an unsaved query.** The spec gives the playlist "the same name as the query", but an unsaved query has no name yet. Phase 5 names that playlist for the moment it's created (`YYYY-MM-DD HH:MM`, as a new playlist is) and puts it at the top level, as the spec says for an unsaved query. Change it if a different name is wanted.
 
 - **Converting a full-mode query of tracks.** Its display section is stale (a full query ignores its sections), so phase 2's `playlistDefinitionFromQuery` gives the playlist the default `track` display rather than copying it. Parsing the display out of the hand-written query isn't possible. Change it if a stale display is preferable to the default.
-- **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 should leave it out unless the user says otherwise.
+- **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 leaves it out (`AddToPlaylistModal`'s `keep` filter). Change it if adding a playlist's tracks to itself (duplicating entries at its end) is wanted.

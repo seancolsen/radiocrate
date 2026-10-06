@@ -250,8 +250,8 @@ for (const colorScheme of SCHEMES) {
   });
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
-  // the row carries, "Show album tracks" for an album, "Rate track" for a
-  // track, then "Select multiple". Shot through the menu (it portals out of the
+  // the row carries, "Show album tracks" for an album, "Rate track" and "Add
+  // to playlist…" for a track, then "Select multiple". Shot through the menu (it portals out of the
   // stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
@@ -261,6 +261,7 @@ for (const colorScheme of SCHEMES) {
       "Edit album",
       "Show album tracks",
       "Rate track",
+      "Add to playlist…",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
@@ -278,6 +279,7 @@ for (const colorScheme of SCHEMES) {
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Edit track",
       "Rate track",
+      "Add to playlist…",
       "Remove from playlist",
       "Select multiple",
     ]);
@@ -302,6 +304,7 @@ for (const colorScheme of SCHEMES) {
       "2: ✔️ (Like)",
       "3: ⭐ (Prefer)",
       "4: ❤️ (Love)",
+      "Add to playlist…",
       "Select multiple",
     ]);
     await expect(menu.getByRole("menu")).toHaveScreenshot(
@@ -318,6 +321,26 @@ for (const colorScheme of SCHEMES) {
     await expect(menu.getByText("Loading…")).toBeVisible();
     await expect(menu.getByRole("menu")).toHaveScreenshot(
       snapshot("result-row/rate-submenu-loading", colorScheme),
+    );
+  });
+
+  // The "Add to playlist…" dialog: only playlists, in their folders, with the
+  // explorer's open folders open. Shot through the dialog (it portals out of
+  // the stage).
+  test(`add-to-playlist/modal - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "add-to-playlist/modal", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("treeitem")).toHaveText([
+      "Favorites",
+      "Road trip",
+      "Coast drive",
+      "Desert night",
+      "Sunday morning",
+      "Parties",
+      "Late night",
+    ]);
+    await expect(dialog).toHaveScreenshot(
+      snapshot("add-to-playlist/modal", colorScheme),
     );
   });
 }
