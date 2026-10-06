@@ -12,7 +12,7 @@ import { chordMatchesEvent, formatChord } from "../commands/chord";
 import { rankCommands } from "../commands/rank";
 import type { CommandContext, CommandDef } from "../commands/registry";
 import { selectAvailableCommands, selectBinding } from "../stores/commands";
-import { selectQueryTab, selectResultCount } from "../stores/app";
+import { selectPageTab, selectResultCount } from "../stores/app";
 import { selectFocusedForm } from "../stores/forms";
 import {
   useApp,
@@ -90,7 +90,7 @@ function PaletteDialog(): JSX.Element {
   const activeTabId = useApp((s) => s.activeTabId);
   const queryTabActive = useApp(
     (s) =>
-      s.activeTabId !== null && selectQueryTab(s, s.activeTabId) !== undefined,
+      s.activeTabId !== null && selectPageTab(s, s.activeTabId) !== undefined,
   );
   const resultsAvailable = useApp(
     (s) =>

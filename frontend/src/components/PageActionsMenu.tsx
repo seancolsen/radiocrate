@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
-import { selectCanRevert, selectIsPersisted } from "../stores/app";
+import { selectCanRevert, selectIsPersisted, selectTab } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import BaseSubmenu from "./BaseSubmenu";
 import { MenuItem, MenuSeparator } from "./ui/Menu";
@@ -9,8 +9,42 @@ import { MenuItem, MenuSeparator } from "./ui/Menu";
  * is built on, or full-Querydown mode), then Rename (only for a saved query —
  * an unsaved one is named as it's saved), Duplicate, Revert (only while a save
  * has failed, leaving the working query apart from what the backend holds),
- * View SQL, and Delete (Pin remains deferred). */
+ * View SQL, and Delete (Pin remains deferred).
+ *
+ * A playlist's menu leaves out everything that's only a query's (the Base
+ * submenu, Revert), and offers Rename and View SQL. */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
+  const playlist = useApp(
+    (s) => selectTab(s, props.tabId)?.kind === "playlist",
+  );
+  return playlist ? (
+    <PlaylistActions tabId={props.tabId} />
+  ) : (
+    <QueryActions tabId={props.tabId} />
+  );
+}
+
+/** A playlist's wrench menu body. */
+function PlaylistActions(props: { tabId: string }): JSX.Element {
+  const { beginRename, openViewSql } = useAppActions();
+  return (
+    <>
+      <MenuItem
+        icon={Icons.Rename}
+        label="Rename"
+        onClick={() => beginRename(props.tabId)}
+      />
+      <MenuItem
+        icon={Icons.ViewSql}
+        label="View SQL"
+        onClick={() => openViewSql(props.tabId)}
+      />
+    </>
+  );
+}
+
+/** A query's wrench menu body. */
+function QueryActions(props: { tabId: string }): JSX.Element {
   const canRevert = useApp((s) => selectCanRevert(s, props.tabId));
   const persisted = useApp((s) => selectIsPersisted(s, props.tabId));
   const {

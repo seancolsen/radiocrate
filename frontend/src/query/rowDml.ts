@@ -21,6 +21,11 @@
 //     produces the same columns, and the single row that comes back is the row,
 //     refreshed.
 //
+//   • A **playlist**'s query is narrowed to the one entry the row lists (its
+//     filter replaced by the entry's id, as `playlistQuerydown` does with
+//     `entryId`). Narrowing by the track instead could match several rows: a
+//     playlist can hold a track more than once.
+//
 //   • A **full**, hand-written query can't be picked apart, so it's re-run whole
 //     and the row looked for in the answer, matched on the records it identifies.
 //     It may well not be there — the query may have filtered it out, which is the
@@ -38,8 +43,9 @@ import {
   type Preset,
 } from "api-client";
 import { runSql, stringifyArrowValue } from "../api/query";
-import { compileSavedQuery } from "./compile";
+import { compilePlaylist, compileSavedQuery } from "./compile";
 import type { QueryDefinition } from "./definition";
+import type { PlaylistDefinition } from "./playlist";
 import { analyzeColumnSources, recordKeyColumns } from "./lineage";
 import { querydownReady } from "./querydown";
 import { keyConditions, type RecordKey } from "./recordForm";
@@ -65,9 +71,21 @@ export interface RowLocation {
  *
  * The query arrives as the **definition** the user built rather than as
  * assembled Querydown or compiled SQL: taking the filter section out and putting
- * another one in is only possible while the parts are still separate. */
-export interface RowContext {
-  definition: QueryDefinition;
+ * another one in is only possible while the parts are still separate. A
+ * playlist page's row also names its playlist and the entry it lists. */
+export type RowContext = RowContextCommon &
+  (
+    | { kind: "query"; definition: QueryDefinition }
+    | {
+        kind: "playlist";
+        playlistId: string;
+        definition: PlaylistDefinition;
+        entryId: string;
+      }
+  );
+
+/** What every {@link RowContext} carries, whatever the page. */
+interface RowContextCommon {
   /** The presets the definition's section references resolve against. */
   presets: Preset[];
   /** The enriched introspection JSON the compiler takes. */
@@ -125,6 +143,7 @@ async function refreshRow(
   context: RowContext,
 ): Promise<RowLocation | undefined> {
   await querydownReady();
+  if (context.kind === "playlist") return await fetchEntryRow(context);
   const narrowed = narrowedDefinition(context.definition, context.records);
   return narrowed === undefined
     ? await findRowInFullRun(context)
@@ -174,6 +193,24 @@ async function fetchNarrowedRow(
   return { table, row: 0 };
 }
 
+/** Runs a playlist's query narrowed to the one entry the row lists, and reads
+ * the row it returns. */
+async function fetchEntryRow(
+  context: Extract<RowContext, { kind: "playlist" }>,
+): Promise<RowLocation | undefined> {
+  const { sql } = compilePlaylist(
+    context.playlistId,
+    context.definition,
+    context.presets,
+    context.schemaJson,
+    context.prelude,
+    { entryId: context.entryId },
+  );
+  const table = await runSql(sql);
+  if (table.numRows !== 1) return undefined;
+  return { table, row: 0 };
+}
+
 /** Re-runs the query as it stands and finds the row again by the records it
  * identifies — every one of them, so that a row among near-duplicates (the same
  * album on every one of its tracks) is only claimed when the whole identity
@@ -181,7 +218,7 @@ async function fetchNarrowedRow(
  * itself changed, simply isn't found: nothing is spliced in and the row stays as
  * it was. */
 async function findRowInFullRun(
-  context: RowContext,
+  context: Extract<RowContext, { kind: "query" }>,
 ): Promise<RowLocation | undefined> {
   const { sql } = compileSavedQuery(
     context.definition,

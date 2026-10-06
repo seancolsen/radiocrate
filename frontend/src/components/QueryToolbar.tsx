@@ -11,6 +11,7 @@ import {
   selectIsWriting,
   selectResultCount,
   selectRunning,
+  selectTab,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import IconButton from "./ui/IconButton";
@@ -62,6 +63,9 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const fullEditorOpen = useApp((s) => selectFullEditorOpen(s, props.tabId));
   const section = useApp((s) => selectBuilderSection(s, props.tabId));
   const running = useApp((s) => selectRunning(s, props.tabId));
+  const playlist = useApp(
+    (s) => selectTab(s, props.tabId)?.kind === "playlist",
+  );
   const builderOpen = fullMode ? fullEditorOpen : section !== null;
   const {
     saveQuery,
@@ -89,7 +93,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           trigger={(api) => (
             <IconButton
               icon={Icons.Build}
-              label="Query actions"
+              label={playlist ? "Playlist actions" : "Query actions"}
               active={api.open}
               onClick={() => api.toggle()}
             />

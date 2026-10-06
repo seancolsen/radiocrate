@@ -16,6 +16,7 @@
 // undo.
 
 import type { DmlOperation, DmlRequest, JsonValue } from "api-client";
+import type { QueryResult } from "./result";
 
 /** One `playlist_track` record. */
 export interface PlaylistEntry {
@@ -49,6 +50,35 @@ export function toDmlRequest(writes: readonly PlaylistWrite[]): DmlRequest {
       (write, index) => ({ ...write, id: `e${index}` }) as DmlOperation,
     ),
   };
+}
+
+// ── Result rows ──────────────────────────────────────────────────────────────
+
+/** The entry a playlist page's result row lists: its `playlist_track` id and
+ * position. */
+export interface RowEntry {
+  id: string;
+  position: number;
+}
+
+/** Output columns 0 and 1 of every playlist query: the hidden `$id` and
+ * `$position` (see `playlistQuerydown`). Result columns keep hidden ones, so
+ * these index the result directly. */
+const ENTRY_ID_COLUMN = 0;
+const ENTRY_POSITION_COLUMN = 1;
+
+/** The entry that row `row` of a playlist page's results lists, or `undefined`
+ * when the row carries no entry id (a result that isn't a playlist's). */
+export function rowEntry(
+  result: QueryResult,
+  row: number,
+): RowEntry | undefined {
+  if (row < 0 || row >= result.rowCount) return undefined;
+  const id = result.keyText(row, ENTRY_ID_COLUMN);
+  const raw = result.value(row, ENTRY_POSITION_COLUMN);
+  const position = raw == null ? NaN : Number(raw);
+  if (id === "" || !Number.isFinite(position)) return undefined;
+  return { id, position };
 }
 
 // ── Positions ────────────────────────────────────────────────────────────────

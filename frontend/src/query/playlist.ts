@@ -12,6 +12,8 @@
 import type { Preset } from "api-client";
 import {
   canonicalSection,
+  defsEqual,
+  definitionToStored,
   playlistOrderContent,
   resolveFilter,
   resolveSection,
@@ -23,12 +25,41 @@ import {
 /** The table every playlist's sections are written against. */
 export const PLAYLIST_BASE = "track";
 
-/** A playlist's three sections. `sort` holds "Playlist order" (see
- * {@link playlistOrderContent}) when no sorting conditions apply. */
-export interface PlaylistDefinition {
+/** The three sections a query and a playlist share, and that the builders
+ * edit. */
+export interface Sections {
   filter: FilterParts;
   sort: SectionContent;
   display: SectionContent;
+}
+
+/** A playlist's three sections. `sort` holds "Playlist order" (see
+ * {@link playlistOrderContent}) when no sorting conditions apply. */
+export type PlaylistDefinition = Sections;
+
+/** A results page's working definition: a query's or a playlist's. A query's
+ * always carries a `base`, which is what tells the two apart. */
+export type PageDefinition = QueryDefinition | PlaylistDefinition;
+
+/** Whether `def` is a query's definition rather than a playlist's. */
+export function isQueryDefinition(def: PageDefinition): def is QueryDefinition {
+  return "base" in def;
+}
+
+/** Whether two page definitions are structurally equal. A query's never equals
+ * a playlist's. */
+export function pageDefsEqual(a: PageDefinition, b: PageDefinition): boolean {
+  if (isQueryDefinition(a) || isQueryDefinition(b)) {
+    return isQueryDefinition(a) && isQueryDefinition(b) && defsEqual(a, b);
+  }
+  return playlistDefsEqual(a, b);
+}
+
+/** Serializes a page definition into the JSON its source stores. */
+export function pageDefinitionToStored(def: PageDefinition): string {
+  return isQueryDefinition(def)
+    ? definitionToStored(def)
+    : playlistDefinitionToStored(def);
 }
 
 /** The display a new playlist starts with: the first default `track` display
@@ -131,6 +162,12 @@ export function assemblePlaylist(
   };
 }
 
+/** How {@link playlistQuerydown} narrows the listing. */
+export interface PlaylistQueryOptions {
+  withFilter?: boolean;
+  entryId?: string;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The Querydown listing playlist `playlistId`'s entries, from the spec's
@@ -142,18 +179,25 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * prelude, which the compiler's caller prepends.
  *
  * `withFilter: false` leaves the filter out, for committing a sort: every entry
- * is reordered, hidden or not. */
+ * is reordered, hidden or not. `entryId` narrows the listing to that one entry
+ * in place of the filter, which is how a row is read back after a write made
+ * from it (see `query/rowDml.ts`). */
 export function playlistQuerydown(
   playlistId: string,
   parts: PlaylistParts,
-  options: { withFilter?: boolean } = {},
+  options: PlaylistQueryOptions = {},
 ): string {
   // The id is spliced into a string literal, so it had better be one.
   if (!UUID.test(playlistId)) {
     throw new Error(`Not a playlist id: ${JSON.stringify(playlistId)}`);
   }
   const lines = ["#playlist_track", "", `playlist:="${playlistId}"`, ""];
-  if (options.withFilter !== false && parts.filter.trim() !== "") {
+  if (options.entryId !== undefined) {
+    if (!UUID.test(options.entryId)) {
+      throw new Error(`Not an entry id: ${JSON.stringify(options.entryId)}`);
+    }
+    lines.splice(3, 0, `id:="${options.entryId}"`);
+  } else if (options.withFilter !== false && parts.filter.trim() !== "") {
     lines.push("track{", parts.filter.trim(), "}", "");
   }
   lines.push(

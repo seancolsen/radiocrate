@@ -14,6 +14,7 @@ import type { ComponentType, SVGProps } from "react";
 import { cx } from "./components/ui/cx";
 
 import Query from "~icons/material-symbols/manage-search";
+import Playlist from "~icons/material-symbols/queue-music";
 import Folder from "~icons/material-symbols/folder";
 import FolderOpen from "~icons/material-symbols/folder-open";
 import NewFolder from "~icons/material-symbols/create-new-folder";
@@ -90,6 +91,7 @@ const Spinner: IconComponent = ({ className, ...props }) => (
 
 export const Icons = {
   Query, // query rows + tab handle icon
+  Playlist, // playlist rows + tab handle icon
   Folder, // a collapsed explorer folder
   FolderOpen, // an expanded explorer folder
   NewFolder, // Queries "+" menu: new folder

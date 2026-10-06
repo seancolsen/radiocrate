@@ -45,10 +45,15 @@ function FolderMenu(props: { id: string }): JSX.Element {
   );
 }
 
-/** A saved query's context menu: the query-page actions menu's Rename,
- * Duplicate and Delete — with the rename made in place, in the row. */
+/** A saved source's context menu: the page actions menu's Rename, Duplicate
+ * and Delete — with the rename made in place, in the row. A playlist offers
+ * only Rename for now: duplicating and deleting one are writes of their own
+ * (`dml`, not the query RPCs), still to come. */
 function QueryMenu(props: { id: string }): JSX.Element {
   const actions = useAppActions();
+  const playlist = useApp(
+    (s) => s.sources.data.find((x) => x.id === props.id)?.kind === "playlist",
+  );
   const item = { kind: "source", id: props.id } as const;
   return (
     <>
@@ -57,6 +62,16 @@ function QueryMenu(props: { id: string }): JSX.Element {
         label="Rename"
         onClick={() => actions.beginTreeRename(item)}
       />
+      {playlist ? null : <QueryOnlyItems id={props.id} />}
+    </>
+  );
+}
+
+/** The entries of {@link QueryMenu} only a query has yet. */
+function QueryOnlyItems(props: { id: string }): JSX.Element {
+  const actions = useAppActions();
+  return (
+    <>
       <MenuItem
         icon={Icons.Duplicate}
         label="Duplicate"
@@ -89,16 +104,7 @@ export default function QueryTree(props: {
   const renaming = useApp((s) => s.renamingTreeItem);
   const actions = useAppActions();
 
-  // Playlists can't be opened yet, so the tree lists only queries. The store's
-  // moves still see every source, so a hidden playlist keeps its place.
-  const tree = useMemo(
-    () =>
-      buildTree(
-        sources.filter((x) => x.kind === "query"),
-        folders,
-      ),
-    [sources, folders],
-  );
+  const tree = useMemo(() => buildTree(sources, folders), [sources, folders]);
   const rows = useMemo(
     () => visibleRows(tree, expanded, filter),
     [tree, expanded, filter],
@@ -149,6 +155,7 @@ export default function QueryTree(props: {
           return (
             <QueryRow
               key={`query:${node.id}`}
+              kind={node.source.kind}
               name={node.name}
               depth={row.depth}
               dragging={dragging}
@@ -157,11 +164,7 @@ export default function QueryTree(props: {
               onContextMenu={onContextMenu}
               onOpen={() => {
                 if (dnd.ignoreClick()) return;
-                actions.openTab({
-                  id: node.id,
-                  name: node.name,
-                  definition: node.source.definition,
-                });
+                actions.openTab(node.source);
               }}
             />
           );

@@ -14,6 +14,7 @@ import {
   assemblePlaylist,
   playlistQuerydown,
   type PlaylistDefinition,
+  type PlaylistQueryOptions,
 } from "./playlist";
 
 /** Compiles a saved query definition to DuckDB SQL plus the per-column
@@ -58,14 +59,16 @@ export function compileSavedQuery(
  * The playlist query is one whole query, so it goes through `compile`, not
  * `compile_sections`: a syntax error in the filter text reports as the generic
  * "Invalid querydown code" rather than as one tied to the filter section.
- * `withFilter: false` compiles it without the filter, for committing a sort. */
+ * `options` narrows it as `playlistQuerydown` does: `withFilter: false`
+ * compiles it without the filter, for committing a sort, and `entryId` lists
+ * just that entry. */
 export function compilePlaylist(
   playlistId: string,
   def: PlaylistDefinition,
   presets: Preset[],
   schemaJson: string,
   prelude: string,
-  options: { withFilter?: boolean } = {},
+  options: PlaylistQueryOptions = {},
 ): CompileResult {
   const text = playlistQuerydown(
     playlistId,

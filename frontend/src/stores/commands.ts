@@ -29,7 +29,7 @@ import {
 import type { AppState, AppStoreBundle } from "./app";
 import {
   selectIsUnsaved,
-  selectQueryTab,
+  selectPageTab,
   selectResultCount,
   selectRowRecords,
   selectRowSelection,
@@ -137,8 +137,7 @@ export function selectCommandContext(
   const active = app.activeTabId;
   return {
     activeTab: active !== null,
-    queryTabActive:
-      active !== null && selectQueryTab(app, active) !== undefined,
+    queryTabActive: active !== null && selectPageTab(app, active) !== undefined,
     resultsAvailable:
       active !== null && (selectResultCount(app, active) ?? 0) > 0,
     trackLoaded: app.currentTrack !== null,
@@ -287,13 +286,13 @@ export function createCommandsStore(
    * be racing a tab close). */
   const activeTab = (): string | null => app.store.getState().activeTabId;
 
-  /** The active tab's id when it holds a *query*, else `null` — the same
-   * guard for the commands that act on a query page, so one aimed at the
-   * settings tab does nothing rather than writing query state under its
-   * id. */
+  /** The active tab's id when it holds a query page — a query's or a
+   * playlist's — else `null`: the same guard for the commands that act on a
+   * query page, so one aimed at the settings tab does nothing rather than
+   * writing query state under its id. */
   const activeQueryTab = (): string | null => {
     const id = activeTab();
-    return id !== null && selectQueryTab(app.store.getState(), id) !== undefined
+    return id !== null && selectPageTab(app.store.getState(), id) !== undefined
       ? id
       : null;
   };

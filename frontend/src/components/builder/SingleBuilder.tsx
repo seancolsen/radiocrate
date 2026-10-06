@@ -2,8 +2,9 @@ import { useRef, type JSX } from "react";
 import { sectionLabel } from "../../query/definition";
 import {
   selectExpandedPreset,
+  selectPageBase,
+  selectPageSections,
   selectPresetName,
-  selectQueryTab,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -12,16 +13,16 @@ import PresetTab from "./PresetTab";
 import { useBuilderFocus } from "./useBuilderFocus";
 
 /** The sort/display builder. The section holds exactly one thing: a custom
- * Querydown block, a single (expandable) preset, or the built-in Shuffle
- * preset. */
+ * Querydown block, a single (expandable) preset, or a built-in preset —
+ * Shuffle, or a playlist's "Playlist order". */
 export default function SingleBuilder(props: {
   tabId: string;
   section: "sort" | "display";
 }): JSX.Element {
   const content = useApp(
-    (s) => selectQueryTab(s, props.tabId)?.live[props.section],
+    (s) => selectPageSections(s, props.tabId)?.[props.section],
   );
-  const base = useApp((s) => selectQueryTab(s, props.tabId)?.live.base ?? "");
+  const base = useApp((s) => selectPageBase(s, props.tabId));
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const presetId = content && "preset" in content ? content.preset : undefined;
   const presetName = useApp((s) =>
@@ -48,7 +49,7 @@ export default function SingleBuilder(props: {
           ref={inputRef}
           value={content.custom}
           hint={sectionLabel(props.section)}
-          canSave={base.trim() !== ""}
+          canSave={base !== ""}
           onInput={(t) => setSectionCustomText(props.tabId, props.section, t)}
           onClear={() => setSectionCustomText(props.tabId, props.section, "")}
           onSaveAsPreset={() => openPresetSave(props.section, content.custom)}
@@ -77,6 +78,13 @@ export default function SingleBuilder(props: {
               name="Shuffle"
               onReshuffle={() => reshuffle(props.tabId, props.section)}
             />
+          </div>
+        )}
+      {content &&
+        "builtin" in content &&
+        content.builtin.preset === "playlist_order" && (
+          <div className="flex">
+            <PresetTab builtin name="Playlist order" />
           </div>
         )}
     </div>

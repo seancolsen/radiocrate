@@ -40,6 +40,37 @@ describe("open tabs", () => {
     after.dispose();
   });
 
+  it("bring a playlist tab back as one, edits included", () => {
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    before.actions.openTab({
+      id: "s1",
+      name: "Road trip",
+      definition: "{}",
+      kind: "playlist",
+      playlistId: "p1",
+    });
+    before.actions.setFilterCustom("s1", "jazz");
+    before.dispose();
+
+    const after = createAppStore(env);
+    const [restored] = after.store.getState().tabs;
+    expect(restored).toMatchObject({
+      kind: "playlist",
+      id: "s1",
+      playlistId: "p1",
+      name: "Road trip",
+      saveFailed: false,
+    });
+    expect(restored.kind === "playlist" && restored.live.filter.custom).toBe(
+      "jazz",
+    );
+    expect(restored.kind === "playlist" && restored.saved.sort).toEqual({
+      builtin: { preset: "playlist_order" },
+    });
+    after.dispose();
+  });
+
   it("leave nothing behind once the last one closes", () => {
     const env = fakeEnv();
     const bundle = createAppStore(env);

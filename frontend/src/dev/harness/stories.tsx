@@ -1,16 +1,18 @@
 import type { JSX } from "react";
 import { castDraft } from "immer";
-import type {
-  CurrentTrack,
-  PlaybackState,
-  Rating,
-  RecordRef,
+import {
+  selectTab,
+  type CurrentTrack,
+  type PlaybackState,
+  type Rating,
+  type RecordRef,
 } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
 import { SETTINGS } from "../../state/settings";
 import {
   FILTER_DEF,
   FULL_DEF,
+  PLAYLIST_SOURCE,
   SOURCES_FIXTURE,
   SHUFFLE_DEF,
   VETTED_PRESET_ID,
@@ -50,6 +52,7 @@ import TabBar from "../../components/TabBar";
 import RecordEditorPanel from "../../components/RecordEditorPanel";
 import RecordPicker from "../../components/RecordPicker";
 import RowActionsMenu from "../../components/RowActionsMenu";
+import SectionOptionsMenu from "../../components/builder/SectionOptionsMenu";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
@@ -124,6 +127,27 @@ function openLemonade(stores: Stores): string {
     definition: "",
   });
   return LEMONADE.id;
+}
+
+/** Opens the "Road Trip" fixture playlist in a tab and returns its id. */
+function openRoadTrip(stores: Stores): string {
+  stores.app.actions.openTab(PLAYLIST_SOURCE);
+  return PLAYLIST_SOURCE.id;
+}
+
+/** "Road Trip"'s sort options menu, open — mounted only once the story's setup
+ * has opened the playlist, as a real menu is only ever opened on an open tab.
+ * The setup runs in the harness's layout effect, after the story's own have
+ * run, so a menu mounted alongside it would focus its first row before
+ * "Playlist order" was there to be first. */
+function RoadTripSortOptions(): JSX.Element | null {
+  const open = useApp((s) => selectTab(s, PLAYLIST_SOURCE.id) !== undefined);
+  if (!open) return null;
+  return (
+    <Menu defaultOpen width="240px" trigger={() => null}>
+      <SectionOptionsMenu tabId={PLAYLIST_SOURCE.id} section="sort" />
+    </Menu>
+  );
 }
 
 /** Opens "Lemonade" carrying `def` as its (saved) query. */
@@ -422,6 +446,18 @@ export const STORIES: Record<string, Story> = {
     render: () => <TabBar />,
   },
 
+  // A playlist tab, active, beside a query's: the playlist's handle carries the
+  // `queue_music` icon, and never the ✱ (a playlist is always saved).
+  "tab-bar/playlist": {
+    width: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      openLemonade(stores);
+      openRoadTrip(stores);
+    },
+    render: () => <TabBar />,
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
     width: 200,
@@ -631,6 +667,18 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
+  // A playlist's toolbar, its Sort section open on "Playlist order": the same
+  // controls as a query's, with no Save, and the built-in preset's tab in the
+  // builder line.
+  "query-builder/playlist": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openRoadTrip(stores);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleBuilderSection(id, "sort");
+    },
+    render: () => <QueryToolbar tabId={PLAYLIST_SOURCE.id} />,
+  },
   // The wrench menu, with its Base submenu open (the test opens it): the
   // schema's tables as an exclusive choice over the "Full Querydown" escape
   // hatch.
@@ -646,6 +694,15 @@ export const STORIES: Record<string, Story> = {
         <PageActionsMenu tabId={LEMONADE.id} />
       </Menu>
     ),
+  },
+
+  // A playlist's sort options: "Playlist order" first, and checked — what a
+  // playlist's sort starts as — over the query's own entries.
+  "sort-options/playlist": {
+    width: 280,
+    height: 160,
+    setup: openRoadTrip,
+    render: () => <RoadTripSortOptions />,
   },
 
   // ── The builders, without the toolbar above them ─────────────────────────

@@ -5,6 +5,8 @@ import { definitionForBase, playlistOrderContent } from "./definition";
 import {
   assemblePlaylist,
   newPlaylistDefinition,
+  pageDefinitionToStored,
+  pageDefsEqual,
   playlistDefinitionFromQuery,
   playlistDefinitionFromStored,
   playlistDefinitionToStored,
@@ -252,6 +254,40 @@ describe("playlistQuerydown", () => {
     expect(() =>
       playlistQuerydown('x" || true', { filter: "", sort: "", display: "" }),
     ).toThrow(/Not a playlist id/);
+  });
+
+  it("can list one entry, in place of the filter, to read a row back", () => {
+    const entry = "00000000-0000-0000-0000-0000000000b1";
+    const parts = { filter: "year:>1990", sort: "", display: "$title" };
+    const text = playlistQuerydown(PLAYLIST, parts, { entryId: entry });
+    expect(text).toContain(`playlist:="${PLAYLIST}"\nid:="${entry}"\n`);
+    expect(text).not.toContain("year:>1990");
+    expect(text).toContain("$track.(\n$title\n)");
+    expect(() =>
+      playlistQuerydown(PLAYLIST, parts, { entryId: "1 or true" }),
+    ).toThrow(/Not an entry id/);
+  });
+});
+
+describe("page definitions", () => {
+  const playlist = newPlaylistDefinition([]);
+  const query = definitionForBase("track", []);
+
+  it("compare a query's and a playlist's apart, and each as its kind does", () => {
+    expect(pageDefsEqual(playlist, structuredClone(playlist))).toBe(true);
+    expect(pageDefsEqual(query, structuredClone(query))).toBe(true);
+    // The same three sections, but one is a query's.
+    expect(pageDefsEqual({ ...query, ...playlist }, playlist)).toBe(false);
+  });
+
+  it("store as their kind does", () => {
+    expect(pageDefinitionToStored(playlist)).toBe(
+      playlistDefinitionToStored(playlist),
+    );
+    expect(JSON.parse(pageDefinitionToStored(query))).toHaveProperty(
+      "base",
+      "track",
+    );
   });
 });
 

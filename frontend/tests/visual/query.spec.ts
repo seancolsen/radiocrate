@@ -73,6 +73,31 @@ for (const colorScheme of SCHEMES) {
 
   // The wrench menu with its Base submenu open: the schema's tables as an
   // exclusive choice over the "Full Querydown" escape hatch.
+  // A playlist's toolbar, Sort open on "Playlist order": no Save, and the
+  // built-in preset's tab (with no Reshuffle) in the builder line.
+  test(`query-builder/playlist - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "query-builder/playlist", colorScheme);
+    await expect(stage.getByText("Playlist order")).toBeVisible();
+    await expect(
+      stage.getByRole("button", { name: "Playlist actions" }),
+    ).toBeVisible();
+    await expect(stage.getByRole("button", { name: "Save" })).toHaveCount(0);
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/playlist", colorScheme),
+    );
+  });
+
+  // A playlist's sort options: "Playlist order" first, and checked.
+  test(`sort-options/playlist - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "sort-options/playlist", colorScheme);
+    await expect(
+      page.getByRole("menuitemradio", { name: "Playlist order" }),
+    ).toBeChecked();
+    await expect(stage).toHaveScreenshot(
+      snapshot("sort-options/playlist", colorScheme),
+    );
+  });
+
   test(`query-builder/actions-menu - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,

@@ -24,7 +24,11 @@ import SettingModal from "./components/SettingModal";
  * which page exists at all. */
 function TabPage(props: { tabId: string }): JSX.Element | null {
   const kind = useApp((s) => selectTab(s, props.tabId)?.kind);
-  if (kind === "query") return <QueryPage tabId={props.tabId} />;
+  // A playlist's page is the query page: the differences are in what it runs
+  // and which of the page's controls apply, decided further down.
+  if (kind === "query" || kind === "playlist") {
+    return <QueryPage tabId={props.tabId} />;
+  }
   if (kind === "shortcuts") return <ShortcutsPage />;
   return null;
 }

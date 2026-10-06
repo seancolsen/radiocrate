@@ -56,6 +56,15 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A playlist tab beside a query's: its handle carries the playlist icon.
+  test(`tab-bar/playlist - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "tab-bar/playlist", colorScheme);
+    await expect(stage.getByText("Road Trip", { exact: true })).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("tab-bar/playlist", colorScheme),
+    );
+  });
+
   test(`settings/menu - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "settings/menu", colorScheme);
     await expect(

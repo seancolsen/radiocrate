@@ -1,8 +1,9 @@
 import { useRef, type JSX } from "react";
 import {
   selectExpandedPreset,
+  selectPageBase,
+  selectPageSections,
   selectPresetName,
-  selectQueryTab,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -34,13 +35,13 @@ function FilterPresetTab(props: { tabId: string; id: string }): JSX.Element {
  * right-aligned row below it (flex-wrap). Expanding a preset reveals its
  * inline editor full-width below the row. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
-  const live = useApp((s) => selectQueryTab(s, props.tabId)?.live);
+  const live = useApp((s) => selectPageSections(s, props.tabId));
+  const canSave = useApp((s) => selectPageBase(s, props.tabId) !== "");
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const { setFilterCustom, clearFilterCustom, openPresetSave } =
     useAppActions();
 
   const presets = live?.filter.presets ?? [];
-  const canSave = (live?.base.trim() ?? "") !== "";
   const expandedInFilter =
     expandedPreset && presets.includes(expandedPreset) ? expandedPreset : null;
 

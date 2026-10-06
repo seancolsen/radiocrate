@@ -25,6 +25,7 @@ import {
   type Placement,
   type Preset,
   type Source,
+  type SourceKind,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
 import { sendPlaylistWrites } from "../../api/playlist";
@@ -37,7 +38,7 @@ import {
   INTROSPECTION_SQL,
   parseSchemaTables,
 } from "../../query/schema";
-import { compileSavedQuery } from "../../query/compile";
+import { compilePlaylist, compileSavedQuery } from "../../query/compile";
 import { overridesFromEntries, withSetting } from "../../state/settings";
 import type { SettingKey } from "../../state/settings";
 import {
@@ -53,8 +54,15 @@ import {
 } from "../../state/undoHistory";
 import type { EntryWrites } from "../../query/playlistEntries";
 import {
+  isQueryDefinition,
+  pageDefinitionToStored,
+  pageDefsEqual,
+  playlistDefinitionFromStored,
+  type PageDefinition,
+  type Sections,
+} from "../../query/playlist";
+import {
   cloneDefinition,
-  defsEqual,
   definitionForBase,
   definitionFromStored,
   definitionToStored,
@@ -102,9 +110,12 @@ import {
   selectEffectivePresets,
   selectCanRedo,
   selectIsUnsaved,
+  selectIsPersisted,
   selectIsWriting,
   selectLocateRow,
   selectQueueAround,
+  selectPageBase,
+  selectPageTab,
   selectPrelude,
   selectQueryTab,
   selectRowContext,
@@ -121,6 +132,7 @@ import {
   emptyPage,
   type AppState,
   type CurrentTrack,
+  type PageTab,
   type PresetEdit,
   type PresetSave,
   type QueryTab,
@@ -187,7 +199,7 @@ const UNREPORTED_METHODS: ReadonlySet<string> = new Set(["app.version"]);
  * edit is applied to the definition as it stands when the writes land. */
 export interface PreparedStep {
   writes: EntryWrites;
-  edit?: (def: QueryDefinition) => void;
+  edit?: (def: Sections) => void;
 }
 
 export interface AppActions {
@@ -213,8 +225,15 @@ export interface AppActions {
   setTheme: (pref: ThemePref) => void;
   /** Sets the audio-streaming quality preference — the Settings menu's action. */
   setAudioQuality: (pref: AudioQualityPref) => void;
-  /** Open (or focus) a query in a tab. */
-  openTab: (query: { id: string; name: string; definition: string }) => void;
+  /** Open (or focus) a saved source in a tab: a query tab, or a playlist tab
+   * for a playlist (`kind: "playlist"` with its `playlistId`). */
+  openTab: (source: {
+    id: string;
+    name: string;
+    definition: string;
+    kind?: SourceKind;
+    playlistId?: string | null;
+  }) => void;
   /** Open (or focus) the singleton Keyboard Shortcuts tab — the
    * `shortcuts.configure` command's and the Settings menu's action. */
   openShortcutsTab: () => void;
@@ -616,9 +635,40 @@ export function createAppActions(
     });
   };
 
-  /** The draft of `tabId`'s page, created empty by the first write to it. Only
-   * for writes: a read goes through `s.pages[tabId]?.…`, which never creates
-   * one. */
+  /** {@link editQueryTab} for any page tab: a query's or a playlist's. */
+  const editPageTab = (tabId: string, mutate: (t: PageTab) => void) => {
+    set((s) => {
+      const t = s.tabs.find((x) => x.id === tabId);
+      if (t?.kind === "query" || t?.kind === "playlist") mutate(t);
+    });
+  };
+
+  /** Puts `def` in page tab `t`'s `field`. A page only ever holds definitions
+   * of its own kind (its history and its saves hold ones it produced), so the
+   * kinds always match; the check is what lets the types follow that. */
+  const assignDefinition = (
+    t: PageTab,
+    field: "saved" | "live",
+    def: PageDefinition,
+  ) => {
+    if (t.kind === "query") {
+      if (isQueryDefinition(def)) t[field] = def;
+    } else if (!isQueryDefinition(def)) {
+      t[field] = def;
+    }
+  };
+
+  /** Compiles page tab `t`'s working definition as its kind calls for: a
+   * query through `compileSavedQuery`, a playlist's entry listing through
+   * `compilePlaylist`. Throws as they do. */
+  const compilePage = (t: PageTab, schemaJson: string) => {
+    const presets = selectEffectivePresets(get());
+    const prelude = selectPrelude(get());
+    return t.kind === "playlist"
+      ? compilePlaylist(t.playlistId, t.live, presets, schemaJson, prelude)
+      : compileSavedQuery(t.live, presets, schemaJson, prelude);
+  };
+
   // Writes to playlists' entries, run one at a time per playlist, keyed by
   // source id (which is also its tab's id). A page's `writing` flag mirrors
   // whether its key has anything in flight or waiting.
@@ -630,6 +680,9 @@ export function createAppActions(
     });
   });
 
+  /** The draft of `tabId`'s page, created empty by the first write to it. Only
+   * for writes: a read goes through `s.pages[tabId]?.…`, which never creates
+   * one. */
   const pageDraft = (s: Draft<AppState>, tabId: string) =>
     (s.pages[tabId] ??= castDraft({
       ...emptyPage(),
@@ -737,10 +790,15 @@ export function createAppActions(
     const trackCol = trackIdColumn(sources);
     const playable = trackCol !== undefined && !isListColumn(trackCol);
     const schemaJson = get().schema.json;
+    // A playlist page's rows stand for their tracks. The entries themselves
+    // aren't for editing, so the record editor begins at the track ("Edit
+    // track", not "Edit playlist_track").
+    const playlist = selectPageTab(get(), tabId)?.kind === "playlist";
     const records = schemaJson
       ? recordKeyColumns(sources, parseSchemaTables(schemaJson))
           // A key whose value arrives as a list identifies no one record.
           .filter((k) => !k.keyIndices.some(isListColumn))
+          .filter((k) => !playlist || k.table !== "playlist_track")
       : [];
 
     set((s) => {
@@ -784,10 +842,10 @@ export function createAppActions(
 
   /** {@link checkpoint}, whether or not a write is in flight. */
   const recordLive = (tabId: string) => {
-    const live = selectQueryTab(get(), tabId)?.live;
+    const live = selectPageTab(get(), tabId)?.live;
     if (!live) return;
     const history = get().pages[tabId]?.undo ?? EMPTY_HISTORY;
-    const next = checkpointHistory(history, live, defsEqual);
+    const next = checkpointHistory(history, live, pageDefsEqual);
     if (next === history) return;
     set((s) => {
       pageDraft(s, tabId).undo = castDraft(next);
@@ -795,7 +853,7 @@ export function createAppActions(
   };
 
   const runQuery = (tabId: string) => {
-    const t = selectQueryTab(get(), tabId);
+    const t = selectPageTab(get(), tabId);
     if (!t) return;
     // An immediate run supersedes any run this tab had pending on the debounce.
     cancelScheduledRun(tabId);
@@ -813,15 +871,10 @@ export function createAppActions(
         await querydownReady();
         // Re-read after the await (store rule 4): the tab's working
         // definition may have moved on while the compiler was loading.
-        const current = selectQueryTab(get(), tabId);
+        const current = selectPageTab(get(), tabId);
         const schemaJson = get().schema.json;
         if (!current || schemaJson === undefined) return;
-        const { sql, columnAnnotations } = compileSavedQuery(
-          current.live,
-          selectEffectivePresets(get()),
-          schemaJson,
-          selectPrelude(get()),
-        );
+        const { sql, columnAnnotations } = compilePage(current, schemaJson);
         const table = await runSql(sql);
         // Decode the result once, here — never per resize/frame (§6). Display
         // text is derived from it on read, not precomputed.
@@ -867,49 +920,50 @@ export function createAppActions(
    * lands immediately (so the controlled input stays in sync) while the run
    * waits for a pause in the typing.
    *
-   * The one way a query's definition changes — every edit, rebase, revert,
-   * undo and redo comes through here — so a saved query's save is deferred
-   * from here too. */
+   * The one way a page's definition changes — every edit, rebase, revert,
+   * undo and redo comes through here — so a saved query's or a playlist's save
+   * is deferred from here too. */
   const changeLive = (
     tabId: string,
-    change: (t: QueryTab) => void,
+    change: (t: PageTab) => void,
     run: "now" | "debounced",
   ) => {
-    if (!selectQueryTab(get(), tabId)) return;
-    editQueryTab(tabId, change);
+    if (!selectPageTab(get(), tabId)) return;
+    editPageTab(tabId, change);
     deferSave(tabId);
     if (run === "now") runQuery(tabId);
     else scheduleRun(tabId);
   };
 
-  /** Formulates the save of saved query `tabId`'s working definition as it
+  /** Formulates the save of saved source `tabId`'s working definition as it
    * stands, and holds it until the app goes quiet — replacing any save of it
    * already waiting. An unsaved query's edits stay in its tab. */
   const deferSave = (tabId: string) => {
-    const t = selectQueryTab(get(), tabId);
-    if (!t?.persisted) return;
+    const t = selectPageTab(get(), tabId);
+    if (!t || !selectIsPersisted(get(), tabId)) return;
     const def = t.live;
     saves.defer(tabId, () => writeDefinition(tabId, def));
   };
 
-  /** Writes `def` as saved query `tabId`'s definition. Once the backend has
-   * it, it's the tab's `saved` baseline and the explorer's copy (which is what
-   * opening the query again reads); a failure is flagged on the tab, and the
-   * error bar has already reported it (`onRpcFailure`). */
-  const writeDefinition = async (tabId: string, def: QueryDefinition) => {
-    const definition = definitionToStored(def);
+  /** Writes `def` as saved source `tabId`'s definition (whichever of a query
+   * or a playlist it wraps — `source.update_definition` sorts that out). Once
+   * the backend has it, it's the tab's `saved` baseline and the explorer's copy
+   * (which is what opening the source again reads); a failure is flagged on the
+   * tab, and the error bar has already reported it (`onRpcFailure`). */
+  const writeDefinition = async (tabId: string, def: PageDefinition) => {
+    const definition = pageDefinitionToStored(def);
     const modifiedAt = nowEpoch();
     try {
       await sourceUpdateDefinition({ id: tabId, definition, modifiedAt });
     } catch (err) {
-      console.error("query save failed", err);
-      editQueryTab(tabId, (x) => {
+      console.error("source save failed", err);
+      editPageTab(tabId, (x) => {
         x.saveFailed = true;
       });
       return;
     }
-    editQueryTab(tabId, (x) => {
-      x.saved = def;
+    editPageTab(tabId, (x) => {
+      assignDefinition(x, "saved", def);
       x.saveFailed = false;
     });
     set((s) => {
@@ -925,9 +979,9 @@ export function createAppActions(
    * history where it was. */
   const traverseStep = (
     tabId: string,
-    from: UndoHistory<QueryDefinition>,
-    step: UndoStep<QueryDefinition>,
-    to: UndoHistory<QueryDefinition>,
+    from: UndoHistory<PageDefinition>,
+    step: UndoStep<PageDefinition>,
+    to: UndoHistory<PageDefinition>,
     direction: "apply" | "revert",
   ) => {
     const writes = step.writes?.[direction];
@@ -956,13 +1010,13 @@ export function createAppActions(
    * "The results after a write" in the playlists spec). */
   const landHistory = (
     tabId: string,
-    history: UndoHistory<QueryDefinition>,
+    history: UndoHistory<PageDefinition>,
     entriesChanged: boolean,
   ) => {
-    const live = selectQueryTab(get(), tabId)?.live;
+    const live = selectPageTab(get(), tabId)?.live;
     const def = history.current;
     const changesDef =
-      def !== undefined && live !== undefined && !defsEqual(def, live);
+      def !== undefined && live !== undefined && !pageDefsEqual(def, live);
     set((s) => {
       const page = pageDraft(s, tabId);
       page.undo = castDraft(history);
@@ -973,22 +1027,35 @@ export function createAppActions(
     else if (entriesChanged) runQuery(tabId);
   };
 
-  /** {@link changeLive} through a mutator of the working definition. */
+  /** {@link changeLive} through a mutator of the working definition's
+   * sections — the part every page kind shares, and the builders edit. */
   const editLive = (
     tabId: string,
-    mutate: (def: QueryDefinition) => void,
+    mutate: (def: Sections) => void,
     run: "now" | "debounced" = "now",
   ) => changeLive(tabId, (t) => mutate(t.live), run);
 
-  /** {@link changeLive} to a whole new working definition. */
-  const replaceLive = (tabId: string, def: QueryDefinition) =>
+  /** {@link editLive} for what only a query has (its full-Querydown text): a
+   * no-op on any other page. */
+  const editQueryLive = (
+    tabId: string,
+    mutate: (def: QueryDefinition) => void,
+    run: "now" | "debounced" = "now",
+  ) => {
+    if (!selectQueryTab(get(), tabId)) return;
     changeLive(
       tabId,
       (t) => {
-        t.live = def;
+        if (t.kind === "query") mutate(t.live);
       },
-      "now",
+      run,
     );
+  };
+
+  /** {@link changeLive} to a whole new working definition, of the page's own
+   * kind. */
+  const replaceLive = (tabId: string, def: PageDefinition) =>
+    changeLive(tabId, (t) => assignDefinition(t, "live", def), "now");
 
   const beginPresetEdit = (id: string) => {
     const preset = get().presets.find((p) => p.id === id);
@@ -1202,10 +1269,11 @@ export function createAppActions(
     );
   };
 
-  /** Records a play against `tabId`'s saved source (bumps `last_play`). Skipped
-   * for an unsaved tab, which has no backend row yet. */
+  /** Records a play against `tabId`'s saved source (bumps `last_play`) — a
+   * query's or a playlist's. Skipped for an unsaved query, which has no backend
+   * row yet. */
   const recordQueryPlay = (tabId: string) => {
-    if (!selectQueryTab(get(), tabId)?.persisted) return;
+    if (!selectIsPersisted(get(), tabId)) return;
     void sourceRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
       console.error("record play failed", err),
     );
@@ -1468,22 +1536,35 @@ export function createAppActions(
       });
       persistAudioQuality(env, pref);
     },
-    openTab: (query) => {
+    openTab: (source) => {
       set((s) => {
-        if (!s.tabs.some((t) => t.id === query.id)) {
-          const saved = definitionFromStored(query.definition);
-          s.tabs.push({
-            kind: "query",
-            id: query.id,
-            name: query.name,
-            saved,
-            live: cloneDefinition(saved),
-            persisted: true,
-            saveFailed: false,
-            folder: null,
-          });
+        if (!s.tabs.some((t) => t.id === source.id)) {
+          if (source.kind === "playlist" && source.playlistId) {
+            const saved = playlistDefinitionFromStored(source.definition);
+            s.tabs.push({
+              kind: "playlist",
+              id: source.id,
+              playlistId: source.playlistId,
+              name: source.name,
+              saved,
+              live: structuredClone(saved),
+              saveFailed: false,
+            });
+          } else {
+            const saved = definitionFromStored(source.definition);
+            s.tabs.push({
+              kind: "query",
+              id: source.id,
+              name: source.name,
+              saved,
+              live: cloneDefinition(saved),
+              persisted: true,
+              saveFailed: false,
+              folder: null,
+            });
+          }
         }
-        s.activeTabId = query.id;
+        s.activeTabId = source.id;
       });
     },
     openShortcutsTab: () => {
@@ -1588,9 +1669,9 @@ export function createAppActions(
         item.kind === "folder"
           ? folderRename({ id: item.id, name: trimmed })
           : sourceRename({ id: item.id, name: trimmed });
-      // An open tab of the query goes by its name too.
+      // An open tab of the source goes by its name too.
       if (item.kind === "source") {
-        editQueryTab(item.id, (t) => {
+        editPageTab(item.id, (t) => {
           t.name = trimmed;
         });
       }
@@ -1971,12 +2052,12 @@ export function createAppActions(
       );
     },
 
-    // Only a saved query has a name of its own to rename; a settings tab's
+    // Only a saved source has a name of its own to rename; a settings tab's
     // handle text is fixed, and an unsaved query is named as it's saved, so
     // the rename affordances stand down for both.
     beginRename: (id) => {
-      const t = selectQueryTab(get(), id);
-      if (t?.persisted) {
+      const t = selectPageTab(get(), id);
+      if (t && selectIsPersisted(get(), id)) {
         set((s) => {
           s.renaming = { id, buffer: t.name };
         });
@@ -1990,17 +2071,17 @@ export function createAppActions(
       const r = get().renaming;
       if (!r) return;
       const name = r.buffer.trim();
-      const t = selectQueryTab(get(), r.id);
+      const t = selectPageTab(get(), r.id);
       set((s) => {
         s.renaming = null;
       });
       if (name === "" || !t || t.name === name) return;
-      editQueryTab(r.id, (x) => {
+      editPageTab(r.id, (x) => {
         x.name = name;
       });
       void sourceRename({ id: r.id, name })
         .then(() => actions.loadSources())
-        .catch((err) => console.error("query rename failed", err));
+        .catch((err) => console.error("source rename failed", err));
     },
     cancelRename: () =>
       set((s) => {
@@ -2121,12 +2202,12 @@ export function createAppActions(
         pageDraft(s, tabId).expandedPreset = null;
         pageDraft(s, tabId).builderSection = null;
       });
-      editLive(tabId, (def) => {
+      editQueryLive(tabId, (def) => {
         def.full = full;
       });
     },
     setFullText: (tabId, text) =>
-      editLive(
+      editQueryLive(
         tabId,
         (def) => {
           def.full = text;
@@ -2155,7 +2236,7 @@ export function createAppActions(
       });
       // Collapse the expansion if the now-removed preset was expanded.
       if (
-        !selectQueryTab(get(), tabId)?.live.filter.presets.includes(presetId) &&
+        !selectPageTab(get(), tabId)?.live.filter.presets.includes(presetId) &&
         get().pages[tabId]?.expandedPreset === presetId
       ) {
         set((s) => {
@@ -2223,12 +2304,12 @@ export function createAppActions(
         }
         // Re-read after the awaits: the tab may have closed, or its definition
         // moved on, while the writes were in flight.
-        if (!selectQueryTab(get(), tabId)) return true;
+        if (!selectPageTab(get(), tabId)) return true;
         // An edit made while the writes were in flight went unrecorded
         // (`checkpoint` waits on them). It came first, so it's a step of its
         // own, before this one.
         recordLive(tabId);
-        const before = selectQueryTab(get(), tabId)?.live;
+        const before = selectPageTab(get(), tabId)?.live;
         const history = get().pages[tabId]?.undo;
         if (!before || !history) return true;
         const { edit } = prepared;
@@ -2237,7 +2318,7 @@ export function createAppActions(
           tabId,
           pushStep(history, {
             writes: prepared.writes,
-            definition: defsEqual(before, after)
+            definition: pageDefsEqual(before, after)
               ? undefined
               : { before, after },
           }),
@@ -2299,10 +2380,9 @@ export function createAppActions(
       }),
     confirmPresetSave: (tabId) => {
       const save = get().presetSave;
-      const t = selectQueryTab(get(), tabId);
-      if (!save || !t) return;
+      if (!save || !selectPageTab(get(), tabId)) return;
       const name = save.name.trim();
-      const base = t.live.base.trim();
+      const base = selectPageBase(get(), tabId);
       if (name === "" || base === "") return;
       const now = nowEpoch();
       const preset: Preset = {
@@ -2335,16 +2415,11 @@ export function createAppActions(
       });
     },
     openViewSql: (tabId) => {
-      const t = selectQueryTab(get(), tabId);
+      const t = selectPageTab(get(), tabId);
       const schemaJson = get().schema.json;
       if (!t || schemaJson === undefined) return;
       try {
-        const { sql } = compileSavedQuery(
-          t.live,
-          selectEffectivePresets(get()),
-          schemaJson,
-          selectPrelude(get()),
-        );
+        const { sql } = compilePage(t, schemaJson);
         set((s) => {
           s.viewSql = sql;
         });
@@ -2379,8 +2454,10 @@ export function createAppActions(
       void persisted.catch((err) => console.error("setting save failed", err));
       // Every setting so far feeds the compiler, and the rows on screen were
       // compiled under the old value — so they're now stale. Re-run each open
-      // query rather than leave results that no longer answer what they claim.
-      for (const t of get().tabs) if (t.kind === "query") runQuery(t.id);
+      // page rather than leave results that no longer answer what they claim.
+      for (const t of get().tabs) {
+        if (t.kind === "query" || t.kind === "playlist") runQuery(t.id);
+      }
     },
     openSetting: (key) =>
       set((s) => {
@@ -2425,11 +2502,12 @@ export function createAppActions(
     flushSaves: () => saves.flushAll(),
   };
 
-  // A saved query restored with edits the backend never acknowledged (the
+  // A saved source restored with edits the backend never acknowledged (the
   // page went away before they were written, or the write failed) has them
   // saved now, as if they had just been made.
   for (const t of get().tabs) {
-    if (t.kind === "query" && !defsEqual(t.saved, t.live)) deferSave(t.id);
+    if (t.kind === "shortcuts") continue;
+    if (!pageDefsEqual(t.saved, t.live)) deferSave(t.id);
   }
 
   const dispose = () => {

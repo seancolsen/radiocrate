@@ -8,12 +8,15 @@ import {
   rearrangeMoves,
   removeEntriesWrites,
   renumberMoves,
+  rowEntry,
   sequentialPositions,
   setPositionsWrites,
   sourceTimestamp,
   toDmlRequest,
   type PlaylistEntry,
 } from "./playlistEntries";
+
+import { buildResultFromStringRows } from "./result";
 
 /** Ids `n0`, `n1`, … in the order they're asked for. */
 function ids(): () => string {
@@ -309,5 +312,22 @@ describe("setPositionsWrites", () => {
         },
       ],
     });
+  });
+});
+
+describe("rowEntry", () => {
+  it("reads a row's entry from the hidden id and position columns", () => {
+    const result = buildResultFromStringRows(
+      [
+        ["e1", "6.25", "t1"],
+        [null, "7", "t2"],
+        ["e3", null, "t3"],
+      ],
+      [0, 1],
+    );
+    expect(rowEntry(result, 0)).toEqual({ id: "e1", position: 6.25 });
+    expect(rowEntry(result, 1)).toBeUndefined();
+    expect(rowEntry(result, 2)).toBeUndefined();
+    expect(rowEntry(result, 3)).toBeUndefined();
   });
 });

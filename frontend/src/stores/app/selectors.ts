@@ -1,6 +1,12 @@
 import type { Preset } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
 import { defsEqual, type Section } from "../../query/definition";
+import {
+  pageDefsEqual,
+  PLAYLIST_BASE,
+  type Sections,
+} from "../../query/playlist";
+import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryResult } from "../../query/result";
@@ -8,6 +14,7 @@ import type { RowContext } from "../../query/rowDml";
 import {
   EMPTY_SELECTION,
   type AppState,
+  type PageTab,
   type PresetEdit,
   type QueryTab,
   type Rating,
@@ -40,6 +47,33 @@ export const selectQueryTab = (
   return t?.kind === "query" ? t : undefined;
 };
 
+/** The tab with `id` when it holds a results page — a query's or a
+ * playlist's: what runs, the builders, the results, undo and the record editor
+ * all go through. A shortcuts tab reads as absent. */
+export const selectPageTab = (
+  s: AppState,
+  tabId: string,
+): PageTab | undefined => {
+  const t = selectTab(s, tabId);
+  return t?.kind === "query" || t?.kind === "playlist" ? t : undefined;
+};
+
+/** The sections a page tab's builders edit — its working definition, as the
+ * builders see it. */
+export const selectPageSections = (
+  s: AppState,
+  tabId: string,
+): Sections | undefined => selectPageTab(s, tabId)?.live;
+
+/** The table a page tab's sections are written against: a query's base, or
+ * `track` for a playlist (its sections are scoped to each entry's track).
+ * Empty for a query with no base chosen, and for a tab that isn't a page. */
+export const selectPageBase = (s: AppState, tabId: string): string => {
+  const t = selectPageTab(s, tabId);
+  if (!t) return "";
+  return t.kind === "playlist" ? PLAYLIST_BASE : t.live.base.trim();
+};
+
 /** Whether a tab has changes the backend doesn't: an unsaved query always, and
  * a saved one whose last save failed. What shows the Save button and the ✱. A
  * saved query's edits waiting to be written lazily don't count — they're on
@@ -50,9 +84,12 @@ export const selectIsUnsaved = (s: AppState, tabId: string): boolean => {
   return t ? !t.persisted || t.saveFailed : false;
 };
 
-/** Whether `tabId` is a saved query — one with a name to rename. */
-export const selectIsPersisted = (s: AppState, tabId: string): boolean =>
-  selectQueryTab(s, tabId)?.persisted ?? false;
+/** Whether `tabId` is a saved source — one with a name to rename: a saved
+ * query, or any playlist (which is saved from the moment it exists). */
+export const selectIsPersisted = (s: AppState, tabId: string): boolean => {
+  const t = selectPageTab(s, tabId);
+  return t?.kind === "playlist" || (t?.persisted ?? false);
+};
 
 /** Whether "Revert changes" applies: a saved query whose working definition
  * couldn't be saved, and so differs from what the backend holds. (An unsaved
@@ -67,17 +104,17 @@ export const selectCanRevert = (s: AppState, tabId: string): boolean => {
  * While a write is in flight ({@link selectIsWriting}) it still applies, but
  * has to wait. */
 export const selectCanUndo = (s: AppState, tabId: string): boolean => {
-  const t = selectQueryTab(s, tabId);
+  const t = selectPageTab(s, tabId);
   const undo = s.pages[tabId]?.undo;
-  return t && undo ? canUndo(undo, t.live, defsEqual) : false;
+  return t && undo ? canUndo(undo, t.live, pageDefsEqual) : false;
 };
 
 /** Whether `tabId`'s Redo applies: something has been undone, and nothing
  * edited since. Waits on a write in flight, as Undo does. */
 export const selectCanRedo = (s: AppState, tabId: string): boolean => {
-  const t = selectQueryTab(s, tabId);
+  const t = selectPageTab(s, tabId);
   const undo = s.pages[tabId]?.undo;
-  return t && undo ? canRedo(undo, t.live, defsEqual) : false;
+  return t && undo ? canRedo(undo, t.live, pageDefsEqual) : false;
 };
 
 /** Whether a write to `tabId`'s playlist entries is in flight or waiting. */
@@ -211,7 +248,7 @@ export const selectBuilderSection = (
 ): Section | null => s.pages[tabId]?.builderSection ?? null;
 
 /** Whether a tab's working query is one hand-written Querydown query rather
- * than the four builder sections. */
+ * than the four builder sections. Never true of a playlist. */
 export const selectIsFullQuery = (s: AppState, tabId: string): boolean =>
   selectQueryTab(s, tabId)?.live.full != null;
 
@@ -388,25 +425,37 @@ export function selectRowForRecord(
 }
 
 /** What re-reading row `index` of `tabId` takes: the query as the user built
- * it, and what the row stands for. `undefined` — which runs the write with no
- * refresh at all — when the tab holds no query, the schema hasn't loaded, or
- * the row identifies no record to narrow the query to. */
+ * it, and what the row stands for (on a playlist page, the entry it lists too).
+ * `undefined` — which runs the write with no refresh at all — when the tab
+ * holds no page, the schema hasn't loaded, or the row identifies no record to
+ * narrow the query to (no entry, on a playlist page). */
 export function selectRowContext(
   s: AppState,
   tabId: string,
   index: number,
 ): RowContext | undefined {
-  const t = selectQueryTab(s, tabId);
+  const t = selectPageTab(s, tabId);
   const schemaJson = s.schema.json;
   if (!t || schemaJson === undefined) return undefined;
   const records = selectRowRecords(s, tabId, index);
   if (records.length === 0) return undefined;
-  // The *working* definition: it's the one the displayed rows came from.
-  return {
-    definition: t.live,
+  const common = {
     presets: selectEffectivePresets(s),
     schemaJson,
     prelude: selectPrelude(s),
     records,
+  };
+  // The *working* definition: it's the one the displayed rows came from.
+  if (t.kind === "query")
+    return { ...common, kind: "query", definition: t.live };
+  const result = s.pages[tabId]?.result;
+  const entry = result && rowEntry(result, index);
+  if (!entry) return undefined;
+  return {
+    ...common,
+    kind: "playlist",
+    playlistId: t.playlistId,
+    definition: t.live,
+    entryId: entry.id,
   };
 }

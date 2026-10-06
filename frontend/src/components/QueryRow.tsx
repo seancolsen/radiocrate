@@ -1,11 +1,12 @@
 import type { JSX, MouseEvent, PointerEvent } from "react";
+import type { SourceKind } from "api-client";
 import { TREE_INDENT, TREE_PAD } from "../gestures/useTreeDrag";
 import { Icons } from "../icons";
 import TreeNameField from "./TreeNameField";
 import { cx } from "./ui/cx";
 
-/** A row in the "Queries" tree: a saved query, `depth` folders deep. Clicking
- * (or Enter) opens it, F2 renames it in place, and pressing on it can also
+/** A row in the "Queries" tree: a saved source — a query or a playlist, each
+ * with its own icon — `depth` folders deep. Clicking (or Enter) opens it, F2 renames it in place, and pressing on it can also
  * pick it up to drag (see `QueryTree`). Unlike the Opened rows, saved-query
  * rows never show the unsaved (✱) marker — that state belongs to open tabs,
  * not the saved catalog.
@@ -13,6 +14,7 @@ import { cx } from "./ui/cx";
  * The icon sits one chevron's width in from the row's edge, so a query lines up
  * with the folder icons beside it rather than with their chevrons. */
 export default function QueryRow(props: {
+  kind: SourceKind;
   name: string;
   depth: number;
   renaming: boolean;
@@ -25,6 +27,7 @@ export default function QueryRow(props: {
   onPointerDown: (e: PointerEvent<HTMLElement>) => void;
   onContextMenu: (e: MouseEvent<HTMLElement>) => void;
 }): JSX.Element {
+  const Icon = props.kind === "playlist" ? Icons.Playlist : Icons.Query;
   return (
     <div
       data-tree-row
@@ -51,10 +54,10 @@ export default function QueryRow(props: {
       }}
     >
       <span className="size-4 shrink-0" aria-hidden="true" />
-      <Icons.Query className="text-ink-weak size-[14px] shrink-0" />
+      <Icon className="text-ink-weak size-[14px] shrink-0" />
       {props.renaming ? (
         <TreeNameField
-          label="Query name"
+          label={props.kind === "playlist" ? "Playlist name" : "Query name"}
           name={props.name}
           onCommit={props.onCommitRename}
           onCancel={props.onCancelRename}

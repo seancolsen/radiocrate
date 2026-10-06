@@ -2,11 +2,17 @@ import type { JSX } from "react";
 import { useShallow } from "zustand/shallow";
 import { Icons } from "../../icons";
 import {
+  playlistOrderContent,
   sectionLabel,
   sectionSeedText,
   type Section,
 } from "../../query/definition";
-import { selectPresetsFor, selectQueryTab } from "../../stores/app";
+import {
+  selectPageBase,
+  selectPageSections,
+  selectPresetsFor,
+  selectTab,
+} from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import { MenuHeading, MenuSeparator, MenuToggleItem } from "../ui/Menu";
 
@@ -15,26 +21,27 @@ import { MenuHeading, MenuSeparator, MenuToggleItem } from "../ui/Menu";
  * sort/display pick exactly one thing, so theirs are radios (exclusive).
  * Rendered inside the `SplitButton`'s `Menu`.
  *
- * Layout: the always-present "Custom …" entry, then (sort-of-track only) the
- * built-in Shuffle preset under a BUILT-IN heading, then the user presets. */
+ * Layout: on a playlist's sort only, "Playlist order" (no sorting conditions,
+ * the default) first; then the always-present "Custom …" entry, then
+ * (sort-of-track only) the built-in Shuffle preset under a BUILT-IN heading,
+ * then the user presets. */
 export default function SectionOptionsMenu(props: {
   tabId: string;
   section: Section;
 }): JSX.Element {
-  const live = useApp((s) => selectQueryTab(s, props.tabId)?.live);
+  const live = useApp((s) => selectPageSections(s, props.tabId));
+  const base = useApp((s) => selectPageBase(s, props.tabId));
+  const playlist = useApp(
+    (s) => selectTab(s, props.tabId)?.kind === "playlist",
+  );
   const presets = useApp(
     useShallow((s) =>
-      selectPresetsFor(
-        s,
-        selectQueryTab(s, props.tabId)?.live.base.trim() ?? "",
-        props.section,
-      ),
+      selectPresetsFor(s, selectPageBase(s, props.tabId), props.section),
     ),
   );
   const allPresets = useApp((s) => s.presets);
   const { setSectionContent, toggleFilterPreset, reshuffle } = useAppActions();
 
-  const base = live?.base.trim() ?? "";
   const kind = props.section === "filter" ? "checkbox" : "radio";
   const customLabel = `Custom ${sectionLabel(props.section).toLowerCase()}`;
   const showShuffle =
@@ -46,10 +53,13 @@ export default function SectionOptionsMenu(props: {
     props.section === "filter"
       ? true
       : live != null && "custom" in live[props.section];
-  const shuffleChecked =
+  const builtinChecked = (preset: "shuffle" | "playlist_order") =>
     live != null &&
     "builtin" in live.sort &&
-    live.sort.builtin.preset === "shuffle";
+    live.sort.builtin.preset === preset;
+  const shuffleChecked = builtinChecked("shuffle");
+  const showPlaylistOrder = playlist && props.section === "sort";
+  const playlistOrderChecked = builtinChecked("playlist_order");
   const presetChecked = (id: string): boolean => {
     if (props.section === "filter")
       return live?.filter.presets.includes(id) ?? false;
@@ -75,6 +85,19 @@ export default function SectionOptionsMenu(props: {
 
   return (
     <div className="min-w-[220px]">
+      {showPlaylistOrder && (
+        <MenuToggleItem
+          kind="radio"
+          icon={Icons.Playlist}
+          label="Playlist order"
+          checked={playlistOrderChecked}
+          onClick={() => {
+            if (!playlistOrderChecked) {
+              setSectionContent(props.tabId, "sort", playlistOrderContent());
+            }
+          }}
+        />
+      )}
       <MenuToggleItem
         kind={kind}
         icon={Icons.Custom}

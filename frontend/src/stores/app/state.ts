@@ -9,6 +9,7 @@ import type { AudioQualityPref } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
+import type { PageDefinition, PlaylistDefinition } from "../../query/playlist";
 import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
 import type { SchemaTable } from "../../query/schema";
@@ -54,7 +55,7 @@ export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
  * surface (the tab bar, the explorer's "Opened" list) reads one field. */
 export const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
 
-/** An open query tab. Tab id == query id. Carries the working (`live`) query
+/** An open query tab. Tab id == source id. Carries the working (`live`) query
  * definition the builder edits, and the `saved` one the backend is known to
  * hold.
  *
@@ -86,6 +87,26 @@ export interface QueryTab {
   folder: string | null;
 }
 
+/** An open playlist tab. Tab id == source id; `playlistId` names the
+ * `playlist` row the source wraps, which is what the page's query lists the
+ * entries of.
+ *
+ * A playlist is always saved (it exists only as records in the database), so
+ * unlike a query tab it has no unsaved state, no folder to be saved into, and
+ * always a name. Its working definition saves itself as a saved query's does:
+ * lazily, through `source.update_definition`, with `saved` catching up as each
+ * write is acknowledged, and `saveFailed` reporting a write that wasn't. */
+export interface PlaylistTab {
+  kind: "playlist";
+  id: string;
+  playlistId: string;
+  name: string;
+  saved: PlaylistDefinition;
+  live: PlaylistDefinition;
+  /** As {@link QueryTab.saveFailed}. */
+  saveFailed: boolean;
+}
+
 /** The keyboard-shortcuts editor tab. There is at most one, and its transient UI
  * state (search text, record mode, the capture dialog) lives in the command
  * store — so the tab itself carries no data beyond its identity. */
@@ -95,12 +116,18 @@ export interface ShortcutsTab {
   name: string;
 }
 
-/** An open tab: a query page or the singleton keyboard-shortcuts editor. More
- * page kinds (playlists, artists, …) slot in here as further variants — the tab
- * bar, the explorer's "Opened" list and the tab commands all work off the shared
- * `kind` / `id` / `name` fields, and only {@link queryTab} narrows to the
- * query-only state. */
-export type Tab = QueryTab | ShortcutsTab;
+/** An open tab: a query page, a playlist page, or the singleton
+ * keyboard-shortcuts editor. More page kinds (artists, …) slot in here as
+ * further variants — the tab bar, the explorer's "Opened" list and the tab
+ * commands all work off the shared `kind` / `id` / `name` fields, and only
+ * `selectQueryTab` / `selectPageTab` narrow to a page's own state. */
+export type Tab = QueryTab | PlaylistTab | ShortcutsTab;
+
+/** A tab whose page is the results page — a query's or a playlist's: a working
+ * definition built with the filter, sort and display builders, run, and shown
+ * as rows. Everything the two share (runs, builders, results, undo, the record
+ * editor, autosave) works off this. */
+export type PageTab = QueryTab | PlaylistTab;
 
 /** Which kind of page a tab holds — the discriminant every kind-aware surface
  * switches on. */
@@ -212,7 +239,7 @@ export interface RpcErrorNotice {
   count: number;
 }
 
-/** Everything a query tab's page holds beyond the tab itself: its results and
+/** Everything a page tab's page holds beyond the tab itself: its results and
  * how the user is looking at them. */
 export interface QueryPageState {
   /** The decoded, render-ready result (absent until a run lands). */
@@ -274,7 +301,7 @@ export interface QueryPageState {
   /** The page's undo history, checkpointed at every run of its query (see
    * `state/undoHistory.ts`). Replaced wholesale on every change, like
    * `selection`. */
-  undo: UndoHistory<QueryDefinition>;
+  undo: UndoHistory<PageDefinition>;
   /** Whether a write to the page's playlist entries is in flight or waiting
    * in the playlist's write queue. Undo and redo wait for it, and so does the
    * history: no checkpoint is recorded while it's set (see `writeStep`). */
@@ -312,7 +339,7 @@ export interface AppState {
   /** The explorer item (folder or saved query) whose name is being edited in
    * place, if any. */
   renamingTreeItem: TreeItemRef | null;
-  /** Each query tab's page state, keyed by tab id. An entry is created by the
+  /** Each page tab's page state, keyed by tab id. An entry is created by the
    * first write for its tab and dropped whole when the tab closes. */
   pages: Record<string, QueryPageState>;
   /** Whether the initial `preset.list` load has landed. */
@@ -384,8 +411,8 @@ export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 
 /** The open tabs a previous visit left (see `storedTabs`), as tabs: the
  * shortcuts editor gets its fixed id and name back, and an active id that names
- * no restored tab falls back to the first one. A restored query tab has no page
- * yet; its query runs again when it's first viewed. */
+ * no restored tab falls back to the first one. A restored query or playlist tab
+ * has no page yet; its query runs again when it's first viewed. */
 function restoredTabs(env: AppEnv): {
   tabs: Tab[];
   activeTabId: string | null;

@@ -32,6 +32,7 @@ import {
 import {
   assemblePlaylist,
   playlistQuerydown as generate,
+  type PlaylistQueryOptions,
 } from "../../frontend/src/query/playlist.ts";
 import { addInferredLinks } from "../../frontend/src/query/schema.ts";
 
@@ -53,7 +54,7 @@ function playlistQuerydown(
   filter: string,
   sort: string,
   display: string,
-  options: { withFilter?: boolean } = {},
+  options: PlaylistQueryOptions = {},
 ): string {
   return generate(PLAYLIST, { filter, sort, display }, options);
 }
@@ -79,6 +80,13 @@ duckdb(
    insert into playlist_track
    select gen_random_uuid(), '${PLAYLIST}', id, row_number() over () from (select id from track limit 5);`,
 );
+// One entry, for the listing narrowed to it (how a row is read back after a
+// write made from it).
+const ENTRY = (
+  JSON.parse(duckdb(db, "select id::text as id from playlist_track limit 1;", true)) as {
+    id: string;
+  }[]
+)[0].id;
 const introspection = readFileSync("introspection/resources/duckdb.sql", "utf8");
 const rawSchema = (JSON.parse(duckdb(db, introspection, true)) as { schema: string }[])[0].schema;
 const schema = addInferredLinks(rawSchema);
@@ -94,9 +102,10 @@ $title @{width:[100 400]}
 $year @{width:35}
 $rating.symbol @{width:20 align:center}`;
 
-/** Each case's Querydown, and the number of hidden playlist columns it leads
- * with (the entry's `$id` and `$position`, or none for a plain track query). */
-const cases: Record<string, { text: string; entryColumns: boolean }> = {
+/** Each case's Querydown, whether it leads with the hidden playlist columns (the
+ * entry's `$id` and `$position`, or none for a plain track query), and the row
+ * count it must return, where that's fixed. */
+const cases: Record<string, { text: string; entryColumns: boolean; rows?: number }> = {
   "no conditions": { text: playlistQuerydown("", "", DISPLAY), entryColumns: true },
   "playlist order": {
     text: generate(
@@ -129,6 +138,11 @@ const cases: Record<string, { text: string; entryColumns: boolean }> = {
     entryColumns: true,
   },
   "empty display": { text: playlistQuerydown("", "", ""), entryColumns: true },
+  "one entry (row re-read)": {
+    text: playlistQuerydown('artist:"a"', "\\\\artists", DISPLAY, { entryId: ENTRY }),
+    entryColumns: true,
+    rows: 1,
+  },
   // Not a playlist: the same duplicate-name bug hit a track query that shows
   // both its own id and its album's.
   "track query with $album.id": {
@@ -138,7 +152,7 @@ const cases: Record<string, { text: string; entryColumns: boolean }> = {
 };
 
 let failed = false;
-for (const [name, { text, entryColumns }] of Object.entries(cases)) {
+for (const [name, { text, entryColumns, rows: expectedRows }] of Object.entries(cases)) {
   try {
     const { sql } = compile(schema, "duckdb", `${DEFAULT_PRELUDE}\n${text}`);
     const rows = (JSON.parse(duckdb(db, sql, true) || "[]") as unknown[]).length;
@@ -150,9 +164,10 @@ for (const [name, { text, entryColumns }] of Object.entries(cases)) {
       (!entryColumns ||
         (traces(0, "playlist_track", "id") && traces(1, "playlist_track", "position"))) &&
       (name === "empty display" ? trackIdCols.length === 0 : trackIdCols.length === 1);
-    if (!lineageOk) failed = true;
+    const ok = lineageOk && (expectedRows === undefined || rows === expectedRows);
+    if (!ok) failed = true;
     console.log(
-      `${lineageOk ? "ok  " : "FAIL"} ${name}: ${rows} rows; track.id in columns [${trackIdCols}]; ` +
+      `${ok ? "ok  " : "FAIL"} ${name}: ${rows} rows; track.id in columns [${trackIdCols}]; ` +
         `lineage ${JSON.stringify(sources)}`,
     );
   } catch (err) {

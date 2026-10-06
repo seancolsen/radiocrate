@@ -53,6 +53,27 @@ export const SOURCES_FIXTURE: Source[] = [
   },
 ];
 
+/** A saved playlist, kept out of {@link SOURCES_FIXTURE} so that the explorer
+ * and whole-app snapshots don't change with it: the playlist stories install
+ * it themselves. */
+export const PLAYLIST_SOURCE: Source = {
+  id: "00000000-0000-0000-0000-000000000004",
+  kind: "playlist",
+  parent: null,
+  position: 3,
+  name: "Road Trip",
+  createdAt: 1_700_000_000,
+  modifiedAt: 1_700_000_000,
+  lastPlay: 0,
+  definition: JSON.stringify({
+    filter: { custom: "", presets: [] },
+    sort: { builtin: { preset: "playlist_order" } },
+    display: { custom: "" },
+  }),
+  queryId: null,
+  playlistId: "00000000-0000-0000-0000-0000000000d4",
+};
+
 /** A stable id for the "vetted" filter preset used by the builder snapshots. */
 export const VETTED_PRESET_ID = "00000000-0000-0000-0000-0000000000a1";
 

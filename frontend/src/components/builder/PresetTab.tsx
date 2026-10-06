@@ -6,8 +6,8 @@ import { cx } from "../ui/cx";
  * (chevron + preset icon + name) padded
  * to a one-line input's height; it gains a faint outline on hover and the pink
  * background when `expanded` (its bottom corners squared so it reads as joined to
- * the detail editor below). The built-in variant shows the preset name beside a
- * Reshuffle button and never expands. */
+ * the detail editor below). The built-in variant shows the preset name — beside
+ * a Reshuffle button, given `onReshuffle` (Shuffle) — and never expands. */
 export default function PresetTab(props: {
   name: string;
   expanded?: boolean;
@@ -20,14 +20,16 @@ export default function PresetTab(props: {
       <div className="flex items-center gap-2 rounded px-[7px] py-1 text-sm">
         <Icons.Preset className="text-ink-weak size-4" />
         <span className="text-ink">{props.name}</span>
-        <button
-          type="button"
-          className="border-edge text-ink hover:bg-hover ml-1 flex items-center gap-1.5 rounded border px-2 py-0.5 text-sm"
-          onClick={() => props.onReshuffle?.()}
-        >
-          <Icons.Shuffle className="text-ink-weak size-4" />
-          Reshuffle
-        </button>
+        {props.onReshuffle && (
+          <button
+            type="button"
+            className="border-edge text-ink hover:bg-hover ml-1 flex items-center gap-1.5 rounded border px-2 py-0.5 text-sm"
+            onClick={props.onReshuffle}
+          >
+            <Icons.Shuffle className="text-ink-weak size-4" />
+            Reshuffle
+          </button>
+        )}
       </div>
     );
   }

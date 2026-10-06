@@ -64,7 +64,8 @@ export type When =
 export interface CommandContext {
   /** A tab is open (and therefore active), whatever page it holds. */
   activeTab: boolean;
-  /** The active tab is a query page — what the query-only commands need. */
+  /** The active tab is a query page — a query's or a playlist's: what the
+   * builder and save commands need. */
   queryTabActive: boolean;
   /** The active tab has result rows. */
   resultsAvailable: boolean;

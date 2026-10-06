@@ -44,6 +44,7 @@ vi.mock("../../query/querydown", () => ({
 }));
 vi.mock("../../query/compile", () => ({
   compileSavedQuery: vi.fn(() => ({ sql: "select 1", columnAnnotations: [] })),
+  compilePlaylist: vi.fn(() => ({ sql: "select 2", columnAnnotations: [] })),
 }));
 vi.mock("../../api/query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/query")>();
@@ -87,8 +88,8 @@ import {
   type Source,
 } from "api-client";
 import { fetchRatings } from "../../query/ratings";
-import { compileSavedQuery } from "../../query/compile";
-import { analyzeColumnSources } from "../../query/lineage";
+import { compilePlaylist, compileSavedQuery } from "../../query/compile";
+import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
 import type { EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
@@ -96,7 +97,9 @@ import {
   selectCanRedo,
   selectCanUndo,
   selectIsUnsaved,
+  selectPageTab,
   selectQueryTab,
+  selectRowContext,
 } from "./selectors";
 
 function openQueryTab(bundle: AppStoreBundle, id: string) {
@@ -1434,5 +1437,158 @@ describe("undo steps with entry writes", () => {
     bundle.actions.undo("a"); // the edit alone: no writes
     expect(filter()).toBe("");
     expect(sent()).toHaveLength(2);
+  });
+});
+
+describe("playlist tabs", () => {
+  const SOURCE = "00000000-0000-0000-0000-0000000000c1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  const ENTRY = "00000000-0000-0000-0000-0000000000b1";
+  let bundle: AppStoreBundle;
+
+  function openPlaylistTab(definition = "{}") {
+    bundle.actions.openTab({
+      id: SOURCE,
+      name: "Road trip",
+      definition,
+      kind: "playlist",
+      playlistId: PLAYLIST,
+    });
+  }
+
+  /** Runs `tabId`'s page and waits for its rows to land. */
+  async function run(tabId: string) {
+    bundle.actions.runQuery(tabId);
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().pages[tabId]?.running).toBe(false),
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(compileSavedQuery).mockClear();
+    vi.mocked(compilePlaylist).mockClear();
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([[ENTRY, "1", "t1"]]),
+    );
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson("{}");
+  });
+  afterEach(() => bundle.dispose());
+
+  it("opens a playlist source in a playlist tab, with no unsaved state", () => {
+    openPlaylistTab(
+      JSON.stringify({
+        filter: { custom: "jazz", presets: [] },
+        sort: { builtin: { preset: "playlist_order" } },
+        display: { custom: "$title" },
+      }),
+    );
+    const t = selectPageTab(bundle.store.getState(), SOURCE);
+    expect(t).toMatchObject({
+      kind: "playlist",
+      playlistId: PLAYLIST,
+      name: "Road trip",
+    });
+    expect(t?.live.filter.custom).toBe("jazz");
+    expect(selectQueryTab(bundle.store.getState(), SOURCE)).toBeUndefined();
+    expect(selectIsUnsaved(bundle.store.getState(), SOURCE)).toBe(false);
+  });
+
+  it("compiles each tab as its kind calls for", async () => {
+    openPlaylistTab();
+    openQueryTab(bundle, "q");
+    await run(SOURCE);
+    await run("q");
+    expect(compilePlaylist).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(compilePlaylist).mock.calls[0][0]).toBe(PLAYLIST);
+    expect(compileSavedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the entries out of what a playlist page's rows edit", async () => {
+    const entries = {
+      table: "playlist_track",
+      keyColumns: ["id"],
+      keyIndices: [0],
+    };
+    const tracks = { table: "track", keyColumns: ["id"], keyIndices: [2] };
+    vi.mocked(analyzeColumnSources).mockResolvedValue([]);
+    vi.mocked(recordKeyColumns).mockReturnValue([entries, tracks]);
+    openPlaylistTab();
+    openQueryTab(bundle, "q");
+    await run(SOURCE);
+    await run("q");
+    await vi.waitFor(() => {
+      expect(bundle.store.getState().pages[SOURCE]?.lineage?.records).toEqual([
+        tracks,
+      ]);
+      // A query of entries still edits them.
+      expect(bundle.store.getState().pages["q"]?.lineage?.records).toEqual([
+        entries,
+        tracks,
+      ]);
+    });
+    vi.mocked(recordKeyColumns).mockReturnValue([]);
+  });
+
+  it("re-reads a row by the entry it lists", () => {
+    openPlaylistTab();
+    bundle.actions.setResults(
+      SOURCE,
+      buildResultFromStringRows([[ENTRY, "1", "t1"]]),
+      {
+        records: [{ table: "track", keyColumns: ["id"], keyIndices: [2] }],
+      },
+    );
+    expect(selectRowContext(bundle.store.getState(), SOURCE, 0)).toMatchObject({
+      kind: "playlist",
+      playlistId: PLAYLIST,
+      entryId: ENTRY,
+    });
+  });
+
+  it("saves its definition through the source, and undoes an edit", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(sourceUpdateDefinition).mockReset();
+      vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
+      openPlaylistTab();
+      await vi.advanceTimersByTimeAsync(0);
+      bundle.actions.runQuery(SOURCE);
+      bundle.actions.setFilterCustom(SOURCE, "jazz");
+      bundle.actions.runQuery(SOURCE);
+      await vi.advanceTimersByTimeAsync(5000);
+      const [params] = vi.mocked(sourceUpdateDefinition).mock.calls[0];
+      expect(params.id).toBe(SOURCE);
+      // A playlist's definition has no base and no full mode.
+      expect(JSON.parse(params.definition)).toEqual({
+        filter: { custom: "jazz", presets: [] },
+        sort: { builtin: { preset: "playlist_order" } },
+        display: { custom: "" },
+      });
+
+      expect(selectCanUndo(bundle.store.getState(), SOURCE)).toBe(true);
+      bundle.actions.undo(SOURCE);
+      expect(
+        selectPageTab(bundle.store.getState(), SOURCE)?.live.filter.custom,
+      ).toBe("");
+      expect(selectCanRedo(bundle.store.getState(), SOURCE)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renames, as a saved query does", () => {
+    openPlaylistTab();
+    bundle.actions.beginRename(SOURCE);
+    bundle.actions.setRenameBuffer("Long drive");
+    bundle.actions.commitRename();
+    expect(selectPageTab(bundle.store.getState(), SOURCE)?.name).toBe(
+      "Long drive",
+    );
+    expect(vi.mocked(sourceRename)).toHaveBeenCalledWith({
+      id: SOURCE,
+      name: "Long drive",
+    });
   });
 });

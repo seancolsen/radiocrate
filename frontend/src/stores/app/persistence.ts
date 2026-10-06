@@ -4,6 +4,11 @@ import {
   definitionToStored,
   type QueryDefinition,
 } from "../../query/definition";
+import {
+  playlistDefinitionFromStored,
+  playlistDefinitionToStored,
+  type PlaylistDefinition,
+} from "../../query/playlist";
 import type { AppEnv } from "../env";
 import type { Tab } from "./state";
 import type { ThemePref } from "./theme";
@@ -140,9 +145,9 @@ export function persistExpandedFolders(
   }
 }
 
-/** An open tab as a previous visit left it: a query tab with both of its
- * definitions (so unsaved edits survive), or the keyboard-shortcuts editor,
- * which carries nothing of its own. */
+/** An open tab as a previous visit left it: a query or playlist tab with both
+ * of its definitions (so unsaved edits survive), or the keyboard-shortcuts
+ * editor, which carries nothing of its own. */
 export type StoredTab =
   | {
       kind: "query";
@@ -152,6 +157,14 @@ export type StoredTab =
       live: QueryDefinition;
       persisted: boolean;
       folder: string | null;
+    }
+  | {
+      kind: "playlist";
+      id: string;
+      playlistId: string;
+      name: string;
+      saved: PlaylistDefinition;
+      live: PlaylistDefinition;
     }
   | { kind: "shortcuts" };
 
@@ -164,7 +177,9 @@ export interface StoredTabs {
 
 const OPEN_TABS_KEY = "openTabs";
 /** Bump when the record's shape changes incompatibly: a record of any other
- * version restores nothing. */
+ * version restores nothing. Adding a tab kind isn't such a change — an older
+ * build skips an entry of a kind it doesn't know — and bumping would close
+ * every open tab. */
 const OPEN_TABS_VERSION = 1;
 
 /** The record as it sits in storage: definitions in their stored string form,
@@ -182,6 +197,14 @@ interface OpenTabsRecord {
         persisted: boolean;
         /** Absent from records written before unsaved queries kept one. */
         folder?: string | null;
+      }
+    | {
+        kind: "playlist";
+        id: string;
+        playlistId: string;
+        name: string;
+        saved: string;
+        live: string;
       }
     | { kind: "shortcuts" }
   >;
@@ -234,6 +257,24 @@ export function storedTabs(env: AppEnv): StoredTabs {
         persisted,
         folder: typeof t.folder === "string" ? t.folder : null,
       });
+    } else if (
+      t.kind === "playlist" &&
+      typeof t.id === "string" &&
+      typeof t.playlistId === "string" &&
+      typeof t.name === "string" &&
+      typeof t.saved === "string" &&
+      typeof t.live === "string" &&
+      !ids.has(t.id)
+    ) {
+      ids.add(t.id);
+      tabs.push({
+        kind: "playlist",
+        id: t.id,
+        playlistId: t.playlistId,
+        name: t.name,
+        saved: playlistDefinitionFromStored(t.saved),
+        live: playlistDefinitionFromStored(t.live),
+      });
     }
   }
   const active = record.activeTabId;
@@ -254,9 +295,10 @@ export function persistTabs(
     const record: OpenTabsRecord = {
       version: OPEN_TABS_VERSION,
       activeTabId,
-      tabs: tabs.map((t) =>
-        t.kind === "query"
-          ? {
+      tabs: tabs.map((t): OpenTabsRecord["tabs"][number] => {
+        switch (t.kind) {
+          case "query":
+            return {
               kind: "query",
               id: t.id,
               name: t.name,
@@ -264,9 +306,20 @@ export function persistTabs(
               live: definitionToStored(t.live),
               persisted: t.persisted,
               folder: t.folder,
-            }
-          : { kind: "shortcuts" },
-      ),
+            };
+          case "playlist":
+            return {
+              kind: "playlist",
+              id: t.id,
+              playlistId: t.playlistId,
+              name: t.name,
+              saved: playlistDefinitionToStored(t.saved),
+              live: playlistDefinitionToStored(t.live),
+            };
+          case "shortcuts":
+            return { kind: "shortcuts" };
+        }
+      }),
     };
     env.storage.setItem(OPEN_TABS_KEY, JSON.stringify(record));
   } catch {

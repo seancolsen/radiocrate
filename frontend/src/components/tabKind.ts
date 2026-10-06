@@ -7,6 +7,8 @@ export function tabIcon(kind: TabKind): IconComponent {
   switch (kind) {
     case "query":
       return Icons.Query;
+    case "playlist":
+      return Icons.Playlist;
     case "shortcuts":
       return Icons.Keyboard;
   }

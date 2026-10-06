@@ -18,10 +18,10 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 
 | Phase | Status | Owed by the user |
 | ----- | ------ | ---------------- |
-| 1 — Schema, migration and source RPCs | done | Back up the real database, start the server so migration 0006 runs, and confirm that saved queries, folders, their order and open tabs all survived. |
+| 1 — Schema, migration and source RPCs | done | |
 | 2 — Playlist query, entry math, lineage fix | done | |
 | 3 — One undo abstraction | done | |
-| 4 — Playlist tabs and the playlist page | not started | |
+| 4 — Playlist tabs and the playlist page | done | |
 | 5 — Creating and managing playlists | not started | |
 | 6 — Removing tracks and committing conditions | not started | |
 | 7 — "Add to playlist…" | not started | |
@@ -575,6 +575,36 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Stories** (intended snapshot additions): the playlist tab handle, the sort options menu with "Playlist order", and the playlist toolbar.
 - **Tests:** compile routing per kind, a persisted playlist tab surviving a round trip, and a playlist page leaving out `playlist_track` records.
 - **Owed by the user:** nothing can create a playlist until phase 5, so manual checks wait until then.
+
+#### As built
+
+- **Tab kind** (`stores/app/state.ts`): `PlaylistTab` (`kind: "playlist"`, `id` = source id, `playlistId`, `name`, `saved`, `live`, `saveFailed`), and `PageTab = QueryTab | PlaylistTab`, which is what "a tab with a results page" means everywhere below. A page's `undo` is `UndoHistory<PageDefinition>`.
+- **Definitions** (`query/playlist.ts`): `Sections` (the filter, sort and display both kinds share, and the builders edit), `PlaylistDefinition = Sections`, `PageDefinition = QueryDefinition | PlaylistDefinition`, told apart by `isQueryDefinition` (a query's carries `base`), with `pageDefsEqual` and `pageDefinitionToStored`. `PreparedStep.edit` now takes `Sections`.
+- **Persistence** (`stores/app/persistence.ts`): a `playlist` variant of `StoredTab` and of the stored record, with no version bump. An older build skips the entry.
+- **Selectors:** `selectPageTab`, `selectPageSections` (what the builders read), and `selectPageBase` (a query's base, or `track` for a playlist). `selectIsPersisted` is true for every playlist, so rename, autosave and `record_play` treat a playlist as a saved query. `selectCanUndo` / `selectCanRedo` work on any page. `selectQueryTab` still means "a query tab", for the query-only paths (Save, Revert, Base, full mode, Duplicate, Delete).
+- **Actions** (`stores/app/actions.ts`):
+  - `editPageTab`, `assignDefinition` (kind-checked, so no casts) and `compilePage` (`compilePlaylist` for a playlist, `compileSavedQuery` otherwise), used by `runQuery` and `openViewSql`.
+  - `editLive` mutates `Sections` and so serves both kinds. The new `editQueryLive` is for full-mode text only.
+  - Autosave, undo, `landHistory`, `writeStep`, rename (tab handle and tree), `confirmPresetSave` (base `track`) and `saveSetting`'s re-runs all accept either kind.
+  - `openTab` takes an optional `kind` / `playlistId`, so the explorer passes the `Source` itself. Phase 5 can open new playlists the same way.
+- **Record editor:** `analyzeLineage` drops `playlist_track` from a playlist page's `records`, so the menu says "Edit track", `results.edit_selected` edits tracks, and the existing de-duplication edits a repeated track once.
+- **Departure (re-reading a row after a write):** the plan didn't mention this. Without it, saving a track from the editor, rating it, or logging a play would leave a playlist row stale. `RowContext` (`query/rowDml.ts`) is now a union. A playlist row is re-read through `compilePlaylist` narrowed to its entry (`playlistQuerydown(…, { entryId })`, which puts `id:="<entry>"` in place of the filter). Narrowing by track could return several rows. The probe gained a case for it (1 row, same lineage).
+- **Entry helper:** `rowEntry(result, row)` in `query/playlistEntries.ts` reads `{ id, position }` from result columns 0 and 1, or returns `undefined`. Phases 6 and 9 use it, and so does `selectRowContext`.
+- **UI:**
+  - `App.tsx` routes a playlist tab to `QueryPage`.
+  - `Icons.Playlist` (`queue_music`) appears on tab handles, Opened rows and tree rows (`QueryRow` takes `kind`).
+  - The explorer tree lists playlists. The filter that hid them in phase 1 is gone.
+  - The wrench menu (`PageActionsMenu`) splits into `PlaylistActions` (Rename, View SQL) and `QueryActions`. Its button is labeled "Playlist actions" on a playlist.
+  - The sort options menu puts a "Playlist order" radio (playlist icon) first on a playlist's sort.
+  - **Addition:** with "Playlist order" selected, the open Sort builder shows a built-in `PresetTab` named "Playlist order". `PresetTab`'s Reshuffle button now shows only when `onReshuffle` is given, which Shuffle always does. Without this, the open builder would have been blank.
+  - Shuffle and the `track` presets are offered on playlists, and no preset is applied by default (a playlist's definition is only ever read from storage).
+- **Explorer menu, until phase 5:** a playlist row's context menu offers only Rename. `duplicateQuery`, `requestDelete` and `confirmDelete` are still query-only, and must not be handed a playlist id (`confirmDelete` would drop it from the list and send a `query.delete` that does nothing).
+- **Commands:** the `queryTab` predicate (`queryTabActive`) now holds on playlist pages too, so `query.focus_*` work there. `tabs.save_active` is a no-op, since a playlist is never unsaved. The shortcuts editor's "query tab active" label is unchanged, to avoid snapshot churn.
+- **Tests:** a `playlist tabs` block in `stores/app/actions.test.ts` (opening, compile routing per kind, entries left out of `records`, the entry-narrowed row context, autosave of the playlist JSON plus undo/redo, rename), a playlist round trip in `persistence.test.ts`, `entryId` and page-definition tests in `query/playlist.test.ts`, and `rowEntry` in `query/playlistEntries.test.ts`.
+- **Gate:** typecheck, lint, format:check, test:unit (469), build and test:visual (235: the 229 existing unchanged, plus 6 new) all pass. The probe exits 0, including its new "one entry" case. No Rust was touched.
+- **Baselines added** (light and dark, all looked at): `tab-bar/playlist`, `query-builder/playlist` and `sort-options/playlist`. The fixture playlist (`PLAYLIST_SOURCE`) is deliberately not in `SOURCES_FIXTURE`, so the explorer and app frames don't change.
+- **For the next session regenerating snapshots:** `test:visual:update` rewrites only baselines that fail the comparison. Playwright's default per-pixel threshold doesn't register a faint `bg-hover` fill, so a stale image with the highlight on the wrong menu row survived an update. Use `npx playwright test --update-snapshots=all --grep "<story>"` to force a rewrite. Separately, a story whose component has mount-time behavior (a menu focusing its first row) has to mount after `setup`, because the harness runs `setup` in its own layout effect, after the story's (see `RoadTripSortOptions`).
+- **For phase 5:** add Duplicate and Delete to `PlaylistActions` and to the explorer's `QueryMenu`, and branch `requestDelete` / `confirmDelete` on kind. Create and convert can open the new playlist with `openTab(source)`.
 
 ### Phase 5 — Creating and managing playlists
 
