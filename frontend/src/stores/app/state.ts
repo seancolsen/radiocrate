@@ -13,6 +13,7 @@ import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
 import type { SchemaTable } from "../../query/schema";
 import type { SettingKey, SettingOverrides } from "../../state/settings";
+import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
 import type { AppEnv } from "../env";
 import {
   storedAudioQuality,
@@ -211,18 +212,6 @@ export interface RpcErrorNotice {
   count: number;
 }
 
-/** A query page's undo history: every query definition the page has run, in
- * the order it ran them (consecutive repeats collapsed), and which of them the
- * page stands on. Undo and redo move `index` and put that entry back as the
- * working definition; a run of anything else drops whatever lies past `index`
- * and appends. Unbounded, and kept only as long as the page is: closing the tab
- * forgets it. Replaced wholesale on every push, like a page's `selection`. */
-export interface UndoHistory {
-  entries: readonly QueryDefinition[];
-  /** The entry the page stands on; -1 while `entries` is empty. */
-  index: number;
-}
-
 /** Everything a query tab's page holds beyond the tab itself: its results and
  * how the user is looking at them. */
 export interface QueryPageState {
@@ -282,13 +271,15 @@ export interface QueryPageState {
   fullEditorOpen: boolean;
   /** The expanded preset id (null = none expanded). */
   expandedPreset: string | null;
-  /** The page's undo history, checkpointed at every run of its query. */
-  undo: UndoHistory;
+  /** The page's undo history, checkpointed at every run of its query (see
+   * `state/undoHistory.ts`). Replaced wholesale on every change, like
+   * `selection`. */
+  undo: UndoHistory<QueryDefinition>;
+  /** Whether a write to the page's playlist entries is in flight or waiting
+   * in the playlist's write queue. Undo and redo wait for it, and so does the
+   * history: no checkpoint is recorded while it's set (see `writeStep`). */
+  writing: boolean;
 }
-
-/** An undo history with nothing in it — what a page starts with. Shared and
- * never written through: a page's history is replaced, not mutated. */
-export const EMPTY_UNDO: UndoHistory = { entries: [], index: -1 };
 
 /** A page with nothing in it yet — what a tab's first page write starts from. */
 export function emptyPage(): QueryPageState {
@@ -301,7 +292,8 @@ export function emptyPage(): QueryPageState {
     builderSection: null,
     fullEditorOpen: false,
     expandedPreset: null,
-    undo: EMPTY_UNDO,
+    undo: EMPTY_HISTORY,
+    writing: false,
   };
 }
 

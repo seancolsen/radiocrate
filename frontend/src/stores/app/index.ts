@@ -4,7 +4,7 @@ import { createAppVanillaStore } from "./vanillaStore";
 
 export * from "./state";
 export * from "./selectors";
-export type { AppActions } from "./actions";
+export type { AppActions, PreparedStep } from "./actions";
 export type { AppVanillaStore } from "./vanillaStore";
 
 /** Builds one app store bundle: the vanilla Zustand+Immer store, its actions,

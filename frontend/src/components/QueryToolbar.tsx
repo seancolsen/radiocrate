@@ -8,6 +8,7 @@ import {
   selectFullEditorOpen,
   selectIsFullQuery,
   selectIsUnsaved,
+  selectIsWriting,
   selectResultCount,
   selectRunning,
 } from "../stores/app";
@@ -45,12 +46,15 @@ function Separator(): JSX.Element {
  * builder line for the open section. The control line runs, left to right: the
  * wrench query-actions menu · a separator · the Filter/Sort/Display section
  * toggles · then, each only while it applies, Undo, Redo and Save (behind a
- * separator of their own while any of them shows) — and, at the far right, the
+ * separator of their own while any of them shows; Undo and Redo dim while a
+ * write to a playlist's entries is in flight) — and, at the far right, the
  * result count and Refresh. */
 export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.tabId));
   const canUndo = useApp((s) => selectCanUndo(s, props.tabId));
   const canRedo = useApp((s) => selectCanRedo(s, props.tabId));
+  // Undo and Redo wait on a write to the page's playlist entries.
+  const writing = useApp((s) => selectIsWriting(s, props.tabId));
   const count = useApp((s) => selectResultCount(s, props.tabId));
   // Full mode swaps the three section toggles for one Querydown toggle, so what
   // "the builder is open" means swaps with it.
@@ -126,6 +130,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <IconButton
             icon={Icons.Undo}
             label="Undo"
+            disabled={writing}
             onClick={() => undo(props.tabId)}
           />
         )}
@@ -133,6 +138,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <IconButton
             icon={Icons.Redo}
             label="Redo"
+            disabled={writing}
             onClick={() => redo(props.tabId)}
           />
         )}

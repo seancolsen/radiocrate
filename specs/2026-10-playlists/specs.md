@@ -19,8 +19,8 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | Phase | Status | Owed by the user |
 | ----- | ------ | ---------------- |
 | 1 — Schema, migration and source RPCs | done | Back up the real database, start the server so migration 0006 runs, and confirm that saved queries, folders, their order and open tabs all survived. |
-| 2 — Playlist query, entry math, lineage fix | awaiting user | Run `./track-lineage/build.sh`, then `bun specs/2026-10-playlists/probe.ts` must exit 0. Phase 4 needs this; phase 3 doesn't. |
-| 3 — One undo abstraction | not started | |
+| 2 — Playlist query, entry math, lineage fix | done | |
+| 3 — One undo abstraction | done | |
 | 4 — Playlist tabs and the playlist page | not started | |
 | 5 — Creating and managing playlists | not started | |
 | 6 — Removing tracks and committing conditions | not started | |
@@ -534,6 +534,21 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Tests:** steps with fake writes. Cover success, failure leaving the index unmoved, two queued writes running in order, and redo after undo.
 - **No UI change**, so no snapshot changes.
 
+#### As built
+
+- **History** (`frontend/src/state/undoHistory.ts`, pure and generic over the definition type): `UndoHistory<D> = { current, steps, index }`. A step has an optional `definition` (`{ before, after }`) and optional `writes` (`EntryWrites`). `index` counts the applied steps. `current` is the definition as of the last checkpoint or step, and the first checkpoint records it without making a step. The functions are `checkpoint`, `pushStep`, `stepBack` / `stepForward`, `stepToUndo` / `stepToRedo`, and `canUndo` / `canRedo`. `EMPTY_HISTORY` replaces `EMPTY_UNDO`. The query page's snapshots are now definition steps, so `selectCanUndo` / `selectCanRedo` keep their old meaning, and the `undo and redo` tests pass unchanged.
+- **Write queue** (`frontend/src/api/writeQueue.ts`): `WriteQueue.run(key, write)` runs writes one at a time per key, whether earlier ones succeeded or failed. It reports busy transitions, and it has already stopped counting a write as busy when that write's caller hears it settled.
+- **Store** (`stores/app/actions.ts`):
+  - One `entryWrites` queue, keyed by source id (= tab id). It mirrors busy into the new page field `writing` (selector `selectIsWriting`). `pageDraft` seeds `writing` from the queue for a page created mid-write.
+  - **`writeStep(tabId, prepare)`** is the entry point for phases 6 and 9. `prepare` runs inside the queue, so its reads are current. It resolves to a `PreparedStep` (`{ writes: EntryWrites, edit? }`), or `undefined` for nothing to do. After `writes.apply` lands, any edit made meanwhile is recorded as its own step. Then the step is pushed, with `edit` applied (through Immer's `produce`) to the definition as it stands *then*, and the results reload as new rows (`lastRunSql` is cleared). `writeStep` resolves to whether the writes landed. A failure records nothing.
+  - **Undo / redo:** a definition-only step lands synchronously, as before. A step with writes sends `revert` / `apply` through the queue and moves the history only once that lands, then applies the definition half and reloads as new rows. Failure leaves the index unmoved, and the generated client's `onRpcFailure` has already fed the error bar.
+  - **Checkpoints are held off while `writing`.** Only the queued write moves the history then, so an edit made during a write can't shift the step the write is about to move. The edit is recorded at the next checkpoint (or by `writeStep` before its own step).
+- **Departure:** Undo and Redo do nothing while *any* write to the page's entries is in flight or waiting, including phase 7's adds from another tab. The spec says undo/redo writes are "queued like any other write". They do go through the queue, but blocking them is simpler and keeps the history's order unambiguous. The toolbar keeps the buttons on screen and disables them (`disabled={writing}`) rather than hiding them, so nothing shifts during a write.
+- **Toolbar / story:** `QueryToolbar` reads `selectIsWriting`. The harness's `undoableFailedSave` builds its history with `checkpoint` / `stepBack`.
+- **Tests:** `state/undoHistory.test.ts` (8), `api/writeQueue.test.ts` (5), and a new `undo steps with entry writes` block in `stores/app/actions.test.ts` (6). The block covers success with undo and redo, reloading as new rows, a failed step recording nothing, a failed undo leaving the index unmoved (then retried), two queued writes running in order with undo held meanwhile, and a step with a definition edit undone together with it.
+- **Gate:** typecheck, lint, format:check, test:unit (458), build and test:visual (229, no snapshot changes) all pass. The probe exits 0. No Rust was touched.
+- **For the next phase:** the history, `PreparedStep.edit` and `landHistory` are typed on `QueryDefinition` and read `selectQueryTab(…).live`. Phase 4 widens them to the playlist tab's definition (for example a `PageDefinition` union with a kind-aware equality and live accessor). The page state's `undo` and `writing` already apply to any page.
+
 ### Phase 4 — Playlist tabs and the playlist page
 
 **Goal:** a playlist opens in its own kind of tab and works as a read-only page: filter, sort, display, play and edit tracks.
@@ -656,6 +671,8 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 ## Deferred follow-ups
 
 (Add entries as phases defer work.)
+
+- **Builders stay live during an entry write** (phase 3). An edit made while a step's writes are in flight survives, unless the step's own definition half (or an undo's) overwrites it when the writes land. Disabling the builders while `writing` would close that gap, if it turns out to matter in practice.
 
 ## Open questions
 

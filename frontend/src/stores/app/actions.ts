@@ -1,5 +1,5 @@
 import * as arrow from "apache-arrow";
-import { castDraft, type Draft } from "immer";
+import { castDraft, produce, type Draft } from "immer";
 import { shallow } from "zustand/vanilla/shallow";
 import {
   folderAdd,
@@ -27,6 +27,8 @@ import {
   type Source,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
+import { sendPlaylistWrites } from "../../api/playlist";
+import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
 import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
@@ -38,6 +40,18 @@ import {
 import { compileSavedQuery } from "../../query/compile";
 import { overridesFromEntries, withSetting } from "../../state/settings";
 import type { SettingKey } from "../../state/settings";
+import {
+  checkpoint as checkpointHistory,
+  EMPTY_HISTORY,
+  pushStep,
+  stepBack,
+  stepForward,
+  stepToUndo,
+  stepToRedo,
+  type UndoHistory,
+  type UndoStep,
+} from "../../state/undoHistory";
+import type { EntryWrites } from "../../query/playlistEntries";
 import {
   cloneDefinition,
   defsEqual,
@@ -88,6 +102,7 @@ import {
   selectEffectivePresets,
   selectCanRedo,
   selectIsUnsaved,
+  selectIsWriting,
   selectLocateRow,
   selectQueueAround,
   selectPrelude,
@@ -101,7 +116,6 @@ import {
 } from "./selectors";
 import {
   EMPTY_SELECTION,
-  EMPTY_UNDO,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
   emptyPage,
@@ -167,6 +181,15 @@ const UNREPORTED_METHODS: ReadonlySet<string> = new Set(["app.version"]);
 /** Every write method the app store exposes. Reads live in `selectors.ts`
  * instead (state management rule 1): actions are stable references, so a
  * component can put them in an effect's dependency array without churn. */
+/** A step of writes to a playlist's entries, as {@link AppActions.writeStep}'s
+ * caller works it out: the writes, and an edit of the page's working definition
+ * that's part of the same step ("Remove these tracks" clears the filter). The
+ * edit is applied to the definition as it stands when the writes land. */
+export interface PreparedStep {
+  writes: EntryWrites;
+  edit?: (def: QueryDefinition) => void;
+}
+
 export interface AppActions {
   // Boot loads. `createStores()` runs these once; unit tests call them
   // directly.
@@ -360,12 +383,28 @@ export interface AppActions {
   /** Open a new unsaved query tab based on "track", seeded with that base's
    * default filter/sort/display presets. */
   newQueryTab: () => void;
-  /** Step `tabId`'s query back to the definition it ran before this one (see
-   * `UndoHistory`). An edit not yet run is a step of its own, so it's what goes
-   * first. */
+  /** Step `tabId`'s page back by one step of its undo history (see
+   * `state/undoHistory.ts`): for the query page, back to the definition it ran
+   * before this one. An edit not yet run is a step of its own, so it's what
+   * goes first. A step that wrote to the page's playlist entries sends their
+   * inverse first, and steps back only once that has landed. Does nothing while
+   * a write to the entries is in flight (`selectIsWriting`). */
   undo: (tabId: string) => void;
-  /** Step `tabId`'s query forward again, after an undo. */
+  /** Step `tabId`'s page forward again, after an undo, resending a step's entry
+   * writes as undo does. */
   redo: (tabId: string) => void;
+  /** Writes to `tabId`'s playlist entries as one undoable step. `prepare` runs
+   * in the playlist's write queue, once every write queued before it has
+   * settled, so what it reads is current. It resolves to the writes to send,
+   * with an optional edit of the working definition that goes with them (or to
+   * `undefined`, for nothing to do). Once the writes have landed, the step is
+   * recorded, the edit applied, and the results reloaded as new rows. Resolves
+   * to whether the writes landed. A failed request leaves the history alone,
+   * and the error bar has already reported it. */
+  writeStep: (
+    tabId: string,
+    prepare: () => Promise<PreparedStep | undefined>,
+  ) => Promise<boolean>;
   /** Note a request to the backend, in flight until `settled` settles: a saved
    * query's edits aren't written until the app has been quiet for a while.
    * `createStores()` feeds every request the generated client sends
@@ -580,8 +619,22 @@ export function createAppActions(
   /** The draft of `tabId`'s page, created empty by the first write to it. Only
    * for writes: a read goes through `s.pages[tabId]?.…`, which never creates
    * one. */
+  // Writes to playlists' entries, run one at a time per playlist, keyed by
+  // source id (which is also its tab's id). A page's `writing` flag mirrors
+  // whether its key has anything in flight or waiting.
+  const entryWrites = new WriteQueue((key, busy) => {
+    set((s) => {
+      // Not `pageDraft`: a playlist that isn't open has no page to mark.
+      const page = s.pages[key];
+      if (page) page.writing = busy;
+    });
+  });
+
   const pageDraft = (s: Draft<AppState>, tabId: string) =>
-    (s.pages[tabId] ??= castDraft(emptyPage()));
+    (s.pages[tabId] ??= castDraft({
+      ...emptyPage(),
+      writing: entryWrites.busy(tabId),
+    }));
 
   /** Installs a tab's decoded result, forcing a fresh object reference.
    *
@@ -720,21 +773,24 @@ export function createAppActions(
     }
   };
 
-  /** Records `tabId`'s working definition in its undo history — unless it's
-   * the entry the history already stands on. Anything undone past is dropped:
-   * the history branches here. */
+  /** Records `tabId`'s working definition in its undo history: whatever it's
+   * become since the last checkpoint is a step. Held off while a write to the
+   * page's entries is in flight, since the history is that write's to move
+   * until it lands. An edit made meanwhile is recorded by the next checkpoint
+   * instead. */
   const checkpoint = (tabId: string) => {
+    if (!get().pages[tabId]?.writing) recordLive(tabId);
+  };
+
+  /** {@link checkpoint}, whether or not a write is in flight. */
+  const recordLive = (tabId: string) => {
     const live = selectQueryTab(get(), tabId)?.live;
     if (!live) return;
-    const { entries, index } = get().pages[tabId]?.undo ?? EMPTY_UNDO;
-    const current = entries[index];
-    if (current !== undefined && (current === live || defsEqual(current, live)))
-      return;
+    const history = get().pages[tabId]?.undo ?? EMPTY_HISTORY;
+    const next = checkpointHistory(history, live, defsEqual);
+    if (next === history) return;
     set((s) => {
-      pageDraft(s, tabId).undo = castDraft({
-        entries: [...entries.slice(0, index + 1), live],
-        index: index + 1,
-      });
+      pageDraft(s, tabId).undo = castDraft(next);
     });
   };
 
@@ -862,17 +918,59 @@ export function createAppActions(
     });
   };
 
-  /** Steps `tabId`'s undo history to entry `to`, making it the working
-   * definition (which re-runs, and is saved like any other change). */
-  const stepHistory = (tabId: string, to: number) => {
-    const def = get().pages[tabId]?.undo.entries[to];
-    if (!def) return;
+  /** Moves `tabId`'s undo history from `from` across `step` to `to`, its
+   * neighbor (`"revert"` to step back, `"apply"` to step forward). A step with
+   * no writes lands at once. One with writes sends them through the playlist's
+   * write queue first, and lands only once they have: a failure leaves the
+   * history where it was. */
+  const traverseStep = (
+    tabId: string,
+    from: UndoHistory<QueryDefinition>,
+    step: UndoStep<QueryDefinition>,
+    to: UndoHistory<QueryDefinition>,
+    direction: "apply" | "revert",
+  ) => {
+    const writes = step.writes?.[direction];
+    if (!writes) {
+      landHistory(tabId, to, false);
+      return;
+    }
+    void entryWrites.run(tabId, async () => {
+      try {
+        await sendPlaylistWrites(writes);
+      } catch (err) {
+        console.error("playlist write failed", err);
+        return;
+      }
+      // Re-read after the await: the tab may have closed meanwhile. Nothing
+      // else moves the history while the write is in flight.
+      if (get().pages[tabId]?.undo !== from) return;
+      landHistory(tabId, to, true);
+    });
+  };
+
+  /** Puts `tabId`'s undo history at `history`, and the definition it stands
+   * on in force as the working one (which re-runs, and is saved like any other
+   * change). `entriesChanged` says the playlist's entries were just written,
+   * so the results reload as new rows even if the definition is the same (see
+   * "The results after a write" in the playlists spec). */
+  const landHistory = (
+    tabId: string,
+    history: UndoHistory<QueryDefinition>,
+    entriesChanged: boolean,
+  ) => {
+    const live = selectQueryTab(get(), tabId)?.live;
+    const def = history.current;
+    const changesDef =
+      def !== undefined && live !== undefined && !defsEqual(def, live);
     set((s) => {
       const page = pageDraft(s, tabId);
-      page.undo.index = to;
-      page.expandedPreset = null;
+      page.undo = castDraft(history);
+      if (changesDef) page.expandedPreset = null;
     });
-    replaceLive(tabId, def);
+    if (entriesChanged) lastRunSql.delete(tabId);
+    if (changesDef) replaceLive(tabId, def);
+    else if (entriesChanged) runQuery(tabId);
   };
 
   /** {@link changeLive} through a mutator of the working definition. */
@@ -2095,16 +2193,58 @@ export function createAppActions(
     },
 
     undo: (tabId) => {
+      if (selectIsWriting(get(), tabId)) return;
       // An edit still waiting on its debounced run is undone first: record it,
       // so it's there to redo.
       checkpoint(tabId);
-      const index = get().pages[tabId]?.undo.index ?? -1;
-      if (index > 0) stepHistory(tabId, index - 1);
+      const from = get().pages[tabId]?.undo;
+      const step = from && stepToUndo(from);
+      if (from && step)
+        traverseStep(tabId, from, step, stepBack(from), "revert");
     },
     redo: (tabId) => {
-      if (!selectCanRedo(get(), tabId)) return;
-      stepHistory(tabId, (get().pages[tabId]?.undo.index ?? -1) + 1);
+      if (selectIsWriting(get(), tabId) || !selectCanRedo(get(), tabId)) return;
+      const from = get().pages[tabId]?.undo;
+      const step = from && stepToRedo(from);
+      if (from && step) {
+        traverseStep(tabId, from, step, stepForward(from), "apply");
+      }
     },
+    writeStep: (tabId, prepare) =>
+      entryWrites.run(tabId, async () => {
+        let prepared: PreparedStep | undefined;
+        try {
+          prepared = await prepare();
+          if (!prepared) return false;
+          await sendPlaylistWrites(prepared.writes.apply);
+        } catch (err) {
+          console.error("playlist write failed", err);
+          return false;
+        }
+        // Re-read after the awaits: the tab may have closed, or its definition
+        // moved on, while the writes were in flight.
+        if (!selectQueryTab(get(), tabId)) return true;
+        // An edit made while the writes were in flight went unrecorded
+        // (`checkpoint` waits on them). It came first, so it's a step of its
+        // own, before this one.
+        recordLive(tabId);
+        const before = selectQueryTab(get(), tabId)?.live;
+        const history = get().pages[tabId]?.undo;
+        if (!before || !history) return true;
+        const { edit } = prepared;
+        const after = edit ? produce(before, (d) => edit(d)) : before;
+        landHistory(
+          tabId,
+          pushStep(history, {
+            writes: prepared.writes,
+            definition: defsEqual(before, after)
+              ? undefined
+              : { before, after },
+          }),
+          true,
+        );
+        return true;
+      }),
 
     beginPresetEdit,
     patchPresetEdit: (id, patch) => {

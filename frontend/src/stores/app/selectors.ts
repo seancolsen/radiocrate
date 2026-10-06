@@ -1,10 +1,7 @@
 import type { Preset } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
-import {
-  defsEqual,
-  type QueryDefinition,
-  type Section,
-} from "../../query/definition";
+import { defsEqual, type Section } from "../../query/definition";
+import { canRedo, canUndo } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryResult } from "../../query/result";
 import type { RowContext } from "../../query/rowDml";
@@ -65,29 +62,27 @@ export const selectCanRevert = (s: AppState, tabId: string): boolean => {
   return t ? t.persisted && t.saveFailed && !defsEqual(t.saved, t.live) : false;
 };
 
-/** Whether `a` and `b` are the same definition — by reference first, which is
- * the common case (the history holds the very objects the tab ran). */
-const sameDef = (a: QueryDefinition, b: QueryDefinition): boolean =>
-  a === b || defsEqual(a, b);
-
-/** Whether `tabId`'s Undo applies: there's a run to step back to, or an edit
- * made since the last run (a debounced one, still waiting) to step back out
- * of. */
+/** Whether `tabId`'s Undo applies: there's a step to unapply, or an edit made
+ * since the last run (a debounced one, still waiting) to step back out of.
+ * While a write is in flight ({@link selectIsWriting}) it still applies, but
+ * has to wait. */
 export const selectCanUndo = (s: AppState, tabId: string): boolean => {
   const t = selectQueryTab(s, tabId);
   const undo = s.pages[tabId]?.undo;
-  if (!t || !undo || undo.index < 0) return false;
-  return undo.index > 0 || !sameDef(undo.entries[undo.index], t.live);
+  return t && undo ? canUndo(undo, t.live, defsEqual) : false;
 };
 
 /** Whether `tabId`'s Redo applies: something has been undone, and nothing
- * edited since. */
+ * edited since. Waits on a write in flight, as Undo does. */
 export const selectCanRedo = (s: AppState, tabId: string): boolean => {
   const t = selectQueryTab(s, tabId);
   const undo = s.pages[tabId]?.undo;
-  if (!t || !undo || undo.index >= undo.entries.length - 1) return false;
-  return sameDef(undo.entries[undo.index], t.live);
+  return t && undo ? canRedo(undo, t.live, defsEqual) : false;
 };
+
+/** Whether a write to `tabId`'s playlist entries is in flight or waiting. */
+export const selectIsWriting = (s: AppState, tabId: string): boolean =>
+  s.pages[tabId]?.writing ?? false;
 
 export const selectResultCount = (
   s: AppState,

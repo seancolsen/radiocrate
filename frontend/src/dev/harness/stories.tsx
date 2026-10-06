@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { castDraft } from "immer";
 import type {
   CurrentTrack,
   PlaybackState,
@@ -22,7 +23,17 @@ import {
   fixtureQuery,
   installRecordFixture,
 } from "../recordFixture";
-import { emptyDefinition, type QueryDefinition } from "../../query/definition";
+import {
+  defsEqual,
+  emptyDefinition,
+  type QueryDefinition,
+} from "../../query/definition";
+import {
+  checkpoint,
+  EMPTY_HISTORY,
+  stepBack,
+  type UndoHistory,
+} from "../../state/undoHistory";
 
 import { AboutDialog } from "../../components/AboutModal";
 import { SettingDialog } from "../../components/SettingModal";
@@ -136,10 +147,13 @@ function undoableFailedSave(
     ...def,
     filter: { ...def.filter, custom: "" },
   };
+  const history = [emptyDefinition(), def, undone].reduce(
+    (h, d) => checkpoint(h, d, defsEqual),
+    EMPTY_HISTORY as UndoHistory<QueryDefinition>,
+  );
   stores.app.store.setState((s) => {
     const page = s.pages[id];
-    if (page)
-      page.undo = { entries: [emptyDefinition(), def, undone], index: 1 };
+    if (page) page.undo = castDraft(stepBack(history));
     const tab = s.tabs.find((t) => t.id === id);
     if (tab?.kind === "query") {
       tab.saved = emptyDefinition();

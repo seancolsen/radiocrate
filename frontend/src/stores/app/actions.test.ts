@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAppStore, type AppStoreBundle } from "./index";
+import {
+  createAppStore,
+  type AppStoreBundle,
+  type PreparedStep,
+} from "./index";
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
 
@@ -86,6 +90,7 @@ import { fetchRatings } from "../../query/ratings";
 import { compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
+import type { EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
 import {
   selectCanRedo,
@@ -1265,5 +1270,169 @@ describe("undo and redo", () => {
     expect(
       JSON.parse(vi.mocked(sourceUpdateDefinition).mock.calls[0][0].definition),
     ).toMatchObject({ filter: { custom: "", presets: [] } });
+  });
+});
+
+describe("undo steps with entry writes", () => {
+  // Steps are written to query tab "a": the history doesn't care which kind of
+  // page it belongs to, and `dml` (mocked at the top of the file) stands in for
+  // the backend, so the writes themselves are fake.
+  let bundle: AppStoreBundle;
+  const page = () => bundle.store.getState().pages["a"];
+  const filter = () =>
+    selectQueryTab(bundle.store.getState(), "a")?.live.filter.custom;
+  const can = () => ({
+    undo: selectCanUndo(bundle.store.getState(), "a"),
+    redo: selectCanRedo(bundle.store.getState(), "a"),
+  });
+  /** The operations of each `dml` request sent, as `operation:id`. */
+  const sent = () =>
+    vi
+      .mocked(dml)
+      .mock.calls.map(([req]) =>
+        req.operations.map(
+          (op) =>
+            `${op.operation}:${op.operation === "insert" ? op.values.id : op.where.id}`,
+        ),
+      );
+  /** Removing entry `id`, and its undo. */
+  const removal = (id: string): EntryWrites => ({
+    apply: [{ operation: "delete", table: "playlist_track", where: { id } }],
+    revert: [
+      {
+        operation: "insert",
+        table: "playlist_track",
+        values: { id, playlist: "p", track: "t", position: 1 },
+      },
+    ],
+  });
+  const prepared = (writes: EntryWrites, edit?: PreparedStep["edit"]) => () =>
+    Promise.resolve({ writes, edit });
+  /** Waits for the page's writes and its run to settle. */
+  const settled = () =>
+    vi.waitFor(() => {
+      expect(page()?.writing).toBe(false);
+      expect(page()?.running).toBe(false);
+    });
+
+  beforeEach(async () => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 1",
+      columnAnnotations: [],
+    });
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["1"], ["2"]]),
+    );
+    bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setSchemaJson("{}");
+    bundle.actions.ensureRun("a"); // the first checkpoint: the query as opened
+    await settled();
+  });
+  afterEach(() => {
+    bundle.dispose();
+  });
+
+  it("records a step once its writes land, and undoes and redoes it", async () => {
+    await expect(
+      bundle.actions.writeStep("a", prepared(removal("e1"))),
+    ).resolves.toBe(true);
+    expect(sent()).toEqual([["delete:e1"]]);
+    expect(can()).toEqual({ undo: true, redo: false });
+
+    bundle.actions.undo("a");
+    await settled();
+    expect(sent()).toEqual([["delete:e1"], ["insert:e1"]]);
+    expect(can()).toEqual({ undo: false, redo: true });
+
+    bundle.actions.redo("a");
+    await settled();
+    expect(sent()).toEqual([["delete:e1"], ["insert:e1"], ["delete:e1"]]);
+    expect(can()).toEqual({ undo: true, redo: false });
+  });
+
+  it("reloads the results as new rows, though the SQL is the same", async () => {
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    await bundle.actions.writeStep("a", prepared(removal("e1")));
+    await settled();
+    expect(page()?.resultIsRefresh).toBe(false);
+    expect(page()?.selection).toBeUndefined();
+  });
+
+  it("records nothing when its writes fail", async () => {
+    vi.mocked(dml).mockRejectedValueOnce(new Error("constraint"));
+    await expect(
+      bundle.actions.writeStep("a", prepared(removal("e1"))),
+    ).resolves.toBe(false);
+    expect(page()?.undo.steps).toEqual([]);
+    expect(can()).toEqual({ undo: false, redo: false });
+  });
+
+  it("leaves the history where it was when an undo's writes fail", async () => {
+    await bundle.actions.writeStep("a", prepared(removal("e1")));
+    vi.mocked(dml).mockRejectedValueOnce(new Error("constraint"));
+    bundle.actions.undo("a");
+    await settled();
+    expect(page()?.undo.index).toBe(1);
+    expect(can()).toEqual({ undo: true, redo: false });
+
+    bundle.actions.undo("a"); // and it can be tried again
+    await settled();
+    expect(page()?.undo.index).toBe(0);
+    expect(sent()).toEqual([["delete:e1"], ["insert:e1"], ["insert:e1"]]);
+  });
+
+  it("runs queued writes one at a time, in order, and holds undo for them", async () => {
+    let land!: () => void;
+    vi.mocked(dml).mockImplementationOnce(
+      () => new Promise((resolve) => (land = () => resolve({}))),
+    );
+    const first = bundle.actions.writeStep("a", prepared(removal("e1")));
+    const second = bundle.actions.writeStep("a", prepared(removal("e2")));
+    await vi.waitFor(() => expect(sent()).toEqual([["delete:e1"]]));
+    expect(page()?.writing).toBe(true);
+    bundle.actions.undo("a"); // waits on the writes: does nothing
+    expect(sent()).toEqual([["delete:e1"]]);
+
+    land();
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(sent()).toEqual([["delete:e1"], ["delete:e2"]]);
+    await settled();
+
+    bundle.actions.undo("a");
+    await settled();
+    bundle.actions.undo("a");
+    await settled();
+    expect(sent().slice(2)).toEqual([["insert:e2"], ["insert:e1"]]);
+    expect(can()).toEqual({ undo: false, redo: true });
+  });
+
+  it("applies a step's edit with its writes, and undoes them together", async () => {
+    bundle.actions.setFilterCustom("a", "jazz"); // debounced: not run yet
+    await bundle.actions.writeStep(
+      "a",
+      prepared(removal("e1"), (def) => {
+        def.filter.custom = "";
+      }),
+    );
+    await settled();
+    expect(filter()).toBe("");
+    // The edit made before the step is a step of its own.
+    expect(
+      page()?.undo.steps.map((s) => s.definition?.after.filter.custom),
+    ).toEqual(["jazz", ""]);
+
+    bundle.actions.undo("a");
+    await settled();
+    expect(filter()).toBe("jazz");
+    expect(sent()).toEqual([["delete:e1"], ["insert:e1"]]);
+
+    bundle.actions.undo("a"); // the edit alone: no writes
+    expect(filter()).toBe("");
+    expect(sent()).toHaveLength(2);
   });
 });
