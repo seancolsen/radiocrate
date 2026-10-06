@@ -1,6 +1,11 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
-import { selectCanRevert, selectIsPersisted, selectTab } from "../stores/app";
+import {
+  selectCanConvertToPlaylist,
+  selectCanRevert,
+  selectIsPersisted,
+  selectTab,
+} from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import BaseSubmenu from "./BaseSubmenu";
 import { MenuItem, MenuSeparator } from "./ui/Menu";
@@ -9,10 +14,12 @@ import { MenuItem, MenuSeparator } from "./ui/Menu";
  * is built on, or full-Querydown mode), then Rename (only for a saved query —
  * an unsaved one is named as it's saved), Duplicate, Revert (only while a save
  * has failed, leaving the working query apart from what the backend holds),
+ * Convert to playlist (only while the rows on screen are the query's tracks),
  * View SQL, and Delete (Pin remains deferred).
  *
  * A playlist's menu leaves out everything that's only a query's (the Base
- * submenu, Revert), and offers Rename and View SQL. */
+ * submenu, Revert, Convert), and offers Rename, Duplicate, View SQL and
+ * Delete. */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
   const playlist = useApp(
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
@@ -26,7 +33,8 @@ export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
 
 /** A playlist's wrench menu body. */
 function PlaylistActions(props: { tabId: string }): JSX.Element {
-  const { beginRename, openViewSql } = useAppActions();
+  const { beginRename, duplicatePlaylist, openViewSql, requestDelete } =
+    useAppActions();
   return (
     <>
       <MenuItem
@@ -35,9 +43,21 @@ function PlaylistActions(props: { tabId: string }): JSX.Element {
         onClick={() => beginRename(props.tabId)}
       />
       <MenuItem
+        icon={Icons.Duplicate}
+        label="Duplicate"
+        onClick={() => duplicatePlaylist(props.tabId)}
+      />
+      <MenuItem
         icon={Icons.ViewSql}
         label="View SQL"
         onClick={() => openViewSql(props.tabId)}
+      />
+      <MenuSeparator />
+      <MenuItem
+        icon={Icons.Delete}
+        label="Delete"
+        danger
+        onClick={() => requestDelete(props.tabId)}
       />
     </>
   );
@@ -47,8 +67,10 @@ function PlaylistActions(props: { tabId: string }): JSX.Element {
 function QueryActions(props: { tabId: string }): JSX.Element {
   const canRevert = useApp((s) => selectCanRevert(s, props.tabId));
   const persisted = useApp((s) => selectIsPersisted(s, props.tabId));
+  const canConvert = useApp((s) => selectCanConvertToPlaylist(s, props.tabId));
   const {
     beginRename,
+    convertToPlaylist,
     duplicateQuery,
     revertLive,
     openViewSql,
@@ -75,6 +97,13 @@ function QueryActions(props: { tabId: string }): JSX.Element {
           icon={Icons.Revert}
           label="Revert changes"
           onClick={() => revertLive(props.tabId)}
+        />
+      )}
+      {canConvert && (
+        <MenuItem
+          icon={Icons.Playlist}
+          label="Convert to playlist"
+          onClick={() => convertToPlaylist(props.tabId)}
         />
       )}
       <MenuItem

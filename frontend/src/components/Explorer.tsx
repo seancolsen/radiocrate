@@ -4,7 +4,7 @@ import { selectIsUnsaved, type TabKind } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import SectionHeading from "./SectionHeading";
 import OpenedRow from "./OpenedRow";
-import QueryTree from "./QueryTree";
+import SourceTree from "./SourceTree";
 import SettingsFooter from "./SettingsFooter";
 import { tabIcon } from "./tabKind";
 import IconButton from "./ui/IconButton";
@@ -33,10 +33,10 @@ function OpenedTabRow(props: {
   );
 }
 
-/** The Queries filter field. Its own component so it takes the caret each time
+/** The Sources filter field. Its own component so it takes the caret each time
  * it's shown. Escape hides it again (which clears it). */
-function QueryFilterInput(): JSX.Element {
-  const queryFilter = useApp((s) => s.queryFilter);
+function SourceFilterInput(): JSX.Element {
+  const sourceFilter = useApp((s) => s.sourceFilter);
   const actions = useAppActions();
   const inputRef = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
@@ -47,15 +47,15 @@ function QueryFilterInput(): JSX.Element {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Filter"
-        aria-label="Filter queries"
+        placeholder="Filter sources"
+        aria-label="Filter sources"
         className="border-edge bg-panel text-ink placeholder:text-ink-weak focus:border-accent w-full rounded border px-2 py-1 outline-none"
-        value={queryFilter}
-        onChange={(e) => actions.setQueryFilter(e.currentTarget.value)}
+        value={sourceFilter}
+        onChange={(e) => actions.setSourceFilter(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key !== "Escape") return;
           e.preventDefault();
-          actions.toggleQueryFilter();
+          actions.toggleSourceFilter();
         }}
       />
     </div>
@@ -64,15 +64,16 @@ function QueryFilterInput(): JSX.Element {
 
 /** The explorer: an "Opened" section (every open tab, whatever page it holds —
  * left out altogether while none is open),
- * a "Queries" section (the saved queries, in the folders the user arranges them
- * in, with an actions menu to add a query or folder, filter or refresh), and
+ * a "Sources" section (the saved queries and playlists, in the folders the user
+ * arranges them in, with an actions menu to add a query, playlist or folder,
+ * filter or refresh), and
  * the Settings menu footer pinned to the bottom.
  *
  * This is only the contents. The panel it fills — its surface, width, and
  * persistent-column / modal-drawer behavior — belongs to `ui/SidebarLeft`, so
  * the explorer says nothing about being in a sidebar at all. */
 export default function Explorer(): JSX.Element {
-  const filterOpen = useApp((s) => s.queryFilterOpen);
+  const filterOpen = useApp((s) => s.sourceFilterOpen);
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
   const actions = useAppActions();
@@ -97,15 +98,15 @@ export default function Explorer(): JSX.Element {
           </>
         )}
 
-        {/* Queries */}
-        <SectionHeading title="Queries" spaced={tabs.length > 0}>
+        {/* Sources */}
+        <SectionHeading title="Sources" spaced={tabs.length > 0}>
           <Menu
             align="end"
             width="170px"
             trigger={(api) => (
               <IconButton
                 icon={Icons.More}
-                label="Query list actions"
+                label="Source list actions"
                 active={api.open}
                 onClick={() => api.toggle()}
               />
@@ -117,6 +118,11 @@ export default function Explorer(): JSX.Element {
               onClick={() => actions.addQuery(null)}
             />
             <MenuItem
+              icon={Icons.Playlist}
+              label="Add playlist"
+              onClick={() => actions.addPlaylist(null)}
+            />
+            <MenuItem
               icon={Icons.NewFolder}
               label="Add folder"
               onClick={actions.newFolder}
@@ -126,7 +132,7 @@ export default function Explorer(): JSX.Element {
               icon={Icons.Filter}
               label="Filter"
               checked={filterOpen}
-              onClick={actions.toggleQueryFilter}
+              onClick={actions.toggleSourceFilter}
             />
             <MenuItem
               icon={Icons.Refresh}
@@ -135,8 +141,8 @@ export default function Explorer(): JSX.Element {
             />
           </Menu>
         </SectionHeading>
-        {filterOpen && <QueryFilterInput />}
-        <QueryTree scrollRef={scrollRef} />
+        {filterOpen && <SourceFilterInput />}
+        <SourceTree scrollRef={scrollRef} />
       </div>
 
       <SettingsFooter />

@@ -94,12 +94,12 @@ export const Icons = {
   Playlist, // playlist rows + tab handle icon
   Folder, // a collapsed explorer folder
   FolderOpen, // an expanded explorer folder
-  NewFolder, // Queries "+" menu: new folder
+  NewFolder, // Sources "+" menu: new folder
   ExplorerOpen, // sidebar toggle when closed
   ExplorerClose, // sidebar toggle when open
   Close, // tab close ×, opened-row ×
   Add, // new-tab (+)
-  Refresh, // Queries-section reload + toolbar run
+  Refresh, // Sources-section reload + toolbar run
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron
   Settings, // static Settings footer

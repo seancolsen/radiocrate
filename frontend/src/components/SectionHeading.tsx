@@ -2,7 +2,7 @@ import type { JSX, ReactNode } from "react";
 import { cx } from "./ui/cx";
 
 /** An explorer section's heading row: its title, and any `children` —
- * controls set at the right edge (the Queries section's actions menu). The
+ * controls set at the right edge (the Sources section's actions menu). The
  * sections don't collapse, so the heading itself does nothing when clicked.
  * `spaced` sets it apart from a section heading above it. */
 export default function SectionHeading(props: {

@@ -4,6 +4,7 @@ import type {
   Preset,
   Source,
   SourceFolder,
+  SourceKind,
 } from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
@@ -289,6 +290,10 @@ export interface QueryPageState {
   recordEditor: RecordEditorTarget | null;
   /** Whether a run is in flight. */
   running: boolean;
+  /** Whether the last run failed (to compile, or to run). The rows on screen,
+   * if any, are then an earlier run's, so nothing is built from them that has
+   * to match the definition ("Query: Convert to playlist"). */
+  runFailed: boolean;
   /** The open builder section (null = builder closed). */
   builderSection: Section | null;
   /** Whether the whole-query Querydown editor is open. Kept apart from
@@ -316,6 +321,7 @@ export function emptyPage(): QueryPageState {
     multiSelect: false,
     recordEditor: null,
     running: false,
+    runFailed: false,
     builderSection: null,
     fullEditorOpen: false,
     expandedPreset: null,
@@ -329,14 +335,14 @@ export interface AppState {
   theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
   tabs: Tab[]; // open tabs, in tab-bar order
   activeTabId: string | null;
-  queryFilter: string; // "Filter" input text in the Queries section
-  /** Whether the Queries section's filter input is shown. Hiding it clears
-   * `queryFilter`, so a filter is never in force out of sight. */
-  queryFilterOpen: boolean;
+  sourceFilter: string; // "Filter" input text in the Sources section
+  /** Whether the Sources section's filter input is shown. Hiding it clears
+   * `sourceFilter`, so a filter is never in force out of sight. */
+  sourceFilterOpen: boolean;
   /** The explorer folders showing their contents (persisted). Replaced
    * wholesale on every change, like a page's `selection`. */
   expandedFolders: ReadonlySet<string>;
-  /** The explorer item (folder or saved query) whose name is being edited in
+  /** The explorer item (folder or saved source) whose name is being edited in
    * place, if any. */
   renamingTreeItem: TreeItemRef | null;
   /** Each page tab's page state, keyed by tab id. An entry is created by the
@@ -355,8 +361,14 @@ export interface AppState {
   viewSql: string | null;
   /** The in-progress inline rename (tab handle field), when active. */
   renaming: { id: string; buffer: string } | null;
-  /** The query pending delete confirmation (modal), when open. */
-  pendingDelete: { id: string; name: string; unsaved: boolean } | null;
+  /** The source pending delete confirmation (modal), when open: a query (saved
+   * or not) or a playlist. */
+  pendingDelete: {
+    id: string;
+    kind: SourceKind;
+    name: string;
+    unsaved: boolean;
+  } | null;
   /** Whether the About dialog (versions + the update actions) is open. */
   aboutOpen: boolean;
   /** The setting whose editor dialog is open (null when none is). */
@@ -436,8 +448,8 @@ export function initialState(env: AppEnv): AppState {
     theme: storedTheme(env),
     tabs,
     activeTabId,
-    queryFilter: "",
-    queryFilterOpen: false,
+    sourceFilter: "",
+    sourceFilterOpen: false,
     expandedFolders: storedExpandedFolders(env),
     renamingTreeItem: null,
     pages: {},

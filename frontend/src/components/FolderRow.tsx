@@ -5,7 +5,7 @@ import ExpansionToggle from "./record/ExpansionToggle";
 import TreeNameField from "./TreeNameField";
 import { cx } from "./ui/cx";
 
-/** A folder row in the "Queries" tree: a chevron that shows or hides its
+/** A folder row in the "Sources" tree: a chevron that shows or hides its
  * contents, a folder icon and its name. A single click does nothing — the
  * chevron is what opens it — and a double-click renames it in place. */
 export default function FolderRow(props: {

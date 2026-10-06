@@ -5,15 +5,15 @@ import { Icons } from "../icons";
 import TreeNameField from "./TreeNameField";
 import { cx } from "./ui/cx";
 
-/** A row in the "Queries" tree: a saved source — a query or a playlist, each
- * with its own icon — `depth` folders deep. Clicking (or Enter) opens it, F2 renames it in place, and pressing on it can also
- * pick it up to drag (see `QueryTree`). Unlike the Opened rows, saved-query
- * rows never show the unsaved (✱) marker — that state belongs to open tabs,
- * not the saved catalog.
+/** A row in the "Sources" tree: a saved source — a query or a playlist, each
+ * with its own icon — `depth` folders deep. Clicking (or Enter) opens it, F2
+ * renames it in place, and pressing on it can also pick it up to drag (see
+ * `SourceTree`). Unlike the Opened rows, source rows never show the unsaved (✱)
+ * marker — that state belongs to open tabs, not the saved catalog.
  *
- * The icon sits one chevron's width in from the row's edge, so a query lines up
- * with the folder icons beside it rather than with their chevrons. */
-export default function QueryRow(props: {
+ * The icon sits one chevron's width in from the row's edge, so a source lines
+ * up with the folder icons beside it rather than with their chevrons. */
+export default function SourceRow(props: {
   kind: SourceKind;
   name: string;
   depth: number;

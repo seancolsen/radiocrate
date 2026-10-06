@@ -325,6 +325,7 @@ test("a new query has no name and a Save button until it's saved", async ({
 }) => {
   await openQueryPage(page, `clean=1&count=12&def=${def(FILTER_DEF)}`);
   await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("menuitem", { name: "New query" }).click();
   const tabBar = page.locator("[data-tab-id]");
   await expect(tabBar.last()).toHaveText(/^new$/);
 

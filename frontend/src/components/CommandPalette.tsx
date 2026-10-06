@@ -12,7 +12,11 @@ import { chordMatchesEvent, formatChord } from "../commands/chord";
 import { rankCommands } from "../commands/rank";
 import type { CommandContext, CommandDef } from "../commands/registry";
 import { selectAvailableCommands, selectBinding } from "../stores/commands";
-import { selectPageTab, selectResultCount } from "../stores/app";
+import {
+  selectCanConvertToPlaylist,
+  selectPageTab,
+  selectResultCount,
+} from "../stores/app";
 import { selectFocusedForm } from "../stores/forms";
 import {
   useApp,
@@ -92,6 +96,10 @@ function PaletteDialog(): JSX.Element {
     (s) =>
       s.activeTabId !== null && selectPageTab(s, s.activeTabId) !== undefined,
   );
+  const queryTracksActive = useApp(
+    (s) =>
+      s.activeTabId !== null && selectCanConvertToPlaylist(s, s.activeTabId),
+  );
   const resultsAvailable = useApp(
     (s) =>
       s.activeTabId !== null && (selectResultCount(s, s.activeTabId) ?? 0) > 0,
@@ -102,6 +110,7 @@ function PaletteDialog(): JSX.Element {
     () => ({
       activeTab: activeTabId !== null,
       queryTabActive,
+      queryTracksActive,
       resultsAvailable,
       trackLoaded,
       recordFormFocused,
@@ -109,6 +118,7 @@ function PaletteDialog(): JSX.Element {
     [
       activeTabId,
       queryTabActive,
+      queryTracksActive,
       resultsAvailable,
       trackLoaded,
       recordFormFocused,

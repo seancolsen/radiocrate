@@ -7,12 +7,12 @@ import IconButton from "./ui/IconButton";
 /** What the user was doing when each JSON-RPC method failed, phrased to finish
  * "… failed." A method missing here falls back to naming the method. */
 const ACTIONS: Record<string, string> = {
-  "source.list": "Loading your queries",
+  "source.list": "Loading your sources",
   "query.add": "Saving the query",
-  "source.update_definition": "Saving the query",
-  "source.rename": "Renaming the query",
+  "source.update_definition": "Saving changes",
+  "source.rename": "Renaming the source",
   "query.delete": "Deleting the query",
-  "source.record_play": "Recording when the query was played",
+  "source.record_play": "Recording when the source was played",
   "preset.list": "Loading presets",
   "preset.add": "Saving the preset",
   "preset.update": "Saving the preset",

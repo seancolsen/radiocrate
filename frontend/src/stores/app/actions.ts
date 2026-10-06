@@ -28,7 +28,7 @@ import {
   type SourceKind,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
-import { sendPlaylistWrites } from "../../api/playlist";
+import { fetchPlaylistEntries, sendPlaylistWrites } from "../../api/playlist";
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
@@ -52,13 +52,23 @@ import {
   type UndoHistory,
   type UndoStep,
 } from "../../state/undoHistory";
-import type { EntryWrites } from "../../query/playlistEntries";
+import {
+  createPlaylistWrites,
+  deletePlaylistWrites,
+  sequentialPositions,
+  type EntryWrites,
+  type PlaylistEntry,
+} from "../../query/playlistEntries";
 import {
   isQueryDefinition,
+  newPlaylistDefinition,
   pageDefinitionToStored,
   pageDefsEqual,
+  playlistDefinitionFromQuery,
   playlistDefinitionFromStored,
+  playlistDefinitionToStored,
   type PageDefinition,
+  type PlaylistDefinition,
   type Sections,
 } from "../../query/playlist";
 import {
@@ -108,6 +118,7 @@ import {
 } from "./persistence";
 import {
   selectEffectivePresets,
+  selectCanConvertToPlaylist,
   selectCanRedo,
   selectIsUnsaved,
   selectIsPersisted,
@@ -240,17 +251,21 @@ export interface AppActions {
   closeTab: (id: string) => void;
   selectTab: (id: string) => void;
   reorderTab: (id: string, toIndex: number) => void;
-  setQueryFilter: (text: string) => void;
-  /** Show or hide the Queries filter input. Hiding it clears the filter. */
-  toggleQueryFilter: () => void;
+  setSourceFilter: (text: string) => void;
+  /** Show or hide the Sources filter input. Hiding it clears the filter. */
+  toggleSourceFilter: () => void;
   /** Show or hide explorer folder `id`'s contents. */
   toggleFolderExpanded: (id: string) => void;
-  /** Create a folder at the top of the Queries tree (expanded, being empty)
+  /** Create a folder at the top of the Sources tree (expanded, being empty)
    * and start renaming it. */
   newFolder: () => void;
   /** Open a new, unsaved query in a tab, to be saved at the top of folder
    * `parent` (null: the top level of the tree). */
   addQuery: (parent: string | null) => void;
+  /** Create an empty playlist, named for the current moment, at the top of
+   * folder `parent` (null: the top level of the tree), and open it in a new,
+   * active tab once it's saved — a playlist is never unsaved. */
+  addPlaylist: (parent: string | null) => void;
   /** Start editing an explorer item's name in place. */
   beginTreeRename: (item: TreeItemRef) => void;
   /** Finish the in-place rename with `name` (`folder.rename` or
@@ -399,6 +414,15 @@ export interface AppActions {
   /** Open an unsaved copy of query `id` (from its working definition, when
    * it's open) in a new tab. */
   duplicateQuery: (id: string) => void;
+  /** Save a copy of playlist `id` — its name, its definition (the working
+   * one, when it's open) and its entries — at the top of its folder, and open
+   * the copy in a new tab. */
+  duplicatePlaylist: (id: string) => void;
+  /** "Query: Convert to playlist": save a new playlist holding the tracks of
+   * query tab `tabId`'s rows, in the order shown, at the top of the query's
+   * folder, and open it in a tab beside the query's. A no-op unless
+   * `selectCanConvertToPlaylist`. */
+  convertToPlaylist: (tabId: string) => void;
   /** Open a new unsaved query tab based on "track", seeded with that base's
    * default filter/sort/display presets. */
   newQueryTab: () => void;
@@ -459,9 +483,12 @@ export interface AppActions {
   /** Abandon the in-progress rename. */
   cancelRename: () => void;
 
-  /** Open the delete-confirmation modal for query `id`. */
+  /** Open the delete-confirmation modal for source `id`: a query (saved or
+   * not) or a playlist. */
   requestDelete: (id: string) => void;
-  /** Confirm the pending delete (`query.delete` + close its tab). */
+  /** Confirm the pending delete — `query.delete` for a query, or one `dml`
+   * request deleting a playlist's entries, source and record — and close its
+   * tab. */
   confirmDelete: () => void;
   /** Dismiss the delete-confirmation modal. */
   cancelDelete: () => void;
@@ -889,6 +916,9 @@ export function createAppActions(
           page?.result !== undefined && lastRunSql.get(tabId) === sql;
         lastRunSql.set(tabId, sql);
         setTabResult(tabId, result, refresh);
+        set((s) => {
+          pageDraft(s, tabId).runFailed = false;
+        });
         if (refresh && page?.lineage !== undefined) {
           // Identical SQL maps its columns identically, so the mapping the tab
           // already holds is the mapping these rows want — and re-deriving it
@@ -904,6 +934,10 @@ export function createAppActions(
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
+        set((s) => {
+          const page = s.pages[tabId];
+          if (page) page.runFailed = true;
+        });
       } finally {
         set((s) => {
           // Not `pageDraft`: a tab closed mid-run took its page with it, and
@@ -1099,6 +1133,46 @@ export function createAppActions(
     rowSelectionLead.delete(id);
     runTokens.delete(id);
     lastRunSql.delete(id);
+  };
+
+  /** Opens saved source `source` in a tab — a query tab, or a playlist tab
+   * for a playlist — and makes it the active tab. A source already open is
+   * only made active. A new tab goes in at `index` in the tab bar, or at the
+   * end without one. */
+  const openSource = (
+    source: Parameters<AppActions["openTab"]>[0],
+    index?: number,
+  ) => {
+    set((s) => {
+      if (!s.tabs.some((t) => t.id === source.id)) {
+        const at = index ?? s.tabs.length;
+        if (source.kind === "playlist" && source.playlistId) {
+          const saved = playlistDefinitionFromStored(source.definition);
+          s.tabs.splice(at, 0, {
+            kind: "playlist",
+            id: source.id,
+            playlistId: source.playlistId,
+            name: source.name,
+            saved,
+            live: structuredClone(saved),
+            saveFailed: false,
+          });
+        } else {
+          const saved = definitionFromStored(source.definition);
+          s.tabs.splice(at, 0, {
+            kind: "query",
+            id: source.id,
+            name: source.name,
+            saved,
+            live: cloneDefinition(saved),
+            persisted: true,
+            saveFailed: false,
+            folder: null,
+          });
+        }
+      }
+      s.activeTabId = source.id;
+    });
   };
 
   /** Opens `def` in a new unsaved (and so nameless) query tab, and makes it
@@ -1414,6 +1488,84 @@ export function createAppActions(
     });
   };
 
+  // ── Creating and deleting playlists ─────────────────────────────────────────
+  //
+  // A playlist is saved from the moment it exists (its entries are records),
+  // so none of these is optimistic about creating one: the tab opens once the
+  // backend has it. Each is one `dml` request (see `query/playlistEntries.ts`),
+  // and a failure is the error bar's to report, as for every request.
+
+  /** Saves a new playlist — `name`, `definition`, and an entry for each of
+   * `entries` (a track and its position) — at the top of `folder`, then lists
+   * it in the explorer and opens it in a new, active tab: beside tab
+   * `besideTabId` when that's open, or at the end of the tab bar. Resolves
+   * once that's done, or once the write has failed. */
+  const createPlaylist = async (
+    playlist: {
+      name: string;
+      folder: string | null;
+      definition: PlaylistDefinition;
+    },
+    entries: readonly Omit<PlaylistEntry, "id">[],
+    besideTabId?: string,
+  ): Promise<void> => {
+    const now = nowEpoch();
+    const { sources, folders } = get();
+    const playlistId = newUuid();
+    const source: Source = {
+      id: newUuid(),
+      kind: "playlist",
+      name: playlist.name,
+      createdAt: now,
+      modifiedAt: now,
+      lastPlay: now,
+      definition: playlistDefinitionToStored(playlist.definition),
+      parent: playlist.folder,
+      position: topPosition(sources.data, folders.data, playlist.folder),
+      queryId: null,
+      playlistId,
+    };
+    try {
+      await sendPlaylistWrites(
+        createPlaylistWrites(
+          {
+            sourceId: source.id,
+            playlistId,
+            name: source.name,
+            createdAt: now,
+            folder: source.parent,
+            position: source.position,
+            definition: source.definition,
+          },
+          entries,
+          newUuid,
+        ),
+      );
+    } catch (err) {
+      console.error("playlist create failed", err);
+      return;
+    }
+    set((s) => {
+      s.sources.data = [source, ...s.sources.data];
+    });
+    if (source.parent !== null) expandFolder(source.parent);
+    // Re-read after the await: the tabs may have moved meanwhile.
+    const beside =
+      besideTabId === undefined
+        ? -1
+        : get().tabs.findIndex((t) => t.id === besideTabId);
+    openSource(source, beside === -1 ? undefined : beside + 1);
+  };
+
+  /** The `playlist` record source `id` wraps — read from its open tab, or from
+   * the explorer's list — or `undefined` for a source that isn't a
+   * playlist. */
+  const playlistIdOf = (id: string): string | undefined => {
+    const t = selectTab(get(), id);
+    if (t?.kind === "playlist") return t.playlistId;
+    return get().sources.data.find((x) => x.id === id)?.playlistId ?? undefined;
+  };
+
   const actions: AppActions = {
     loadSources: async () => {
       // Sources and folders load together: the explorer builds one tree of
@@ -1536,37 +1688,7 @@ export function createAppActions(
       });
       persistAudioQuality(env, pref);
     },
-    openTab: (source) => {
-      set((s) => {
-        if (!s.tabs.some((t) => t.id === source.id)) {
-          if (source.kind === "playlist" && source.playlistId) {
-            const saved = playlistDefinitionFromStored(source.definition);
-            s.tabs.push({
-              kind: "playlist",
-              id: source.id,
-              playlistId: source.playlistId,
-              name: source.name,
-              saved,
-              live: structuredClone(saved),
-              saveFailed: false,
-            });
-          } else {
-            const saved = definitionFromStored(source.definition);
-            s.tabs.push({
-              kind: "query",
-              id: source.id,
-              name: source.name,
-              saved,
-              live: cloneDefinition(saved),
-              persisted: true,
-              saveFailed: false,
-              folder: null,
-            });
-          }
-        }
-        s.activeTabId = source.id;
-      });
-    },
+    openTab: (source) => openSource(source),
     openShortcutsTab: () => {
       set((s) => {
         // A singleton: a second request focuses the tab that's already open.
@@ -1595,14 +1717,14 @@ export function createAppActions(
         s.tabs.splice(clamped, 0, moved);
       });
     },
-    setQueryFilter: (text) =>
+    setSourceFilter: (text) =>
       set((s) => {
-        s.queryFilter = text;
+        s.sourceFilter = text;
       }),
-    toggleQueryFilter: () =>
+    toggleSourceFilter: () =>
       set((s) => {
-        s.queryFilterOpen = !s.queryFilterOpen;
-        if (!s.queryFilterOpen) s.queryFilter = "";
+        s.sourceFilterOpen = !s.sourceFilterOpen;
+        if (!s.sourceFilterOpen) s.sourceFilter = "";
       }),
     toggleFolderExpanded: (id) => {
       const next = new Set(get().expandedFolders);
@@ -1624,8 +1746,8 @@ export function createAppActions(
       // hide the name about to be edited.
       set((s) => {
         s.folders.data = [folder, ...s.folders.data];
-        s.queryFilterOpen = false;
-        s.queryFilter = "";
+        s.sourceFilterOpen = false;
+        s.sourceFilter = "";
         s.renamingTreeItem = { kind: "folder", id: folder.id };
       });
       expandFolder(folder.id);
@@ -1640,6 +1762,15 @@ export function createAppActions(
         { folder: parent },
       );
     },
+    addPlaylist: (parent) =>
+      void createPlaylist(
+        {
+          name: nowName(),
+          folder: parent,
+          definition: newPlaylistDefinition(selectEffectivePresets(get())),
+        },
+        [],
+      ),
     beginTreeRename: (item) =>
       set((s) => {
         s.renamingTreeItem = item;
@@ -2005,7 +2136,7 @@ export function createAppActions(
     duplicateQuery: (id) => {
       // Open a new *unsaved* tab copied from the source's working copy.
       // Nothing is written to the backend until the user saves it; it stays
-      // out of the Queries list meanwhile. A query that isn't open (duplicated
+      // out of the Sources list meanwhile. A query that isn't open (duplicated
       // from the explorer) is copied as saved.
       const source = selectQueryTab(get(), id);
       if (source) {
@@ -2014,6 +2145,62 @@ export function createAppActions(
       }
       const saved = get().sources.data.find((q) => q.id === id);
       if (saved) openUnsavedTab(definitionFromStored(saved.definition));
+    },
+    duplicatePlaylist: (id) => {
+      const playlistId = playlistIdOf(id);
+      if (playlistId === undefined) return;
+      const listed = get().sources.data.find((x) => x.id === id);
+      const t = selectPageTab(get(), id);
+      const name = t?.name ?? listed?.name;
+      if (name === undefined) return;
+      // The working definition when it's open: its edits may not have been
+      // written yet.
+      const definition =
+        t?.kind === "playlist"
+          ? t.live
+          : playlistDefinitionFromStored(listed?.definition ?? "");
+      // In the original's write queue, so the entries read are the ones every
+      // write already queued to it has left.
+      void entryWrites
+        .run(id, async () => {
+          const entries = await fetchPlaylistEntries(playlistId);
+          await createPlaylist(
+            { name, folder: listed?.parent ?? null, definition },
+            entries.map(({ track, position }) => ({ track, position })),
+          );
+        })
+        .catch((err) => console.error("playlist duplicate failed", err));
+    },
+    convertToPlaylist: (tabId) => {
+      const s = get();
+      const t = selectQueryTab(s, tabId);
+      const result = s.pages[tabId]?.result;
+      if (!t || !result || !selectCanConvertToPlaylist(s, tabId)) return;
+      // Every row that holds a track, in the order shown. (A row without one,
+      // from an outer join, has nothing to list.)
+      const tracks: string[] = [];
+      for (let row = 0; row < result.rowCount; row++) {
+        const id = selectTrackIdAt(s, tabId, row);
+        if (id !== undefined) tracks.push(id);
+      }
+      const positions = sequentialPositions(tracks.length);
+      // An unsaved query has no name to give it, and no folder yet: it's named
+      // for the moment, as a new playlist is, and goes at the top level.
+      const listed = t.persisted
+        ? s.sources.data.find((x) => x.id === tabId)
+        : undefined;
+      void createPlaylist(
+        {
+          name: t.persisted ? t.name : nowName(),
+          folder: listed?.parent ?? null,
+          definition: playlistDefinitionFromQuery(
+            t.live,
+            selectEffectivePresets(s),
+          ),
+        },
+        tracks.map((track, i) => ({ track, position: positions[i] })),
+        tabId,
+      );
     },
     newQueryTab: () => {
       openUnsavedTab(definitionForBase("track", selectEffectivePresets(get())));
@@ -2089,38 +2276,57 @@ export function createAppActions(
       }),
 
     requestDelete: (id) => {
-      // The query may be open in a tab, or only listed in the explorer.
-      const name =
-        selectQueryTab(get(), id)?.name ??
-        get().sources.data.find((q) => q.id === id)?.name;
-      if (name === undefined) return;
+      // The source may be open in a tab, or only listed in the explorer.
+      const t = selectPageTab(get(), id);
+      const listed = get().sources.data.find((q) => q.id === id);
+      const name = t?.name ?? listed?.name;
+      const kind = t?.kind ?? listed?.kind;
+      if (name === undefined || kind === undefined) return;
       const unsaved = selectIsUnsaved(get(), id);
       set((s) => {
-        s.pendingDelete = { id, name, unsaved };
+        s.pendingDelete = { id, kind, name, unsaved };
       });
     },
     confirmDelete: () => {
       const pending = get().pendingDelete;
       if (!pending) return;
+      const { id } = pending;
       const persisted =
-        selectQueryTab(get(), pending.id)?.persisted ??
-        get().sources.data.some((q) => q.id === pending.id);
+        selectQueryTab(get(), id)?.persisted ??
+        get().sources.data.some((q) => q.id === id);
+      const playlistId =
+        pending.kind === "playlist" ? playlistIdOf(id) : undefined;
       set((s) => {
         s.pendingDelete = null;
-        s.sources.data = s.sources.data.filter((q) => q.id !== pending.id);
+        s.sources.data = s.sources.data.filter((q) => q.id !== id);
       });
-      // Its pending edits would only be written to a query that's gone.
-      saves.cancel(pending.id);
-      // An unsaved query has no backend record to delete — just drop its tab.
-      if (persisted) {
-        // Already gone from the list (above); only a failure needs the
-        // backend's copy back.
-        void queryDelete({ id: pending.id }).catch((err) => {
-          console.error("query delete failed", err);
-          void actions.loadSources();
-        });
+      // Its pending edits would only be written to a source that's gone.
+      saves.cancel(id);
+      // Already gone from the list (above); only a failure needs the
+      // backend's copy back.
+      const restore = (err: unknown) => {
+        console.error(`${pending.kind} delete failed`, err);
+        void actions.loadSources();
+      };
+      if (playlistId !== undefined) {
+        // Its entries first, as `dml`'s reference checks require — all of
+        // them, read once every write already queued to them has landed.
+        void entryWrites
+          .run(id, async () => {
+            const entries = await fetchPlaylistEntries(playlistId);
+            await sendPlaylistWrites(
+              deletePlaylistWrites(
+                { sourceId: id, playlistId },
+                entries.map((e) => e.id),
+              ),
+            );
+          })
+          .catch(restore);
+      } else if (persisted) {
+        // An unsaved query has no backend record to delete — just its tab.
+        void queryDelete({ id }).catch(restore);
       }
-      closeTab(pending.id);
+      closeTab(id);
     },
     cancelDelete: () =>
       set((s) => {

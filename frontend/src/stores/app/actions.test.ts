@@ -28,6 +28,12 @@ vi.mock("api-client", async (importOriginal) => {
     collectionRescan: vi.fn(() => Promise.resolve(null)),
   };
 });
+// A playlist's entries, read as raw SQL, so duplicating and deleting one can be
+// exercised without a backend. Its writes still go through the mocked `dml`.
+vi.mock("../../api/playlist", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/playlist")>();
+  return { ...actual, fetchPlaylistEntries: vi.fn(() => Promise.resolve([])) };
+});
 // The rating vocabulary's query, so `loadRatings` can be exercised without a
 // compiler or a backend.
 vi.mock("../../query/ratings", async (importOriginal) => {
@@ -87,6 +93,7 @@ import {
   settingSet,
   type Source,
 } from "api-client";
+import { fetchPlaylistEntries } from "../../api/playlist";
 import { fetchRatings } from "../../query/ratings";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
@@ -94,6 +101,7 @@ import { buildResultFromArrow } from "../../query/result";
 import type { EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
 import {
+  selectCanConvertToPlaylist,
   selectCanRedo,
   selectCanUndo,
   selectIsUnsaved,
@@ -878,8 +886,8 @@ describe("the query tree", () => {
   });
 
   it("adds a new folder at the top, expanded, and starts renaming it", () => {
-    bundle.actions.toggleQueryFilter();
-    bundle.actions.setQueryFilter("zzz");
+    bundle.actions.toggleSourceFilter();
+    bundle.actions.setSourceFilter("zzz");
     bundle.actions.newFolder();
     const s = bundle.store.getState();
     const [folder] = s.folders.data;
@@ -888,7 +896,7 @@ describe("the query tree", () => {
     expect(s.renamingTreeItem).toEqual({ kind: "folder", id: folder.id });
     expect(s.expandedFolders.has(folder.id)).toBe(true);
     // …where it can be seen.
-    expect(s.queryFilter).toBe("");
+    expect(s.sourceFilter).toBe("");
     expect(vi.mocked(folderAdd)).toHaveBeenCalledWith(folder);
 
     bundle.actions.commitTreeRename(
@@ -904,12 +912,12 @@ describe("the query tree", () => {
   });
 
   it("clears the filter when the filter input is hidden", () => {
-    bundle.actions.toggleQueryFilter();
-    bundle.actions.setQueryFilter("lemon");
-    bundle.actions.toggleQueryFilter();
+    bundle.actions.toggleSourceFilter();
+    bundle.actions.setSourceFilter("lemon");
+    bundle.actions.toggleSourceFilter();
     const s = bundle.store.getState();
-    expect(s.queryFilterOpen).toBe(false);
-    expect(s.queryFilter).toBe("");
+    expect(s.sourceFilterOpen).toBe(false);
+    expect(s.sourceFilter).toBe("");
   });
 
   it("moves an item, locally and in the backend", () => {
@@ -1046,6 +1054,7 @@ describe("the query tree", () => {
     bundle.actions.requestDelete("b");
     expect(bundle.store.getState().pendingDelete).toEqual({
       id: "b",
+      kind: "query",
       name: "b",
       unsaved: false,
     });
@@ -1589,6 +1598,336 @@ describe("playlist tabs", () => {
     expect(vi.mocked(sourceRename)).toHaveBeenCalledWith({
       id: SOURCE,
       name: "Long drive",
+    });
+  });
+});
+
+describe("creating and managing playlists", () => {
+  const FOLDER = "00000000-0000-0000-0000-0000000000f1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  let bundle: AppStoreBundle;
+
+  const source = (over: Partial<Source>): Source => ({
+    id: "q",
+    kind: "query",
+    name: "q",
+    createdAt: 0,
+    modifiedAt: 0,
+    lastPlay: 0,
+    definition: "{}",
+    parent: null,
+    position: 0,
+    queryId: "query-q",
+    playlistId: null,
+    ...over,
+  });
+  /** A playlist "Road trip" in `FOLDER`, beside query "q" there. */
+  const roadTrip = source({
+    id: "p",
+    kind: "playlist",
+    name: "Road trip",
+    definition: JSON.stringify({
+      filter: { custom: "jazz", presets: [] },
+      sort: { builtin: { preset: "playlist_order" } },
+      display: { custom: "$title" },
+    }),
+    parent: FOLDER,
+    position: 3,
+    queryId: null,
+    playlistId: PLAYLIST,
+  });
+
+  /** The operations of each `dml` request sent, as `operation:table`. */
+  const sent = () =>
+    vi
+      .mocked(dml)
+      .mock.calls.map(([req]) =>
+        req.operations.map((op) => `${op.operation}:${op.table}`),
+      );
+  /** The values of the `table` inserts in `dml` request `n`. */
+  const inserted = (n: number, table: string) =>
+    vi
+      .mocked(dml)
+      .mock.calls[n][0].operations.flatMap((op) =>
+        op.operation === "insert" && op.table === table ? [op.values] : [],
+      );
+  /** Waits for `dml` to have been sent `n` times, and its effects to land. */
+  const sentTimes = (n: number) =>
+    vi.waitFor(() => expect(vi.mocked(dml)).toHaveBeenCalledTimes(n));
+
+  beforeEach(() => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(fetchPlaylistEntries).mockReset();
+    vi.mocked(fetchPlaylistEntries).mockResolvedValue([]);
+    bundle = createAppStore(fakeEnv());
+    bundle.store.setState((s) => {
+      s.sources = {
+        status: "ready",
+        data: [source({ parent: FOLDER, position: 2 }), roadTrip],
+      };
+      s.folders = {
+        status: "ready",
+        data: [{ id: FOLDER, name: "Mixes", parent: null, position: 0 }],
+      };
+    });
+  });
+  afterEach(() => bundle.dispose());
+
+  it("adds an empty playlist at the top of its folder, and opens it once saved", async () => {
+    bundle.actions.addPlaylist(FOLDER);
+    // Nothing is listed or opened before the backend has it.
+    expect(bundle.store.getState().tabs).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().tabs).toHaveLength(1),
+    );
+    expect(sent()).toEqual([["insert:playlist", "insert:source"]]);
+    const s = bundle.store.getState();
+    const added = s.sources.data[0];
+    expect(added).toMatchObject({
+      kind: "playlist",
+      parent: FOLDER,
+      position: 1,
+      queryId: null,
+    });
+    expect(added.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+    const [playlistRow] = inserted(0, "playlist");
+    const [sourceRow] = inserted(0, "source");
+    expect(playlistRow).toEqual({
+      id: added.playlistId,
+      definition: added.definition,
+    });
+    expect(sourceRow).toMatchObject({
+      id: added.id,
+      name: added.name,
+      source_folder: FOLDER,
+      position: 1,
+      playlist: added.playlistId,
+    });
+    // No filter, "Playlist order", and (with no presets loaded) an empty
+    // display.
+    expect(JSON.parse(added.definition)).toEqual({
+      filter: { custom: "", presets: [] },
+      sort: { builtin: { preset: "playlist_order" } },
+      display: { custom: "" },
+    });
+    expect(s.activeTabId).toBe(added.id);
+    expect(selectPageTab(s, added.id)).toMatchObject({
+      kind: "playlist",
+      playlistId: added.playlistId,
+      name: added.name,
+    });
+    expect(selectIsUnsaved(s, added.id)).toBe(false);
+    expect(s.expandedFolders.has(FOLDER)).toBe(true);
+  });
+
+  it("adds nothing when the backend turns a new playlist down", async () => {
+    vi.mocked(dml).mockRejectedValueOnce(new Error("500 nope"));
+    bundle.actions.addPlaylist(null);
+    await sentTimes(1);
+    await Promise.resolve();
+    const s = bundle.store.getState();
+    expect(s.tabs).toHaveLength(0);
+    expect(s.sources.data.map((x) => x.id)).toEqual(["q", "p"]);
+  });
+
+  it("duplicates a playlist with its entries, at the top of its folder", async () => {
+    vi.mocked(fetchPlaylistEntries).mockResolvedValue([
+      { id: "e1", track: "t1", position: 1 },
+      { id: "e2", track: "t1", position: 2.5 },
+    ]);
+    bundle.actions.duplicatePlaylist("p");
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().tabs).toHaveLength(1),
+    );
+    expect(fetchPlaylistEntries).toHaveBeenCalledWith(PLAYLIST);
+    expect(sent()).toEqual([
+      [
+        "insert:playlist",
+        "insert:source",
+        "insert:playlist_track",
+        "insert:playlist_track",
+      ],
+    ]);
+    const copy = bundle.store.getState().sources.data[0];
+    expect(copy).toMatchObject({
+      kind: "playlist",
+      name: "Road trip",
+      parent: FOLDER,
+      position: 1,
+    });
+    expect(copy.id).not.toBe("p");
+    expect(copy.playlistId).not.toBe(PLAYLIST);
+    expect(JSON.parse(copy.definition)).toEqual(
+      JSON.parse(roadTrip.definition),
+    );
+    // Same tracks and positions, under new ids.
+    const entries = inserted(0, "playlist_track");
+    expect(entries.map((e) => [e.playlist, e.track, e.position])).toEqual([
+      [copy.playlistId, "t1", 1],
+      [copy.playlistId, "t1", 2.5],
+    ]);
+    expect(entries.map((e) => e.id)).not.toContain("e1");
+    expect(bundle.store.getState().activeTabId).toBe(copy.id);
+  });
+
+  it("duplicates an open playlist's working definition", async () => {
+    bundle.actions.openTab(roadTrip);
+    bundle.actions.setFilterCustom("p", "blues");
+    bundle.actions.duplicatePlaylist("p");
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().tabs).toHaveLength(2),
+    );
+    const copy = bundle.store.getState().sources.data[0];
+    expect(JSON.parse(copy.definition).filter.custom).toBe("blues");
+  });
+
+  it("deletes a playlist's entries, source and record, and closes its tab", async () => {
+    vi.mocked(fetchPlaylistEntries).mockResolvedValue([
+      { id: "e1", track: "t1", position: 1 },
+      { id: "e2", track: "t2", position: 2 },
+    ]);
+    bundle.actions.openTab(roadTrip);
+    bundle.actions.requestDelete("p");
+    expect(bundle.store.getState().pendingDelete).toEqual({
+      id: "p",
+      kind: "playlist",
+      name: "Road trip",
+      unsaved: false,
+    });
+    bundle.actions.confirmDelete();
+    const s = bundle.store.getState();
+    expect(s.tabs).toHaveLength(0);
+    expect(s.sources.data.map((x) => x.id)).toEqual(["q"]);
+    await sentTimes(1);
+    expect(vi.mocked(dml).mock.calls[0][0].operations).toMatchObject([
+      { operation: "delete", table: "playlist_track", where: { id: "e1" } },
+      { operation: "delete", table: "playlist_track", where: { id: "e2" } },
+      { operation: "delete", table: "source", where: { id: "p" } },
+      { operation: "delete", table: "playlist", where: { id: PLAYLIST } },
+    ]);
+    expect(vi.mocked(queryDelete)).not.toHaveBeenCalledWith({ id: "p" });
+  });
+
+  describe("converting a query", () => {
+    const TRACKS = { records: [], trackIdColumn: 0 };
+
+    /** Opens query "q" (a query of tracks) with rows of these track ids. */
+    function openQuery(rows: string[][], base = "track") {
+      bundle.actions.openTab(
+        source({
+          parent: FOLDER,
+          definition: JSON.stringify({
+            base,
+            filter: { custom: "", presets: [] },
+            sort: { custom: "" },
+            display: { custom: "$title" },
+          }),
+        }),
+      );
+      bundle.actions.setResults("q", buildResultFromStringRows(rows), TRACKS);
+    }
+
+    it("saves the rows' tracks in the order shown, beside the query's tab", async () => {
+      bundle.actions.openTab(roadTrip);
+      bundle.actions.selectTab("p");
+      openQuery([["t2"], [""], ["t1"], ["t2"]]);
+      // The playlist's tab, then the query's — the new one goes between them
+      // and the end.
+      bundle.actions.reorderTab("q", 0);
+      expect(selectCanConvertToPlaylist(bundle.store.getState(), "q")).toBe(
+        true,
+      );
+      bundle.actions.convertToPlaylist("q");
+      await vi.waitFor(() =>
+        expect(bundle.store.getState().tabs).toHaveLength(3),
+      );
+      const s = bundle.store.getState();
+      const added = s.sources.data[0];
+      expect(added).toMatchObject({
+        kind: "playlist",
+        name: "q",
+        parent: FOLDER,
+        position: 1,
+      });
+      expect(s.tabs.map((t) => t.id)).toEqual(["q", added.id, "p"]);
+      expect(s.activeTabId).toBe(added.id);
+      // A row without a track is left out; a repeated track is listed twice.
+      expect(
+        inserted(0, "playlist_track").map((e) => [e.track, e.position]),
+      ).toEqual([
+        ["t2", 1],
+        ["t1", 2],
+        ["t2", 3],
+      ]);
+      // No filter and "Playlist order"; the display is the query's.
+      expect(JSON.parse(added.definition)).toEqual({
+        filter: { custom: "", presets: [] },
+        sort: { builtin: { preset: "playlist_order" } },
+        display: { custom: "$title" },
+      });
+      // The query is left as it was.
+      expect(s.sources.data.find((x) => x.id === "q")).toBeDefined();
+      expect(selectQueryTab(s, "q")?.live.base).toBe("track");
+    });
+
+    it("names an unsaved query's playlist for the moment, at the top level", async () => {
+      bundle.actions.newQueryTab();
+      const id = bundle.store.getState().activeTabId!;
+      bundle.actions.setResults(
+        id,
+        buildResultFromStringRows([["t1"]]),
+        TRACKS,
+      );
+      bundle.actions.convertToPlaylist(id);
+      await vi.waitFor(() =>
+        expect(bundle.store.getState().tabs).toHaveLength(2),
+      );
+      const added = bundle.store.getState().sources.data[0];
+      expect(added.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+      expect(added.parent).toBeNull();
+    });
+
+    it("isn't available unless the rows on screen are the query's tracks", async () => {
+      const can = (id: string) =>
+        selectCanConvertToPlaylist(bundle.store.getState(), id);
+      openQuery([["t1"]]);
+      expect(can("q")).toBe(true);
+
+      // Rows that aren't tracks.
+      bundle.actions.setResults("q", buildResultFromStringRows([["x"]]), {
+        records: [],
+      });
+      expect(can("q")).toBe(false);
+
+      // A run in flight, then a failed one.
+      bundle.actions.setSchemaJson("{}");
+      bundle.actions.setResults(
+        "q",
+        buildResultFromStringRows([["t1"]]),
+        TRACKS,
+      );
+      vi.mocked(compileSavedQuery).mockImplementationOnce(() => {
+        throw new Error("Invalid querydown code");
+      });
+      bundle.actions.runQuery("q");
+      expect(can("q")).toBe(false);
+      await vi.waitFor(() =>
+        expect(bundle.store.getState().pages["q"]?.running).toBe(false),
+      );
+      expect(bundle.store.getState().pages["q"]?.runFailed).toBe(true);
+      expect(can("q")).toBe(false);
+      bundle.actions.convertToPlaylist("q");
+      expect(vi.mocked(dml)).not.toHaveBeenCalled();
+
+      // A playlist page is never converted.
+      bundle.actions.openTab(roadTrip);
+      bundle.actions.setResults(
+        "p",
+        buildResultFromStringRows([["t1"]]),
+        TRACKS,
+      );
+      expect(can("p")).toBe(false);
     });
   });
 });

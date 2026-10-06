@@ -136,6 +136,24 @@ export const selectRowSelection = (
 export const selectRunning = (s: AppState, tabId: string): boolean =>
   s.pages[tabId]?.running ?? false;
 
+/** Whether "Query: Convert to playlist" applies to `tabId`: a query tab
+ * whose rows are tracks (they carry a track id column — what makes them
+ * playable), and whose last run neither is still going nor failed, so that the
+ * rows on screen are its definition's. */
+export const selectCanConvertToPlaylist = (
+  s: AppState,
+  tabId: string,
+): boolean => {
+  const page = s.pages[tabId];
+  return (
+    selectQueryTab(s, tabId) !== undefined &&
+    page?.result !== undefined &&
+    page.lineage?.trackIdColumn !== undefined &&
+    !page.running &&
+    !page.runFailed
+  );
+};
+
 /** Whether the result `tabId` is showing arrived as a refresh of the one before
  * it (see `QueryPageState.resultIsRefresh`) — read by the results grid as it's
  * handed the swap, to decide whether the scroll position survives it. */

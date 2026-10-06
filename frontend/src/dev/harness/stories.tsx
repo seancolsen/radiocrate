@@ -99,10 +99,10 @@ const FAVORITES = "00000000-0000-0000-0000-0000000000f1";
 const ROAD_TRIP = "00000000-0000-0000-0000-0000000000f2";
 const ARCHIVE = "00000000-0000-0000-0000-0000000000f3";
 
-/** Arranges the fixture queries into folders: "Favorites" (open) holds
+/** Arranges the fixture sources into folders: "Favorites" (open) holds
  * Lemonade and a "Road trip" folder (closed) holding Workout Mix; Deep Cuts and
  * an empty "Archive" folder sit beside it at the top level. */
-function arrangeQueryTree(stores: Stores): void {
+function arrangeSourceTree(stores: Stores): void {
   const [lemonade, deepCuts, workoutMix] = SOURCES_FIXTURE;
   stores.app.store.setState((s) => {
     s.folders.data = [
@@ -399,7 +399,7 @@ export const STORIES: Record<string, Story> = {
     width: 220,
     height: 360,
     frame: "flex flex-col",
-    setup: arrangeQueryTree,
+    setup: arrangeSourceTree,
     render: () => (
       <>
         <Explorer />
@@ -414,9 +414,9 @@ export const STORIES: Record<string, Story> = {
     height: 360,
     frame: "flex flex-col",
     setup: (stores) => {
-      arrangeQueryTree(stores);
-      stores.app.actions.toggleQueryFilter();
-      stores.app.actions.setQueryFilter("workout");
+      arrangeSourceTree(stores);
+      stores.app.actions.toggleSourceFilter();
+      stores.app.actions.setSourceFilter("workout");
     },
     render: () => <Explorer />,
   },
@@ -426,7 +426,7 @@ export const STORIES: Record<string, Story> = {
     height: 360,
     frame: "flex flex-col",
     setup: (stores) => {
-      arrangeQueryTree(stores);
+      arrangeSourceTree(stores);
       stores.app.actions.beginTreeRename({ kind: "folder", id: ROAD_TRIP });
     },
     render: () => <Explorer />,

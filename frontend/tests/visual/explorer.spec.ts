@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { SCHEMES, openStory, snapshot } from "./harness";
 
-// The explorer's tree of saved queries (the `explorer/tree` story: "Favorites"
+// The explorer's tree of saved sources (the `explorer/tree` story: "Favorites"
 // open, holding Lemonade and a closed "Road trip"; then Deep Cuts and an empty
 // "Archive" at the top level): its looks — folders, the filter, a rename, the
 // "+" menu and the two drop indicators — and what its controls and drags do.
@@ -9,7 +9,7 @@ import { SCHEMES, openStory, snapshot } from "./harness";
 /** The explorer's tree rows, top to bottom, as "depth:name". */
 async function treeRows(page: Page): Promise<string[]> {
   return page
-    .getByRole("tree", { name: "Queries" })
+    .getByRole("tree", { name: "Sources" })
     .getByRole("treeitem")
     .evaluateAll((rows) =>
       rows.map(
@@ -21,7 +21,7 @@ async function treeRows(page: Page): Promise<string[]> {
 
 function treeRow(page: Page, name: string): Locator {
   return page
-    .getByRole("tree", { name: "Queries" })
+    .getByRole("tree", { name: "Sources" })
     .getByRole("treeitem", { name, exact: true });
 }
 
@@ -59,7 +59,7 @@ for (const colorScheme of SCHEMES) {
 
   test(`explorer/tree-actions-menu - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "explorer/tree", colorScheme);
-    await page.getByRole("button", { name: "Query list actions" }).click();
+    await page.getByRole("button", { name: "Source list actions" }).click();
     await expect(
       page.getByRole("menuitem", { name: "Add folder" }),
     ).toBeVisible();
@@ -125,7 +125,7 @@ test.describe("the query tree", () => {
   test("the actions menu adds a folder at the top, open and ready to name", async ({
     page,
   }) => {
-    await page.getByRole("button", { name: "Query list actions" }).click();
+    await page.getByRole("button", { name: "Source list actions" }).click();
     await page.getByRole("menuitem", { name: "Add folder" }).click();
     const field = page.getByRole("textbox", { name: "Folder name" });
     await expect(field).toBeFocused();
@@ -140,12 +140,27 @@ test.describe("the query tree", () => {
 
   test("the actions menu opens a new, unsaved query", async ({ page }) => {
     const before = await treeRows(page);
-    await page.getByRole("button", { name: "Query list actions" }).click();
+    await page.getByRole("button", { name: "Source list actions" }).click();
     await page.getByRole("menuitem", { name: "Add query" }).click();
     // Opened, nameless — and out of the tree until it's saved.
     await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
     await expect(page.getByText("new", { exact: true })).toBeVisible();
     expect(await treeRows(page)).toEqual(before);
+  });
+
+  test("the actions menu adds a playlist at the top, saved and open", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "Source list actions" }).click();
+    await page.getByRole("menuitem", { name: "Add playlist" }).click();
+    // Saved as it's made: named for the moment, at the top of the tree, and
+    // open in a tab.
+    const name = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+    await expect
+      .poll(async () => (await treeRows(page))[0])
+      .toMatch(/^0:\d{4}/);
+    expect((await treeRows(page))[0].slice(2)).toMatch(name);
+    await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
   });
 
   test("a folder's context menu opens a new, unsaved query", async ({
@@ -194,10 +209,10 @@ test.describe("the query tree", () => {
     page,
   }) => {
     const toggle = async () => {
-      await page.getByRole("button", { name: "Query list actions" }).click();
+      await page.getByRole("button", { name: "Source list actions" }).click();
       await page.getByRole("menuitemcheckbox", { name: "Filter" }).click();
     };
-    const input = page.getByRole("textbox", { name: "Filter queries" });
+    const input = page.getByRole("textbox", { name: "Filter sources" });
     await expect(input).toHaveCount(0);
     await toggle();
     await expect(input).toBeFocused();

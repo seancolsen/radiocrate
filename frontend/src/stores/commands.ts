@@ -28,6 +28,7 @@ import {
 } from "../commands/registry";
 import type { AppState, AppStoreBundle } from "./app";
 import {
+  selectCanConvertToPlaylist,
   selectIsUnsaved,
   selectPageTab,
   selectResultCount,
@@ -138,6 +139,8 @@ export function selectCommandContext(
   return {
     activeTab: active !== null,
     queryTabActive: active !== null && selectPageTab(app, active) !== undefined,
+    queryTracksActive:
+      active !== null && selectCanConvertToPlaylist(app, active),
     resultsAvailable:
       active !== null && (selectResultCount(app, active) ?? 0) > 0,
     trackLoaded: app.currentTrack !== null,
@@ -358,6 +361,10 @@ export function createCommandsStore(
         break;
       case "query.focus_display":
         if (queryId) app.actions.focusBuilderSection(queryId, "display");
+        break;
+      case "query.convert_to_playlist":
+        // The action checks that the rows are the query's tracks.
+        if (tabId) app.actions.convertToPlaylist(tabId);
         break;
       // Up/Down move the row selection — unless the user is inside a record
       // editor form, where they move between its items instead (the form is

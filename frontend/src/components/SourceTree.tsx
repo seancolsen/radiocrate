@@ -15,7 +15,7 @@ import {
 } from "../query/explorerTree";
 import { useApp, useAppActions } from "../stores/react";
 import FolderRow from "./FolderRow";
-import QueryRow from "./QueryRow";
+import SourceRow from "./SourceRow";
 import { ContextMenu } from "./ui/ContextMenu";
 import { MenuItem } from "./ui/Menu";
 
@@ -29,6 +29,11 @@ function FolderMenu(props: { id: string }): JSX.Element {
         icon={Icons.Query}
         label="Add query"
         onClick={() => actions.addQuery(props.id)}
+      />
+      <MenuItem
+        icon={Icons.Playlist}
+        label="Add playlist"
+        onClick={() => actions.addPlaylist(props.id)}
       />
       <MenuItem
         icon={Icons.Rename}
@@ -46,10 +51,9 @@ function FolderMenu(props: { id: string }): JSX.Element {
 }
 
 /** A saved source's context menu: the page actions menu's Rename, Duplicate
- * and Delete — with the rename made in place, in the row. A playlist offers
- * only Rename for now: duplicating and deleting one are writes of their own
- * (`dml`, not the query RPCs), still to come. */
-function QueryMenu(props: { id: string }): JSX.Element {
+ * and Delete — with the rename made in place, in the row. Duplicating a query
+ * opens an unsaved copy; duplicating a playlist saves one. */
+function SourceMenu(props: { id: string }): JSX.Element {
   const actions = useAppActions();
   const playlist = useApp(
     (s) => s.sources.data.find((x) => x.id === props.id)?.kind === "playlist",
@@ -62,20 +66,14 @@ function QueryMenu(props: { id: string }): JSX.Element {
         label="Rename"
         onClick={() => actions.beginTreeRename(item)}
       />
-      {playlist ? null : <QueryOnlyItems id={props.id} />}
-    </>
-  );
-}
-
-/** The entries of {@link QueryMenu} only a query has yet. */
-function QueryOnlyItems(props: { id: string }): JSX.Element {
-  const actions = useAppActions();
-  return (
-    <>
       <MenuItem
         icon={Icons.Duplicate}
         label="Duplicate"
-        onClick={() => actions.duplicateQuery(props.id)}
+        onClick={() =>
+          playlist
+            ? actions.duplicatePlaylist(props.id)
+            : actions.duplicateQuery(props.id)
+        }
       />
       <MenuItem
         icon={Icons.Delete}
@@ -87,20 +85,20 @@ function QueryOnlyItems(props: { id: string }): JSX.Element {
   );
 }
 
-/** The saved queries, as the tree of folders the user arranges them in: the
+/** The saved sources, as the tree of folders the user arranges them in: the
  * rows (folders expanded or not, the filter applied), drag-to-rearrange across
  * them, and each item's context menu (a right-click, or a touch held on it and
  * let go).
  *
  * `scrollRef` is the element the rows scroll in, which a drag scrolls when it
  * nears the top or bottom. */
-export default function QueryTree(props: {
+export default function SourceTree(props: {
   scrollRef: RefObject<HTMLElement | null>;
 }): JSX.Element {
   const sources = useApp((s) => s.sources.data);
   const folders = useApp((s) => s.folders.data);
   const expanded = useApp((s) => s.expandedFolders);
-  const filter = useApp((s) => s.queryFilter);
+  const filter = useApp((s) => s.sourceFilter);
   const renaming = useApp((s) => s.renamingTreeItem);
   const actions = useAppActions();
 
@@ -131,7 +129,7 @@ export default function QueryTree(props: {
   const target = drag?.target ?? null;
 
   return (
-    <div ref={listRef} role="tree" aria-label="Queries" className="relative">
+    <div ref={listRef} role="tree" aria-label="Sources" className="relative">
       {rows.map((row) => {
         const { node } = row;
         const dragging =
@@ -153,8 +151,8 @@ export default function QueryTree(props: {
         };
         if (node.kind === "source") {
           return (
-            <QueryRow
-              key={`query:${node.id}`}
+            <SourceRow
+              key={`source:${node.id}`}
               kind={node.source.kind}
               name={node.name}
               depth={row.depth}
@@ -191,7 +189,7 @@ export default function QueryTree(props: {
 
       {rows.length === 0 && filtering && (
         <div className="text-ink-weak flex h-[26px] items-center pl-8 text-sm">
-          No matching queries
+          No matching sources
         </div>
       )}
 
@@ -211,7 +209,7 @@ export default function QueryTree(props: {
           {menu.item.kind === "folder" ? (
             <FolderMenu id={menu.item.id} />
           ) : (
-            <QueryMenu id={menu.item.id} />
+            <SourceMenu id={menu.item.id} />
           )}
         </ContextMenu>
       )}

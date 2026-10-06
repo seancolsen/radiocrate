@@ -9,6 +9,8 @@ import {
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
 import TabHandle from "./TabHandle";
 import { tabIcon } from "./tabKind";
+import { cx } from "./ui/cx";
+import { Menu, MenuItem } from "./ui/Menu";
 
 /** One tab handle, wired to the store. Split out from {@link TabBar} so its
  * unsaved-star subscription (`selectIsUnsaved`) is narrow to this one tab — an
@@ -54,7 +56,8 @@ function WiredTabHandle(props: {
 }
 
 /** The tab bar across the top: the explorer toggle, one handle per open tab
- * (drag-to-reorder), then a "+" new-tab button. Height is TAB_BAR_HEIGHT (34px);
+ * (drag-to-reorder), then a "+" new-tab button, whose menu opens a new query or
+ * a new playlist. Height is TAB_BAR_HEIGHT (34px);
  * the bar background is a step darker than the content panel.
  *
  * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
@@ -101,15 +104,37 @@ export default function TabBar(): JSX.Element {
         />
       ))}
 
-      {/* New tab (+): opens a fresh, unsaved "track" query. */}
-      <button
-        type="button"
-        aria-label="New tab"
-        className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
-        onClick={() => actions.newQueryTab()}
+      {/* New tab (+): a fresh, unsaved "track" query, or a new playlist
+          (saved as it's created). */}
+      <Menu
+        className="shrink-0"
+        trigger={(api) => (
+          <button
+            type="button"
+            aria-label="New tab"
+            aria-haspopup="menu"
+            aria-expanded={api.open}
+            className={cx(
+              "text-ink-weak hover:bg-hover hover:text-ink flex w-9 items-center justify-center",
+              { "bg-hover text-ink": api.open },
+            )}
+            onClick={() => api.toggle()}
+          >
+            <Icons.Add className="size-5" />
+          </button>
+        )}
       >
-        <Icons.Add className="size-5" />
-      </button>
+        <MenuItem
+          icon={Icons.Query}
+          label="New query"
+          onClick={() => actions.newQueryTab()}
+        />
+        <MenuItem
+          icon={Icons.Playlist}
+          label="New playlist"
+          onClick={() => actions.addPlaylist(null)}
+        />
+      </Menu>
     </div>
   );
 }

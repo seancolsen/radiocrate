@@ -33,6 +33,7 @@ export type CommandId =
   | "query.focus_filter"
   | "query.focus_sort"
   | "query.focus_display"
+  | "query.convert_to_playlist"
   | "results.select_next"
   | "results.select_previous"
   | "results.extend_selection_down"
@@ -55,6 +56,7 @@ export type When =
   | "always"
   | "activeTab"
   | "queryTab"
+  | "queryTracks"
   | "results"
   | "trackLoaded"
   | "recordForm";
@@ -67,6 +69,10 @@ export interface CommandContext {
   /** The active tab is a query page — a query's or a playlist's: what the
    * builder and save commands need. */
   queryTabActive: boolean;
+  /** The active tab is a query (not a playlist) whose rows on screen are its
+   * tracks: they carry a track id column, and its last run is neither still
+   * going nor failed (`selectCanConvertToPlaylist`). */
+  queryTracksActive: boolean;
   /** The active tab has result rows. */
   resultsAvailable: boolean;
   /** A track is loaded in the now-playing bar. */
@@ -146,6 +152,14 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Query: Focus display builder",
     when: "queryTab",
     defaultChord: chordOf("mod+shift+D"),
+  },
+  {
+    // Ships unbound, as the spec asks: it's a rare, heavyweight action (it
+    // saves a new playlist), reachable from the palette and the wrench menu.
+    id: "query.convert_to_playlist",
+    title: "Query: Convert to playlist",
+    when: "queryTracks",
+    defaultChord: null,
   },
   {
     id: "results.select_next",
@@ -275,6 +289,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.activeTab;
     case "queryTab":
       return ctx.queryTabActive;
+    case "queryTracks":
+      return ctx.queryTracksActive;
     case "results":
       return ctx.resultsAvailable;
     case "trackLoaded":
@@ -293,6 +309,8 @@ export function whenLabel(when: When): string {
       return "tab open";
     case "queryTab":
       return "query tab active";
+    case "queryTracks":
+      return "query of tracks";
     case "results":
       return "results";
     case "trackLoaded":

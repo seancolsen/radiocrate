@@ -22,7 +22,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 2 — Playlist query, entry math, lineage fix | done | |
 | 3 — One undo abstraction | done | |
 | 4 — Playlist tabs and the playlist page | done | |
-| 5 — Creating and managing playlists | not started | |
+| 5 — Creating and managing playlists | done | Manual pass against the real server: create (explorer, folder menu, tab bar), convert (including one large query, to see the request-size failure reported), duplicate, rename, delete, and filter/sort/display/play on the result |
 | 6 — Removing tracks and committing conditions | not started | |
 | 7 — "Add to playlist…" | not started | |
 | 8 — Dragging result rows | not started | |
@@ -628,6 +628,29 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - The tab opens next to the query's tab.
 - **Owed by the user:** a manual pass against the real server, covering create, convert (including one large query to see the request-size failure reported), duplicate, rename, delete, and filter/sort/display/play on the result.
 
+#### As built
+
+- **Sources section:** `QueryTree` / `QueryRow` are now `SourceTree` / `SourceRow`. The store's `queryFilter` / `queryFilterOpen` / `setQueryFilter` / `toggleQueryFilter` are now `sourceFilter` / `sourceFilterOpen` / `setSourceFilter` / `toggleSourceFilter`. The UI says "Sources", "Source list actions", "Filter sources" (both the input's label and its placeholder) and "No matching sources". The error bar's `source.*` labels no longer say "query" ("Loading your sources", "Saving changes", "Renaming the source", "Recording when the source was played").
+- **Store** (`stores/app/actions.ts`, under "Creating and deleting playlists"):
+  - **`createPlaylist`** (internal) is shared by add, duplicate and convert. It sends one `createPlaylistWrites` request, then lists the source at the top of its folder (expanding the folder), then opens it with `openSource`. `openSource` is `openTab`'s body, and can insert a tab at an index.
+  - **`addPlaylist(parent)`** creates an empty playlist named `nowName()` with `newPlaylistDefinition`.
+  - **`duplicatePlaylist(id)`** uses the working definition when the playlist is open, and the stored one otherwise. It reads the entries with `fetchPlaylistEntries` inside the original's write queue, so writes already queued to the original land first.
+  - **`convertToPlaylist(tabId)`** collects the track id of every row in display order through `selectTrackIdAt`, skipping rows without one, and gives them positions 1…n with `playlistDefinitionFromQuery`. The tab opens to the right of the query's tab.
+  - **`requestDelete` / `confirmDelete`** work for both kinds. `pendingDelete` now carries `kind`, and the modal's heading says "Delete playlist" for a playlist. A playlist's entries are read and deleted, together with its source and its record, in one request through its write queue.
+- **Departure (not optimistic):** create, duplicate and convert open the tab only after the `dml` request lands. A failure adds nothing, and the error bar reports it as "Writing to the database failed". Because nothing is shown before the write lands, nothing has to be rolled back. Delete stays optimistic, as a query's is: the list entry and the tab go at once, and `loadSources` brings the playlist back if the write fails.
+- **Convert's availability:** `selectCanConvertToPlaylist` requires a query tab with a result, a `trackIdColumn`, not `running`, and not **`runFailed`**. `runFailed` is a new page field: `runQuery` sets it when a run throws and clears it when one lands. Without it, a failed run would leave the previous rows showing with no way to tell. Phase 6 can use it for its disabled states. The command is `query.convert_to_playlist`, unbound, gated by a new `When` called `"queryTracks"` (context field `queryTracksActive`, shown as "query of tracks" in the editor). The wrench entry is hidden while the command is unavailable, as Revert is, so the query actions menu snapshot doesn't change.
+- **Wrench and explorer menus:** `PlaylistActions` now has Rename, Duplicate, View SQL, a separator, and Delete. The explorer's `SourceMenu` offers Rename, Duplicate and Delete for both kinds. Duplicate dispatches by kind. A folder's menu and the section menu both gained "Add playlist", with the playlist icon.
+- **Tab bar:** the "+" now opens a `Menu` with "New query" and "New playlist". The button looks the same as before, so no tab-bar baseline changed. `toolbar.spec.ts`'s new-query test now picks "New query" from that menu.
+- **Tests:** `actions.test.ts` has a new `creating and managing playlists` block. It covers adding (the request, the position at the top of the folder, the definition, the tab, and the folder expanding), a refused add leaving nothing behind, duplicating (entries copied under new ids), duplicating an open playlist's working definition, deleting (operation order, tab closed), and converting: row order with duplicate tracks kept and track-less rows skipped, the tab's place, display copied, an unsaved query named for the moment at the top level, and unavailability for non-track rows, a run in flight, a failed run, and a playlist page. `fetchPlaylistEntries` is mocked there. `explorer.spec.ts` gained "the actions menu adds a playlist at the top, saved and open".
+- **Gate:** typecheck, lint, format:check, test:unit (477), build and test:visual (236: the existing 235 plus the new behavioral test) all pass. The probe exits 0. No Rust was touched.
+- **Baselines regenerated** (light and dark, all looked at):
+  - `explorer/tree`, `explorer/filter`, `explorer/folder-rename`, `explorer/tree-drop-between`, `explorer/tree-drop-into` and `explorer/basic`: the "Sources" heading.
+  - `explorer/tree-actions-menu`: the heading, plus the "Add playlist" row.
+  - `error/banner`: "Renaming the source failed."
+  - `settings/keyboard-shortcuts/list`: the new "Query: Convert to playlist" row.
+  - `app/everything-closed` didn't change, because its explorer is closed.
+- **For phase 6:** use `runFailed` (or `selectCanConvertToPlaylist`'s pattern) for the buttons' "after it has failed" state. `requestDelete` / `confirmDelete` no longer need guarding against playlist ids.
+
 ### Phase 6 — Removing tracks and committing conditions
 
 **Goal:** every in-page write except rearranging, each one an undoable step.
@@ -705,6 +728,8 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Builders stay live during an entry write** (phase 3). An edit made while a step's writes are in flight survives, unless the step's own definition half (or an undo's) overwrites it when the writes land. Disabling the builders while `writing` would close that gap, if it turns out to matter in practice.
 
 ## Open questions
+
+- **Converting an unsaved query.** The spec gives the playlist "the same name as the query", but an unsaved query has no name yet. Phase 5 names that playlist for the moment it's created (`YYYY-MM-DD HH:MM`, as a new playlist is) and puts it at the top level, as the spec says for an unsaved query. Change it if a different name is wanted.
 
 - **Converting a full-mode query of tracks.** Its display section is stale (a full query ignores its sections), so phase 2's `playlistDefinitionFromQuery` gives the playlist the default `track` display rather than copying it. Parsing the display out of the hand-written query isn't possible. Change it if a stale display is preferable to the default.
 - **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 should leave it out unless the user says otherwise.
