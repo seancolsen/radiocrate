@@ -49,7 +49,7 @@ create table playlist_track (
   id uuid primary key,
   playlist uuid not null,
   track uuid not null,
-  "order" double not null default 0
+  position double not null default 0
 );
 
 create table source (
@@ -58,20 +58,21 @@ create table source (
   created_at timestamp_s not null,
   modified_at timestamp_s not null,
   last_play timestamp_s not null,
-  parent uuid,                       -- the containing `source_folder`'s id, or null at the top level
+  source_folder uuid,                -- the containing folder, or null at the top level
   position integer not null default 0, -- the sort key among siblings, as today
-  query uuid,
-  playlist uuid,
+  query uuid unique,
+  playlist uuid unique,
   CHECK ((query IS NULL) <> (playlist IS NULL))
 );
 ```
 
 Notes:
 
-- **Shared ids.** A source has the same id as the query or playlist it wraps (`source.id = source.query` or `source.id = source.playlist`). This lets the frontend keep using one id per tab and per tree item, and it keeps every existing query's id unchanged across the migration.
-- **Folders.** Rename `query_folder` to `source_folder`. Folders and sources share one sibling order through the `parent` and `position` columns, just as folders and queries do today.
-- **Migration.** Create a `source` row for every existing `query` row, carrying over `name`, the three timestamps, `parent` and `position`. Then drop those columns from `query`. Following the established rule for our migrations, do every read and schema change before any backfill (DuckDB refuses to commit an `ALTER TABLE` on a table that the same transaction has already updated).
-- **Links.** Under the existing naming convention (a UUID column named after a table references that table's `id`), `playlist_track.playlist`, `playlist_track.track`, `source.query` and `source.playlist` are all inferred links. Querydown and the record editor rely on this.
+- **Identity.** The frontend identifies a source by `source.id` everywhere (tabs, tree items, ordering, `last_play`), and reaches the query or playlist through `source.query` / `source.playlist`. No code assumes that these ids are equal. The migration reuses each existing query's id as its source's id, purely so that open tabs persisted in `localStorage` survive the upgrade.
+- **Folders.** Rename `query_folder` to `source_folder`. Folders and sources share one sibling order, just as folders and queries do today. A source names its folder in `source.source_folder`, a folder names its parent folder in `source_folder.parent`, and both carry a `position`.
+- **Migration.** Create a `source` row for every existing `query` row, carrying over `name`, the three timestamps, `position`, and `parent` (into `source_folder`). Then drop those columns from `query`. Following the established rule for our migrations, do every read and schema change before any backfill (DuckDB refuses to commit an `ALTER TABLE` on a table that the same transaction has already updated).
+- **Links.** Under the existing naming convention (a UUID column named after a table references that table's `id`), `playlist_track.playlist`, `playlist_track.track`, `source.query`, `source.playlist` and `source.source_folder` are all inferred links. Querydown and the record editor rely on this.
+- **Invariants.** The schema, not application code, enforces the polymorphism, so that writes made through the record editor's generic DML respect it too. The `CHECK` makes every source wrap exactly one query or playlist, and the `unique` constraints stop two sources from wrapping the same one (DuckDB allows any number of NULLs in a unique column). The schema can't stop a `query` or `playlist` row from having no source at all. Such a row is harmless (it just never appears in the explorer), so we accept the gap.
 - **Duplicates.** A playlist may contain the same track more than once. Each occurrence is its own `playlist_track` record.
 - **Playlist definition.** The `playlist.definition` column holds JSON with the same structure as `query.definition`, except that it has no base table (the base is always `track`). It also has no "full Querydown" mode: a playlist's definition is always sectioned into filter, sort and display.
 
@@ -79,7 +80,7 @@ Notes:
 
 Unlike queries, a playlist is saved before the user can use it, because its tracks only exist as `playlist_track` records in the database. Every operation that creates a playlist (adding one, duplicating one, converting a query) therefore persists it immediately, and a playlist tab never shows the "unsaved" state that a new query does.
 
-Each operation that creates, deletes, or changes a playlist's tracks is sent as a single API request that applies all of its writes in one transaction. Examples are creating the `source`, `playlist` and `playlist_track` records together, or rewriting every `order` value at once.
+Each operation that creates, deletes, or changes a playlist's tracks is sent as a single API request that applies all of its writes in one transaction. Examples are creating the `source`, `playlist` and `playlist_track` records together, or rewriting every `position` value at once.
 
 ## Listing playlists and queries in the explorer
 
@@ -100,7 +101,7 @@ Each operation that creates, deletes, or changes a playlist's tracks is sent as 
 As with queries, the user can rename, delete, and duplicate playlists from the explorer sidebar. Follow the same UX that we already have for queries, with these differences:
 
 - **Delete** removes the playlist's `playlist_track` records, its `source` record and its `playlist` record, all in one request. If the playlist is open in a tab, that tab closes.
-- **Duplicate** cannot open an unsaved copy the way it does for queries. It immediately saves a new playlist with the same name, definition and tracks (new `playlist_track` records with the same `track` and `order` values). The copy goes at the top of the original's folder and opens in a new tab.
+- **Duplicate** cannot open an unsaved copy the way it does for queries. It immediately saves a new playlist with the same name, definition and tracks (new `playlist_track` records with the same `track` and `position` values). The copy goes at the top of the original's folder and opens in a new tab.
 - **Rename** works as it does for queries, from the explorer as well as from the tab handle and the page's wrench menu.
 
 ## Converting a query into a playlist
@@ -109,7 +110,7 @@ As with queries, the user can rename, delete, and duplicate playlists from the e
 - Also make the command available from the query actions menu (the wrench/build icon in the query page toolbar).
 - The command is only available when the query's current results are tracks, meaning they carry a track id column (the same condition that makes rows playable). It is unavailable while the query is running or after it has failed.
 - The command creates a new playlist with the same name as the query, at the top of the query's folder (or the top level, for an unsaved query). It opens in a new tab next to the query's tab. The original query is left unchanged.
-- The new playlist gets one `playlist_track` record for each row of the query's current results, in the order they are displayed. Initialize the `order` values with sequential integers starting at 1. The column is a `double` so that rearranging entries later only requires changing the entries that move.
+- The new playlist gets one `playlist_track` record for each row of the query's current results, in the order they are displayed. Initialize the `position` values with sequential integers starting at 1. The column is a `double` so that rearranging entries later only requires changing the entries that move.
 - The new playlist has no filter conditions and its sorting is set to "Playlist order", since both of these are now baked into the track list. If the query's base is `track`, the playlist copies the query's display section. Otherwise it uses the default `track` display preset.
 
 ## Adding tracks to a playlist
@@ -126,9 +127,9 @@ The user can add one or more tracks to a specific playlist from any query or pla
 
 There is no flow for adding tracks to a playlist from within the playlist page itself, and that's okay. To add tracks, the user opens a query in another tab, selects tracks there, and drags them onto the playlist's entry in the sources tree (or uses "Add to playlist…").
 
-When adding tracks to a playlist, compute their `order` values as follows:
+When adding tracks to a playlist, compute their `position` values as follows:
 
-1. Read the playlist's `playlist_track` entries to find the maximum `order` value.
+1. Read the playlist's `playlist_track` entries to find the maximum `position` value.
 1. Give the new `playlist_track` records consecutive integers, starting one above the integer ceiling of that maximum (or at 1 for an empty playlist). This adds the tracks at the _end_ of the playlist.
 1. The added tracks keep the order they had relative to one another in the results they were selected from.
 
@@ -161,11 +162,11 @@ track{
 \\track.(
   // the user's sorting conditions, written as they are for tracks
 )
-\\order
+\\position
 \\track.id
 
 $id @{hide:yes}
-$order @{hide:yes}
+$position @{hide:yes}
 $track.(
   // the user's display definition, written as it is for tracks
 )
@@ -173,7 +174,7 @@ $track.(
 
 The filter, sort and display slots are filled from the filter, sort and display builders. Because every slot is scoped to the related `track`, the presets defined for `track` work unchanged. Omit the `track{…}` block entirely when there are no filter conditions, because Querydown rejects an empty `{}` block. Empty sort and display blocks are fine.
 
-The hidden `$id` and `$order` columns identify each row's `playlist_track` record and its position. Removing and rearranging tracks depend on them. As with a query of tracks, a row only counts as a track (playable, editable as a track, and addable to playlists) when the user's display includes the track's `$id` exactly once.
+The hidden `$id` and `$position` columns identify each row's `playlist_track` record and its position. Removing and rearranging tracks depend on them. As with a query of tracks, a row only counts as a track (playable, editable as a track, and addable to playlists) when the user's display includes the track's `$id` exactly once.
 
 ### Filtering a playlist
 
@@ -201,7 +202,7 @@ Sorting a playlist works much like sorting a query of tracks, with these differe
 - When any sorting conditions are applied, render this button at the bottom of the sort builder:
     - "Commit this track order to playlist" (with a `check` icon)
 
-    Committing rewrites the `order` value of _every_ entry in the playlist to sequential integers starting at 1, following the current sorting conditions. Entries hidden by a filter are reordered too: the order is computed from the playlist query with the sorting conditions but without the filter. Sorting then resets to "Playlist order", and any filter stays as it was. The commit is a single undoable step.
+    Committing rewrites the `position` value of _every_ entry in the playlist to sequential integers starting at 1, following the current sorting conditions. Entries hidden by a filter are reordered too: the order is computed from the playlist query with the sorting conditions but without the filter. Sorting then resets to "Playlist order", and any filter stays as it was. The commit is a single undoable step.
 
 ### Customizing the display of track fields within a playlist
 
@@ -227,7 +228,7 @@ Removing tracks deletes the selected rows' `playlist_track` records (not the `tr
 - The drag-and-drop UX is as similar as possible to the existing UX for rearranging items in the sources tree, including the drop indicator between rows and auto-scrolling near the edges.
 - When tracks are rearranged, the frontend does the following:
     1. Immediately reorder the rows in the in-memory result set to show the order the user intended. This updates the UI optimistically and instantly.
-    2. In a single API request, update the `playlist_track.order` values of the tracks being dragged. Wait for the request to finish before continuing. The new values fall between the `order` values of the rows just above and just below the drop position, evenly spaced. For example, dragging three tracks between rows whose orders are `6` and `7` gives them the orders `6.25`, `6.5` and `6.75`.
+    2. In a single API request, update the `playlist_track.position` values of the tracks being dragged. Wait for the request to finish before continuing. The new values fall between the `position` values of the rows just above and just below the drop position, evenly spaced. For example, dragging three tracks between rows whose positions are `6` and `7` gives them the positions `6.25`, `6.5` and `6.75`.
         - Dropping at the very top gives the tracks consecutive integers ending one below the integer floor of the first row's value. Dropping at the very bottom gives them consecutive integers starting one above the integer ceiling of the last row's value.
         - If the two neighboring values are too close for distinct doubles to fit between them, the same request instead renumbers every entry in the playlist to sequential integers starting at 1, in the new order.
         - When a filter is applied, the neighbors are the adjacent _visible_ rows. Hidden entries keep their values.
@@ -238,14 +239,14 @@ Removing tracks deletes the selected rows' `playlist_track` records (not the `tr
 
 ### Undo/redo within playlists
 
-- The playlist page has a single undo stack, using the same Undo and Redo toolbar buttons as the query page. The stack holds every change the user makes to the playlist from within the page as a transformation that can be applied and unapplied. This covers both changes to the playlist's definition (filter, sort and display) and every write to its `playlist_track` records. For example, when the user removes tracks from the playlist, the stack stores those `playlist_track` records in full so that undo can re-insert them with their original ids and `order` values.
+- The playlist page has a single undo stack, using the same Undo and Redo toolbar buttons as the query page. The stack holds every change the user makes to the playlist from within the page as a transformation that can be applied and unapplied. This covers both changes to the playlist's definition (filter, sort and display) and every write to its `playlist_track` records. For example, when the user removes tracks from the playlist, the stack stores those `playlist_track` records in full so that undo can re-insert them with their original ids and `position` values.
 - Undoing or redoing a `playlist_track` change sends the inverse (or original) writes as one request, queued like any other write to the playlist, and then reloads the results. If that request fails, the stack's position doesn't move.
 - Renaming the playlist is not on the stack, as with queries.
 - The query page's undo history is snapshot-based: it records the whole query definition each time the query runs, and undo restores an earlier snapshot. That model doesn't fit playlists, whose changes also include writes to `playlist_track` records. Refactor the undo/redo system as needed so that both pages share one clean abstraction. For example, a query definition snapshot can become one kind of transformation among several.
 
 ### The record editor within the playlist page
 
-The playlist query lists `playlist_track` records, so on the query page the record editor would show a tree of fields with `id`, `playlist`, `track`, and `order` at the top level. On the playlist page, the user should be able to edit the related `track` record directly, without first expanding the `track` field, and has no need to edit the other `playlist_track` fields. So within the playlist page, the record editor "begins" at the related `track` record instead of the `playlist_track` record:
+The playlist query lists `playlist_track` records, so on the query page the record editor would show a tree of fields with `id`, `playlist`, `track`, and `position` at the top level. On the playlist page, the user should be able to edit the related `track` record directly, without first expanding the `track` field, and has no need to edit the other `playlist_track` fields. So within the playlist page, the record editor "begins" at the related `track` record instead of the `playlist_track` record:
 
 - The result row context menu offers "Edit track" (and not "Edit playlist_track"), and the "Results: Edit selected rows" command edits the selected rows' tracks.
 - Selecting several rows that hold the same track edits that track once, as the record editor already does for duplicate records.
