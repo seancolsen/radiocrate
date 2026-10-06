@@ -429,15 +429,23 @@ export interface AppState {
 
 /** Result rows picked up to be dragged: the tab they were picked up on, the
  * tracks they hold and (on a playlist's page) the entries they list, each in
- * the order shown, and the source in the explorer that would take them if they
- * were dropped now (`null` when nothing would: the pointer isn't over a
- * playlist, or is over the one they came from). Plain data, so the grid that
- * picked the rows up and the explorer they're dropped on can both read it. */
+ * the order shown, and where they'd go if they were dropped now. Plain data, so
+ * the grid that picked the rows up and the explorer they're dropped on can both
+ * read it. */
 export interface RowDrag {
   fromTabId: string;
   trackIds: readonly string[];
   entryIds: readonly string[];
+  /** The source in the explorer that would take the tracks (`null` when none
+   * would: the pointer isn't over a playlist, or is over the one they came
+   * from). */
   over: string | null;
+  /** On a playlist's page, the gap among its rows where the rows would be
+   * rearranged to: above row `gap`, or below the last row when `gap` is the
+   * row count. `null` when they wouldn't be: the pointer isn't over the rows,
+   * the drop would move nothing, or the page can't take a rearrangement now
+   * (`selectCanWriteFromRows`). */
+  gap: number | null;
 }
 
 /** A shared frozen empty set for tabs with no selection, so a selector returns a

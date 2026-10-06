@@ -5,10 +5,12 @@ import {
   createPlaylistWrites,
   deletePlaylistWrites,
   dropPositions,
+  moveAfter,
   rearrangeMoves,
   removeEntriesWrites,
   renumberMoves,
   rowEntry,
+  rowRearrangement,
   sequentialPositions,
   setPositionsWrites,
   sourceTimestamp,
@@ -143,6 +145,61 @@ describe("rearrangeMoves", () => {
       { id: "h", from: 1, to: 3 },
       { id: "b", from: 1, to: 4 },
     ]);
+  });
+});
+
+describe("moveAfter", () => {
+  const all = ["a", "b", "c", "d"].map((id) => ({ id }));
+  const order = (entries: readonly { id: string }[]) =>
+    entries.map((e) => e.id).join("");
+
+  it("puts the moved entries right after the one named, in their order", () => {
+    expect(order(moveAfter(all, [all[3], all[0]], "b"))).toBe("bdac");
+  });
+
+  it("puts them first without one", () => {
+    expect(order(moveAfter(all, [all[2]], undefined))).toBe("cabd");
+  });
+});
+
+describe("rowRearrangement", () => {
+  it("moves rows up, keeping their order, between the rows either side", () => {
+    expect(rowRearrangement(5, [2, 3, 4], 1)).toEqual({
+      order: [0, 2, 3, 4, 1],
+      at: 1,
+      above: 0,
+      below: 1,
+    });
+  });
+
+  it("moves scattered rows down to sit together", () => {
+    expect(rowRearrangement(5, [0, 2], 4)).toEqual({
+      order: [1, 3, 0, 2, 4],
+      at: 2,
+      above: 3,
+      below: 4,
+    });
+  });
+
+  it("has no neighbor past an edge", () => {
+    expect(rowRearrangement(3, [1], 0)).toMatchObject({
+      order: [1, 0, 2],
+      above: undefined,
+      below: 0,
+    });
+    expect(rowRearrangement(3, [1], 3)).toMatchObject({
+      order: [0, 2, 1],
+      above: 2,
+      below: undefined,
+    });
+  });
+
+  it("is nothing when the rows would stay where they are", () => {
+    for (const gap of [1, 2, 3]) {
+      expect(rowRearrangement(4, [1, 2], gap)).toBeUndefined();
+    }
+    expect(rowRearrangement(4, [], 0)).toBeUndefined();
+    expect(rowRearrangement(4, [1], 5)).toBeUndefined();
   });
 });
 

@@ -60,14 +60,18 @@ import {
   addEntriesWrites,
   createPlaylistWrites,
   deletePlaylistWrites,
+  moveAfter,
+  rearrangeMoves,
   removeEntriesWrites,
   renumberMoves,
   rowEntry,
+  rowRearrangement,
   sequentialPositions,
   setPositionsWrites,
   type EntryWrites,
   type PlaylistEntry,
   type RowEntry,
+  type RowRearrangement,
 } from "../../query/playlistEntries";
 import {
   isQueryDefinition,
@@ -166,6 +170,11 @@ import {
   type ThemePref,
 } from "./state";
 import type { AppVanillaStore } from "./vanillaStore";
+
+/** Whether every one of `items` is defined, narrowing them to say so. */
+function allDefined<T>(items: (T | undefined)[]): items is T[] {
+  return items.every((item) => item !== undefined);
+}
 
 function newUuid(): string {
   return crypto.randomUUID();
@@ -505,16 +514,24 @@ export interface AppActions {
   ) => Promise<void>;
   /** A press picked up row `row` of page `tabId` to drag it: the selection
    * when the row belongs to it, and otherwise the row alone, selected first
-   * (as a click on it would select it). Only rows that are tracks drag.
+   * (as a click on it would select it). Rows that are tracks drag, and so do a
+   * playlist's rows, which can be rearranged whether or not they're tracks.
    * Returns whether the rows were picked up, as {@link AppState.rowDrag}. */
   beginRowDrag: (tabId: string, row: number) => boolean;
   /** The rows being dragged are over source `sourceId` in the explorer, or
-   * over no source (`null`). Only a playlist other than the one they came
-   * from would take them. */
-  hoverRowDrag: (sourceId: string | null) => void;
+   * over no source (`null`), and over gap `gap` among the rows they came from
+   * (`null`: not over those rows). Only a playlist other than the one they
+   * came from would take their tracks. Only a playlist's page takes them back
+   * among its rows, and only where that would move something, at a time it
+   * can be written from its rows ({@link RowDrag.gap}). */
+  hoverRowDrag: (sourceId: string | null, gap?: number | null) => void;
   /** The rows being dragged were let go (`drop`), or the drag was called off.
    * Dropped over a playlist, their tracks are added to its end
-   * ({@link AppActions.addTracksToPlaylist}). Returns whether they were. */
+   * ({@link AppActions.addTracksToPlaylist}). Dropped among the rows of the
+   * playlist they came from, they're moved there, shown at once, and the new
+   * order is written as one undoable step, after which the rows reload with
+   * the moved ones still selected. Returns whether they were dropped
+   * anywhere. */
   endRowDrag: (drop: boolean) => boolean;
   /** Note a request to the backend, in flight until `settled` settles: a saved
    * query's edits aren't written until the app has been quiet for a while.
@@ -683,6 +700,12 @@ export function createAppActions(
   // rather than replacing them (see `setTabResult`). Non-reactive: nothing
   // renders from it.
   const lastRunSql = new Map<string, string>();
+
+  // The entries a rearrangement just moved, per playlist page, until the
+  // page's next run lands: that's the reload after the write, which brings back
+  // the rows the user is already looking at (see `rearrangeRows`).
+  // Non-reactive: the selection it leads to is what renders.
+  const rearranged = new Map<string, ReadonlySet<string>>();
 
   // Trailing-debounced re-runs, keyed by tab id, so a burst of keystrokes in a
   // builder text input collapses into one query run once the user pauses.
@@ -980,14 +1003,22 @@ export function createAppActions(
         // question asked again, so what the user built on the last answer
         // (selection, editor, scroll) survives it; see `setTabResult`.
         const page = get().pages[tabId];
+        const sameSql = lastRunSql.get(tabId) === sql;
+        // The reload after a rearrangement brings back the rows on screen, in
+        // the order they were dropped in (or, if the write failed, in the
+        // stored order), and lands as a refresh too: the place in them is
+        // kept, and the moved entries are selected again where they are now.
+        const moved = rearranged.get(tabId);
+        rearranged.delete(tabId);
         const refresh =
-          page?.result !== undefined && lastRunSql.get(tabId) === sql;
+          page?.result !== undefined && (sameSql || moved !== undefined);
         lastRunSql.set(tabId, sql);
         setTabResult(tabId, result, refresh);
+        if (moved) selectEntryRows(tabId, result, moved);
         set((s) => {
           pageDraft(s, tabId).runFailed = false;
         });
-        if (refresh && page?.lineage !== undefined) {
+        if (refresh && sameSql && page?.lineage !== undefined) {
           // Identical SQL maps its columns identically, so the mapping the tab
           // already holds is the mapping these rows want — and re-deriving it
           // would only churn the reference the record editor's resync watches.
@@ -1002,6 +1033,7 @@ export function createAppActions(
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
+        rearranged.delete(tabId);
         set((s) => {
           const page = s.pages[tabId];
           if (page) page.runFailed = true;
@@ -1201,6 +1233,7 @@ export function createAppActions(
     rowSelectionLead.delete(id);
     runTokens.delete(id);
     lastRunSql.delete(id);
+    rearranged.delete(id);
   };
 
   /** Opens saved source `source` in a tab — a query tab, or a playlist tab
@@ -1748,6 +1781,161 @@ export function createAppActions(
       entries.push(entry);
     }
     return entries;
+  };
+
+  // ── Rearranging a playlist's rows ───────────────────────────────────────────
+  //
+  // Rows dragged to another place among a playlist page's rows are shown there
+  // at once (the result is swapped for a reordered view of itself), and then
+  // the new order is written as one step through the playlist's write queue.
+  // The rows reload once it lands, or once it has failed, which puts the
+  // stored order back on screen.
+
+  /** Selects rows `rows` of `tabId`'s results, as clicking the first and
+   * shift-clicking the last would (they needn't be contiguous). With none,
+   * nothing is selected, and multi-select mode ends with the selection. */
+  const selectRows = (tabId: string, rows: readonly number[]) => {
+    set((s) => {
+      const page = pageDraft(s, tabId);
+      if (rows.length > 0) page.selection = new Set(rows);
+      else {
+        delete page.selection;
+        page.multiSelect = false;
+      }
+    });
+    if (rows.length === 0) {
+      rowClickAnchor.delete(tabId);
+      rowSelectionLead.delete(tabId);
+      return;
+    }
+    rowClickAnchor.set(tabId, rows[0]);
+    rowSelectionLead.set(tabId, rows[rows.length - 1]);
+  };
+
+  /** Selects the rows of `result` (`tabId`'s) that list entries `ids`. */
+  const selectEntryRows = (
+    tabId: string,
+    result: QueryResult,
+    ids: ReadonlySet<string>,
+  ) => {
+    const rows: number[] = [];
+    for (let row = 0; row < result.rowCount; row++) {
+      const entry = rowEntry(result, row);
+      if (entry && ids.has(entry.id)) rows.push(row);
+    }
+    selectRows(tabId, rows);
+  };
+
+  /** What dropping the rows in hand at `gap` among playlist page `tabId`'s
+   * rows would do, or `undefined` when it would rearrange nothing: the page
+   * can't be written from its rows now (`selectCanWriteFromRows`, which also
+   * blocks a rearrangement while any write to the playlist is in flight), or
+   * the rows would stay where they are. The rows in hand are the selection,
+   * which nothing changes during a drag. */
+  const rearrangementAt = (
+    tabId: string,
+    gap: number,
+  ): RowRearrangement | undefined => {
+    const s = get();
+    const result = s.pages[tabId]?.result;
+    if (!result || !selectCanWriteFromRows(s, tabId)) return undefined;
+    const rows = [...selectRowSelection(s, tabId)].sort((a, b) => a - b);
+    return rowRearrangement(result.rowCount, rows, gap);
+  };
+
+  /** Drops the rows in hand, which list entries `entryIds` (in the order
+   * shown), at `gap` among playlist page `tabId`'s rows. Returns whether it
+   * did.
+   *
+   * The moved entries get positions between those of the visible rows they
+   * now sit between, or the whole playlist is renumbered when they don't fit
+   * (`rearrangeMoves`). When a sort applies, the order on screen isn't the
+   * stored one, so the whole playlist is renumbered in that order with the
+   * move made in it, and the sort is reset to "Playlist order": committing the
+   * sort and the move together, as one step. */
+  const rearrangeRows = (
+    tabId: string,
+    entryIds: readonly string[],
+    gap: number,
+  ): boolean => {
+    const s = get();
+    const t = selectPageTab(s, tabId);
+    const result = s.pages[tabId]?.result;
+    const move = rearrangementAt(tabId, gap);
+    if (t?.kind !== "playlist" || !result || !move) return false;
+    const rows = [...selectRowSelection(s, tabId)].sort((a, b) => a - b);
+    const ids = rows.map((row) => rowEntry(result, row)?.id);
+    // The rows in hand are still the ones picked up.
+    if (ids.join("\n") !== entryIds.join("\n")) return false;
+    const neighbor = (row: number | undefined) =>
+      row === undefined ? undefined : rowEntry(result, row)?.id;
+    const above = neighbor(move.above);
+    const below = neighbor(move.below);
+    const sorted = selectSortApplied(s, tabId);
+    // The sort the user is looking at, which the move is made in.
+    const { playlistId, live } = t;
+
+    // Shown at once: the same rows, in the new order, the moved ones still
+    // selected. The grid keeps its place, as it does for a refresh.
+    const reordered = result.reordered(move.order);
+    set((d) => {
+      const page = pageDraft(d, tabId);
+      page.result = castDraft(reordered);
+      page.resultIsRefresh = true;
+      const ct = d.currentTrack;
+      if (ct?.sourceTabId === tabId && ct.rowIndex !== null) {
+        ct.rowIndex = move.order.indexOf(ct.rowIndex);
+      }
+    });
+    selectRows(
+      tabId,
+      rows.map((_, i) => move.at + i),
+    );
+    rearranged.set(tabId, new Set(entryIds));
+
+    void writeStep(tabId, async () => {
+      if (sorted) {
+        const order = await sortedEntries(playlistId, live);
+        const byId = new Map(order.map((e) => [e.id, e]));
+        const moved = entryIds.map((id) => byId.get(id));
+        if (!allDefined(moved) || (above !== undefined && !byId.has(above)))
+          return undefined;
+        return {
+          writes: setPositionsWrites(
+            renumberMoves(moveAfter(order, moved, above)),
+          ),
+          edit: (def) => {
+            def.sort = playlistOrderContent();
+          },
+        };
+      }
+      // Read inside the queue, so the positions are the stored ones.
+      const all = await fetchPlaylistEntries(playlistId);
+      const byId = new Map(all.map((e) => [e.id, e]));
+      const moved = entryIds.map((id) => byId.get(id));
+      const find = (id: string | undefined) =>
+        id === undefined ? undefined : byId.get(id);
+      // An entry gone from under the drop (written elsewhere) leaves the drop
+      // nothing to go by, and the reload shows what's stored.
+      if (
+        !allDefined(moved) ||
+        (above !== undefined && !byId.has(above)) ||
+        (below !== undefined && !byId.has(below))
+      )
+        return undefined;
+      return {
+        writes: setPositionsWrites(
+          rearrangeMoves(all, moved, find(above), find(below)),
+        ),
+      };
+    }).then((landed) => {
+      if (landed) return;
+      // The stored order, back on screen. The error bar has already reported
+      // a refused write.
+      lastRunSql.delete(tabId);
+      runQuery(tabId);
+    });
+    return true;
   };
 
   const actions: AppActions = {
@@ -2774,9 +2962,9 @@ export function createAppActions(
       });
     },
     beginRowDrag: (tabId, row) => {
-      if (get().pages[tabId]?.lineage?.trackIdColumn === undefined) {
-        return false;
-      }
+      const tracks = get().pages[tabId]?.lineage?.trackIdColumn !== undefined;
+      const playlist = selectPageTab(get(), tabId)?.kind === "playlist";
+      if (!tracks && !playlist) return false;
       // Holding a row outside the selection takes it alone (or, in
       // multi-select mode, adds it, as a tap there does).
       if (!selectRowSelection(get(), tabId).has(row)) {
@@ -2784,7 +2972,6 @@ export function createAppActions(
       }
       const s = get();
       const result = s.pages[tabId]?.result;
-      const playlist = selectPageTab(s, tabId)?.kind === "playlist";
       const trackIds: string[] = [];
       const entryIds: string[] = [];
       // In the order shown, whatever order the rows were selected in.
@@ -2795,25 +2982,36 @@ export function createAppActions(
         const entry = playlist && result ? rowEntry(result, r) : undefined;
         if (entry) entryIds.push(entry.id);
       }
-      if (trackIds.length === 0) return false;
+      if (trackIds.length === 0 && entryIds.length === 0) return false;
       set((d) => {
-        d.rowDrag = { fromTabId: tabId, trackIds, entryIds, over: null };
+        d.rowDrag = {
+          fromTabId: tabId,
+          trackIds,
+          entryIds,
+          over: null,
+          gap: null,
+        };
       });
       return true;
     },
-    hoverRowDrag: (sourceId) => {
+    hoverRowDrag: (sourceId, gap = null) => {
       const drag = get().rowDrag;
       if (!drag) return;
       const takes =
+        drag.trackIds.length > 0 &&
         sourceId !== null &&
         sourceId !== drag.fromTabId &&
         get().sources.data.some(
           (x) => x.id === sourceId && x.kind === "playlist",
         );
       const over = takes ? sourceId : null;
-      if (over === drag.over) return;
+      const at =
+        gap !== null && rearrangementAt(drag.fromTabId, gap) ? gap : null;
+      if (over === drag.over && at === drag.gap) return;
       set((d) => {
-        if (d.rowDrag) d.rowDrag.over = over;
+        if (!d.rowDrag) return;
+        d.rowDrag.over = over;
+        d.rowDrag.gap = at;
       });
     },
     endRowDrag: (drop) => {
@@ -2822,7 +3020,11 @@ export function createAppActions(
       set((d) => {
         d.rowDrag = null;
       });
-      if (!drop || drag.over === null) return false;
+      if (!drop) return false;
+      if (drag.gap !== null) {
+        return rearrangeRows(drag.fromTabId, drag.entryIds, drag.gap);
+      }
+      if (drag.over === null) return false;
       void actions.addTracksToPlaylist(drag.over, drag.trackIds);
       return true;
     },

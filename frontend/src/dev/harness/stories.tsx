@@ -466,6 +466,7 @@ export const STORIES: Record<string, Story> = {
           trackIds: ["t1", "t2"],
           entryIds: [],
           over: PLAYLIST_SOURCE.id,
+          gap: null,
         };
       });
     },
@@ -890,6 +891,32 @@ export const STORIES: Record<string, Story> = {
       );
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
+  // A playlist's row being dragged to another place among its rows: the row
+  // in hand stays selected where it is, and the drop line marks the gap
+  // between the first two rows, where it would land. No pointer has moved, so
+  // the "1 track" chip sits at the stage's top-left corner.
+  "results/playlist-drop": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openRoadTrip(stores);
+      const entryIds = ["e1", "e2", "e3", "e4", "e5"];
+      const { result } = lemonadeGridResult({ entryIds });
+      stores.app.actions.setResults(id, result, { records: [] });
+      stores.app.actions.clickRow(id, 3, { shift: false, ctrl: false });
+      stores.app.store.setState((s) => {
+        s.rowDrag = {
+          fromTabId: id,
+          trackIds: [],
+          entryIds: ["e4"],
+          over: null,
+          gap: 1,
+        };
+      });
+    },
+    render: () => <QueryResults tabId={PLAYLIST_SOURCE.id} />,
   },
   // A row's context menu: one entry per table whose primary key the row
   // carries, over the entry that turns multi-select mode on.

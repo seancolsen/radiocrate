@@ -183,6 +183,49 @@ describe("QueryResult.patchRow", () => {
   });
 });
 
+describe("QueryResult.reordered", () => {
+  const table = new arrow.Table({
+    id: arrow.vectorFromArray(["t1", "t2", "t3"], new arrow.Utf8()),
+    title: arrow.vectorFromArray(["Pray You Catch Me", "Hold Up", "Sorry"]),
+  });
+  const annotations: (AnnotationValue | null)[] = [
+    mapAnno([["hide", "yes"]]),
+    null,
+  ];
+  const ids = (result: ReturnType<typeof buildResultFromArrow>) =>
+    Array.from({ length: result.rowCount }, (_, row) => result.value(row, 0));
+
+  it("reads the same rows in the new order, leaving the original as it was", () => {
+    const result = buildResultFromArrow(table, annotations);
+    const reordered = result.reordered([2, 0, 1]);
+    expect(ids(reordered)).toEqual(["t3", "t1", "t2"]);
+    expect(reordered.text(0, reordered.visible[0])).toBe("Sorry");
+    expect(reordered.visible).toEqual(result.visible);
+    expect(ids(result)).toEqual(["t1", "t2", "t3"]);
+    // A reordering of a reordering reads through both.
+    expect(ids(reordered.reordered([1, 2, 0]))).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("moves a patched row's patch with it", () => {
+    const result = buildResultFromArrow(table, annotations);
+    const patch = new arrow.Table({
+      id: arrow.vectorFromArray(["t2"], new arrow.Utf8()),
+      title: arrow.vectorFromArray(["Hold Up (refreshed)"]),
+    });
+    result.patchRow(1, patch, 0);
+    const reordered = result.reordered([1, 2, 0]);
+    expect(reordered.text(0, reordered.visible[0])).toBe("Hold Up (refreshed)");
+    expect(reordered.text(1, reordered.visible[0])).toBe("Sorry");
+  });
+
+  it("refuses an order that doesn't list every row once", () => {
+    const result = buildResultFromArrow(table, annotations);
+    expect(() => result.reordered([0, 1])).toThrow();
+    expect(() => result.reordered([0, 0, 1])).toThrow();
+    expect(() => result.reordered([0, 1, 3])).toThrow();
+  });
+});
+
 // The third real-backend regression: a DuckDB INTERVAL column. apache-arrow
 // decodes it to an `Int32Array` of nonsense — iterable, so the list-detection
 // fallback above would classify the column as a list and paint a row of pills.

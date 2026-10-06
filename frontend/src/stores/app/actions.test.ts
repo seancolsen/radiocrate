@@ -103,7 +103,7 @@ import { fetchRatings } from "../../query/ratings";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
 import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
-import type { EntryWrites } from "../../query/playlistEntries";
+import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
 import {
   selectCanConvertToPlaylist,
@@ -2487,6 +2487,7 @@ describe("dragging result rows", () => {
       trackIds: ["t1", "t3"],
       entryIds: [],
       over: null,
+      gap: null,
     });
     expect(selection("q")).toEqual([0, 2]);
   });
@@ -2581,8 +2582,304 @@ describe("dragging result rows", () => {
       trackIds: ["t1", "t1"],
       entryIds: ["e1", "e3"],
       over: null,
+      gap: null,
     });
     bundle.actions.hoverRowDrag(SOURCE);
     expect(drag()?.over).toBeNull();
+  });
+});
+
+describe("rearranging a playlist's rows", () => {
+  const SOURCE = "00000000-0000-0000-0000-0000000000c1";
+  const PLAYLIST = "00000000-0000-0000-0000-0000000000d1";
+  const OTHER = "00000000-0000-0000-0000-0000000000c3";
+  let bundle: AppStoreBundle;
+
+  /** The playlist's entries as stored: e1…e5, holding tracks t1…t5, at
+   * positions 6…10. */
+  const ENTRIES = [6, 7, 8, 9, 10].map((position, i) => ({
+    id: `e${i + 1}`,
+    track: `t${i + 1}`,
+    position,
+  }));
+  /** `entries` as the page's rows: their `$id` and `$position` columns, then
+   * the track. */
+  const rowsOf = (entries: readonly { id: string; position: number }[]) =>
+    entries.map((e) => [e.id, String(e.position), "x"]);
+  /** The rows the page's runs bring back, and the ones a sorted read does. */
+  let pageRows: string[][];
+  let sortedRows: string[][];
+
+  const page = () => bundle.store.getState().pages[SOURCE];
+  const live = () => selectPageTab(bundle.store.getState(), SOURCE)?.live;
+  const drag = () => bundle.store.getState().rowDrag;
+  /** The entry each row on screen lists, in order. */
+  const shown = () => {
+    const result = page()?.result;
+    if (!result) return [];
+    return Array.from(
+      { length: result.rowCount },
+      (_, row) => rowEntry(result, row)?.id,
+    );
+  };
+  const selection = () => [...(page()?.selection ?? [])].sort((a, b) => a - b);
+  /** Each `dml` request's operations, as `id=position` updates. */
+  const sent = () =>
+    vi
+      .mocked(dml)
+      .mock.calls.map(([req]) =>
+        req.operations.map((op) =>
+          op.operation === "update"
+            ? `${op.where.id}=${String(op.values.position)}`
+            : op.operation,
+        ),
+      );
+  const settled = () =>
+    vi.waitFor(() => {
+      expect(page()?.writing).toBe(false);
+      expect(page()?.running).toBe(false);
+    });
+
+  async function open(def: object, rows: string[][]) {
+    pageRows = rows;
+    bundle.actions.openTab({
+      id: SOURCE,
+      name: "Road trip",
+      definition: JSON.stringify(def),
+      kind: "playlist",
+      playlistId: PLAYLIST,
+    });
+    bundle.actions.ensureRun(SOURCE);
+    await settled();
+  }
+
+  /** Selects `rows` (a click, then Ctrl-clicks), picks them up by the first,
+   * and lets go over gap `gap`. */
+  function drop(rows: number[], gap: number): boolean {
+    bundle.actions.clickRow(SOURCE, rows[0], { shift: false, ctrl: false });
+    for (const row of rows.slice(1)) {
+      bundle.actions.clickRow(SOURCE, row, { shift: false, ctrl: true });
+    }
+    bundle.actions.beginRowDrag(SOURCE, rows[0]);
+    bundle.actions.hoverRowDrag(null, gap);
+    return bundle.actions.endRowDrag(true);
+  }
+
+  const PLAIN = {
+    filter: { custom: "", presets: [] },
+    sort: { builtin: { preset: "playlist_order" } },
+    display: { custom: "$title" },
+  };
+  const FILTERED = { ...PLAIN, filter: { custom: "jazz", presets: [] } };
+  const SORTED = { ...FILTERED, sort: { custom: "\\\\title" } };
+
+  beforeEach(() => {
+    vi.mocked(dml).mockReset();
+    vi.mocked(dml).mockResolvedValue({});
+    vi.mocked(fetchPlaylistEntries).mockReset();
+    vi.mocked(fetchPlaylistEntries).mockImplementation(() =>
+      Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
+    );
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    vi.mocked(compilePlaylist).mockReset();
+    vi.mocked(compilePlaylist).mockImplementation(
+      (_id, _def, _presets, _schema, _prelude, options) => ({
+        sql: options?.withFilter === false ? "sorted" : "page",
+        columnAnnotations: [],
+      }),
+    );
+    vi.mocked(runSql).mockImplementation((sql) =>
+      Promise.resolve({ sql } as never),
+    );
+    vi.mocked(buildResultFromArrow).mockImplementation((table) =>
+      buildResultFromStringRows(
+        (table as unknown as { sql: string }).sql === "sorted"
+          ? sortedRows
+          : pageRows,
+      ),
+    );
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson("{}");
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.mocked(runSql).mockReset();
+    vi.mocked(runSql).mockResolvedValue({} as never);
+    vi.mocked(buildResultFromArrow).mockReset();
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["r"]]),
+    );
+  });
+
+  it("shows the rows in their new place at once, and writes positions between their neighbors", async () => {
+    await open(PLAIN, rowsOf(ENTRIES));
+    expect(drop([2, 3, 4], 1)).toBe(true);
+    expect(drag()).toBeNull();
+    // At once: the same rows reordered, the moved ones still selected, and
+    // the grid keeping its place.
+    expect(shown()).toEqual(["e1", "e3", "e4", "e5", "e2"]);
+    expect(selection()).toEqual([1, 2, 3]);
+    expect(page()?.resultIsRefresh).toBe(true);
+    expect(page()?.writing).toBe(true);
+
+    // The reload brings back the order now stored.
+    pageRows = [
+      ["e1", "6", "x"],
+      ["e3", "6.25", "x"],
+      ["e4", "6.5", "x"],
+      ["e5", "6.75", "x"],
+      ["e2", "7", "x"],
+    ];
+    await settled();
+    // Between 6 and 7, evenly spaced, in one request.
+    expect(sent()).toEqual([["e3=6.25", "e4=6.5", "e5=6.75"]]);
+    expect(vi.mocked(compilePlaylist).mock.calls.length).toBe(2);
+    expect(shown()).toEqual(["e1", "e3", "e4", "e5", "e2"]);
+    expect(selection()).toEqual([1, 2, 3]);
+    expect(page()?.resultIsRefresh).toBe(true);
+    expect(page()?.undo.steps).toHaveLength(1);
+
+    // One step, undone by moving them back.
+    pageRows = rowsOf(ENTRIES);
+    bundle.actions.undo(SOURCE);
+    await settled();
+    expect(sent()[1]).toEqual(["e3=8", "e4=9", "e5=10"]);
+    expect(shown()).toEqual(["e1", "e2", "e3", "e4", "e5"]);
+  });
+
+  it("drops at the very top and bottom on whole numbers past the edges", async () => {
+    await open(PLAIN, rowsOf(ENTRIES));
+    drop([4], 0);
+    await settled();
+    expect(sent()).toEqual([["e5=5"]]);
+
+    pageRows = rowsOf(ENTRIES);
+    drop([0, 1], 5);
+    await settled();
+    expect(sent()[1]).toEqual(["e1=11", "e2=12"]);
+  });
+
+  it("renumbers the whole playlist when the neighbors are too close", async () => {
+    const close = [
+      { id: "e1", track: "t1", position: 1 },
+      { id: "e2", track: "t2", position: 1 + Number.EPSILON },
+      { id: "e3", track: "t3", position: 2 },
+      { id: "e4", track: "t4", position: 3 },
+    ];
+    vi.mocked(fetchPlaylistEntries).mockResolvedValue(close);
+    await open(PLAIN, rowsOf(close));
+    drop([3], 1);
+    await settled();
+    expect(sent()).toEqual([["e4=2", "e2=3", "e3=4"]]);
+  });
+
+  it("goes between the visible neighbors under a filter, leaving hidden entries be", async () => {
+    await open(FILTERED, rowsOf([ENTRIES[0], ENTRIES[3], ENTRIES[4]]));
+    drop([2], 1);
+    expect(shown()).toEqual(["e1", "e5", "e4"]);
+    await settled();
+    // Between e1 (6) and e4 (9); e2 and e3 aren't on screen.
+    expect(sent()).toEqual([["e5=7.5"]]);
+    expect(live()?.filter.custom).toBe("jazz");
+  });
+
+  it("under a sort, renumbers everything in the sorted order with the move made, and resets the sort, as one step", async () => {
+    // Sorted descending; the filter shows e5, e3 and e1.
+    sortedRows = rowsOf([...ENTRIES].reverse());
+    await open(SORTED, rowsOf([ENTRIES[4], ENTRIES[2], ENTRIES[0]]));
+    drop([2], 1);
+    expect(shown()).toEqual(["e5", "e1", "e3"]);
+    await settled();
+    // The full sorted order is e5 e4 e3 e2 e1; e1 goes right after e5.
+    expect(sent()).toEqual([["e5=1", "e1=2", "e4=3", "e3=4", "e2=5"]]);
+    expect(live()?.sort).toEqual({ builtin: { preset: "playlist_order" } });
+    expect(live()?.filter.custom).toBe("jazz");
+    expect(page()?.undo.steps).toHaveLength(1);
+
+    bundle.actions.undo(SOURCE);
+    await settled();
+    expect(sent()[1]).toEqual(["e5=10", "e1=6", "e4=9", "e3=8", "e2=7"]);
+    expect(live()?.sort).toEqual({ custom: "\\\\title" });
+  });
+
+  it("reloads the stored order when the write fails, with the moved entries still selected", async () => {
+    await open(PLAIN, rowsOf(ENTRIES));
+    vi.mocked(dml).mockRejectedValueOnce(new Error("refused"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    drop([4], 0);
+    expect(shown()).toEqual(["e5", "e1", "e2", "e3", "e4"]);
+    await settled();
+    expect(shown()).toEqual(["e1", "e2", "e3", "e4", "e5"]);
+    expect(selection()).toEqual([4]);
+    expect(page()?.undo.steps).toHaveLength(0);
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("only offers a drop that moves something, while nothing writes to the playlist", async () => {
+    await open(PLAIN, rowsOf(ENTRIES));
+    bundle.actions.clickRow(SOURCE, 2, { shift: false, ctrl: false });
+    bundle.actions.clickRow(SOURCE, 3, { shift: false, ctrl: true });
+    bundle.actions.beginRowDrag(SOURCE, 2);
+    // Either side of the rows in hand, or between them, moves nothing.
+    for (const gap of [2, 3, 4]) {
+      bundle.actions.hoverRowDrag(null, gap);
+      expect(drag()?.gap).toBeNull();
+    }
+    bundle.actions.hoverRowDrag(null, 5);
+    expect(drag()?.gap).toBe(5);
+    // Rows that aren't tracks don't go to another playlist.
+    bundle.store.setState((s) => {
+      s.sources = {
+        status: "ready",
+        data: [
+          {
+            id: OTHER,
+            kind: "playlist",
+            name: "Other",
+            createdAt: 0,
+            modifiedAt: 0,
+            lastPlay: 0,
+            definition: "{}",
+            parent: null,
+            position: 0,
+            queryId: null,
+            playlistId: "00000000-0000-0000-0000-0000000000d3",
+          },
+        ],
+      };
+    });
+    bundle.actions.hoverRowDrag(OTHER, null);
+    expect(drag()?.over).toBeNull();
+    expect(drag()?.gap).toBeNull();
+    bundle.actions.endRowDrag(false);
+
+    // A write in flight blocks a rearrangement.
+    let land!: () => void;
+    vi.mocked(dml).mockImplementationOnce(
+      () => new Promise((resolve) => (land = () => resolve({}))),
+    );
+    bundle.actions.removeRows(SOURCE, [0]);
+    await vi.waitFor(() => expect(dml).toHaveBeenCalledTimes(1));
+    bundle.actions.beginRowDrag(SOURCE, 2);
+    bundle.actions.hoverRowDrag(null, 5);
+    expect(drag()?.gap).toBeNull();
+    expect(bundle.actions.endRowDrag(true)).toBe(false);
+    land();
+    await settled();
+    expect(sent()).toEqual([["delete"]]);
+  });
+
+  it("isn't offered on a query's page", () => {
+    openQueryTab(bundle, "q");
+    bundle.actions.setResults(
+      "q",
+      buildResultFromStringRows([["t1"], ["t2"], ["t3"]]),
+      { records: [], trackIdColumn: 0 },
+    );
+    bundle.actions.beginRowDrag("q", 2);
+    bundle.actions.hoverRowDrag(null, 0);
+    expect(drag()?.gap).toBeNull();
+    expect(bundle.actions.endRowDrag(true)).toBe(false);
+    expect(dml).not.toHaveBeenCalled();
   });
 });

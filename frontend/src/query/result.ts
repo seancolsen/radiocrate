@@ -12,6 +12,11 @@
 // exact object — `patchRow` can still rewrite a row in place, and a new result
 // always swaps the reference the grid's subscription watches (see `setResults`
 // in `stores/app/actions.ts`, and `stores/app/immer.test.ts`).
+//
+// A result can also be a reordered *view* of another's rows (`reordered`): the
+// same table, read through a map from display row to table row. A playlist
+// page shows its rows in their new order that way the moment they're dropped,
+// before the write that stores the order has landed.
 
 import * as arrow from "apache-arrow";
 import type { DataType as ArrowType, Table } from "apache-arrow";
@@ -49,7 +54,9 @@ interface Patch {
 
 /** A query result: the row count, every column (hidden included), and the
  * visible ones the grid lays out and paints — computed once at construction.
- * Cell text is derived on read, not precomputed. */
+ * Cell text is derived on read, not precomputed. Row numbers are display rows,
+ * which are the table's own unless the result is a reordered view
+ * ({@link QueryResult.reordered}). */
 export class QueryResult {
   readonly rowCount: number;
   readonly columns: readonly ResultColumn[];
@@ -58,13 +65,21 @@ export class QueryResult {
 
   private readonly table: Table;
   private readonly types: readonly (ArrowType | undefined)[];
+  /** The table row each display row reads, for a reordered view; `undefined`
+   * when display rows are the table's own. */
+  private readonly rowMap: readonly number[] | undefined;
   /** Rows a re-read has pointed at a fresh one-row table (see `patchRow`).
    * Empty in the ordinary case; dropped wholesale when the tab re-runs. */
   private readonly patches = new Map<number, Patch>();
 
-  constructor(table: Table, columns: readonly ResultColumn[]) {
+  constructor(
+    table: Table,
+    columns: readonly ResultColumn[],
+    rowMap?: readonly number[],
+  ) {
     this.table = table;
-    this.rowCount = table.numRows;
+    this.rowMap = rowMap;
+    this.rowCount = rowMap?.length ?? table.numRows;
     this.columns = columns;
     this.visible = columns.filter((c) => !c.meta.hide);
     this.types = table.schema.fields.map((f) => f.type);
@@ -80,7 +95,7 @@ export class QueryResult {
     const patch = this.patches.get(row);
     const vector = (patch ? patch.table : this.table).getChildAt(column);
     if (!vector) return undefined;
-    const index = patch ? patch.row : row;
+    const index = patch ? patch.row : this.tableRow(row);
     return isMonthDayNanoInterval(this.types[column])
       ? readMonthDayNanoInterval(vector, index)
       : vector.get(index);
@@ -110,6 +125,35 @@ export class QueryResult {
     return Array.from(raw as Iterable<unknown>, (e) =>
       displayText(column.meta, stringifyArrowValue(e)),
     );
+  }
+
+  /** The same rows in another order: display row `i` of the new result is row
+   * `order[i]` of this one. `order` lists every row once. A re-read row keeps
+   * its patch at its new place. Nothing is copied: the new result reads this
+   * one's table. */
+  reordered(order: readonly number[]): QueryResult {
+    if (
+      order.length !== this.rowCount ||
+      new Set(order).size !== order.length ||
+      order.some((row) => !(row >= 0 && row < this.rowCount))
+    ) {
+      throw new Error("A reordering must list every row exactly once.");
+    }
+    const next = new QueryResult(
+      this.table,
+      this.columns,
+      order.map((row) => this.tableRow(row)),
+    );
+    order.forEach((from, to) => {
+      const patch = this.patches.get(from);
+      if (patch) next.patches.set(to, patch);
+    });
+    return next;
+  }
+
+  /** The table row display row `row` reads. */
+  private tableRow(row: number): number {
+    return this.rowMap ? this.rowMap[row] : row;
   }
 
   /** Re-points one row at a re-read (see `query/rowDml.ts`): from then on its

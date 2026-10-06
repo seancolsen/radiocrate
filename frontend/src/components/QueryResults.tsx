@@ -18,6 +18,7 @@ import {
   selectResultCount,
   selectResultIsRefresh,
   selectResultsScroll,
+  selectRowDropGap,
   selectRowRecords,
   selectRowSelection,
   selectTableRecordsForRows,
@@ -53,10 +54,13 @@ import RowDragChip from "./RowDragChip";
 // grid is told to keep scrollable above its first row, and the chip that
 // follows the pointer while rows are dragged.
 //
-// Rows that are tracks can be dragged onto a playlist in the explorer's tree.
-// The drag itself is plain data in the store (`rowDrag`), which the tree reads
-// to highlight the playlist that would take the rows; finding that playlist
-// under the pointer is this shell's, since it's a question about the DOM.
+// Rows that are tracks can be dragged onto a playlist in the explorer's tree,
+// and a playlist's rows can be dragged to another place among themselves. The
+// drag itself is plain data in the store (`rowDrag`), which the tree reads to
+// highlight the playlist that would take the rows, and the grid to draw the
+// line where they'd go among its own. Finding what's under the pointer is this
+// shell's: the playlist is a question about the DOM, and the gap between rows
+// one for the grid.
 
 /** An open row context menu: where it was raised, the rows it acts on, and the
  * records it offers to edit.
@@ -176,10 +180,13 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   // the same one.
   const ratings = useApp(selectRatings);
   const ratingsLoading = useApp(selectRatingsLoading);
-  // How many tracks this page's rows have in hand, while they're being
-  // dragged (0 otherwise).
+  // How many rows this page has in hand, while they're being dragged (0
+  // otherwise): every one lists an entry on a playlist's page, and holds a
+  // track elsewhere.
   const dragCount = useApp((s) =>
-    s.rowDrag?.fromTabId === props.tabId ? s.rowDrag.trackIds.length : 0,
+    s.rowDrag?.fromTabId === props.tabId
+      ? Math.max(s.rowDrag.trackIds.length, s.rowDrag.entryIds.length)
+      : 0,
   );
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
@@ -278,10 +285,10 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       onRowDragMove: (x, y) => {
         dragPoint.current = { x, y };
         placeChip(chipRef.current, x, y);
-        hoverRowDrag(sourceAt(x, y));
+        hoverRowDrag(sourceAt(x, y), grid.gapAt(x, y) ?? null);
       },
       onRowDragEnd: (x, y, drop) => {
-        if (drop) hoverRowDrag(sourceAt(x, y));
+        if (drop) hoverRowDrag(sourceAt(x, y), grid.gapAt(x, y) ?? null);
         return endRowDrag(drop);
       },
     });
@@ -353,6 +360,14 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       // new result set (which would reset the scroll and clear the selection).
       // Nothing about the result's identity changes, so the subscription above
       // never fires — this is what asks for the repaint.
+      // Where rows dragged on this page (a playlist's) would drop among its
+      // rows: the grid draws the line there, and scrolls at its edges while
+      // they're in hand.
+      store.subscribe(
+        (s) => selectRowDropGap(s, tabId),
+        (gap) => grid.setDropGap(gap),
+        { fireImmediately: true },
+      ),
       store.subscribe(
         (s) => s.rowPatch,
         (patch) => {

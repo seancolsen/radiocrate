@@ -3,13 +3,14 @@ import { tableFromArrays, tableToIPC } from "apache-arrow";
 import { PLAYLIST_SOURCE, SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
-// Dragging result rows onto a playlist in the explorer, with a mouse. The drag
-// runs between components — the canvas grid picks the rows up, the explorer's
-// tree outlines the playlist under the pointer, and the drop writes through
-// the playlist's write queue — so it's driven through the assembled app
-// (`?expose=1`). What the outlined playlist looks like is the
-// `explorer/tracks-drop` snapshot. Touch can't be driven here: the device
-// checks in the playlists spec's Manual QA cover it.
+// Dragging result rows onto a playlist in the explorer, and to another place
+// among a playlist's own rows, with a mouse. The drag runs between components
+// — the canvas grid picks the rows up, the explorer's tree outlines the
+// playlist under the pointer, and the drop writes through the playlist's write
+// queue — so it's driven through the assembled app (`?expose=1`). What the
+// outlined playlist looks like is the `explorer/tracks-drop` snapshot, and the
+// drop line between rows the `results/playlist-drop` one. Touch can't be
+// driven here: the device checks in the playlists spec's Manual QA cover it.
 //
 // The rows are canvas pixels, so they're addressed by coordinates and the
 // selection and the drag are read back through the exposed store.
@@ -18,12 +19,14 @@ interface AppWindow {
   __appStore: AppStoreFacade;
 }
 
-/** Each `dml` request the page sent, as its inserts' `track@position`. */
+/** Each `dml` request the page sent, as its inserts' `track@position` and its
+ * updates' `id=position`. */
 type Sent = string[][];
 
 /** Answers the app's requests, with the "Road Trip" playlist in the source
  * list, and records every `dml` request. The playlist's greatest position is
- * 2, so tracks added to it start at 3. */
+ * 2, so tracks added to it start at 3. Read whole, its entries are e1…e5, at
+ * positions 1…5. */
 async function mockBackend(page: Page): Promise<Sent> {
   const sent: Sent = [];
   await page.route("**/api/rpc", async (route) => {
@@ -34,13 +37,16 @@ async function mockBackend(page: Page): Promise<Sent> {
         operations: {
           operation: string;
           values?: Record<string, unknown>;
+          where?: Record<string, unknown>;
         }[];
       };
     };
     if (body.method === "dml") {
       sent.push(
-        (body.params?.operations ?? []).map(
-          (op) => `${String(op.values?.track)}@${String(op.values?.position)}`,
+        (body.params?.operations ?? []).map((op) =>
+          op.operation === "update"
+            ? `${String(op.where?.id)}=${String(op.values?.position)}`
+            : `${String(op.values?.track)}@${String(op.values?.position)}`,
         ),
       );
     }
@@ -61,15 +67,29 @@ async function mockBackend(page: Page): Promise<Sent> {
     tableFromArrays({ max: Float64Array.of(2) }),
     "stream",
   );
-  await page.route("**/api/query", (route) =>
-    route.request().postData()?.includes("max(position)")
+  const entries = tableToIPC(
+    tableFromArrays({
+      id: ["e1", "e2", "e3", "e4", "e5"],
+      track: ["t1", "t2", "t3", "t4", "t5"],
+      position: Float64Array.of(1, 2, 3, 4, 5),
+    }),
+    "stream",
+  );
+  await page.route("**/api/query", (route) => {
+    const sql = route.request().postData() ?? "";
+    const table = sql.includes("max(position)")
+      ? maxPosition
+      : sql.includes("from playlist_track")
+        ? entries
+        : undefined;
+    return table
       ? route.fulfill({
           status: 200,
           contentType: "application/vnd.apache.arrow.stream",
-          body: Buffer.from(maxPosition),
+          body: Buffer.from(table),
         })
-      : route.fulfill({ status: 200, contentType: "text/plain", body: "" }),
-  );
+      : route.fulfill({ status: 200, contentType: "text/plain", body: "" });
+  });
   return sent;
 }
 
@@ -215,5 +235,54 @@ test("rows that aren't tracks don't drag", async ({ page }) => {
     ),
   ).toBeNull();
   await page.mouse.up();
+  expect(sent).toEqual([]);
+});
+
+/** "Road Trip" open, its five rows listing entries e1…e5 (tracks t1…t5). */
+const PLAYLIST_PAGE =
+  "/?sidebar=open&tabs=Road%20Trip&grid=lemonade&tracks=t1,t2,t3,t4,t5&entries=e1,e2,e3,e4,e5&expose=1";
+
+/** A viewport point on the boundary above the nth seeded row. */
+async function gapPoint(page: Page, index: number) {
+  const box = (await page.locator("canvas").boundingBox())!;
+  return { x: box.x + 200, y: box.y + index * 36 + 2 };
+}
+
+const dropGap = (page: Page) =>
+  page.evaluate(
+    () => (window as unknown as AppWindow).__appStore.state.rowDrag?.gap,
+  );
+
+test("dragging a playlist's row to another place among them moves it there", async ({
+  page,
+}) => {
+  const sent = await openGrid(page, PLAYLIST_PAGE);
+  const a = await rowPoint(page, 3);
+  const b = await gapPoint(page, 1);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y, { steps: 10 });
+  await expect(page.getByText("1 track", { exact: true })).toBeVisible();
+  await expect.poll(() => dropGap(page)).toBe(1);
+
+  await page.mouse.up();
+  // Between e1 (1) and e2 (2), in one request.
+  await expect.poll(() => sent).toEqual([["e4=1.5"]]);
+  // The row went with the drop, and stays selected where it landed.
+  expect(await selection(page)).toEqual([1]);
+});
+
+test("a drop that would move nothing isn't offered", async ({ page }) => {
+  const sent = await openGrid(page, PLAYLIST_PAGE);
+  const a = await rowPoint(page, 2);
+  const b = await gapPoint(page, 3);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y, { steps: 10 });
+  await expect(page.getByText("1 track", { exact: true })).toBeVisible();
+  expect(await dropGap(page)).toBeNull();
+  await page.mouse.up();
+  expect(await selection(page)).toEqual([2]);
+  await page.waitForTimeout(200);
   expect(sent).toEqual([]);
 });

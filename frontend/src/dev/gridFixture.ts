@@ -74,6 +74,10 @@ export interface LemonadeIdentity {
   /** Per-row primary-key values, one hidden column per named table (keyed by a
    * single `id` column, as the schema's tables all are). */
   recordKeys?: Readonly<Record<string, readonly string[]>>;
+  /** Per-row playlist entry ids, for rows shaped like a playlist page's: they
+   * go first, as hidden columns 0 and 1 (the entry's id, and its position,
+   * 1…n), where a playlist query puts its `$id` and `$position`. */
+  entryIds?: readonly string[];
 }
 
 /** The canned Lemonade grid result plus the lineage mapping `identity` asks
@@ -96,6 +100,25 @@ export function lemonadeGridResult(identity: LemonadeIdentity = {}): {
     metas.push(m);
     return metas.length - 1;
   };
+
+  if (identity.entryIds) {
+    const ids = identity.entryIds;
+    push(
+      "seed_entry_id",
+      arrow.vectorFromArray(
+        Array.from({ length: ROW_COUNT }, (_, r) => ids[r] ?? null),
+      ),
+      meta({ hide: true }),
+    );
+    push(
+      "seed_entry_position",
+      arrow.vectorFromArray(
+        Array.from({ length: ROW_COUNT }, (_, r) => r + 1),
+        new arrow.Float64(),
+      ),
+      meta({ hide: true }),
+    );
+  }
 
   // Hidden id column — dropped from the visible set but still occupies a
   // result-column index (exercises the hide path).

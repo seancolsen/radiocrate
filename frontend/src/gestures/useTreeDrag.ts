@@ -17,6 +17,7 @@ import {
 import { claimPointer, releasePointer } from "./pointerClaim";
 import {
   DRAG_THRESHOLD,
+  edgeScrollDelta,
   HOLD_SLOP,
   LONG_PRESS_MS,
   LONG_PRESS_SLOP,
@@ -28,11 +29,6 @@ import {
  * them, so the two always agree. */
 export const TREE_PAD = 8;
 export const TREE_INDENT = 16;
-
-/** Distance from the list's scrolling edge (px) inside which a drag scrolls it,
- * faster the closer it gets, up to this many px per frame. */
-const EDGE_ZONE = 32;
-const MAX_EDGE_SPEED = 14;
 
 /** The drag in progress: what's being dragged, and where it would land (null:
  * nowhere — over itself, or out of reach). `lineTop` places the drop line for
@@ -165,11 +161,7 @@ export function useTreeDrag(opts: {
     const scroller = latest.current.scrollRef.current;
     if (!s?.started || !scroller) return;
     const box = scroller.getBoundingClientRect();
-    const speed = (into: number) =>
-      Math.ceil(MAX_EDGE_SPEED * (1 - Math.max(0, into) / EDGE_ZONE));
-    let dy = 0;
-    if (s.y < box.top + EDGE_ZONE) dy = -speed(s.y - box.top);
-    else if (s.y > box.bottom - EDGE_ZONE) dy = speed(box.bottom - s.y);
+    const dy = edgeScrollDelta(s.y, box.top, box.bottom);
     if (dy === 0) return;
     const before = scroller.scrollTop;
     scroller.scrollTop += dy;

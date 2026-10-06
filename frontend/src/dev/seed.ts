@@ -40,6 +40,10 @@ import type { Stores } from "../stores/createStores";
 //   ?section=filter  ← open a builder section (filter|sort|display)
 //   ?tracks=id1,id2  ← per-row track ids for the seeded grid, so double-click
 //                      plays without the lineage analysis having run
+//   ?entries=e1,e2   ← per-row playlist entry ids for the seeded grid, put
+//                      where a playlist's rows carry them (hidden columns 0
+//                      and 1, with positions 1…n), so a playlist tab's rows
+//                      can be removed and rearranged
 //   ?records=track,album
 //                    ← tables whose (single-column `id`) primary key the seeded
 //                      rows carry, standing in for the lineage analysis so a
@@ -177,6 +181,7 @@ export function applySeed(stores: Stores): void {
       if (grid === "lemonade") {
         const { result, lineage } = lemonadeGridResult({
           trackIds: params.get("tracks")?.split(","),
+          entryIds: params.get("entries")?.split(","),
           recordKeys: recordKeys(params.get("records")),
         });
         app.actions.setResults(activeId, result, lineage);

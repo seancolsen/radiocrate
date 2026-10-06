@@ -81,6 +81,38 @@ export function rowEntry(
   return { id, position };
 }
 
+/** Rows dropped somewhere else among a result's rows: the order the rows show
+ * in afterwards, and the rows that end up next to the dropped ones. */
+export interface RowRearrangement {
+  /** For each display row afterwards, the row it showed before. */
+  order: number[];
+  /** Where the first dropped row lands. */
+  at: number;
+  /** The rows just above and just below the dropped ones (as numbered before
+   * the drop), or `undefined` at an edge. */
+  above: number | undefined;
+  below: number | undefined;
+}
+
+/** What dropping rows `moved` (of `count` rows, in the order shown) at gap
+ * `gap` does: the gap above row `gap`, or below the last row when `gap` is
+ * `count`. The dropped rows keep their order. `undefined` when the drop would
+ * leave every row where it was, or names no rows. */
+export function rowRearrangement(
+  count: number,
+  moved: readonly number[],
+  gap: number,
+): RowRearrangement | undefined {
+  if (moved.length === 0 || gap < 0 || gap > count) return undefined;
+  const lifted = new Set(moved);
+  const rest: number[] = [];
+  for (let row = 0; row < count; row++) if (!lifted.has(row)) rest.push(row);
+  const at = rest.filter((row) => row < gap).length;
+  const order = [...rest.slice(0, at), ...moved, ...rest.slice(at)];
+  if (order.every((row, i) => row === i)) return undefined;
+  return { order, at, above: rest[at - 1], below: rest[at] };
+}
+
 // ── Positions ────────────────────────────────────────────────────────────────
 
 /** `count` consecutive integers from `start`. */
@@ -162,6 +194,20 @@ export function renumberMoves(
   return moves;
 }
 
+/** `entries` with `moved` taken out and put back, in their own order, right
+ * after the entry `aboveId`, or first without one. */
+export function moveAfter<E extends { id: string }>(
+  entries: readonly E[],
+  moved: readonly E[],
+  aboveId: string | undefined,
+): E[] {
+  const movedIds = new Set(moved.map((e) => e.id));
+  const rest = entries.filter((e) => !movedIds.has(e.id));
+  const at =
+    aboveId === undefined ? 0 : rest.findIndex((e) => e.id === aboveId) + 1;
+  return [...rest.slice(0, at), ...moved, ...rest.slice(at)];
+}
+
 /** The moves that rearrange `moved` (in the order they're to keep) to sit
  * between the rows `above` and `below`, either of which is `undefined` at an
  * edge. When a filter hides some entries, the neighbors are the adjacent
@@ -189,11 +235,7 @@ export function rearrangeMoves(
         : [{ id: entry.id, from: entry.position, to: positions[i] }],
     );
   }
-  const movedIds = new Set(moved.map((e) => e.id));
-  const rest = all.filter((e) => !movedIds.has(e.id));
-  const at =
-    above === undefined ? 0 : rest.findIndex((e) => e.id === above.id) + 1;
-  return renumberMoves([...rest.slice(0, at), ...moved, ...rest.slice(at)]);
+  return renumberMoves(moveAfter(all, moved, above?.id));
 }
 
 // ── Writes ───────────────────────────────────────────────────────────────────

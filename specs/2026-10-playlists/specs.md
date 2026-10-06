@@ -26,7 +26,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 6 — Removing tracks and committing conditions | done | |
 | 7 — "Add to playlist…" | done | |
 | 8 — Dragging result rows | done | |
-| 9 — Rearranging tracks within a playlist | not started | |
+| 9 — Rearranging tracks within a playlist | done | |
 
 The "Owed by the user" column lists actions that sessions can't do themselves, such as a build or a decision (see "What a session can and can't run" below). They don't block later phases unless the phase says so.
 
@@ -826,6 +826,40 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Afterwards:** reload. A failure reloads the stored order and is reported.
 - **Manual QA:** once this phase lands, the user runs the final checklist below.
 
+#### As built
+
+- **Grid** (`grid/canvasGrid.ts`):
+  - `gapAt(x, y)` names the row boundary nearest a viewport point (0 above the first row, the row count below the last). A point above or below the grid counts as its edge, and a point to either side names nothing.
+  - `setDropGap(gap)` is three-state: `undefined` means the rows in hand can't drop among these rows, `null` means they can but not at the pointer, and a number draws the drop line there. The line is a 2px rounded accent bar, inset 4px, kept inside the canvas at the top and bottom, like the tree's.
+  - While rows are in hand and the gap isn't `undefined`, the frame loop scrolls the grid when the pointer is within 32px of its top or bottom edge, or past it, with the pointer horizontally over the grid. After each scroll it reports the pointer to the owner again (`onRowDragMove`), so the gap follows the rows that moved under it.
+  - The tree's edge-scroll speed is now `edgeScrollDelta` in `gestures/press.ts`, and `useTreeDrag` uses it too, so both lists scroll alike.
+- **`QueryResult.reordered(order)`** (`query/result.ts`) is a new instance over the same table, read through a display-row → table-row map. Patches move with their rows, a reordering of a reordering composes, and an order that doesn't list every row once throws.
+- **Math** (`query/playlistEntries.ts`):
+  - `rowRearrangement(count, moved, gap)` gives the new display order, where the first moved row lands, and the visible rows above and below, or `undefined` for a drop that moves nothing.
+  - `moveAfter(entries, moved, aboveId)` is now shared by `rearrangeMoves`' renumbering fallback and the sorted case.
+- **Store** (`stores/app/actions.ts`, "Rearranging a playlist's rows"; `state.ts`; `selectors.ts`):
+  - `RowDrag` gains `gap`. `hoverRowDrag(sourceId, gap)` keeps a gap only when `rearrangementAt` allows it: the page passes `selectCanWriteFromRows`, which includes the write queue being idle, and the drop moves something. `selectRowDropGap` feeds the grid.
+  - `endRowDrag` with a gap calls `rearrangeRows`. It checks the selection still lists the entries picked up. Then it swaps in `result.reordered(…)` (as a refresh, so the grid keeps its place), selects the moved rows at their new indexes, remaps a playing row's index, and sends one `writeStep`:
+    - **No sort:** it reads the stored entries in the queue and writes `rearrangeMoves(all, moved, above, below)`, with the visible neighbors.
+    - **A sort applies:** it reads `sortedEntries` (no filter), moves the entries right after the visible row above (or to the top), renumbers 1…n, and resets the sort to "Playlist order", all in one step.
+    - Either way, an entry missing from the read makes the step nothing.
+  - **Afterwards:** `writeStep` reloads on success. On failure (or a step of nothing), `rearrangeRows` reloads itself, which puts the stored order back, and the error bar reports a refused write.
+- **Departure (the reload keeps the place):** "The results after a write" says to reload as new rows. Here the run after a rearrangement lands as a *refresh* instead: `runQuery` consumes a per-tab `rearranged` set of entry ids. The scroll is kept, and the moved entries are selected again wherever they are now, by entry id, which also covers a failed write. A full reload as new rows would scroll back to the top after every drop. Lineage is still re-analyzed whenever the SQL differs (the sorted case resets the sort).
+- **Departure (rows without tracks):** on a playlist page, `beginRowDrag` no longer requires `trackIdColumn`, so a display without the track's `$id` can still be rearranged, including during the lineage analysis right after a run. Such rows aren't offered to other playlists (`hoverRowDrag` requires track ids). The chip counts rows in hand (`max(trackIds, entryIds)`).
+- **Additions:**
+  - No drop line is offered where a drop would move nothing (beside or inside the rows in hand).
+  - A rearrangement is also blocked while the page is running, after a failed run, or with an edit waiting on its debounced run (the rest of `selectCanWriteFromRows`), since the rows on screen might not be the ones a drop is computed against.
+- **Choice:** in a filtered *and* sorted view, a drop at the very top puts the moved entries first in the whole playlist, ahead of hidden entries, as `rearrangeMoves`' fallback already did.
+- **Not done:** undoing a rearrangement reloads as new rows (selection cleared, scroll to the top), as undoing any write does. See Deferred follow-ups.
+- **Seed:** `?entries=e1,…` gives the seeded Lemonade rows a playlist's hidden entry columns 0 and 1 (positions 1…n) (`dev/gridFixture.ts`).
+- **Tests:**
+  - `query/result.test.ts`: `reordered` (3 tests).
+  - `query/playlistEntries.test.ts`: `moveAfter` (2) and `rowRearrangement` (4).
+  - `stores/app/actions.test.ts`, a `rearranging a playlist's rows` block (8): between neighbors (6.25/6.5/6.75, shown at once, kept selected through the refresh reload, undo); top and bottom; renumbering when the neighbors are adjacent doubles; visible neighbors under a filter; the sorted case (one request, sort reset, filter kept, undo restores both); a failed write reloading the stored order with the entry still selected; no gap for no-op drops, for another playlist with trackless rows, or while a write is in flight; none on a query page. Two `dragging result rows` expectations gained `gap: null`.
+  - `tests/visual/rowDrag.spec.ts` (2 new, mouse, assembled app): a row dragged above another sends `e4=1.5` and stays selected at its new index; a no-op drop offers no gap and writes nothing. `/api/query` also answers the entries read with an Arrow stream.
+- **Gate:** typecheck, lint, format:check, test:unit (549), build and test:visual (255: the 251 existing unchanged, plus 2 new snapshots and 2 behavioral tests) all pass. The probe exits 0. No Rust was touched.
+- **Baselines added** (light and dark, both looked at): `results/playlist-drop`, with row 4 selected and the drop line between rows 1 and 2. No pointer has moved in the story, so the "1 track" chip sits at the stage's top-left corner.
+
 ## Manual QA (after phase 9)
 
 Every check that needs a real server or a real device is collected here. The user runs them all once, against a release build, after phase 9 has landed. They don't block any phase. A phase that adds a manual check appends it to the matching group below (or a new one), naming the phase it comes from.
@@ -877,6 +911,18 @@ Every check that needs a real server or a real device is collected here. The use
 
 **Rearranging tracks** (phase 9)
 
+- [ ] With a mouse, on an unfiltered, unsorted playlist: drag one row, then several scattered rows, between two others. The drop line follows the pointer, and none is offered beside the rows in hand. The rows move at once, stay selected, and the list doesn't jump. A reload of the page shows the same order.
+- [ ] Drop rows at the very top and the very bottom.
+- [ ] On a playlist longer than the screen, hold a drag near the grid's top and bottom edges: it scrolls, faster nearer the edge, as the explorer's tree does.
+- [ ] Filter a playlist, rearrange, then clear the filter: the hidden entries kept their places.
+- [ ] Sort a playlist (a custom sort, a preset, Shuffle), and rearrange. The rows stay as shown, with the move made, and the sort goes back to "Playlist order". Undo restores the order and the sort in one step, and redo makes both again.
+- [ ] Undo and redo an unsorted rearrangement.
+- [ ] Drop, then immediately try to drag again: no drop line is offered until the write and its reload are done. A `Delete` pressed meanwhile runs after it.
+- [ ] With the server stopped, rearrange: the rows go back to the stored order, the moved ones still selected, and the error bar reports it.
+- [ ] On a touch device: a hold picks the rows up, the drop line follows the finger, the grid scrolls at its edges, and the drop moves the rows.
+- [ ] With a track playing from the playlist, rearrange: "Locate" still finds its row, and the next track played follows the new order.
+- [ ] A playlist whose display leaves out the track's `$id` still rearranges, and its rows aren't taken by other playlists in the explorer.
+
 **Whole feature**
 
 - [ ] A final pass over the whole feature against the real server, on desktop and on a touch device.
@@ -888,6 +934,7 @@ Every check that needs a real server or a real device is collected here. The use
 - **Focus in the "Add to playlist…" dialog** (phase 7). The dialog doesn't take focus as it opens, so a keyboard user has to Tab into the tree. The delete dialog behaves the same way. Moving focus to the first playlist row on mount (a `useLayoutEffect`) would fix both, but expect a focus ring to show up in their snapshots.
 - **Scrolling the explorer during a row drag** (phase 8). Dragging result rows toward a playlist that's scrolled out of the explorer's view doesn't scroll the tree. A mouse can wheel it, but a touch can't. `useTreeDrag`'s `edgeScroll` is the model.
 - **Dropping rows at narrow widths** (phase 8). With the explorer as a closed drawer there's nothing to drop on. Opening the drawer when a drag nears the left edge would make the drop reachable on a phone.
+- **Keeping the place on undo of a rearrangement** (phase 9). Undoing or redoing a rearrangement reloads as new rows, as every write step's undo does, so the selection clears and the grid scrolls to the top. `runQuery`'s `rearranged` hand-off (reselect by entry id, land as a refresh) could serve those steps too.
 - **Builders stay live during an entry write** (phase 3). An edit made while a step's writes are in flight survives, unless the step's own definition half (or an undo's) overwrites it when the writes land. Disabling the builders while `writing` would close that gap, if it turns out to matter in practice.
 
 ## Open questions

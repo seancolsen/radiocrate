@@ -229,6 +229,16 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A playlist's row in hand: the accent drop line between the first two
+  // rows, where it would land, over the rows' own separators.
+  test(`results/playlist-drop - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/playlist-drop", colorScheme);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/playlist-drop", colorScheme),
+    );
+  });
+
   // Multi-select mode: the floating toolbar over the rows, counting the two
   // selected ones. Its actions menu is the row menu's body over the whole
   // selection, minus the "Select multiple" entry that put the mode on.

@@ -32,6 +32,10 @@
 // touch held still and let go raises the row's context menu instead, in place
 // of the platform's own long-press `contextmenu`. Where the rows can go is the
 // owner's business: the grid only reports the drag's start, moves and end.
+// When the owner says the rows can also be dropped among these rows (a
+// playlist's page, `setDropGap`), the grid draws the drop line where it's told
+// and scrolls itself while the drag sits near its top or bottom edge, as the
+// explorer's tree does; `gapAt` says which gap between rows a point is over.
 //
 // The owner can also freeze the grid (`setFrozen`) while a menu it opened is up:
 // scrolling, hovering and clicking all stop, so the rows under an open context
@@ -39,7 +43,7 @@
 // that reach it; freezing covers what it can't (a wheel over the menu itself, a
 // pointer that was mid-gesture when the menu opened).
 
-import { swallowReleaseClick } from "../gestures/press";
+import { edgeScrollDelta, swallowReleaseClick } from "../gestures/press";
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
 import {
@@ -78,6 +82,11 @@ const CURRENT_MARKER_RADIUS = 8;
  * drawn large enough to read at a glance over the row's left padding. */
 const MODIFIED_MARKER = "✱";
 const MODIFIED_MARKER_FONT = 18;
+
+// The drop line between rows, while rows being dragged would land there: the
+// explorer tree's line (a 2px rounded accent bar, just inside the edges).
+const DROP_LINE_H = 2;
+const DROP_LINE_INSET = 4;
 
 /** Opacity of the top-lit sheen gradient layered over a selected row's flat fill,
  * so the sheen reads without hiding the selection color (SELECTED_ROW_GRADIENT_
@@ -123,6 +132,8 @@ interface Theme {
   currentWash: string;
   /** The unsaved-changes ✱, in the same red as everywhere else. */
   danger: string;
+  /** The drop line, in the accent the tree's drop line uses. */
+  accent: string;
 }
 
 /** Callbacks the owner wires up to react to row interaction. */
@@ -139,7 +150,8 @@ export interface GridInteraction {
    * these rows don't drag, and the press stays a click — or, under a touch
    * held still, a context menu. */
   onRowDragStart?: (index: number, x: number, y: number) => boolean;
-  /** The rows being dragged moved to viewport point (x, y). */
+  /** The rows being dragged moved to viewport point (x, y) — or the pointer
+   * stayed there while the grid scrolled other rows under it. */
   onRowDragMove?: (x: number, y: number) => void;
   /** The drag ended at (x, y): released (`drop`), or called off (Escape, a
    * cancelled pointer, the grid freezing or going away). Returns whether the
@@ -225,6 +237,10 @@ export class CanvasGrid {
   private interaction: GridInteraction | undefined;
   /** While true the grid ignores every input (see `setFrozen`). */
   private frozen = false;
+  /** Where rows in hand would drop among these rows (see `setDropGap`). */
+  private dropGap: number | null | undefined;
+  /** Where the pointer dragging rows is, in viewport coordinates. */
+  private dragPoint: { x: number; y: number } | undefined;
 
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
@@ -261,15 +277,19 @@ export class CanvasGrid {
         this.canvas.setPointerCapture(id);
       }
       window.addEventListener("keydown", this.onDragKey, true);
-      if (this.hoverRow !== undefined) {
-        this.hoverRow = undefined;
-        this.requestDraw();
-      }
+      this.dragPoint = { x, y };
+      this.hoverRow = undefined;
+      // Also starts the frame loop that scrolls near the edges.
+      this.requestDraw();
       return true;
     },
-    onDragMove: (x, y) => this.interaction?.onRowDragMove?.(x, y),
+    onDragMove: (x, y) => {
+      this.dragPoint = { x, y };
+      this.interaction?.onRowDragMove?.(x, y);
+    },
     onDragEnd: (x, y, drop) => {
       window.removeEventListener("keydown", this.onDragKey, true);
+      this.dragPoint = undefined;
       return this.interaction?.onRowDragEnd?.(x, y, drop) ?? false;
     },
     onHold: (row, x, y) => this.interaction?.onRowContextMenu(row, x, y),
@@ -409,6 +429,33 @@ export class CanvasGrid {
     if (selection === this.selection) return;
     this.selection = selection;
     this.requestDraw();
+  }
+
+  /** Says whether rows being dragged can be dropped among these rows, and
+   * where the drop line goes: `undefined` when they can't (no line, and the
+   * grid doesn't scroll at its edges), `null` when they can but not at the
+   * pointer (no line), or the gap the line marks, above row `gap` (below the
+   * last row when `gap` is the row count). */
+  setDropGap(gap: number | null | undefined): void {
+    if (gap === this.dropGap) return;
+    this.dropGap = gap;
+    this.requestDraw();
+  }
+
+  /** The gap between rows that viewport point (x, y) is over: the row
+   * boundary nearest it, from 0 (above the first row) to the row count (below
+   * the last). A point above or below the grid counts as being at its edge, so
+   * a drag held there names the gap it's scrolling toward. `undefined` when
+   * the point is to either side of the grid, or there are no rows. */
+  gapAt(x: number, y: number): number | undefined {
+    const layout = this.layout;
+    const count = this.result?.rowCount ?? 0;
+    if (!layout || count === 0) return undefined;
+    const rect = this.canvas.getBoundingClientRect();
+    if (x < rect.left || x > rect.right) return undefined;
+    const local = Math.max(0, Math.min(this.vh, y - rect.top));
+    const gap = Math.round((local + this.scrollTop) / layout.rowH);
+    return Math.max(0, Math.min(count, gap));
   }
 
   /** Reserves `px` of scrollable space above the first row, for a floating
@@ -915,12 +962,34 @@ export class CanvasGrid {
       this.lastFrameT = t;
       this.stepFling(dt);
     }
+    const edgeScrolling = this.stepEdgeScroll();
     if (this.dirty) {
       this.draw();
       this.dirty = false;
     }
-    if (this.flinging) this.raf = requestAnimationFrame(this.frame);
+    if (this.flinging || edgeScrolling) {
+      this.raf = requestAnimationFrame(this.frame);
+    }
   };
+
+  /** One frame of scrolling under a drag held near the top or bottom edge,
+   * while the rows in hand can drop among these rows. A scroll moves the rows
+   * under the pointer, so the owner hears the pointer "move" to where it now
+   * is. Returns whether to keep watching, which is for as long as the drag
+   * lasts. */
+  private stepEdgeScroll(): boolean {
+    const p = this.dragPoint;
+    if (!p || !this.press.dragging || this.dropGap === undefined) return false;
+    if (!this.rect) this.rect = this.canvas.getBoundingClientRect();
+    const { left, right, top, bottom } = this.rect;
+    if (p.x < left || p.x > right) return true;
+    const dy = edgeScrollDelta(p.y, top, bottom);
+    if (dy === 0 || this.scrollRange <= 0) return true;
+    const before = this.scrollTop;
+    this.scrollBy(dy);
+    if (this.scrollTop !== before) this.interaction?.onRowDragMove?.(p.x, p.y);
+    return true;
+  }
 
   // ── Painting ────────────────────────────────────────────────────────────────
 
@@ -967,6 +1036,9 @@ export class CanvasGrid {
       }
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
       if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH);
+    }
+    if (typeof this.dropGap === "number") {
+      this.drawDropLine(this.dropGap * rowH - this.scrollTop);
     }
 
     this.drawScrollbar();
@@ -1061,6 +1133,27 @@ export class CanvasGrid {
     );
     ctx.stroke();
     ctx.restore();
+  }
+
+  /** The drop line, centered on the row boundary at `screenY`, and kept just
+   * inside the canvas at its top and bottom so a line above the first row (or
+   * below the last) still shows whole. */
+  private drawDropLine(screenY: number): void {
+    const w = this.vw - 2 * DROP_LINE_INSET;
+    if (w <= 0) return;
+    const half = DROP_LINE_H / 2;
+    const y = Math.max(half, Math.min(this.vh - half, screenY));
+    const ctx = this.ctx;
+    ctx.fillStyle = this.theme.accent;
+    roundRectPath(
+      ctx,
+      this.snap(DROP_LINE_INSET),
+      this.snap(y - half),
+      w,
+      DROP_LINE_H,
+      half,
+    );
+    ctx.fill();
   }
 
   /** Cuts the thumb's box out of the clip region, so what follows paints
@@ -1312,6 +1405,7 @@ export class CanvasGrid {
       currentMarker: v("--now-playing", "rgb(46 124 246)"),
       currentWash: v("--row-current", "rgb(46 124 246 / 0.063)"),
       danger: v("--danger", "#c0392b"),
+      accent: v("--accent", "rgb(46 124 246)"),
       // No CSS token for the thumb; a mid-gray reads on both themes.
       scrollThumb: "rgba(130, 130, 130, 0.55)",
     };

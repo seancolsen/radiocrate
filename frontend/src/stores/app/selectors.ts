@@ -194,6 +194,18 @@ export const selectCanWriteFromRows = (s: AppState, tabId: string): boolean => {
   );
 };
 
+/** Where rows being dragged would drop among page `tabId`'s own rows, for the
+ * grid's drop line: `undefined` unless rows picked up on this page, a
+ * playlist's, are in hand, and then the drag's `gap` (`null` for nowhere). */
+export const selectRowDropGap = (
+  s: AppState,
+  tabId: string,
+): number | null | undefined => {
+  const drag = s.rowDrag;
+  if (drag?.fromTabId !== tabId) return undefined;
+  return selectPageTab(s, tabId)?.kind === "playlist" ? drag.gap : undefined;
+};
+
 /** Whether the result `tabId` is showing arrived as a refresh of the one before
  * it (see `QueryPageState.resultIsRefresh`) — read by the results grid as it's
  * handed the swap, to decide whether the scroll position survives it. */
