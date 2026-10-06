@@ -38,7 +38,7 @@ function Harness() {
   // render. The layout effect (not a passive one) runs before the browser
   // paints, so the store write it makes — and the re-render that gives the
   // subscribed story tree — lands before this frame is ever shown.
-  const queriesReady = useApp((s) => s.queries.status === "ready");
+  const queriesReady = useApp((s) => s.sources.status === "ready");
   const presetsReady = useApp((s) => s.presetsStatus === "ready");
   const dataReady =
     story?.setup === undefined || (queriesReady && presetsReady);

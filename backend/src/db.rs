@@ -46,6 +46,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("migrations/0005.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("migrations/0006.sql"),
+    },
 ];
 
 fn init_db_version_metadata(conn: &Connection) -> Result<(), duckdb::Error> {
@@ -89,4 +93,19 @@ pub fn get_db(db_path: &Path) -> Result<Connection, Box<dyn std::error::Error>> 
     }
 
     Ok(conn)
+}
+
+/// Applies every migration up to and including `version` to `conn`, each in its
+/// own transaction exactly as [`get_db`] does. Tests use it for a fresh schema
+/// (`u32::MAX` for all of them), or to stop short of a migration under test.
+#[cfg(test)]
+pub(crate) fn migrate_through(conn: &mut Connection, version: u32) {
+    init_db_version_metadata(conn).unwrap();
+    let current = get_current_version(conn).unwrap();
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|m| m.version > current && m.version <= version)
+    {
+        run_migration(conn, migration).unwrap();
+    }
 }

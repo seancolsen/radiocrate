@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 import type { lemonadeGridResult } from "../../src/dev/gridFixture";
 
@@ -29,8 +29,8 @@ async function mockRpc(page: Page) {
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? PRESETS_FIXTURE
           : null;

@@ -651,13 +651,8 @@ mod tests {
 
     /// A fresh in-memory database with the real migration schema applied.
     fn setup() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("migrations/0001.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("migrations/0002.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("migrations/0003.sql"))
-            .unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, u32::MAX);
         conn
     }
 
@@ -1083,5 +1078,110 @@ mod tests {
             count(&conn, "SELECT count(*) FROM artist WHERE name = 'Wings'"),
             0
         );
+    }
+
+    // --- Sources and playlists (migration 0006) -----------------------------
+
+    const SOURCE1: &str = "55555555-5555-5555-5555-555555555555";
+    const PLAYLIST1: &str = "66666666-6666-6666-6666-666666666666";
+    const ENTRY1: &str = "77777777-7777-7777-7777-777777777777";
+
+    /// The request that creates a playlist holding [`TRACK1`], as the frontend sends it: the
+    /// source's `timestamp_s` columns take plain strings, which `DuckDB` casts implicitly.
+    fn create_playlist(conn: &mut Connection) -> Result<Value, RpcErr> {
+        dml(
+            conn,
+            json!({ "operations": [
+                { "id": "e0", "operation": "insert", "table": "playlist",
+                  "values": { "id": PLAYLIST1, "definition": "{}" } },
+                { "id": "e1", "operation": "insert", "table": "source",
+                  "values": { "id": SOURCE1, "name": "Mix", "created_at": "2026-10-06 12:34:56",
+                              "modified_at": "2026-10-06 12:34:56", "last_play": "2026-10-06 12:34:56",
+                              "source_folder": null, "position": -1, "playlist": { "id": "e0" } } },
+                { "id": "e2", "operation": "insert", "table": "playlist_track",
+                  "values": { "id": ENTRY1, "playlist": PLAYLIST1, "track": TRACK1, "position": 1.5 } }
+            ]}),
+        )
+    }
+
+    #[test]
+    fn insert_source_with_string_timestamps_succeeds() {
+        let mut conn = setup();
+        insert_file(&conn, FILE1);
+        insert_track(&conn, TRACK1, FILE1, None);
+        let out = create_playlist(&mut conn).unwrap();
+        assert_eq!(out["e1"]["playlist"], PLAYLIST1);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT epoch(created_at)::bigint FROM source WHERE name = 'Mix'"
+            ),
+            1_791_290_096
+        );
+        assert_eq!(out["e2"]["position"], 1.5);
+    }
+
+    #[test]
+    fn delete_playlist_requires_entries_then_source_first() {
+        let mut conn = setup();
+        insert_file(&conn, FILE1);
+        insert_track(&conn, TRACK1, FILE1, None);
+        create_playlist(&mut conn).unwrap();
+
+        // The source still names the playlist, and the entry still names it too.
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "e0", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+            ]}),
+        )
+        .unwrap_err();
+        assert_eq!(err.data, Some(json!({ "operation": { "id": "e0" } })));
+        // The entry still names the playlist after its source goes.
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "e0", "operation": "delete", "table": "source", "where": { "id": SOURCE1 } },
+                { "id": "e1", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+            ]}),
+        )
+        .unwrap_err();
+        assert_eq!(err.data, Some(json!({ "operation": { "id": "e1" } })));
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM source"),
+            1,
+            "rolled back"
+        );
+
+        dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "e0", "operation": "delete", "table": "playlist_track", "where": { "id": ENTRY1 } },
+                { "id": "e1", "operation": "delete", "table": "source", "where": { "id": SOURCE1 } },
+                { "id": "e2", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+            ]}),
+        )
+        .unwrap();
+        for table in ["playlist_track", "source", "playlist"] {
+            assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 0);
+        }
+        // The track itself is untouched.
+        assert_eq!(count(&conn, "SELECT count(*) FROM track"), 1);
+    }
+
+    #[test]
+    fn delete_track_held_by_a_playlist_rejected() {
+        let mut conn = setup();
+        insert_file(&conn, FILE1);
+        insert_track(&conn, TRACK1, FILE1, None);
+        create_playlist(&mut conn).unwrap();
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "e0", "operation": "delete", "table": "track", "where": { "id": TRACK1 } }
+            ]}),
+        )
+        .unwrap_err();
+        assert_eq!(err.data, Some(json!({ "operation": { "id": "e0" } })));
     }
 }

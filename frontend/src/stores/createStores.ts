@@ -79,7 +79,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   const update = createUpdateStore(app, forms);
 
   // Boot loads.
-  void app.actions.loadQueries();
+  void app.actions.loadSources();
   void app.actions.loadPresets();
   void app.actions.loadSchema();
   void app.actions.loadSettings();

@@ -3,7 +3,7 @@ import {
   ALBUM_SORT_PRESET_ID,
   FILTER_DEF,
   PRESETS_FIXTURE,
-  QUERIES_FIXTURE,
+  SOURCES_FIXTURE,
 } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
@@ -27,8 +27,8 @@ async function mockRpc(page: Page) {
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? PRESETS_FIXTURE
           : null;
@@ -193,8 +193,8 @@ test("the Refresh icon spins while the run it starts is in flight", async ({
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? PRESETS_FIXTURE
           : null;
@@ -280,7 +280,7 @@ test("a saved query's edit is saved once the app goes quiet; a failed save bring
       params: { definition: string };
       id: number;
     };
-    if (body.method !== "query.update_definition") return route.fallback();
+    if (body.method !== "source.update_definition") return route.fallback();
     saves.push(body.params.definition);
     const reply =
       saves.length === 1

@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
 // The record-editor entry path and everything the form does, behaviorally:
@@ -24,8 +24,8 @@ async function mockRpc(page: Page) {
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? []
           : null;

@@ -16,10 +16,10 @@ vi.mock("api-client", async (importOriginal) => {
     folderAdd: vi.fn(() => Promise.resolve(null)),
     folderDelete: vi.fn(() => Promise.resolve(null)),
     folderRename: vi.fn(() => Promise.resolve(null)),
-    queryArrange: vi.fn(() => Promise.resolve(null)),
+    sourceArrange: vi.fn(() => Promise.resolve(null)),
     queryAdd: vi.fn(() => Promise.resolve(null)),
-    queryRename: vi.fn(() => Promise.resolve(null)),
-    queryUpdateDefinition: vi.fn(() => Promise.resolve(null)),
+    sourceRename: vi.fn(() => Promise.resolve(null)),
+    sourceUpdateDefinition: vi.fn(() => Promise.resolve(null)),
     queryDelete: vi.fn(() => Promise.resolve(null)),
     collectionRescan: vi.fn(() => Promise.resolve(null)),
   };
@@ -74,13 +74,13 @@ import {
   folderDelete,
   folderRename,
   queryAdd,
-  queryArrange,
+  sourceArrange,
   queryDelete,
-  queryRename,
-  queryUpdateDefinition,
+  sourceRename,
+  sourceUpdateDefinition,
   settingDelete,
   settingSet,
-  type Query,
+  type Source,
 } from "api-client";
 import { fetchRatings } from "../../query/ratings";
 import { compileSavedQuery } from "../../query/compile";
@@ -844,8 +844,9 @@ describe("a refresh", () => {
 
 describe("the query tree", () => {
   let bundle: AppStoreBundle;
-  const query = (id: string, position: number): Query => ({
+  const query = (id: string, position: number): Source => ({
     id,
+    kind: "query",
     name: id,
     createdAt: 0,
     modifiedAt: 0,
@@ -853,15 +854,17 @@ describe("the query tree", () => {
     definition: "{}",
     parent: null,
     position,
+    queryId: `query-${id}`,
+    playlistId: null,
   });
   beforeEach(() => {
-    vi.mocked(queryArrange).mockClear();
+    vi.mocked(sourceArrange).mockClear();
     vi.mocked(folderAdd).mockClear();
     vi.mocked(folderDelete).mockClear();
     vi.mocked(folderRename).mockClear();
     bundle = createAppStore(fakeEnv());
     bundle.store.setState((s) => {
-      s.queries = { status: "ready", data: [query("a", 0), query("b", 1)] };
+      s.sources = { status: "ready", data: [query("a", 0), query("b", 1)] };
       s.folders = { status: "ready", data: [] };
     });
   });
@@ -905,13 +908,13 @@ describe("the query tree", () => {
     bundle.actions.newFolder();
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
-      { kind: "query", id: "b" },
+      { kind: "source", id: "b" },
       { kind: "into", folder },
     );
-    const b = bundle.store.getState().queries.data.find((q) => q.id === "b");
+    const b = bundle.store.getState().sources.data.find((q) => q.id === "b");
     expect(b).toMatchObject({ parent: folder, position: 0 });
-    expect(vi.mocked(queryArrange)).toHaveBeenCalledWith({
-      placements: [{ kind: "query", id: "b", parent: folder, position: 0 }],
+    expect(vi.mocked(sourceArrange)).toHaveBeenCalledWith({
+      placements: [{ kind: "source", id: "b", parent: folder, position: 0 }],
     });
   });
 
@@ -919,13 +922,13 @@ describe("the query tree", () => {
     bundle.actions.newFolder();
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
-      { kind: "query", id: "b" },
+      { kind: "source", id: "b" },
       { kind: "into", folder },
     );
     bundle.actions.deleteFolder(folder);
     const s = bundle.store.getState();
     expect(s.folders.data).toEqual([]);
-    expect(s.queries.data.map((q) => [q.id, q.parent, q.position])).toEqual([
+    expect(s.sources.data.map((q) => [q.id, q.parent, q.position])).toEqual([
       ["a", null, 1],
       ["b", null, 0],
     ]);
@@ -940,7 +943,7 @@ describe("the query tree", () => {
     bundle.actions.toggleFolderExpanded(folder); // collapse it
     expect(
       bundle.actions.moveTreeItem(
-        { kind: "query", id: "a" },
+        { kind: "source", id: "a" },
         { kind: "into", folder },
       ),
     ).toBe(true);
@@ -949,7 +952,7 @@ describe("the query tree", () => {
     // A drop that moves nothing says so.
     expect(
       bundle.actions.moveTreeItem(
-        { kind: "query", id: "a" },
+        { kind: "source", id: "a" },
         { kind: "into", folder },
       ),
     ).toBe(false);
@@ -960,7 +963,7 @@ describe("the query tree", () => {
     bundle.actions.newFolder();
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
-      { kind: "query", id: "a" },
+      { kind: "source", id: "a" },
       { kind: "into", folder },
     );
     bundle.actions.toggleFolderExpanded(folder); // collapse it
@@ -973,15 +976,19 @@ describe("the query tree", () => {
     });
     expect(selectIsUnsaved(bundle.store.getState(), id)).toBe(true);
     expect(vi.mocked(queryAdd)).not.toHaveBeenCalled();
-    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+    expect(bundle.store.getState().sources.data.map((q) => q.id)).toEqual([
       "a",
       "b",
     ]);
 
     bundle.actions.saveQuery(id);
     const s = bundle.store.getState();
-    const added = s.queries.data[0];
+    const added = s.sources.data[0];
     expect(added).toMatchObject({ id, parent: folder, position: -1 });
+    // The tab names the source; the query row it wraps has an id of its own.
+    expect(added.kind).toBe("query");
+    expect(added.queryId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(added.queryId).not.toBe(id);
     expect(added.name).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
     expect(vi.mocked(queryAdd)).toHaveBeenCalledWith(added);
     expect(selectQueryTab(s, id)).toMatchObject({
@@ -1003,7 +1010,7 @@ describe("the query tree", () => {
         persisted: false,
       }),
     );
-    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+    expect(bundle.store.getState().sources.data.map((q) => q.id)).toEqual([
       "a",
       "b",
     ]);
@@ -1011,12 +1018,12 @@ describe("the query tree", () => {
 
   it("renames a query in place, and the tab that has it open", () => {
     openQueryTab(bundle, "a");
-    bundle.actions.beginTreeRename({ kind: "query", id: "a" });
-    bundle.actions.commitTreeRename({ kind: "query", id: "a" }, "Renamed");
+    bundle.actions.beginTreeRename({ kind: "source", id: "a" });
+    bundle.actions.commitTreeRename({ kind: "source", id: "a" }, "Renamed");
     const s = bundle.store.getState();
-    expect(s.queries.data.find((q) => q.id === "a")?.name).toBe("Renamed");
+    expect(s.sources.data.find((q) => q.id === "a")?.name).toBe("Renamed");
     expect(s.tabs.find((t) => t.id === "a")?.name).toBe("Renamed");
-    expect(vi.mocked(queryRename)).toHaveBeenCalledWith({
+    expect(vi.mocked(sourceRename)).toHaveBeenCalledWith({
       id: "a",
       name: "Renamed",
     });
@@ -1036,7 +1043,7 @@ describe("the query tree", () => {
     });
     bundle.actions.confirmDelete();
     expect(vi.mocked(queryDelete)).toHaveBeenCalledWith({ id: "b" });
-    expect(bundle.store.getState().queries.data.map((q) => q.id)).toEqual([
+    expect(bundle.store.getState().sources.data.map((q) => q.id)).toEqual([
       "a",
     ]);
   });
@@ -1059,7 +1066,7 @@ describe("autosave", () => {
   /** The definitions written so far, as their filter text. */
   const written = () =>
     vi
-      .mocked(queryUpdateDefinition)
+      .mocked(sourceUpdateDefinition)
       .mock.calls.map(
         ([p]) =>
           (JSON.parse(p.definition) as { filter: { custom: string } }).filter
@@ -1068,8 +1075,8 @@ describe("autosave", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.mocked(queryUpdateDefinition).mockReset();
-    vi.mocked(queryUpdateDefinition).mockResolvedValue(null);
+    vi.mocked(sourceUpdateDefinition).mockReset();
+    vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
     bundle = createAppStore(fakeEnv());
     openQueryTab(bundle, "a");
   });
@@ -1081,7 +1088,7 @@ describe("autosave", () => {
   it("writes a saved query's edit once the app has been idle for a while", async () => {
     bundle.actions.setFilterCustom("a", "jazz");
     await vi.advanceTimersByTimeAsync(IDLE - 1);
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
     // No Save button, no ✱: the edit is on its way.
     expect(selectIsUnsaved(bundle.store.getState(), "a")).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
@@ -1111,10 +1118,10 @@ describe("autosave", () => {
       }),
     );
     await vi.advanceTimersByTimeAsync(IDLE * 3);
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
     settle();
     await vi.advanceTimersByTimeAsync(IDLE - 1);
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(written()).toEqual(["jazz"]);
   });
@@ -1124,11 +1131,11 @@ describe("autosave", () => {
     const id = bundle.store.getState().activeTabId!;
     bundle.actions.setFilterCustom(id, "jazz");
     await vi.advanceTimersByTimeAsync(IDLE * 2);
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
   });
 
   it("shows Save after a failed write, and Save tries again at once", async () => {
-    vi.mocked(queryUpdateDefinition).mockRejectedValueOnce(new Error("500"));
+    vi.mocked(sourceUpdateDefinition).mockRejectedValueOnce(new Error("500"));
     bundle.actions.setFilterCustom("a", "jazz");
     await vi.advanceTimersByTimeAsync(IDLE);
     expect(selectIsUnsaved(bundle.store.getState(), "a")).toBe(true);
@@ -1152,7 +1159,7 @@ describe("autosave", () => {
     bundle.actions.requestDelete("a");
     bundle.actions.confirmDelete();
     await vi.advanceTimersByTimeAsync(IDLE * 2);
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
   });
 
   it("saves a restored tab's edits the backend never acknowledged", async () => {
@@ -1161,7 +1168,7 @@ describe("autosave", () => {
     openQueryTab(before, "a");
     before.actions.setFilterCustom("a", "jazz");
     before.dispose(); // the page goes away before the write is sent
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
 
     const after = createAppStore(env);
     await vi.advanceTimersByTimeAsync(IDLE);
@@ -1248,15 +1255,15 @@ describe("undo and redo", () => {
   });
 
   it("saves the definition it steps to, lazily", async () => {
-    vi.mocked(queryUpdateDefinition).mockReset();
-    vi.mocked(queryUpdateDefinition).mockResolvedValue(null);
+    vi.mocked(sourceUpdateDefinition).mockReset();
+    vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
     bundle.actions.toggleFilterPreset("a", "p1");
     bundle.actions.undo("a");
-    expect(queryUpdateDefinition).not.toHaveBeenCalled();
+    expect(sourceUpdateDefinition).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(queryUpdateDefinition).toHaveBeenCalledTimes(1);
+    expect(sourceUpdateDefinition).toHaveBeenCalledTimes(1);
     expect(
-      JSON.parse(vi.mocked(queryUpdateDefinition).mock.calls[0][0].definition),
+      JSON.parse(vi.mocked(sourceUpdateDefinition).mock.calls[0][0].definition),
     ).toMatchObject({ filter: { custom: "", presets: [] } });
   });
 });

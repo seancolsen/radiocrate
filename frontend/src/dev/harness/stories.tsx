@@ -10,7 +10,7 @@ import { SETTINGS } from "../../state/settings";
 import {
   FILTER_DEF,
   FULL_DEF,
-  QUERIES_FIXTURE,
+  SOURCES_FIXTURE,
   SHUFFLE_DEF,
   VETTED_PRESET_ID,
 } from "../fixtures";
@@ -78,7 +78,7 @@ export interface Story {
   render: () => JSX.Element;
 }
 
-const [LEMONADE, DEEP_CUTS] = QUERIES_FIXTURE;
+const [LEMONADE, DEEP_CUTS] = SOURCES_FIXTURE;
 
 /** Folder ids for the explorer-tree stories. */
 const FAVORITES = "00000000-0000-0000-0000-0000000000f1";
@@ -89,14 +89,14 @@ const ARCHIVE = "00000000-0000-0000-0000-0000000000f3";
  * Lemonade and a "Road trip" folder (closed) holding Workout Mix; Deep Cuts and
  * an empty "Archive" folder sit beside it at the top level. */
 function arrangeQueryTree(stores: Stores): void {
-  const [lemonade, deepCuts, workoutMix] = QUERIES_FIXTURE;
+  const [lemonade, deepCuts, workoutMix] = SOURCES_FIXTURE;
   stores.app.store.setState((s) => {
     s.folders.data = [
       { id: FAVORITES, name: "Favorites", parent: null, position: 0 },
       { id: ROAD_TRIP, name: "Road trip", parent: FAVORITES, position: 1 },
       { id: ARCHIVE, name: "Archive", parent: null, position: 2 },
     ];
-    s.queries.data = [
+    s.sources.data = [
       { ...lemonade, parent: FAVORITES, position: 0 },
       { ...deepCuts, parent: null, position: 1 },
       { ...workoutMix, parent: ROAD_TRIP, position: 0 },
@@ -524,7 +524,7 @@ export const STORIES: Record<string, Story> = {
       <>
         <RpcErrorBar
           notice={{
-            method: "query.rename",
+            method: "source.rename",
             message: "500 database is locked",
             count: 1,
           }}

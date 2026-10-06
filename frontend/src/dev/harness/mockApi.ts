@@ -1,5 +1,5 @@
 import type { AppVersion, DmlResult } from "api-client";
-import { PRESETS_FIXTURE, QUERIES_FIXTURE } from "../fixtures";
+import { PRESETS_FIXTURE, SOURCES_FIXTURE } from "../fixtures";
 
 // The harness's stand-in backend: a `fetch` patch answering the two endpoints
 // the app talks to, from the canned fixtures. It's installed by the harness
@@ -49,8 +49,8 @@ function echoDml(operations: DmlOp[]): DmlResult {
 /** The result for one JSON-RPC method, or a thrown message for a failed call. */
 function rpcResult(method: string, params: unknown): unknown {
   switch (method) {
-    case "query.list":
-      return QUERIES_FIXTURE;
+    case "source.list":
+      return SOURCES_FIXTURE;
     case "preset.list":
       return PRESETS_FIXTURE;
     // No folders: the stories about the tree install their own (`stories.tsx`).
@@ -69,7 +69,7 @@ function rpcResult(method: string, params: unknown): unknown {
       if (dmlError !== null) throw new Error(dmlError);
       return echoDml((params as { operations: DmlOp[] }).operations);
     }
-    // Every write (`query.rename`, `keybinding.set`, …) succeeds and is
+    // Every write (`source.rename`, `keybinding.set`, …) succeeds and is
     // forgotten: the harness renders one state, it doesn't persist one.
     default:
       return null;

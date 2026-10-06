@@ -25,14 +25,32 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::{Config, TS};
 
-/// A saved query as exchanged over the wire. Timestamps are i64 epoch seconds
-/// and are authored by the frontend, as is its place in the explorer tree:
-/// `parent` is the containing [`QueryFolder`]'s id (`None` at the top level) and
-/// `position` orders it among its siblings — folders and queries alike.
+/// Which kind of row a [`Source`] wraps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceKind {
+    Query,
+    Playlist,
+}
+
+/// A saved source — a query or a playlist — as exchanged over the wire. See
+/// migration 0006.
+///
+/// `id` is the `source` row's own id, which is how the frontend names a source
+/// everywhere (tabs, the explorer, ordering, `last_play`). The wrapped row is
+/// reached through `query_id` or `playlist_id`, exactly one of which is set
+/// (matching `kind`); no code may assume either equals `id`. `definition` is
+/// that wrapped row's.
+///
+/// Timestamps are i64 epoch seconds and are authored by the frontend, as is its
+/// place in the explorer tree: `parent` is the containing [`SourceFolder`]'s id
+/// (`None` at the top level, stored as `source.source_folder`) and `position`
+/// orders it among its siblings — folders and sources alike.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct Query {
+pub struct Source {
     pub id: String,
+    pub kind: SourceKind,
     pub name: String,
     #[ts(type = "number")]
     pub created_at: i64,
@@ -43,14 +61,16 @@ pub struct Query {
     pub definition: String,
     pub parent: Option<String>,
     pub position: i32,
+    pub query_id: Option<String>,
+    pub playlist_id: Option<String>,
 }
 
-/// A folder in the explorer's tree of saved queries. It holds queries and other
-/// folders, and sits in its own `parent` at `position`, exactly as a [`Query`]
-/// does. See migration 0005.
+/// A folder in the explorer's tree of sources. It holds sources and other
+/// folders, and sits in its own `parent` at `position`, exactly as a [`Source`]
+/// does. See migrations 0005 and 0006.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryFolder {
+pub struct SourceFolder {
     pub id: String,
     pub name: String,
     pub parent: Option<String>,
@@ -61,7 +81,7 @@ pub struct QueryFolder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum TreeItemKind {
-    Query,
+    Source,
     Folder,
 }
 
@@ -76,12 +96,12 @@ pub struct Placement {
     pub position: i32,
 }
 
-/// Params for `query.arrange`: every item whose place in the tree changed. They
+/// Params for `source.arrange`: every item whose place in the tree changed. They
 /// are written together, in one transaction, so the tree is never seen half
 /// rearranged.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryArrangeParams {
+pub struct SourceArrangeParams {
     pub placements: Vec<Placement>,
 }
 
@@ -94,7 +114,7 @@ pub struct FolderRenameParams {
 }
 
 /// Params for `folder.delete`. Only the folder row goes: its contents are the
-/// caller's to move out first (with `query.arrange`), or they are left naming a
+/// caller's to move out first (with `source.arrange`), or they are left naming a
 /// parent that no longer exists — which reads as the top level.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -167,34 +187,36 @@ pub struct AppVersion {
     pub server_version: String,
 }
 
-/// Params for `query.delete`.
+/// Params for `query.delete`. The `id` is the query's *source* id: the source
+/// row goes, then the query it wraps.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryDeleteParams {
     pub id: String,
 }
 
-/// Params for `query.record_play`.
+/// Params for `source.record_play`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryRecordPlayParams {
+pub struct SourceRecordPlayParams {
     pub id: String,
     #[ts(type = "number")]
     pub last_play: i64,
 }
 
-/// Params for `query.rename`.
+/// Params for `source.rename`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryRenameParams {
+pub struct SourceRenameParams {
     pub id: String,
     pub name: String,
 }
 
-/// Params for `query.update_definition`.
+/// Params for `source.update_definition`: the `definition` lands on whichever
+/// row (query or playlist) the source wraps, and `modified_at` on the source.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryUpdateDefinitionParams {
+pub struct SourceUpdateDefinitionParams {
     pub id: String,
     pub definition: String,
     #[ts(type = "number")]
@@ -241,13 +263,13 @@ pub struct SettingDeleteParams {
 /// TS type *definitions* still come from the `ts-rs` derives above (or, for DML,
 /// the generator's static block), so this only wires names together.
 pub struct Method {
-    /// The JSON-RPC method name, e.g. `"query.list"`.
+    /// The JSON-RPC method name, e.g. `"source.list"`.
     pub wire: &'static str,
-    /// The generated client function name, e.g. `"queryList"`.
+    /// The generated client function name, e.g. `"sourceList"`.
     pub func: &'static str,
     /// The TS type of the single params argument, or `None` for a no-arg method.
     pub params: Option<&'static str>,
-    /// The TS type the method resolves to, e.g. `"Query[]"` or `"null"`.
+    /// The TS type the method resolves to, e.g. `"Source[]"` or `"null"`.
     pub result: &'static str,
 }
 
@@ -255,15 +277,39 @@ pub struct Method {
 /// `backend::rpc` and `backend::dml`.
 pub const METHODS: &[Method] = &[
     Method {
-        wire: "query.list",
-        func: "queryList",
+        wire: "source.list",
+        func: "sourceList",
         params: None,
-        result: "Query[]",
+        result: "Source[]",
+    },
+    Method {
+        wire: "source.record_play",
+        func: "sourceRecordPlay",
+        params: Some("SourceRecordPlayParams"),
+        result: "null",
+    },
+    Method {
+        wire: "source.rename",
+        func: "sourceRename",
+        params: Some("SourceRenameParams"),
+        result: "null",
+    },
+    Method {
+        wire: "source.update_definition",
+        func: "sourceUpdateDefinition",
+        params: Some("SourceUpdateDefinitionParams"),
+        result: "null",
+    },
+    Method {
+        wire: "source.arrange",
+        func: "sourceArrange",
+        params: Some("SourceArrangeParams"),
+        result: "null",
     },
     Method {
         wire: "query.add",
         func: "queryAdd",
-        params: Some("Query"),
+        params: Some("Source"),
         result: "null",
     },
     Method {
@@ -273,39 +319,15 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
-        wire: "query.record_play",
-        func: "queryRecordPlay",
-        params: Some("QueryRecordPlayParams"),
-        result: "null",
-    },
-    Method {
-        wire: "query.rename",
-        func: "queryRename",
-        params: Some("QueryRenameParams"),
-        result: "null",
-    },
-    Method {
-        wire: "query.update_definition",
-        func: "queryUpdateDefinition",
-        params: Some("QueryUpdateDefinitionParams"),
-        result: "null",
-    },
-    Method {
-        wire: "query.arrange",
-        func: "queryArrange",
-        params: Some("QueryArrangeParams"),
-        result: "null",
-    },
-    Method {
         wire: "folder.list",
         func: "folderList",
         params: None,
-        result: "QueryFolder[]",
+        result: "SourceFolder[]",
     },
     Method {
         wire: "folder.add",
         func: "folderAdd",
-        params: Some("QueryFolder"),
+        params: Some("SourceFolder"),
         result: "null",
     },
     Method {
@@ -412,8 +434,9 @@ pub fn type_decls() -> Vec<String> {
     // so its `large_int` setting never applies to our types.
     let cfg = Config::default();
     vec![
-        format!("export {}", Query::decl(&cfg)),
-        format!("export {}", QueryFolder::decl(&cfg)),
+        format!("export {}", SourceKind::decl(&cfg)),
+        format!("export {}", Source::decl(&cfg)),
+        format!("export {}", SourceFolder::decl(&cfg)),
         format!("export {}", TreeItemKind::decl(&cfg)),
         format!("export {}", Placement::decl(&cfg)),
         format!("export {}", Preset::decl(&cfg)),
@@ -421,10 +444,10 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", Setting::decl(&cfg)),
         format!("export {}", AppVersion::decl(&cfg)),
         format!("export {}", QueryDeleteParams::decl(&cfg)),
-        format!("export {}", QueryRecordPlayParams::decl(&cfg)),
-        format!("export {}", QueryRenameParams::decl(&cfg)),
-        format!("export {}", QueryUpdateDefinitionParams::decl(&cfg)),
-        format!("export {}", QueryArrangeParams::decl(&cfg)),
+        format!("export {}", SourceRecordPlayParams::decl(&cfg)),
+        format!("export {}", SourceRenameParams::decl(&cfg)),
+        format!("export {}", SourceUpdateDefinitionParams::decl(&cfg)),
+        format!("export {}", SourceArrangeParams::decl(&cfg)),
         format!("export {}", FolderRenameParams::decl(&cfg)),
         format!("export {}", FolderDeleteParams::decl(&cfg)),
         format!("export {}", PresetUpdateParams::decl(&cfg)),

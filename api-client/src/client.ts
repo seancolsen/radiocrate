@@ -2,14 +2,30 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryArrangeParams, QueryDeleteParams, QueryFolder, QueryRecordPlayParams, QueryRenameParams, QueryUpdateDefinitionParams, Setting, SettingDeleteParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
 import { handleAuthRedirect, rpcCall, trackRequest } from "./rpc";
 
-export async function queryList(): Promise<Query[]> {
-  return (await rpcCall("query.list", null)) as Query[];
+export async function sourceList(): Promise<Source[]> {
+  return (await rpcCall("source.list", null)) as Source[];
 }
 
-export async function queryAdd(params: Query): Promise<null> {
+export async function sourceRecordPlay(params: SourceRecordPlayParams): Promise<null> {
+  return (await rpcCall("source.record_play", params)) as null;
+}
+
+export async function sourceRename(params: SourceRenameParams): Promise<null> {
+  return (await rpcCall("source.rename", params)) as null;
+}
+
+export async function sourceUpdateDefinition(params: SourceUpdateDefinitionParams): Promise<null> {
+  return (await rpcCall("source.update_definition", params)) as null;
+}
+
+export async function sourceArrange(params: SourceArrangeParams): Promise<null> {
+  return (await rpcCall("source.arrange", params)) as null;
+}
+
+export async function queryAdd(params: Source): Promise<null> {
   return (await rpcCall("query.add", params)) as null;
 }
 
@@ -17,27 +33,11 @@ export async function queryDelete(params: QueryDeleteParams): Promise<null> {
   return (await rpcCall("query.delete", params)) as null;
 }
 
-export async function queryRecordPlay(params: QueryRecordPlayParams): Promise<null> {
-  return (await rpcCall("query.record_play", params)) as null;
+export async function folderList(): Promise<SourceFolder[]> {
+  return (await rpcCall("folder.list", null)) as SourceFolder[];
 }
 
-export async function queryRename(params: QueryRenameParams): Promise<null> {
-  return (await rpcCall("query.rename", params)) as null;
-}
-
-export async function queryUpdateDefinition(params: QueryUpdateDefinitionParams): Promise<null> {
-  return (await rpcCall("query.update_definition", params)) as null;
-}
-
-export async function queryArrange(params: QueryArrangeParams): Promise<null> {
-  return (await rpcCall("query.arrange", params)) as null;
-}
-
-export async function folderList(): Promise<QueryFolder[]> {
-  return (await rpcCall("folder.list", null)) as QueryFolder[];
-}
-
-export async function folderAdd(params: QueryFolder): Promise<null> {
+export async function folderAdd(params: SourceFolder): Promise<null> {
   return (await rpcCall("folder.add", params)) as null;
 }
 

@@ -2,8 +2,8 @@ import type {
   DmlOperation,
   DmlResult,
   Preset,
-  Query,
-  QueryFolder,
+  Source,
+  SourceFolder,
 } from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
@@ -353,11 +353,12 @@ export interface AppState {
   currentTrack: CurrentTrack | null;
   /** Transport state for that track. */
   playback: PlaybackState;
-  /** The saved-query list (loads via `query.list`; `refetchQueries` reloads). */
-  queries: ResourceState<readonly Query[]>;
-  /** The explorer's query folders (loads via `folder.list`, alongside
-   * `queries` — the two lists make up one tree; see `query/explorerTree.ts`). */
-  folders: ResourceState<readonly QueryFolder[]>;
+  /** The saved sources — queries and playlists (loads via `source.list`;
+   * `refetchSources` reloads). */
+  sources: ResourceState<readonly Source[]>;
+  /** The explorer's folders (loads via `folder.list`, alongside `sources` —
+   * the two lists make up one tree; see `query/explorerTree.ts`). */
+  folders: ResourceState<readonly SourceFolder[]>;
   /** The rating vocabulary the results row menu offers (the whole `rating`
    * table, lowest value first). Loaded on demand — the first time a menu that
    * offers it is raised — rather than at boot: it needs the schema the
@@ -434,7 +435,7 @@ export function initialState(env: AppEnv): AppState {
     rpcError: null,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
-    queries: { status: "loading", data: [] },
+    sources: { status: "loading", data: [] },
     folders: { status: "loading", data: [] },
     ratings: { status: "loading", data: [] },
     schema: { status: "loading", json: undefined, tables: [] },
@@ -449,7 +450,7 @@ export function initialState(env: AppEnv): AppState {
 
 // Re-exported so `stores/app/actions.ts` and its tests don't have to reach into
 // `api-client` themselves just to name these DML types.
-export type { DmlOperation, DmlResult, Preset, Query, QueryFolder };
+export type { DmlOperation, DmlResult, Preset, Source, SourceFolder };
 // …and so the menu surfaces can name a rating through the store, as they name
 // every other thing they render.
 export type { Rating };

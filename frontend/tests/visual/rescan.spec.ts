@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { QUERIES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE, PRESETS_FIXTURE } from "../../src/dev/fixtures";
 
 // "Re-scan collection" is the one Settings row that outlives its own click: a
 // scan takes as long as the collection is big, so the menu stays up with the
@@ -28,8 +28,8 @@ test("the settings menu waits out a re-scan, then closes itself", async ({
       await rescanHeld;
     }
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? PRESETS_FIXTURE
           : null;

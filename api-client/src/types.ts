@@ -41,11 +41,13 @@ export type DmlRequest = { operations: DmlOperation[] };
 /** Per-operation returned rows, keyed by operation id (delete ops produce none). */
 export type DmlResult = Record<string, Record<string, JsonValue>>;
 
-export type Query = { id: string, name: string, createdAt: number, modifiedAt: number, lastPlay: number, definition: string, parent: string | null, position: number, };
+export type SourceKind = "query" | "playlist";
 
-export type QueryFolder = { id: string, name: string, parent: string | null, position: number, };
+export type Source = { id: string, kind: SourceKind, name: string, createdAt: number, modifiedAt: number, lastPlay: number, definition: string, parent: string | null, position: number, queryId: string | null, playlistId: string | null, };
 
-export type TreeItemKind = "query" | "folder";
+export type SourceFolder = { id: string, name: string, parent: string | null, position: number, };
+
+export type TreeItemKind = "source" | "folder";
 
 export type Placement = { kind: TreeItemKind, id: string, parent: string | null, position: number, };
 
@@ -59,13 +61,13 @@ export type AppVersion = { buildId: string, serverVersion: string, };
 
 export type QueryDeleteParams = { id: string, };
 
-export type QueryRecordPlayParams = { id: string, lastPlay: number, };
+export type SourceRecordPlayParams = { id: string, lastPlay: number, };
 
-export type QueryRenameParams = { id: string, name: string, };
+export type SourceRenameParams = { id: string, name: string, };
 
-export type QueryUpdateDefinitionParams = { id: string, definition: string, modifiedAt: number, };
+export type SourceUpdateDefinitionParams = { id: string, definition: string, modifiedAt: number, };
 
-export type QueryArrangeParams = { placements: Array<Placement>, };
+export type SourceArrangeParams = { placements: Array<Placement>, };
 
 export type FolderRenameParams = { id: string, name: string, };
 

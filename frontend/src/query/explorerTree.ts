@@ -1,12 +1,12 @@
-import type { Placement, Query, QueryFolder, TreeItemKind } from "api-client";
+import type { Placement, Source, SourceFolder, TreeItemKind } from "api-client";
 
-// The explorer's tree of saved queries: how the flat `query.list` /
+// The explorer's tree of saved sources: how the flat `source.list` /
 // `folder.list` rows assemble into folders, how that tree flattens into the
 // rows on screen (expanded folders and the filter applied), where a drag over
 // those rows would drop, and what a drop — or deleting a folder — rewrites.
 //
 // Every item sits in a `parent` folder (null at the top level) at a `position`
-// among its siblings; folders and queries share that one order. Positions only
+// among its siblings; folders and sources share that one order. Positions only
 // order siblings — a move renumbers the list it lands in from zero, and only
 // the items whose place actually changed are written back.
 
@@ -18,7 +18,7 @@ export interface TreeItemRef {
 
 export type TreeNode =
   | { kind: "folder"; id: string; name: string; children: TreeNode[] }
-  | { kind: "query"; id: string; name: string; query: Query };
+  | { kind: "source"; id: string; name: string; source: Source };
 
 /** One row of the tree as drawn: a node, how deep it sits, and — for a folder
  * — whether its children are drawn beneath it. */
@@ -58,8 +58,8 @@ function bySiblingOrder(a: Positioned, b: Positioned): number {
  * there — sits at the top level, as does a folder caught in a parent cycle, so
  * nothing the lists hold ever goes missing from the tree. */
 export function buildTree(
-  queries: readonly Query[],
-  folders: readonly QueryFolder[],
+  sources: readonly Source[],
+  folders: readonly SourceFolder[],
 ): TreeNode[] {
   const folderIds = new Set(folders.map((f) => f.id));
   const items: { node: Positioned; make: () => TreeNode }[] = [];
@@ -90,12 +90,12 @@ export function buildTree(
       children: assemble(f.id),
     }));
   }
-  for (const q of queries) {
+  for (const q of sources) {
     add(q, () => ({
-      kind: "query",
+      kind: "source",
       id: q.id,
       name: q.name,
-      query: q,
+      source: q,
     }));
   }
 
@@ -132,7 +132,7 @@ export function visibleRows(
   ): TreeRow[] =>
     nodes.flatMap((node) => {
       const self = shown || matches(node);
-      if (node.kind === "query") {
+      if (node.kind === "source") {
         return self ? [{ node, depth, parent, expanded: false }] : [];
       }
       if (needle === "") {
@@ -291,14 +291,14 @@ function renumber(
 
 /** Every item's stored position, keyed `kind:id`. */
 export function storedPositions(
-  queries: readonly Query[],
-  folders: readonly QueryFolder[],
+  sources: readonly Source[],
+  folders: readonly SourceFolder[],
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const f of folders)
     out.set(keyOf({ kind: "folder", id: f.id }), f.position);
-  for (const q of queries)
-    out.set(keyOf({ kind: "query", id: q.id }), q.position);
+  for (const q of sources)
+    out.set(keyOf({ kind: "source", id: q.id }), q.position);
   return out;
 }
 
@@ -361,8 +361,8 @@ export function dissolvePlacements(
 /** The position that puts a new item first in folder `parent` (null: the top
  * level): one above its current first item. */
 export function topPosition(
-  queries: readonly Query[],
-  folders: readonly QueryFolder[],
+  sources: readonly Source[],
+  folders: readonly SourceFolder[],
   parent: string | null,
 ): number {
   const folderIds = new Set(folders.map((f) => f.id));
@@ -370,7 +370,7 @@ export function topPosition(
   const inParent = (p: string | null) =>
     parent === null ? p === null || !folderIds.has(p) : p === parent;
   const positions = [
-    ...queries.filter((q) => inParent(q.parent)).map((q) => q.position),
+    ...sources.filter((q) => inParent(q.parent)).map((q) => q.position),
     ...folders.filter((f) => inParent(f.parent)).map((f) => f.position),
   ];
   return positions.length === 0 ? 0 : Math.min(...positions) - 1;
@@ -379,10 +379,10 @@ export function topPosition(
 /** Applies placements to the lists they came from, returning new lists (the
  * optimistic half of a move — the backend's copy is written alongside). */
 export function applyPlacements(
-  queries: readonly Query[],
-  folders: readonly QueryFolder[],
+  sources: readonly Source[],
+  folders: readonly SourceFolder[],
   placements: readonly Placement[],
-): { queries: Query[]; folders: QueryFolder[] } {
+): { sources: Source[]; folders: SourceFolder[] } {
   const byKey = new Map(placements.map((p) => [keyOf(p), p]));
   const place = <
     T extends { id: string; parent: string | null; position: number },
@@ -394,7 +394,7 @@ export function applyPlacements(
     return p ? { ...x, parent: p.parent, position: p.position } : x;
   };
   return {
-    queries: queries.map((q) => place("query", q)),
+    sources: sources.map((q) => place("source", q)),
     folders: folders.map((f) => place("folder", f)),
   };
 }

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import { SCHEMES, snapshot } from "./harness";
 
 // The two snapshots that are about the app as a whole rather than about any one
@@ -13,7 +13,7 @@ async function mockRpc(page: Page) {
       method: string;
       id: number;
     };
-    const result = body.method === "query.list" ? QUERIES_FIXTURE : [];
+    const result = body.method === "source.list" ? SOURCES_FIXTURE : [];
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ jsonrpc: "2.0", result, id: body.id }),
@@ -76,7 +76,7 @@ test("a failed RPC call shows the error bar, which dismisses", async ({
     const envelope =
       body.method === "setting.list"
         ? { error: { code: -32000, message: "database is locked" } }
-        : { result: body.method === "query.list" ? QUERIES_FIXTURE : [] };
+        : { result: body.method === "source.list" ? SOURCES_FIXTURE : [] };
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ jsonrpc: "2.0", ...envelope, id: body.id }),

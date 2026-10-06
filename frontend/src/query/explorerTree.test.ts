@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Query, QueryFolder } from "api-client";
+import type { Source, SourceFolder } from "api-client";
 import {
   applyPlacements,
   buildTree,
@@ -16,9 +16,10 @@ import {
   type TreeRow,
 } from "./explorerTree";
 
-function query(id: string, parent: string | null, position: number): Query {
+function query(id: string, parent: string | null, position: number): Source {
   return {
     id,
+    kind: "query",
     name: id,
     createdAt: 0,
     modifiedAt: 0,
@@ -26,6 +27,8 @@ function query(id: string, parent: string | null, position: number): Query {
     definition: "{}",
     parent,
     position,
+    queryId: `query-${id}`,
+    playlistId: null,
   };
 }
 
@@ -33,7 +36,7 @@ function folder(
   id: string,
   parent: string | null,
   position: number,
-): QueryFolder {
+): SourceFolder {
   return { id, name: id, parent, position };
 }
 
@@ -166,12 +169,12 @@ describe("movePlacements", () => {
     const placements = movePlacements(
       tree,
       positions,
-      { kind: "query", id: "q4" },
+      { kind: "source", id: "q4" },
       { kind: "between", parent: null, after: null, depth: 0, gap: 0 },
     );
     expect(placements).toEqual([
-      { kind: "query", id: "q4", parent: null, position: 0 },
-      { kind: "query", id: "q1", parent: null, position: 1 },
+      { kind: "source", id: "q4", parent: null, position: 0 },
+      { kind: "source", id: "q1", parent: null, position: 1 },
       { kind: "folder", id: "F", parent: null, position: 2 },
     ]);
   });
@@ -180,11 +183,11 @@ describe("movePlacements", () => {
     const placements = movePlacements(
       tree,
       positions,
-      { kind: "query", id: "q1" },
+      { kind: "source", id: "q1" },
       { kind: "into", folder: "G" },
     );
     const moved = applyPlacements(QUERIES, FOLDERS, placements);
-    expect(shape(buildTree(moved.queries, moved.folders))).toEqual([
+    expect(shape(buildTree(moved.sources, moved.folders))).toEqual([
       { F: ["q2", { G: ["q1", "q3"] }] },
       "q4",
     ]);
@@ -194,11 +197,11 @@ describe("movePlacements", () => {
     const placements = movePlacements(
       tree,
       positions,
-      { kind: "query", id: "q3" },
+      { kind: "source", id: "q3" },
       { kind: "between", parent: null, after: "F", depth: 0, gap: 5 },
     );
     const moved = applyPlacements(QUERIES, FOLDERS, placements);
-    expect(shape(buildTree(moved.queries, moved.folders))).toEqual([
+    expect(shape(buildTree(moved.sources, moved.folders))).toEqual([
       "q1",
       { F: ["q2", { G: [] }] },
       "q3",
@@ -211,7 +214,7 @@ describe("movePlacements", () => {
       movePlacements(
         tree,
         positions,
-        { kind: "query", id: "q1" },
+        { kind: "source", id: "q1" },
         { kind: "between", parent: null, after: "q1", depth: 0, gap: 1 },
       ),
     ).toEqual([]);
@@ -219,7 +222,7 @@ describe("movePlacements", () => {
       movePlacements(
         tree,
         positions,
-        { kind: "query", id: "q4" },
+        { kind: "source", id: "q4" },
         { kind: "between", parent: null, after: "F", depth: 0, gap: 5 },
       ),
     ).toEqual([]);
@@ -247,7 +250,7 @@ describe("dissolvePlacements", () => {
     );
     const moved = applyPlacements(QUERIES, FOLDERS, placements);
     const remaining = moved.folders.filter((f) => f.id !== "F");
-    expect(shape(buildTree(moved.queries, remaining))).toEqual([
+    expect(shape(buildTree(moved.sources, remaining))).toEqual([
       "q1",
       "q2",
       { G: ["q3"] },

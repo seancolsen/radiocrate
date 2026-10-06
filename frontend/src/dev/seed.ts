@@ -152,13 +152,13 @@ export function applySeed(stores: Stores): void {
   // a store subscription that unsubscribes itself.
   let seeded = false;
   const unsubscribe = app.store.subscribe(
-    (s) => s.queries.status,
+    (s) => s.sources.status,
     (status) => {
       if (seeded || status !== "ready") return;
       seeded = true;
       unsubscribe();
 
-      const queries = app.store.getState().queries.data;
+      const queries = app.store.getState().sources.data;
       for (const name of names) {
         const match = queries.find((q) => q.name === name);
         app.actions.openTab(match ?? { id: name, name, definition: "" });

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
 // Multi-select mode, behaviorally: the way a touch device builds a multi-row
@@ -25,8 +25,8 @@ async function mockRpc(page: Page) {
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? []
           : null;

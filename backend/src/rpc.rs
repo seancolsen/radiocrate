@@ -1,4 +1,5 @@
-//! Minimal JSON-RPC 2.0 endpoint for managing saved queries.
+//! Minimal JSON-RPC 2.0 endpoint for managing saved sources (queries and
+//! playlists) and settings.
 //!
 //! The surface is tiny (a handful of methods over a single HTTP route), so the
 //! envelope is hand-rolled with serde rather than pulling in a full RPC crate.
@@ -9,20 +10,20 @@ use std::sync::Arc;
 
 use api_schema::{
     AppVersion, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
-    Placement, Preset, PresetDeleteParams, PresetUpdateParams, Query, QueryArrangeParams,
-    QueryDeleteParams, QueryFolder, QueryRecordPlayParams, QueryRenameParams,
-    QueryUpdateDefinitionParams, Setting, SettingDeleteParams, TreeItemKind,
+    Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting,
+    SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
+    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
-use duckdb::Connection;
+use duckdb::{Connection, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{error, warn};
 
 use crate::server::AppState;
 
-// The wire types (`Query`, `Preset`, `Keybinding`) and every method's params
+// The wire types (`Source`, `Preset`, `Keybinding`) and every method's params
 // struct live in the shared `api-schema` crate, so the generated TypeScript
 // client is derived from these exact definitions and can't drift. See that crate.
 
@@ -153,55 +154,50 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             server_version: state.server_version.clone(),
         })
         .map_err(|e| e.to_string()),
-        "query.list" => state.read(|conn| -> Result<Value, String> {
-            let queries = list_queries(conn)?;
-            serde_json::to_value(queries).map_err(|e| e.to_string())
+        "source.list" => state.read(|conn| -> Result<Value, String> {
+            let sources = list_sources(conn)?;
+            serde_json::to_value(sources).map_err(|e| e.to_string())
         }),
-        "query.add" => {
-            let query: Query = from_params(params)?;
-            state.write(|conn| {
-                add_query(conn, &query)?;
-                Ok(Value::Null)
-            })
-        }
-        "query.delete" => {
-            let p: QueryDeleteParams = from_params(params)?;
-            state.write(|conn| {
-                delete_query(conn, &p.id)?;
-                Ok(Value::Null)
-            })
-        }
-        "query.record_play" => {
-            let p: QueryRecordPlayParams = from_params(params)?;
+        "source.record_play" => {
+            let p: SourceRecordPlayParams = from_params(params)?;
             state.write(|conn| {
                 record_play(conn, &p.id, p.last_play)?;
                 Ok(Value::Null)
             })
         }
-        "query.rename" => {
-            let p: QueryRenameParams = from_params(params)?;
+        "source.rename" => {
+            let p: SourceRenameParams = from_params(params)?;
             state.write(|conn| {
-                rename_query(conn, &p.id, &p.name)?;
+                rename_source(conn, &p.id, &p.name)?;
                 Ok(Value::Null)
             })
         }
-        "query.update_definition" => {
-            let p: QueryUpdateDefinitionParams = from_params(params)?;
-            state.write(|conn| {
-                update_definition(conn, &p.id, &p.definition, p.modified_at)?;
-                Ok(Value::Null)
+        "source.update_definition" => {
+            let p: SourceUpdateDefinitionParams = from_params(params)?;
+            state.write_mut(|conn| {
+                update_definition(conn, &p.id, &p.definition, p.modified_at).map(|()| Value::Null)
             })
         }
-        "query.arrange" => {
-            let p: QueryArrangeParams = from_params(params)?;
+        "source.arrange" => {
+            let p: SourceArrangeParams = from_params(params)?;
             state.write_mut(|conn| arrange(conn, &p.placements).map(|()| Value::Null))
+        }
+        // Playlists have no counterpart to these two: they are created and
+        // deleted through `dml`, since their writes also span `playlist_track`.
+        "query.add" => {
+            let source: Source = from_params(params)?;
+            state.write_mut(|conn| add_query(conn, &source).map(|()| Value::Null))
+        }
+        "query.delete" => {
+            let p: QueryDeleteParams = from_params(params)?;
+            state.write_mut(|conn| delete_query(conn, &p.id).map(|()| Value::Null))
         }
         "folder.list" => state.read(|conn| -> Result<Value, String> {
             let folders = list_folders(conn)?;
             serde_json::to_value(folders).map_err(|e| e.to_string())
         }),
         "folder.add" => {
-            let folder: QueryFolder = from_params(params)?;
+            let folder: SourceFolder = from_params(params)?;
             state.write(|conn| {
                 add_folder(conn, &folder)?;
                 Ok(Value::Null)
@@ -313,19 +309,31 @@ fn from_params<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, Strin
     serde_json::from_value(params).map_err(|e| e.to_string())
 }
 
-fn list_queries(conn: &Connection) -> Result<Vec<Query>, String> {
+/// Every source with the definition of the row it wraps, in tree order.
+fn list_sources(conn: &Connection) -> Result<Vec<Source>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id::text, name, epoch(created_at)::bigint, \
-             epoch(modified_at)::bigint, epoch(last_play)::bigint, definition, \
-             parent::text, coalesce(position, 0) \
-             FROM query ORDER BY position, created_at DESC",
+            "SELECT s.id::text, s.name, epoch(s.created_at)::bigint, \
+             epoch(s.modified_at)::bigint, epoch(s.last_play)::bigint, \
+             coalesce(q.definition, p.definition), s.source_folder::text, s.position, \
+             s.query::text, s.playlist::text \
+             FROM source s \
+             LEFT JOIN query q ON q.id = s.query \
+             LEFT JOIN playlist p ON p.id = s.playlist \
+             ORDER BY s.position, s.created_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(Query {
+            let query_id: Option<String> = row.get(8)?;
+            Ok(Source {
                 id: row.get(0)?,
+                // The schema's `check` guarantees exactly one of the two is set.
+                kind: if query_id.is_some() {
+                    SourceKind::Query
+                } else {
+                    SourceKind::Playlist
+                },
                 name: row.get(1)?,
                 created_at: row.get(2)?,
                 modified_at: row.get(3)?,
@@ -333,54 +341,92 @@ fn list_queries(conn: &Connection) -> Result<Vec<Query>, String> {
                 definition: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 parent: row.get(6)?,
                 position: row.get(7)?,
+                query_id,
+                playlist_id: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
-fn add_query(conn: &Connection, query: &Query) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO query (id, name, created_at, modified_at, last_play, definition, parent, position) \
+/// Inserts a new query and the source that wraps it, in one transaction. The
+/// `source`'s `query_id` names the new query row, and must differ from no id in
+/// particular: callers may not assume it equals the source's `id`.
+fn add_query(conn: &mut Connection, source: &Source) -> Result<(), String> {
+    let Some(query_id) = source.query_id.as_deref() else {
+        return Err("query.add: the source has no queryId".to_string());
+    };
+    if source.kind != SourceKind::Query || source.playlist_id.is_some() {
+        return Err("query.add: the source must be a query".to_string());
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO query (id, definition) VALUES (TRY_CAST(? AS UUID), ?)",
+        duckdb::params![query_id, source.definition],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO source (id, name, created_at, modified_at, last_play, source_folder, position, query) \
          VALUES (TRY_CAST(? AS UUID), ?, make_timestamp(? * 1000000)::timestamp_s, \
-         make_timestamp(? * 1000000)::timestamp_s, make_timestamp(? * 1000000)::timestamp_s, ?, \
-         TRY_CAST(? AS UUID), ?)",
+         make_timestamp(? * 1000000)::timestamp_s, make_timestamp(? * 1000000)::timestamp_s, \
+         TRY_CAST(? AS UUID), ?, TRY_CAST(? AS UUID))",
         duckdb::params![
-            query.id,
-            query.name,
-            query.created_at,
-            query.modified_at,
-            query.last_play,
-            query.definition,
-            query.parent,
-            query.position,
+            source.id,
+            source.name,
+            source.created_at,
+            source.modified_at,
+            source.last_play,
+            source.parent,
+            source.position,
+            query_id,
         ],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
-fn delete_query(conn: &Connection, id: &str) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM query WHERE id = TRY_CAST(? AS UUID)",
+/// Deletes a query's source, then the query itself, in one transaction. `id` is
+/// the source's id.
+fn delete_query(conn: &mut Connection, id: &str) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let query_id: Option<String> = tx
+        .query_row(
+            "SELECT query::text FROM source WHERE id = TRY_CAST(? AS UUID)",
+            duckdb::params![id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
+    let Some(query_id) = query_id else {
+        // Already gone, or a playlist: neither is this method's to delete.
+        return Ok(());
+    };
+    tx.execute(
+        "DELETE FROM source WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.execute(
+        "DELETE FROM query WHERE id = TRY_CAST(? AS UUID)",
+        duckdb::params![query_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 fn record_play(conn: &Connection, id: &str, last_play: i64) -> Result<(), String> {
     conn.execute(
-        "UPDATE query SET last_play = make_timestamp(? * 1000000)::timestamp_s WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE source SET last_play = make_timestamp(? * 1000000)::timestamp_s WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![last_play, id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn rename_query(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
+fn rename_source(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
     conn.execute(
-        "UPDATE query SET name = ? WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE source SET name = ? WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, id],
     )
     .map_err(|e| e.to_string())?;
@@ -393,12 +439,12 @@ fn arrange(conn: &mut Connection, placements: &[Placement]) -> Result<(), String
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for p in placements {
         let sql = match p.kind {
-            TreeItemKind::Query => {
-                "UPDATE query SET parent = TRY_CAST(? AS UUID), position = ? \
+            TreeItemKind::Source => {
+                "UPDATE source SET source_folder = TRY_CAST(? AS UUID), position = ? \
                  WHERE id = TRY_CAST(? AS UUID)"
             }
             TreeItemKind::Folder => {
-                "UPDATE query_folder SET parent = TRY_CAST(? AS UUID), position = ? \
+                "UPDATE source_folder SET parent = TRY_CAST(? AS UUID), position = ? \
                  WHERE id = TRY_CAST(? AS UUID)"
             }
         };
@@ -408,16 +454,16 @@ fn arrange(conn: &mut Connection, placements: &[Placement]) -> Result<(), String
     tx.commit().map_err(|e| e.to_string())
 }
 
-fn list_folders(conn: &Connection) -> Result<Vec<QueryFolder>, String> {
+fn list_folders(conn: &Connection) -> Result<Vec<SourceFolder>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id::text, name, parent::text, position \
-             FROM query_folder ORDER BY position, name",
+             FROM source_folder ORDER BY position, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(QueryFolder {
+            Ok(SourceFolder {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 parent: row.get(2)?,
@@ -428,9 +474,9 @@ fn list_folders(conn: &Connection) -> Result<Vec<QueryFolder>, String> {
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
-fn add_folder(conn: &Connection, folder: &QueryFolder) -> Result<(), String> {
+fn add_folder(conn: &Connection, folder: &SourceFolder) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO query_folder (id, name, parent, position) \
+        "INSERT INTO source_folder (id, name, parent, position) \
          VALUES (TRY_CAST(? AS UUID), ?, TRY_CAST(? AS UUID), ?)",
         duckdb::params![folder.id, folder.name, folder.parent, folder.position],
     )
@@ -440,7 +486,7 @@ fn add_folder(conn: &Connection, folder: &QueryFolder) -> Result<(), String> {
 
 fn rename_folder(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
     conn.execute(
-        "UPDATE query_folder SET name = ? WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE source_folder SET name = ? WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, id],
     )
     .map_err(|e| e.to_string())?;
@@ -449,7 +495,7 @@ fn rename_folder(conn: &Connection, id: &str, name: &str) -> Result<(), String> 
 
 fn delete_folder(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM query_folder WHERE id = TRY_CAST(? AS UUID)",
+        "DELETE FROM source_folder WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
@@ -594,47 +640,58 @@ fn delete_setting(conn: &Connection, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Writes `definition` to whichever row (query or playlist) the source wraps,
+/// and bumps the source's `modified_at`, in one transaction.
 fn update_definition(
-    conn: &Connection,
+    conn: &mut Connection,
     id: &str,
     definition: &str,
     modified_at: i64,
 ) -> Result<(), String> {
-    conn.execute(
-        "UPDATE query SET definition = ?, modified_at = make_timestamp(? * 1000000)::timestamp_s \
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // At most one of these matches a row: the source wraps exactly one of the two.
+    for table in ["query", "playlist"] {
+        tx.execute(
+            &format!(
+                "UPDATE {table} SET definition = ? \
+                 WHERE id = (SELECT {table} FROM source WHERE id = TRY_CAST(? AS UUID))"
+            ),
+            duckdb::params![definition, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "UPDATE source SET modified_at = make_timestamp(? * 1000000)::timestamp_s \
          WHERE id = TRY_CAST(? AS UUID)",
-        duckdb::params![definition, modified_at, id],
+        duckdb::params![modified_at, id],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const Q1: &str = "00000000-0000-0000-0000-000000000001";
-    const Q2: &str = "00000000-0000-0000-0000-000000000002";
+    const S1: &str = "00000000-0000-0000-0000-000000000001";
+    const S2: &str = "00000000-0000-0000-0000-000000000002";
+    const Q1: &str = "00000000-0000-0000-0000-0000000000e1";
+    const Q2: &str = "00000000-0000-0000-0000-0000000000e2";
+    const P1: &str = "00000000-0000-0000-0000-0000000000a1";
     const F1: &str = "00000000-0000-0000-0000-0000000000f1";
 
     /// A fresh in-memory database with the real migration schema applied.
     fn setup() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        for sql in [
-            include_str!("migrations/0001.sql"),
-            include_str!("migrations/0002.sql"),
-            include_str!("migrations/0003.sql"),
-            include_str!("migrations/0004.sql"),
-            include_str!("migrations/0005.sql"),
-        ] {
-            conn.execute_batch(sql).unwrap();
-        }
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, u32::MAX);
         conn
     }
 
-    fn query(id: &str, name: &str, position: i32) -> Query {
-        Query {
+    /// A query source whose query id differs from its own, as new ones do.
+    fn query(id: &str, query_id: &str, name: &str, position: i32) -> Source {
+        Source {
             id: id.to_string(),
+            kind: SourceKind::Query,
             name: name.to_string(),
             created_at: 1_700_000_000,
             modified_at: 1_700_000_000,
@@ -642,15 +699,180 @@ mod tests {
             definition: "{}".to_string(),
             parent: None,
             position,
+            query_id: Some(query_id.to_string()),
+            playlist_id: None,
         }
     }
 
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
     #[test]
-    fn queries_list_in_position_order() {
+    fn migration_0006_moves_queries_into_sources() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 5);
+        conn.execute_batch(&format!(
+            "INSERT INTO query_folder (id, name, parent, position) VALUES ('{F1}', 'folder', NULL, 3);
+             INSERT INTO query (id, name, created_at, modified_at, last_play, definition, parent, position)
+             VALUES ('{Q1}', 'filed', '2024-01-02 03:04:05', '2024-02-03 04:05:06', '2024-03-04 05:06:07', 'def1', '{F1}', 7),
+                    ('{Q2}', 'unpositioned', '2024-01-01 00:00:00', '2024-01-01 00:00:00', '2024-01-01 00:00:00', 'def2', NULL, NULL);"
+        ))
+        .unwrap();
+
+        crate::db::migrate_through(&mut conn, 6);
+
+        let sources = list_sources(&conn).unwrap();
+        assert_eq!(sources.len(), 2);
+        let filed = sources.iter().find(|s| s.name == "filed").unwrap();
+        // The source reuses its query's id, so persisted tabs survive.
+        assert_eq!(filed.id, Q1);
+        assert_eq!(filed.query_id.as_deref(), Some(Q1));
+        assert_eq!(filed.kind, SourceKind::Query);
+        assert_eq!(filed.definition, "def1");
+        assert_eq!(filed.parent.as_deref(), Some(F1));
+        assert_eq!(filed.position, 7);
+        assert_eq!(
+            (filed.created_at, filed.modified_at, filed.last_play),
+            (1_704_164_645, 1_706_933_106, 1_709_528_767)
+        );
+        let unpositioned = sources.iter().find(|s| s.id == Q2).unwrap();
+        assert_eq!(
+            (unpositioned.parent.as_deref(), unpositioned.position),
+            (None, 0)
+        );
+
+        // The folder table is renamed, with its rows intact.
+        assert_eq!(list_folders(&conn).unwrap()[0].id, F1);
+        // `query` keeps only what is specific to a query.
+        let columns: Vec<String> = conn
+            .prepare(
+                "SELECT column_name FROM information_schema.columns \
+                 WHERE table_name = 'query' ORDER BY ordinal_position",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(columns, ["id", "definition"]);
+    }
+
+    #[test]
+    fn a_source_wraps_exactly_one_query_or_playlist() {
         let conn = setup();
-        add_query(&conn, &query(Q1, "second", 5)).unwrap();
-        add_query(&conn, &query(Q2, "first", -1)).unwrap();
-        let names: Vec<_> = list_queries(&conn)
+        let insert = |id: &str, query: &str, playlist: &str| {
+            conn.execute_batch(&format!(
+                "INSERT INTO source (id, name, created_at, modified_at, last_play, query, playlist) \
+                 VALUES ('{id}', 'x', now(), now(), now(), {query}, {playlist})"
+            ))
+        };
+        assert!(insert(S1, "NULL", "NULL").is_err(), "wraps neither");
+        assert!(
+            insert(S1, &format!("'{Q1}'"), &format!("'{P1}'")).is_err(),
+            "wraps both"
+        );
+        insert(S1, &format!("'{Q1}'"), "NULL").unwrap();
+        assert!(
+            insert(S2, &format!("'{Q1}'"), "NULL").is_err(),
+            "two sources wrap one query"
+        );
+        insert(S2, "NULL", &format!("'{P1}'")).unwrap();
+        assert!(
+            insert(Q2, "NULL", &format!("'{P1}'")).is_err(),
+            "two sources wrap one playlist"
+        );
+    }
+
+    #[test]
+    fn source_list_returns_both_kinds() {
+        let mut conn = setup();
+        add_query(&mut conn, &query(S1, Q1, "a query", 1)).unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO playlist (id, definition) VALUES ('{P1}', 'pdef');
+             INSERT INTO source (id, name, created_at, modified_at, last_play, position, playlist)
+             VALUES ('{S2}', 'a playlist', now(), now(), now(), 0, '{P1}');"
+        ))
+        .unwrap();
+        let sources = list_sources(&conn).unwrap();
+        let summary: Vec<_> = sources
+            .iter()
+            .map(|s| (s.name.as_str(), s.kind, s.definition.as_str()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("a playlist", SourceKind::Playlist, "pdef"),
+                ("a query", SourceKind::Query, "{}"),
+            ]
+        );
+        assert_eq!(sources[0].playlist_id.as_deref(), Some(P1));
+        assert_eq!(sources[0].query_id, None);
+        assert_eq!(sources[1].query_id.as_deref(), Some(Q1));
+    }
+
+    #[test]
+    fn update_definition_writes_the_wrapped_row() {
+        let mut conn = setup();
+        add_query(&mut conn, &query(S1, Q1, "q", 0)).unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO playlist (id, definition) VALUES ('{P1}', 'old');
+             INSERT INTO source (id, name, created_at, modified_at, last_play, playlist)
+             VALUES ('{S2}', 'p', now(), now(), now(), '{P1}');"
+        ))
+        .unwrap();
+        update_definition(&mut conn, S1, "new query", 1_800_000_000).unwrap();
+        update_definition(&mut conn, S2, "new playlist", 1_800_000_001).unwrap();
+        let sources = list_sources(&conn).unwrap();
+        let by_id = |id: &str| sources.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(
+            (by_id(S1).definition.as_str(), by_id(S1).modified_at),
+            ("new query", 1_800_000_000)
+        );
+        assert_eq!(
+            (by_id(S2).definition.as_str(), by_id(S2).modified_at),
+            ("new playlist", 1_800_000_001)
+        );
+    }
+
+    #[test]
+    fn query_add_and_delete_span_both_tables() {
+        let mut conn = setup();
+        add_query(&mut conn, &query(S1, Q1, "q", 0)).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 1);
+        delete_query(&mut conn, S1).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM source"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 0);
+    }
+
+    #[test]
+    fn query_add_rejects_a_playlist() {
+        let mut conn = setup();
+        let mut source = query(S1, Q1, "q", 0);
+        source.kind = SourceKind::Playlist;
+        assert!(add_query(&mut conn, &source).is_err());
+        source.kind = SourceKind::Query;
+        source.query_id = None;
+        assert!(add_query(&mut conn, &source).is_err());
+        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 0);
+    }
+
+    #[test]
+    fn rename_and_record_play_target_the_source() {
+        let mut conn = setup();
+        add_query(&mut conn, &query(S1, Q1, "old", 0)).unwrap();
+        rename_source(&conn, S1, "new").unwrap();
+        record_play(&conn, S1, 1_800_000_000).unwrap();
+        let s = &list_sources(&conn).unwrap()[0];
+        assert_eq!((s.name.as_str(), s.last_play), ("new", 1_800_000_000));
+    }
+
+    #[test]
+    fn sources_list_in_position_order() {
+        let mut conn = setup();
+        add_query(&mut conn, &query(S1, Q1, "second", 5)).unwrap();
+        add_query(&mut conn, &query(S2, Q2, "first", -1)).unwrap();
+        let names: Vec<_> = list_sources(&conn)
             .unwrap()
             .into_iter()
             .map(|q| q.name)
@@ -659,12 +881,12 @@ mod tests {
     }
 
     #[test]
-    fn arrange_moves_queries_and_folders() {
+    fn arrange_moves_sources_and_folders() {
         let mut conn = setup();
-        add_query(&conn, &query(Q1, "a", 0)).unwrap();
+        add_query(&mut conn, &query(S1, Q1, "a", 0)).unwrap();
         add_folder(
             &conn,
-            &QueryFolder {
+            &SourceFolder {
                 id: F1.to_string(),
                 name: "folder".to_string(),
                 parent: None,
@@ -676,8 +898,8 @@ mod tests {
             &mut conn,
             &[
                 Placement {
-                    kind: TreeItemKind::Query,
-                    id: Q1.to_string(),
+                    kind: TreeItemKind::Source,
+                    id: S1.to_string(),
                     parent: Some(F1.to_string()),
                     position: 0,
                 },
@@ -690,7 +912,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let q = &list_queries(&conn).unwrap()[0];
+        let q = &list_sources(&conn).unwrap()[0];
         assert_eq!(q.parent.as_deref(), Some(F1));
         assert_eq!(q.position, 0);
         let f = &list_folders(&conn).unwrap()[0];
@@ -702,7 +924,7 @@ mod tests {
         let conn = setup();
         add_folder(
             &conn,
-            &QueryFolder {
+            &SourceFolder {
                 id: F1.to_string(),
                 name: "old".to_string(),
                 parent: None,

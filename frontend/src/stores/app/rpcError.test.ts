@@ -5,20 +5,20 @@ import { fakeEnv } from "./testEnv";
 describe("reportRpcFailure", () => {
   it("shows a failure, and counts up while the same one repeats", () => {
     const bundle = createAppStore(fakeEnv());
-    bundle.actions.reportRpcFailure("query.rename", new Error("500 locked"));
+    bundle.actions.reportRpcFailure("source.rename", new Error("500 locked"));
     expect(bundle.store.getState().rpcError).toEqual({
-      method: "query.rename",
+      method: "source.rename",
       message: "500 locked",
       count: 1,
     });
 
-    bundle.actions.reportRpcFailure("query.rename", new Error("500 locked"));
+    bundle.actions.reportRpcFailure("source.rename", new Error("500 locked"));
     expect(bundle.store.getState().rpcError?.count).toBe(2);
   });
 
   it("replaces the failure showing with a different one", () => {
     const bundle = createAppStore(fakeEnv());
-    bundle.actions.reportRpcFailure("query.rename", new Error("500 locked"));
+    bundle.actions.reportRpcFailure("source.rename", new Error("500 locked"));
     bundle.actions.reportRpcFailure("setting.set", "Failed to fetch");
     expect(bundle.store.getState().rpcError).toEqual({
       method: "setting.set",

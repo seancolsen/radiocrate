@@ -1,4 +1,4 @@
-import type { Preset, Query } from "api-client";
+import type { Preset, Source } from "api-client";
 import type { QueryDefinition } from "../query/definition";
 
 // The canned backend answers shared by the visual-test harness (`dev/harness/`,
@@ -9,10 +9,12 @@ import type { QueryDefinition } from "../query/definition";
 // Dev/test only: nothing in `main.tsx`'s import graph reaches this file, so it
 // never ships.
 
-/** Saved-query fixture for the RPC mock. */
-export const QUERIES_FIXTURE: Query[] = [
+/** Saved-source fixture for the RPC mock: three queries. Each wraps a query
+ * row whose id differs from the source's, as a newly added query's does. */
+export const SOURCES_FIXTURE: Source[] = [
   {
     id: "00000000-0000-0000-0000-000000000001",
+    kind: "query",
     parent: null,
     position: 0,
     name: "Lemonade",
@@ -20,9 +22,12 @@ export const QUERIES_FIXTURE: Query[] = [
     modifiedAt: 1_700_000_300,
     lastPlay: 0,
     definition: "{}",
+    queryId: "00000000-0000-0000-0000-0000000000e1",
+    playlistId: null,
   },
   {
     id: "00000000-0000-0000-0000-000000000002",
+    kind: "query",
     parent: null,
     position: 1,
     name: "Deep Cuts",
@@ -30,9 +35,12 @@ export const QUERIES_FIXTURE: Query[] = [
     modifiedAt: 1_700_000_200,
     lastPlay: 0,
     definition: "{}",
+    queryId: "00000000-0000-0000-0000-0000000000e2",
+    playlistId: null,
   },
   {
     id: "00000000-0000-0000-0000-000000000003",
+    kind: "query",
     parent: null,
     position: 2,
     name: "Workout Mix",
@@ -40,6 +48,8 @@ export const QUERIES_FIXTURE: Query[] = [
     modifiedAt: 1_700_000_100,
     lastPlay: 0,
     definition: "{}",
+    queryId: "00000000-0000-0000-0000-0000000000e3",
+    playlistId: null,
   },
 ];
 

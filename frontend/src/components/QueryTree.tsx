@@ -49,7 +49,7 @@ function FolderMenu(props: { id: string }): JSX.Element {
  * Duplicate and Delete — with the rename made in place, in the row. */
 function QueryMenu(props: { id: string }): JSX.Element {
   const actions = useAppActions();
-  const item = { kind: "query", id: props.id } as const;
+  const item = { kind: "source", id: props.id } as const;
   return (
     <>
       <MenuItem
@@ -82,14 +82,23 @@ function QueryMenu(props: { id: string }): JSX.Element {
 export default function QueryTree(props: {
   scrollRef: RefObject<HTMLElement | null>;
 }): JSX.Element {
-  const queries = useApp((s) => s.queries.data);
+  const sources = useApp((s) => s.sources.data);
   const folders = useApp((s) => s.folders.data);
   const expanded = useApp((s) => s.expandedFolders);
   const filter = useApp((s) => s.queryFilter);
   const renaming = useApp((s) => s.renamingTreeItem);
   const actions = useAppActions();
 
-  const tree = useMemo(() => buildTree(queries, folders), [queries, folders]);
+  // Playlists can't be opened yet, so the tree lists only queries. The store's
+  // moves still see every source, so a hidden playlist keeps its place.
+  const tree = useMemo(
+    () =>
+      buildTree(
+        sources.filter((x) => x.kind === "query"),
+        folders,
+      ),
+    [sources, folders],
+  );
   const rows = useMemo(
     () => visibleRows(tree, expanded, filter),
     [tree, expanded, filter],
@@ -136,7 +145,7 @@ export default function QueryTree(props: {
           if (dnd.pressing()) return;
           setMenu({ item, x: e.clientX, y: e.clientY });
         };
-        if (node.kind === "query") {
+        if (node.kind === "source") {
           return (
             <QueryRow
               key={`query:${node.id}`}
@@ -151,7 +160,7 @@ export default function QueryTree(props: {
                 actions.openTab({
                   id: node.id,
                   name: node.name,
-                  definition: node.query.definition,
+                  definition: node.source.definition,
                 });
               }}
             />

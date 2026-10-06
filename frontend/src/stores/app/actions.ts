@@ -10,12 +10,12 @@ import {
   presetList,
   presetUpdate,
   queryAdd,
-  queryArrange,
+  sourceArrange,
   queryDelete,
-  queryList,
-  queryRecordPlay,
-  queryRename,
-  queryUpdateDefinition,
+  sourceList,
+  sourceRecordPlay,
+  sourceRename,
+  sourceUpdateDefinition,
   collectionRescan,
   settingDelete,
   settingList,
@@ -24,7 +24,7 @@ import {
   type DmlResult,
   type Placement,
   type Preset,
-  type Query,
+  type Source,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
 import { runSql, runSqlScalar } from "../../api/query";
@@ -170,12 +170,12 @@ const UNREPORTED_METHODS: ReadonlySet<string> = new Set(["app.version"]);
 export interface AppActions {
   // Boot loads. `createStores()` runs these once; unit tests call them
   // directly.
-  loadQueries: () => Promise<void>;
+  loadSources: () => Promise<void>;
   loadPresets: () => Promise<void>;
   loadSchema: () => Promise<void>;
   loadSettings: () => Promise<void>;
-  /** Re-runs `loadQueries` and `loadPresets` — the Explorer's manual refresh. */
-  refetchQueries: () => void;
+  /** Re-runs `loadSources` and `loadPresets` — the Explorer's manual refresh. */
+  refetchSources: () => void;
 
   /** Loads the rating vocabulary (the whole `rating` table), unless it's
    * already loaded or in flight. Not a boot load: it compiles a Querydown
@@ -212,7 +212,7 @@ export interface AppActions {
   /** Start editing an explorer item's name in place. */
   beginTreeRename: (item: TreeItemRef) => void;
   /** Finish the in-place rename with `name` (`folder.rename` or
-   * `query.rename`, which an open tab of the query follows); a blank or
+   * `source.rename`, which an open tab of the query follows); a blank or
    * unchanged name just ends it. */
   commitTreeRename: (item: TreeItemRef, name: string) => void;
   cancelTreeRename: () => void;
@@ -396,7 +396,7 @@ export interface AppActions {
   beginRename: (id: string) => void;
   /** Update the in-progress rename buffer. */
   setRenameBuffer: (text: string) => void;
-  /** Commit the in-progress rename (`query.rename`); an empty name cancels. */
+  /** Commit the in-progress rename (`source.rename`); an empty name cancels. */
   commitRename: () => void;
   /** Abandon the in-progress rename. */
   cancelRename: () => void;
@@ -848,7 +848,7 @@ export function createAppActions(
     const definition = definitionToStored(def);
     const modifiedAt = nowEpoch();
     try {
-      await queryUpdateDefinition({ id: tabId, definition, modifiedAt });
+      await sourceUpdateDefinition({ id: tabId, definition, modifiedAt });
     } catch (err) {
       console.error("query save failed", err);
       editQueryTab(tabId, (x) => {
@@ -861,7 +861,7 @@ export function createAppActions(
       x.saveFailed = false;
     });
     set((s) => {
-      const query = s.queries.data.find((q) => q.id === tabId);
+      const query = s.sources.data.find((q) => q.id === tabId);
       if (query) Object.assign(query, { definition, modifiedAt });
     });
   };
@@ -1108,11 +1108,11 @@ export function createAppActions(
     );
   };
 
-  /** Records a play against `tabId`'s saved query (bumps `last_play`). Skipped
+  /** Records a play against `tabId`'s saved source (bumps `last_play`). Skipped
    * for an unsaved tab, which has no backend row yet. */
   const recordQueryPlay = (tabId: string) => {
     if (!selectQueryTab(get(), tabId)?.persisted) return;
-    void queryRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
+    void sourceRecordPlay({ id: tabId, lastPlay: nowEpoch() }).catch((err) =>
       console.error("record play failed", err),
     );
   };
@@ -1242,34 +1242,34 @@ export function createAppActions(
   };
 
   /** Moves tree items in the loaded lists ahead of the backend's copy — the
-   * optimistic half of `query.arrange`. */
+   * optimistic half of `source.arrange`. */
   const applyPlacementsLocally = (placements: readonly Placement[]) => {
     if (placements.length === 0) return;
     set((s) => {
-      const next = applyPlacements(s.queries.data, s.folders.data, placements);
-      s.queries.data = next.queries;
+      const next = applyPlacements(s.sources.data, s.folders.data, placements);
+      s.sources.data = next.sources;
       s.folders.data = next.folders;
     });
   };
 
   const actions: AppActions = {
-    loadQueries: async () => {
-      // Queries and folders load together: the explorer builds one tree of
+    loadSources: async () => {
+      // Sources and folders load together: the explorer builds one tree of
       // both, which one list without the other would scramble.
       set((s) => {
-        s.queries.status = "loading";
+        s.sources.status = "loading";
         s.folders.status = "loading";
       });
       try {
-        const [data, folders] = await Promise.all([queryList(), folderList()]);
+        const [data, folders] = await Promise.all([sourceList(), folderList()]);
         set((s) => {
-          s.queries = { status: "ready", data };
+          s.sources = { status: "ready", data };
           s.folders = { status: "ready", data: folders ?? [] };
         });
       } catch (err) {
-        console.error("query list failed", err);
+        console.error("source list failed", err);
         set((s) => {
-          s.queries.status = "error";
+          s.sources.status = "error";
           s.folders.status = "error";
         });
       }
@@ -1349,8 +1349,8 @@ export function createAppActions(
         console.error("setting list failed", err);
       }
     },
-    refetchQueries: () => {
-      void actions.loadQueries();
+    refetchSources: () => {
+      void actions.loadSources();
       void actions.loadPresets();
     },
 
@@ -1443,7 +1443,7 @@ export function createAppActions(
         id: newUuid(),
         name: "New folder",
         parent: null,
-        position: topPosition(s0.queries.data, s0.folders.data, null),
+        position: topPosition(s0.sources.data, s0.folders.data, null),
       };
       // Inserted optimistically, and put where it can be seen: a filter would
       // hide the name about to be edited.
@@ -1456,7 +1456,7 @@ export function createAppActions(
       expandFolder(folder.id);
       void folderAdd(folder).catch((err) => {
         console.error("folder add failed", err);
-        void actions.loadQueries();
+        void actions.loadSources();
       });
     },
     addQuery: (parent) => {
@@ -1472,7 +1472,7 @@ export function createAppActions(
     commitTreeRename: (item, name) => {
       const trimmed = name.trim();
       const list =
-        item.kind === "folder" ? get().folders.data : get().queries.data;
+        item.kind === "folder" ? get().folders.data : get().sources.data;
       const current = list.find((x) => x.id === item.id);
       set((s) => {
         if (
@@ -1487,22 +1487,22 @@ export function createAppActions(
         const entry =
           item.kind === "folder"
             ? s.folders.data.find((x) => x.id === item.id)
-            : s.queries.data.find((x) => x.id === item.id);
+            : s.sources.data.find((x) => x.id === item.id);
         if (entry) entry.name = trimmed;
       });
       const renamed =
         item.kind === "folder"
           ? folderRename({ id: item.id, name: trimmed })
-          : queryRename({ id: item.id, name: trimmed });
+          : sourceRename({ id: item.id, name: trimmed });
       // An open tab of the query goes by its name too.
-      if (item.kind === "query") {
+      if (item.kind === "source") {
         editQueryTab(item.id, (t) => {
           t.name = trimmed;
         });
       }
       void renamed.catch((err) => {
         console.error(`${item.kind} rename failed`, err);
-        void actions.loadQueries();
+        void actions.loadSources();
       });
     },
     cancelTreeRename: () =>
@@ -1510,10 +1510,10 @@ export function createAppActions(
         s.renamingTreeItem = null;
       }),
     deleteFolder: (id) => {
-      const { queries, folders } = get();
+      const { sources, folders } = get();
       const placements = dissolvePlacements(
-        buildTree(queries.data, folders.data),
-        storedPositions(queries.data, folders.data),
+        buildTree(sources.data, folders.data),
+        storedPositions(sources.data, folders.data),
         id,
       );
       applyPlacementsLocally(placements);
@@ -1524,18 +1524,18 @@ export function createAppActions(
       // Contents out first, so a failed delete leaves an empty folder rather
       // than orphans.
       void (async () => {
-        if (placements.length > 0) await queryArrange({ placements });
+        if (placements.length > 0) await sourceArrange({ placements });
         await folderDelete({ id });
       })().catch((err) => {
         console.error("folder delete failed", err);
-        void actions.loadQueries();
+        void actions.loadSources();
       });
     },
     moveTreeItem: (item, target) => {
-      const { queries, folders } = get();
+      const { sources, folders } = get();
       const placements = movePlacements(
-        buildTree(queries.data, folders.data),
-        storedPositions(queries.data, folders.data),
+        buildTree(sources.data, folders.data),
+        storedPositions(sources.data, folders.data),
         item,
         target,
       );
@@ -1544,13 +1544,13 @@ export function createAppActions(
       // doesn't vanish from sight.
       const emptyFolder =
         target.kind === "into" &&
-        !queries.data.some((q) => q.parent === target.folder) &&
+        !sources.data.some((q) => q.parent === target.folder) &&
         !folders.data.some((f) => f.parent === target.folder);
       applyPlacementsLocally(placements);
       if (emptyFolder) expandFolder(target.folder);
-      void queryArrange({ placements }).catch((err) => {
-        console.error("query arrange failed", err);
-        void actions.loadQueries();
+      void sourceArrange({ placements }).catch((err) => {
+        console.error("source arrange failed", err);
+        void actions.loadSources();
       });
       return true;
     },
@@ -1787,19 +1787,24 @@ export function createAppActions(
       // add goes through the same queue as the saves that follow it, so none
       // of those can overtake it.
       const now = nowEpoch();
-      const { queries, folders } = get();
-      const query: Query = {
+      const { sources, folders } = get();
+      // The tab is named by its source id; the query row it wraps gets an id
+      // of its own.
+      const query: Source = {
         id: tabId,
+        kind: "query",
         name: nowName(),
         createdAt: now,
         modifiedAt: now,
         lastPlay: now,
         definition: definitionToStored(t.live),
         parent: t.folder,
-        position: topPosition(queries.data, folders.data, t.folder),
+        position: topPosition(sources.data, folders.data, t.folder),
+        queryId: newUuid(),
+        playlistId: null,
       };
       set((s) => {
-        s.queries.data = [query, ...s.queries.data];
+        s.sources.data = [query, ...s.sources.data];
       });
       if (t.folder !== null) expandFolder(t.folder);
       editQueryTab(tabId, (x) => {
@@ -1812,7 +1817,7 @@ export function createAppActions(
           console.error("query save failed", err);
           saves.cancel(tabId);
           set((s) => {
-            s.queries.data = s.queries.data.filter((q) => q.id !== tabId);
+            s.sources.data = s.sources.data.filter((q) => q.id !== tabId);
           });
           editQueryTab(tabId, (x) => {
             x.name = "";
@@ -1832,7 +1837,7 @@ export function createAppActions(
         openUnsavedTab(cloneDefinition(source.live));
         return;
       }
-      const saved = get().queries.data.find((q) => q.id === id);
+      const saved = get().sources.data.find((q) => q.id === id);
       if (saved) openUnsavedTab(definitionFromStored(saved.definition));
     },
     newQueryTab: () => {
@@ -1899,8 +1904,8 @@ export function createAppActions(
       editQueryTab(r.id, (x) => {
         x.name = name;
       });
-      void queryRename({ id: r.id, name })
-        .then(() => actions.loadQueries())
+      void sourceRename({ id: r.id, name })
+        .then(() => actions.loadSources())
         .catch((err) => console.error("query rename failed", err));
     },
     cancelRename: () =>
@@ -1912,7 +1917,7 @@ export function createAppActions(
       // The query may be open in a tab, or only listed in the explorer.
       const name =
         selectQueryTab(get(), id)?.name ??
-        get().queries.data.find((q) => q.id === id)?.name;
+        get().sources.data.find((q) => q.id === id)?.name;
       if (name === undefined) return;
       const unsaved = selectIsUnsaved(get(), id);
       set((s) => {
@@ -1924,10 +1929,10 @@ export function createAppActions(
       if (!pending) return;
       const persisted =
         selectQueryTab(get(), pending.id)?.persisted ??
-        get().queries.data.some((q) => q.id === pending.id);
+        get().sources.data.some((q) => q.id === pending.id);
       set((s) => {
         s.pendingDelete = null;
-        s.queries.data = s.queries.data.filter((q) => q.id !== pending.id);
+        s.sources.data = s.sources.data.filter((q) => q.id !== pending.id);
       });
       // Its pending edits would only be written to a query that's gone.
       saves.cancel(pending.id);
@@ -1937,7 +1942,7 @@ export function createAppActions(
         // backend's copy back.
         void queryDelete({ id: pending.id }).catch((err) => {
           console.error("query delete failed", err);
-          void actions.loadQueries();
+          void actions.loadSources();
         });
       }
       closeTab(pending.id);

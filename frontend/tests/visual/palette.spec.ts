@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
 // The command palette and the keyboard-shortcuts system, behaviorally: a chord
@@ -19,8 +19,8 @@ async function mockRpc(page: Page) {
       id: number;
     };
     const result =
-      body.method === "query.list"
-        ? QUERIES_FIXTURE
+      body.method === "source.list"
+        ? SOURCES_FIXTURE
         : body.method === "preset.list"
           ? []
           : // `keybinding.list` included: no persisted overrides, so every
@@ -326,7 +326,7 @@ test("the shortcuts editor rebinds a command", async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({
         jsonrpc: "2.0",
-        result: body.method === "query.list" ? QUERIES_FIXTURE : null,
+        result: body.method === "source.list" ? SOURCES_FIXTURE : null,
         id: body.id,
       }),
     });

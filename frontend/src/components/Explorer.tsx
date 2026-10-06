@@ -131,7 +131,7 @@ export default function Explorer(): JSX.Element {
             <MenuItem
               icon={Icons.Refresh}
               label="Refresh"
-              onClick={actions.refetchQueries}
+              onClick={actions.refetchSources}
             />
           </Menu>
         </SectionHeading>

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { QUERIES_FIXTURE } from "../../src/dev/fixtures";
+import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
 /** The store the app exposes under `?expose=1` (the same seam reload.spec uses). */
@@ -44,7 +44,7 @@ async function mockBackend(page: Page): Promise<string[]> {
       method: string;
       id: number;
     };
-    const result = body.method === "query.list" ? QUERIES_FIXTURE : null;
+    const result = body.method === "source.list" ? SOURCES_FIXTURE : null;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ jsonrpc: "2.0", result, id: body.id }),

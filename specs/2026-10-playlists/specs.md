@@ -18,7 +18,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 
 | Phase | Status | Owed by the user |
 | ----- | ------ | ---------------- |
-| 1 — Schema, migration and source RPCs | not started | |
+| 1 — Schema, migration and source RPCs | done | Back up the real database, start the server so migration 0006 runs, and confirm that saved queries, folders, their order and open tabs all survived. |
 | 2 — Playlist query, entry math, lineage fix | not started | |
 | 3 — One undo abstraction | not started | |
 | 4 — Playlist tabs and the playlist page | not started | |
@@ -461,6 +461,18 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - Update the harness `mockApi.ts`, `dev/fixtures.ts`, and every Playwright `page.route` mock that answers `query.list`.
 - **Verification:** the gate, plus the probe against the real `0006.sql` (compile and run checks pass; lineage checks fail until phase 2).
 - **Owed by the user:** back up the real database, start the server so the migration runs, and confirm that saved queries, folders, their order and open tabs all survived.
+
+#### As built
+
+- **Migration:** `backend/src/migrations/0006.sql` is the validated draft plus a header comment, registered in `db.rs`'s `MIGRATIONS`. Instead of adding it to `rpc.rs`'s `include_str!` list, both test modules (`rpc.rs` and `dml.rs`) now build their schema with a new `#[cfg(test)] db::migrate_through(conn, version)`. It runs `MIGRATIONS` through `version`, each in its own transaction exactly as `get_db` does. So there's one list of migrations, and the migration test exercises the real transactional path. `dml.rs`'s tests previously stopped at 0003. They now get the full schema, and nothing in them changed meaning.
+- **`api-schema`:** `Source` (with `kind: SourceKind`, `queryId`, `playlistId`), `SourceFolder`, and `TreeItemKind::Source`. The params structs are renamed to `SourceRecordPlayParams`, `SourceRenameParams`, `SourceUpdateDefinitionParams` and `SourceArrangeParams`. `QueryDeleteParams` keeps its name and takes a source id. `query.add` takes a `Source` and rejects one that isn't a query or has no `queryId`. The client is regenerated (`api-client/src/`).
+- **RPCs** (`backend/src/rpc.rs`): `source.list` (left-joins `query` and `playlist` for the definition, and derives `kind` from which id is set), `source.rename`, `source.record_play`, `source.arrange`, and `source.update_definition` (writes `query` or `playlist` through a subquery on `source`, bumps `source.modified_at`, all in one transaction). `query.add` and `query.delete` each run in one transaction over both tables. `query.delete` is a no-op for a source that doesn't wrap a query. `folder.*` targets `source_folder`.
+- **Backend tests:** the migration (ids reused, name, all three timestamps, a null `position` becoming 0, folder kept, `query` left with only `id` and `definition`); the `CHECK` and both `unique`s; `source.list` returning both kinds; `update_definition` on both kinds; `query.add` / `query.delete` spanning both tables; rename and record_play; arrange. In `dml.rs`: an insert into `source` with string timestamps (and a `playlist` op-reference), deleting a playlist in the wrong order failing (both orders tried) and in the right order succeeding, and deleting a track held by a playlist failing. `cargo test -p backend` linked and passed (32 tests).
+- **Frontend:** the store's `queries` / `loadQueries` / `refetchQueries` are now `sources` / `loadSources` / `refetchSources`. The tree model (`query/explorerTree.ts`) follows the wire: a source node is `{ kind: "source", source }` (it was `{ kind: "query", query }`), and tree refs and placements use `kind: "source"`. Component names and UI text are untouched (phase 5). `saveQuery` sends a `Source` with a fresh `queryId`, distinct from the tab's (source) id. `QUERIES_FIXTURE` is now `SOURCES_FIXTURE`. Its three queries carry `queryId`s that differ from their source ids, so nothing can quietly rely on the two being equal. Every `page.route` mock answers `source.list`.
+- **Hiding playlists until phase 4:** only `QueryTree` filters to `kind === "query"`, when it builds its tree. The store's tree actions (move, delete folder, top position) still see every source, so a hidden playlist keeps a consistent place among its siblings. Phase 4 deletes that filter.
+- **Not renamed, deliberately:** `RpcErrorBanner`'s labels are rekeyed to the new method names but still say "queries" ("Loading your queries"). That's UI text, which phase 5 renames.
+- **Gate:** cargo check, clippy (`--all-targets`) and fmt are clean for `backend` and `api-schema`. The frontend's typecheck, lint, format:check, test:unit (398), build and test:visual (229) all pass with no snapshot changes. The probe compiles and runs every case against the real `0006.sql`; its lineage checks fail, as expected until phase 2.
+- **For the next phase:** a tab's id is a source id. Reach a playlist's `playlist` row through `Source.playlistId`. `dml`'s link inference already covers `source.playlist`, `source.query`, `source.source_folder`, `playlist_track.playlist` and `playlist_track.track` (the dml tests rely on it).
 
 ### Phase 2 — Playlist query, entry math and the lineage fix (no UI)
 
