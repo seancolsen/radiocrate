@@ -68,15 +68,17 @@ export default function SingleBuilder(props: {
           )}
         </>
       )}
-      {content && "builtin" in content && (
-        <div className="flex">
-          <PresetTab
-            builtin
-            name="Shuffle"
-            onReshuffle={() => reshuffle(props.tabId, props.section)}
-          />
-        </div>
-      )}
+      {content &&
+        "builtin" in content &&
+        content.builtin.preset === "shuffle" && (
+          <div className="flex">
+            <PresetTab
+              builtin
+              name="Shuffle"
+              onReshuffle={() => reshuffle(props.tabId, props.section)}
+            />
+          </div>
+        )}
     </div>
   );
 }

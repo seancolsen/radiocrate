@@ -18,9 +18,11 @@ export type SectionContent =
   | { builtin: BuiltinPreset };
 
 /** A built-in sorting preset carrying its parameters inline in the stored query.
- * Serde tags it with `preset` (`#[serde(tag = "preset")]`); only `shuffle`
- * exists. */
-export type BuiltinPreset = { preset: "shuffle"; seed: string };
+ * Serde tags it with `preset` (`#[serde(tag = "preset")]`). `shuffle` orders by
+ * a seeded hash; `playlist_order` (a playlist's sort only) applies no sorting
+ * conditions at all, leaving the entries in their stored order. */
+export type BuiltinPreset =
+  { preset: "shuffle"; seed: string } | { preset: "playlist_order" };
 
 /** Characters a shuffle seed is drawn from. */
 const SEED_ALPHABET =
@@ -40,6 +42,13 @@ export function generateSeed(): string {
 /** A fresh Shuffle built-in section content (a new seed reshuffles the order). */
 export function shuffleContent(): SectionContent {
   return { builtin: { preset: "shuffle", seed: generateSeed() } };
+}
+
+/** The "Playlist order" sort: no sorting conditions, so a playlist's entries
+ * show in their stored order. A built-in rather than an empty custom sort so
+ * that the options menu can offer it as a radio of its own. */
+export function playlistOrderContent(): SectionContent {
+  return { builtin: { preset: "playlist_order" } };
 }
 
 /** The filter section: custom conditions AND-combined with any number of
@@ -141,9 +150,12 @@ export function rebasedDefinition(
 /** A section's content rewritten into a canonical, fixed-key-order object, so
  * two structurally-equal sections serialize identically regardless of how they
  * were built (parsed JSON vs. mutated in place). */
-function canonicalSection(c: SectionContent): unknown {
+export function canonicalSection(c: SectionContent): unknown {
   if ("custom" in c) return { custom: c.custom };
   if ("preset" in c) return { preset: c.preset };
+  if (c.builtin.preset === "playlist_order") {
+    return { builtin: { preset: c.builtin.preset } };
+  }
   return { builtin: { preset: c.builtin.preset, seed: c.builtin.seed } };
 }
 
@@ -245,13 +257,15 @@ export function fromStored(raw: string): QueryDefinition | null {
 }
 
 /** The Querydown fragment a built-in preset resolves to: Shuffle orders by a
- * salted hash of each row's id. */
+ * salted hash of each row's id, and "Playlist order" by nothing (the playlist
+ * query's own `\\position` ordering then decides). */
 function builtinQuerydown(b: BuiltinPreset): string {
+  if (b.preset === "playlist_order") return "";
   // `\\id|concat('<seed>')|md5` — the two leading backslashes are literal.
   return `\\\\id|concat('${b.seed}')|md5`;
 }
 
-function presetDefinition(presets: Preset[], id: string): string {
+function presetDefinition(presets: readonly Preset[], id: string): string {
   const found = presets.find((p) => p.id === id);
   if (!found) {
     throw new Error("This query references a preset that no longer exists.");
@@ -259,8 +273,12 @@ function presetDefinition(presets: Preset[], id: string): string {
   return found.definition;
 }
 
-/** Resolves a sort/display `SectionContent` to its Querydown fragment. */
-function resolveSection(content: SectionContent, presets: Preset[]): string {
+/** Resolves a sort/display `SectionContent` to its Querydown fragment. Throws
+ * on a dangling preset reference. */
+export function resolveSection(
+  content: SectionContent,
+  presets: readonly Preset[],
+): string {
   if ("custom" in content) return content.custom.trim();
   if ("preset" in content)
     return presetDefinition(presets, content.preset).trim();
@@ -298,21 +316,30 @@ export function assemble(
   const base = def.base.trim();
   if (base === "") throw new Error("No base table selected.");
 
-  const filterParts: string[] = [];
-  const custom = def.filter.custom.trim();
-  if (custom !== "") filterParts.push(custom);
-  for (const id of def.filter.presets) {
-    const fragment = presetDefinition(presets, id).trim();
-    if (fragment !== "") filterParts.push(fragment);
-  }
-
   return {
     kind: "sections",
     base,
-    filter: filterParts.join("\n"),
+    filter: resolveFilter(def.filter, presets),
     sort: resolveSection(def.sort, presets),
     display: resolveSection(def.display, presets),
   };
+}
+
+/** Resolves the filter section to its Querydown fragment: the custom
+ * conditions and each referenced preset's fragment, newline-joined (so they
+ * AND together). Throws on a dangling preset reference. */
+export function resolveFilter(
+  filter: FilterParts,
+  presets: readonly Preset[],
+): string {
+  const parts: string[] = [];
+  const custom = filter.custom.trim();
+  if (custom !== "") parts.push(custom);
+  for (const id of filter.presets) {
+    const fragment = presetDefinition(presets, id).trim();
+    if (fragment !== "") parts.push(fragment);
+  }
+  return parts.join("\n");
 }
 
 /** A definition flattened into one hand-written Querydown query — what the

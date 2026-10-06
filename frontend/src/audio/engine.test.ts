@@ -92,7 +92,7 @@ function setup() {
 /** Plays track `t1` and stages its element as the backend's transcode looks
  * to a browser: metadata loaded, an infinite duration, the first 30s buffered. */
 function playTranscode(engine: AudioEngine): FakeAudio {
-  engine.setPlaylist([], "t1", []);
+  engine.setQueue([], "t1", []);
   const el = created[0]!;
   el.readyState = 4;
   el.duration = Number.POSITIVE_INFINITY;
@@ -124,7 +124,7 @@ describe("the next track", () => {
 
   it("isn't fetched until the current track has downloaded", () => {
     const { engine } = setup();
-    engine.setPlaylist([], "t1", ["t2"]);
+    engine.setQueue([], "t1", ["t2"]);
     const [active, standby] = created;
     expect(standby!.src).not.toContain("/api/");
 
@@ -137,7 +137,7 @@ describe("the next track", () => {
 
   it("is primed at once after a handoff to a track already downloaded", () => {
     const { engine } = setup();
-    engine.setPlaylist([], "t1", ["t2", "t3"]);
+    engine.setQueue([], "t1", ["t2", "t3"]);
     const [first, second] = created;
     finishDownload(first!);
     second!.networkState = NETWORK_IDLE;
@@ -150,7 +150,7 @@ describe("the next track", () => {
 
   it("waits after a handoff to a track still downloading", () => {
     const { engine } = setup();
-    engine.setPlaylist([], "t1", ["t2", "t3"]);
+    engine.setQueue([], "t1", ["t2", "t3"]);
     const [first, second] = created;
     finishDownload(first!);
 
@@ -166,12 +166,12 @@ describe("the next track", () => {
 
   it("is dropped mid-download when another track starts", () => {
     const { engine } = setup();
-    engine.setPlaylist([], "t1", ["t2"]);
+    engine.setQueue([], "t1", ["t2"]);
     const [active, standby] = created;
     finishDownload(active!);
     expect(standby!.src).toBe(t2);
 
-    engine.setPlaylist([], "t5", ["t6"]);
+    engine.setQueue([], "t5", ["t6"]);
 
     expect(standby!.src).not.toContain("/api/");
     finishDownload(active!);
@@ -182,7 +182,7 @@ describe("the next track", () => {
 describe("stream requests", () => {
   it("are reported as each fetch starts: the track, then the next one primed", () => {
     const { engine, events } = setup();
-    engine.setPlaylist([], "t1", ["t2"]);
+    engine.setQueue([], "t1", ["t2"]);
     expect(events.onStreamRequest).toHaveBeenCalledTimes(1);
     finishDownload(created[0]!);
     expect(events.onStreamRequest).toHaveBeenCalledTimes(2);
@@ -295,7 +295,7 @@ describe("a transcoded stream", () => {
     engine.setMetadata(null, null, 200);
     engine.seek(120);
 
-    engine.setPlaylist([], "t2", []);
+    engine.setQueue([], "t2", []);
 
     expect(engine.position).toBe(0);
     expect(engine.duration).toBeNull();
@@ -306,7 +306,7 @@ describe("a file served whole", () => {
   it("seeks in place, even outside its buffer", () => {
     quality = "higher";
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     const el = created[0]!;
     el.readyState = 4;
     el.duration = 180;
@@ -324,7 +324,7 @@ describe("closing the current track", () => {
     const media = fakeMediaSession();
     vi.stubGlobal("navigator", { mediaSession: media });
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     expect(media.handlers.get("play")).toBeTypeOf("function");
 
     engine.stop();
@@ -346,10 +346,10 @@ describe("closing the current track", () => {
     const media = fakeMediaSession();
     vi.stubGlobal("navigator", { mediaSession: media });
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     engine.stop();
 
-    engine.setPlaylist([], "t2", []);
+    engine.setQueue([], "t2", []);
 
     expect(media.handlers.get("play")).toBeTypeOf("function");
     expect(media.handlers.get("nexttrack")).toBeTypeOf("function");
@@ -359,7 +359,7 @@ describe("closing the current track", () => {
 describe("updating the queue in place", () => {
   it("replaces preceding/upcoming without restarting the current track", () => {
     const { engine, events } = setup();
-    engine.setPlaylist([], "t1", ["t2"]);
+    engine.setQueue([], "t1", ["t2"]);
     const el = created[0]!;
     const src = el.src;
     events.onTransport.mockClear();
@@ -373,7 +373,7 @@ describe("updating the queue in place", () => {
 
   it("advances into the replaced queue, not the old one", () => {
     const { engine, events } = setup();
-    engine.setPlaylist([], "t1", ["t2"]);
+    engine.setQueue([], "t1", ["t2"]);
 
     engine.updateQueue([], ["t5"]);
     engine.skipNext();
@@ -395,7 +395,7 @@ describe("the duration", () => {
   it("is unknown while the stream is still downloading", () => {
     quality = "higher";
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     const el = created[0]!;
     el.readyState = 4;
     el.duration = 12; // what has arrived so far
@@ -407,7 +407,7 @@ describe("the duration", () => {
   it("comes from the element once its download has finished", () => {
     quality = "higher";
     const { engine, events } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     const el = created[0]!;
     el.readyState = 4;
     el.duration = 180;
@@ -422,7 +422,7 @@ describe("the duration", () => {
   it("comes from the library before the download has finished", () => {
     quality = "higher";
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     const el = created[0]!;
     el.readyState = 4;
     el.duration = 12;
@@ -435,7 +435,7 @@ describe("the duration", () => {
   it("prefers the library over the element", () => {
     quality = "higher";
     const { engine } = setup();
-    engine.setPlaylist([], "t1", []);
+    engine.setQueue([], "t1", []);
     const el = created[0]!;
     el.readyState = 4;
     el.duration = 180.4;

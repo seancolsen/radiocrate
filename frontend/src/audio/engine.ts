@@ -228,7 +228,7 @@ export class AudioEngine {
    * `preceding` are the tracks before it (nearest last) that "previous" walks
    * back through, `upcoming` the ones after it that auto-advance and "next" walk
    * forward through. */
-  setPlaylist(preceding: string[], current: string, upcoming: string[]): void {
+  setQueue(preceding: string[], current: string, upcoming: string[]): void {
     // Starting a fresh track abandons whatever was playing. If that track was
     // already past its halfway mark it counts as a completed play — note it
     // before `load` swaps in the new track's position.

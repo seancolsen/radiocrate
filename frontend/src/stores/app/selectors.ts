@@ -332,8 +332,8 @@ export function selectTrackIdAt(
 /** Reads `tabId`'s results around row `index` into the play context the
  * engine navigates. `preceding` is every playable id before `index` (nearest
  * last, for "previous"); `upcoming` is the contiguous run of ids after it,
- * stopping at the first row without one (mirrors `playlist_around`). */
-export function selectPlaylistAround(
+ * stopping at the first row without one. */
+export function selectQueueAround(
   s: AppState,
   tabId: string,
   index: number,

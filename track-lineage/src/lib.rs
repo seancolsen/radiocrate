@@ -14,8 +14,7 @@
 //! `@polyglot-sql/sdk` npm build, which bundles all 30+ dialects and every
 //! feature.
 
-use polyglot_sql::ast_transforms::get_output_column_names;
-use polyglot_sql::expressions::Expression;
+use polyglot_sql::expressions::{Alias, Expression, Identifier, Null, Select};
 use polyglot_sql::lineage::{lineage, LineageNode};
 use polyglot_sql::{parse_one, DialectType};
 use wasm_bindgen::prelude::*;
@@ -28,10 +27,16 @@ use wasm_bindgen::prelude::*;
 /// Returns `undefined` if the SQL can't be parsed or analyzed, which callers
 /// treat as "no lineage known" and degrade accordingly (no affordances offered).
 /// A column with no traceable source — a literal, say — yields an empty array.
+///
+/// `polyglot_sql::lineage` looks an output column up by *name*, and a query can
+/// select two columns with the same name (`"playlist_track"."id"` and
+/// `"track"."id"`, say), which would both resolve to the first. So the outermost
+/// projection list is first re-aliased positionally (see [`alias_positionally`])
+/// and each column is analyzed by its unique alias.
 #[wasm_bindgen]
 pub fn column_sources(sql: &str) -> Option<String> {
-    let expr = parse_one(sql, DialectType::DuckDB).ok()?;
-    let names = get_output_column_names(&expr);
+    let mut expr = parse_one(sql, DialectType::DuckDB).ok()?;
+    let names = alias_positionally(outermost_select(&mut expr)?);
     let mut json = String::from("[");
     for (idx, name) in names.iter().enumerate() {
         let node = lineage(name, &expr, Some(DialectType::DuckDB), false).ok()?;
@@ -42,6 +47,46 @@ pub fn column_sources(sql: &str) -> Option<String> {
     }
     json.push(']');
     Some(json)
+}
+
+/// The `SELECT` whose projection list names the query's output columns: the
+/// statement itself, or the leftmost operand of a set operation (whose column
+/// names the other operands follow), looking through parentheses.
+fn outermost_select(expr: &mut Expression) -> Option<&mut Select> {
+    match expr {
+        Expression::Select(select) => Some(select),
+        Expression::Union(union) => outermost_select(&mut union.left),
+        Expression::Intersect(intersect) => outermost_select(&mut intersect.left),
+        Expression::Except(except) => outermost_select(&mut except.left),
+        Expression::Subquery(subquery) => outermost_select(&mut subquery.this),
+        _ => None,
+    }
+}
+
+/// Gives every projection in `select` a unique alias derived from its position
+/// (replacing any alias it had, so that no two collide), and returns those
+/// aliases in projection order. Aliasing every projection also names the ones
+/// that had no name at all (an unaliased function call, say), which would
+/// otherwise have been skipped and shifted every later index. A `*` is left
+/// alone, since it can't be aliased.
+fn alias_positionally(select: &mut Select) -> Vec<String> {
+    let mut names = Vec::with_capacity(select.expressions.len());
+    for (idx, projection) in select.expressions.iter_mut().enumerate() {
+        if matches!(projection, Expression::Star(_)) {
+            names.push("*".to_string());
+            continue;
+        }
+        let name = format!("__lineage_{idx}");
+        match projection {
+            Expression::Alias(alias) => alias.alias = Identifier::new(&name),
+            _ => {
+                let this = std::mem::replace(projection, Expression::Null(Null));
+                *projection = Expression::Alias(Box::new(Alias::new(this, Identifier::new(&name))));
+            }
+        }
+        names.push(name);
+    }
+    names
 }
 
 /// Appends `root`'s leaf sources to `out` as a JSON array of `[table, column]`
@@ -88,4 +133,32 @@ fn write_json_string(out: &mut String, s: &str) {
         }
     }
     out.push('"');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::column_sources;
+
+    #[test]
+    fn same_named_columns_trace_to_their_own_tables() {
+        let sql = r#"SELECT "playlist_track"."id", "playlist_track"."position", "track"."id", "track"."title"
+            FROM "playlist_track" LEFT JOIN "track" ON "playlist_track"."track" = "track"."id""#;
+        assert_eq!(
+            column_sources(sql).unwrap(),
+            r#"[[["playlist_track","id"]],[["playlist_track","position"]],[["track","id"]],[["track","title"]]]"#
+        );
+    }
+
+    #[test]
+    fn colliding_aliases_and_unnamed_projections_keep_their_positions() {
+        let sql = r#"WITH "cte0" AS (SELECT "credit"."track" AS "pk", count(*) AS "v1" FROM "credit" GROUP BY "credit"."track")
+            SELECT "track"."id", "album"."id", lower("track"."title"), "cte0"."v1" AS "id"
+            FROM "track" LEFT JOIN "album" ON "track"."album" = "album"."id"
+            LEFT JOIN "cte0" ON "track"."id" = "cte0"."pk""#;
+        let json = column_sources(sql).unwrap();
+        assert!(
+            json.starts_with(r#"[[["track","id"]],[["album","id"]],[["track","title"]],["#),
+            "{json}"
+        );
+    }
 }

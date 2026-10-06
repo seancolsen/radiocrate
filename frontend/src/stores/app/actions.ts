@@ -89,7 +89,7 @@ import {
   selectCanRedo,
   selectIsUnsaved,
   selectLocateRow,
-  selectPlaylistAround,
+  selectQueueAround,
   selectPrelude,
   selectQueryTab,
   selectRowContext,
@@ -715,11 +715,7 @@ export function createAppActions(
       if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
     });
     if (rowIndex !== null) {
-      const { preceding, upcoming } = selectPlaylistAround(
-        get(),
-        tabId,
-        rowIndex,
-      );
+      const { preceding, upcoming } = selectQueueAround(get(), tabId, rowIndex);
       audio?.updateQueue(preceding, upcoming);
     }
   };
@@ -1150,7 +1146,7 @@ export function createAppActions(
   const playRow = (tabId: string, index: number) => {
     const id = selectTrackIdAt(get(), tabId, index);
     if (id === undefined) return;
-    const { preceding, upcoming } = selectPlaylistAround(get(), tabId, index);
+    const { preceding, upcoming } = selectQueueAround(get(), tabId, index);
     set((s) => {
       s.currentTrack = {
         sourceTabId: tabId,
@@ -1160,7 +1156,7 @@ export function createAppActions(
         artists: [],
       };
     });
-    engine().setPlaylist(preceding, id, upcoming);
+    engine().setQueue(preceding, id, upcoming);
     syncTransport();
     void loadMetadata(id);
     recordQueryPlay(tabId);

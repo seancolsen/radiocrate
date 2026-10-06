@@ -14,10 +14,9 @@
 //
 //   bun specs/2026-10-playlists/probe.ts [path/to/migration.sql]
 //
-// The migration defaults to `backend/src/migrations/0006.sql`. Phase 2 should
-// switch `playlistQuerydown` below to the real generator in
-// `frontend/src/query/playlist.ts` once it exists, so this keeps probing what
-// the app actually sends.
+// The migration defaults to `backend/src/migrations/0006.sql`. The playlist
+// queries come from the app's own generator (`frontend/src/query/playlist.ts`),
+// so this probes what the app actually sends.
 
 import { copyFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +25,14 @@ import init, { compile } from "../../frontend/vendor/querydown-js/querydown_js.j
 import lineageInit, {
   column_sources,
 } from "../../frontend/vendor/track-lineage/track_lineage.js";
-import { DEFAULT_PRELUDE } from "../../frontend/src/query/definition.ts";
+import {
+  DEFAULT_PRELUDE,
+  playlistOrderContent,
+} from "../../frontend/src/query/definition.ts";
+import {
+  assemblePlaylist,
+  playlistQuerydown as generate,
+} from "../../frontend/src/query/playlist.ts";
 import { addInferredLinks } from "../../frontend/src/query/schema.ts";
 
 const SAMPLE_DB = "sample-data/realistic/collection/radiocrate.db";
@@ -42,19 +48,14 @@ function duckdb(db: string, sql: string, json = false): string {
   return run.stdout.toString();
 }
 
-/** The Querydown the spec's "The playlist query" section describes. */
-function playlistQuerydown(filter: string, sort: string, display: string): string {
-  const parts = ["#playlist_track", `playlist:="${PLAYLIST}"`];
-  if (filter.trim() !== "") parts.push(`track{\n${filter}\n}`);
-  parts.push(
-    `\\\\track.(\n${sort}\n)`,
-    "\\\\position",
-    "\\\\track.id",
-    "$id @{hide:yes}",
-    "$position @{hide:yes}",
-    `$track.(\n${display}\n)`,
-  );
-  return parts.join("\n");
+/** The probe playlist's query, from already-resolved section text. */
+function playlistQuerydown(
+  filter: string,
+  sort: string,
+  display: string,
+  options: { withFilter?: boolean } = {},
+): string {
+  return generate(PLAYLIST, { filter, sort, display }, options);
 }
 
 if (!existsSync(SAMPLE_DB)) {
@@ -93,16 +94,51 @@ $title @{width:[100 400]}
 $year @{width:35}
 $rating.symbol @{width:20 align:center}`;
 
-const cases: Record<string, string> = {
-  "no conditions": playlistQuerydown("", "", DISPLAY),
-  "filter + sort": playlistQuerydown('artist:"a"\nyear:>1990', "\\\\artists\n\\\\year \\d", DISPLAY),
-  "OR filter": playlistQuerydown('[\n  title:"a"\n  title:"b"\n]', "", DISPLAY),
-  shuffle: playlistQuerydown("", "\\\\id|concat('seed')|md5", DISPLAY),
-  "empty display": playlistQuerydown("", "", ""),
+/** Each case's Querydown, and the number of hidden playlist columns it leads
+ * with (the entry's `$id` and `$position`, or none for a plain track query). */
+const cases: Record<string, { text: string; entryColumns: boolean }> = {
+  "no conditions": { text: playlistQuerydown("", "", DISPLAY), entryColumns: true },
+  "playlist order": {
+    text: generate(
+      PLAYLIST,
+      assemblePlaylist(
+        {
+          filter: { custom: "", presets: [] },
+          sort: playlistOrderContent(),
+          display: { custom: DISPLAY },
+        },
+        [],
+      ),
+    ),
+    entryColumns: true,
+  },
+  "filter + sort": {
+    text: playlistQuerydown('artist:"a"\nyear:>1990', "\\\\artists\n\\\\year \\d", DISPLAY),
+    entryColumns: true,
+  },
+  "commit sort (filter left out)": {
+    text: playlistQuerydown('artist:"a"', "\\\\artists", DISPLAY, { withFilter: false }),
+    entryColumns: true,
+  },
+  "OR filter": {
+    text: playlistQuerydown('[\n  title:"a"\n  title:"b"\n]', "", DISPLAY),
+    entryColumns: true,
+  },
+  shuffle: {
+    text: playlistQuerydown("", "\\\\id|concat('seed')|md5", DISPLAY),
+    entryColumns: true,
+  },
+  "empty display": { text: playlistQuerydown("", "", ""), entryColumns: true },
+  // Not a playlist: the same duplicate-name bug hit a track query that shows
+  // both its own id and its album's.
+  "track query with $album.id": {
+    text: "#track\n$id\n$album.id\n$title",
+    entryColumns: false,
+  },
 };
 
 let failed = false;
-for (const [name, text] of Object.entries(cases)) {
+for (const [name, { text, entryColumns }] of Object.entries(cases)) {
   try {
     const { sql } = compile(schema, "duckdb", `${DEFAULT_PRELUDE}\n${text}`);
     const rows = (JSON.parse(duckdb(db, sql, true) || "[]") as unknown[]).length;
@@ -111,8 +147,8 @@ for (const [name, text] of Object.entries(cases)) {
       sources?.[i]?.some(([t, c]) => t === table && c === column) ?? false;
     const trackIdCols = (sources ?? []).flatMap((_, i) => (traces(i, "track", "id") ? [i] : []));
     const lineageOk =
-      traces(0, "playlist_track", "id") &&
-      traces(1, "playlist_track", "position") &&
+      (!entryColumns ||
+        (traces(0, "playlist_track", "id") && traces(1, "playlist_track", "position"))) &&
       (name === "empty display" ? trackIdCols.length === 0 : trackIdCols.length === 1);
     if (!lineageOk) failed = true;
     console.log(

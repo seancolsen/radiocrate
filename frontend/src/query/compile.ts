@@ -10,6 +10,11 @@
 import { compile, compile_sections, type CompileResult } from "querydown-js";
 import type { Preset } from "api-client";
 import { assemble, type QueryDefinition } from "./definition";
+import {
+  assemblePlaylist,
+  playlistQuerydown,
+  type PlaylistDefinition,
+} from "./playlist";
 
 /** Compiles a saved query definition to DuckDB SQL plus the per-column
  * annotations. Requires the loaded preset list (to resolve preset references) and
@@ -44,4 +49,28 @@ export function compileSavedQuery(
         a.sort,
         a.display,
       );
+}
+
+/** Compiles playlist `playlistId`'s entry listing (see `playlistQuerydown`) to
+ * DuckDB SQL plus its column annotations, taking the same `presets`,
+ * `schemaJson` and `prelude` as {@link compileSavedQuery}.
+ *
+ * The playlist query is one whole query, so it goes through `compile`, not
+ * `compile_sections`: a syntax error in the filter text reports as the generic
+ * "Invalid querydown code" rather than as one tied to the filter section.
+ * `withFilter: false` compiles it without the filter, for committing a sort. */
+export function compilePlaylist(
+  playlistId: string,
+  def: PlaylistDefinition,
+  presets: Preset[],
+  schemaJson: string,
+  prelude: string,
+  options: { withFilter?: boolean } = {},
+): CompileResult {
+  const text = playlistQuerydown(
+    playlistId,
+    assemblePlaylist(def, presets),
+    options,
+  );
+  return compile(schemaJson, "duckdb", `${prelude}\n${text}`);
 }

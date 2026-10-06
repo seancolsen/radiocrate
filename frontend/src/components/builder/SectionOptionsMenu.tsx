@@ -46,7 +46,10 @@ export default function SectionOptionsMenu(props: {
     props.section === "filter"
       ? true
       : live != null && "custom" in live[props.section];
-  const shuffleChecked = live != null && "builtin" in live.sort;
+  const shuffleChecked =
+    live != null &&
+    "builtin" in live.sort &&
+    live.sort.builtin.preset === "shuffle";
   const presetChecked = (id: string): boolean => {
     if (props.section === "filter")
       return live?.filter.presets.includes(id) ?? false;

@@ -19,7 +19,7 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | Phase | Status | Owed by the user |
 | ----- | ------ | ---------------- |
 | 1 — Schema, migration and source RPCs | done | Back up the real database, start the server so migration 0006 runs, and confirm that saved queries, folders, their order and open tabs all survived. |
-| 2 — Playlist query, entry math, lineage fix | not started | |
+| 2 — Playlist query, entry math, lineage fix | awaiting user | Run `./track-lineage/build.sh`, then `bun specs/2026-10-playlists/probe.ts` must exit 0. Phase 4 needs this; phase 3 doesn't. |
 | 3 — One undo abstraction | not started | |
 | 4 — Playlist tabs and the playlist page | not started | |
 | 5 — Creating and managing playlists | not started | |
@@ -496,6 +496,28 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Probe:** switch `probe.ts` to import the real generator.
 - **Rename:** "playlist" meaning the play queue becomes "queue" (see "Names already in use").
 
+#### As built
+
+- **Lineage fix** (`track-lineage/src/lib.rs`): `column_sources` re-aliases the outermost projection list positionally (`__lineage_<i>`, replacing any existing alias) before calling `lineage` once per alias. The outermost `SELECT` is found through set operations' left operands and parentheses, and a `*` is left as it was. The JSON contract is unchanged. This also fixes a second, latent bug: `get_output_column_names` skipped unnamed projections (an unaliased function call), which shifted every later index. Two native unit tests cover both bugs (`cargo test` from `track-lineage/`). The vendored WASM is still the old build, so the probe's lineage checks still fail. Running the fixed code natively over the probe's own compiled SQL gave the right lineage for every case (`track.id` in exactly column 2 of each playlist query, and `album.id` in column 1 of a `$id $album.id` track query).
+- **"Playlist order"** is the built-in `{ builtin: { preset: "playlist_order" } }` (`playlistOrderContent()` in `query/definition.ts`), and resolves to an empty fragment. `BuiltinPreset` is now a union, so the two places that treated every built-in as Shuffle (`SectionOptionsMenu`'s Shuffle radio and `SingleBuilder`'s Shuffle tab) now check `preset === "shuffle"`. The radio itself is phase 4's. `definition.ts` now exports `resolveSection`, `resolveFilter` and `canonicalSection`, and `assemble` uses `resolveFilter`, so playlists and queries resolve sections with the same code.
+- **`query/playlist.ts`:** `PlaylistDefinition`; `newPlaylistDefinition` (the first default `track` display preset, or an empty custom display); `playlistDefinitionFromQuery`; `playlistDefinitionToStored` (canonical key order) and `playlistDefinitionFromStored` (fills gaps, and survives blank or bad JSON); `playlistDefsEqual`; `assemblePlaylist`; and `playlistQuerydown(playlistId, parts, { withFilter })`, which throws on an id that isn't a UUID, since the id is spliced into a string literal. **`compilePlaylist`** is in `query/compile.ts` and goes through `compile` with the prelude prepended.
+- **Departure:** `playlistDefinitionFromQuery` gives a **full-mode** query the default display even when its base is `track`, because a full query's display section is stale (see Open questions).
+- **`query/playlistEntries.ts`:** position math (`appendPositions`, `sequentialPositions`, `dropPositions`, `renumberMoves`, `rearrangeMoves`) and the request builders (`createPlaylistWrites`, which also covers duplicating and converting; `deletePlaylistWrites`; `addEntriesWrites`; `removeEntriesWrites`; `setPositionsWrites`).
+  - Builders return `PlaylistWrite`s, which are `DmlOperation`s without an id. `toDmlRequest` numbers them `e0…` when a request is assembled, so writes from several builders can share one request.
+  - Every id is generated client-side (callers pass `newId`), so no builder needs operation references.
+  - Entry builders return `{ apply, revert }`. The `revert` of a removal re-inserts the full records.
+  - Source timestamps are written as UTC civil text (`sourceTimestamp`), matching the backend's `make_timestamp` for `query.add`.
+- **Departure:** `renumberMoves` (used to commit a sort, and as the fallback for a drop) leaves out entries that are already at their new position. The stored result is the same as rewriting every entry, and the request is smaller.
+- **`rearrangeMoves(all, moved, above, below)`** is phase 9's entry point. `above` and `below` are the visible neighbors, `undefined` at an edge. When the moved entries don't fit between the neighbors, it renumbers the whole playlist with `moved` placed right after `above` (or at the top). `dropPositions` returns `undefined` for no room, for equal or reversed neighbors, and when there are no neighbors at all.
+- **`api/playlist.ts`:** `fetchPlaylistEntries` (ordered by position, track and id, which matches the playlist query's tie-break), `fetchMaxPosition`, and **`sendPlaylistWrites(writes)`**, the one function every playlist write goes through.
+- **Rename:** `selectPlaylistAround` is now `selectQueueAround`, and `AudioEngine.setPlaylist` is now `setQueue`. "playlist" now appears only in the new feature's code.
+- **Probe:** it imports `playlistQuerydown`, `assemblePlaylist` and `playlistOrderContent` from the app. It gained a "Playlist order" case built through `assemblePlaylist`, a commit-sort case (`withFilter: false`), and a plain track query showing `$id` and `$album.id`. That last case has no entry columns, so the probe's check skips columns 0 and 1 for it.
+- **Gate:**
+  - `track-lineage`: `cargo fmt --check`, `cargo check` and `cargo clippy -- -D warnings` (`--target wasm32-unknown-unknown`) are clean, and `cargo test` passes (2 tests).
+  - Frontend: typecheck, lint, format:check, test:unit (439), build and test:visual (229) all pass, with no snapshot changes.
+  - Probe: every case compiles and runs, and every lineage check except "empty display" fails, as expected until the WASM is rebuilt.
+- **For the next phase:** phase 3 doesn't need the rebuild. A step's track writes can be `EntryWrites` (`apply` / `revert`), sent with `sendPlaylistWrites`.
+
 ### Phase 3 — One undo abstraction
 
 **Goal:** the query page's snapshot history becomes a stack of transformations that playlist pages can share, with no behavior change on the query page.
@@ -637,4 +659,5 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 
 ## Open questions
 
+- **Converting a full-mode query of tracks.** Its display section is stale (a full query ignores its sections), so phase 2's `playlistDefinitionFromQuery` gives the playlist the default `track` display rather than copying it. Parsing the display out of the hand-written query isn't possible. Change it if a stale display is preferable to the default.
 - **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 should leave it out unless the user says otherwise.
