@@ -89,8 +89,11 @@ Run the spec document's **Definition of done**, fixing failures as you go.
 
    Keep it factual and short.
 2. Update the Status row: `done`, `in progress` with a few words on what
-   remains, or `awaiting user`. Add anything the user must check or run to
-   "Owed by the user".
+   remains, or `awaiting user`. Add anything the user must run or decide
+   (a build, a decision) to "Owed by the user". Manual QA isn't owed per
+   phase: add any manual check your phase needs to the spec's **Manual QA
+   (after phase 9)** checklist instead, under your phase's group. A manual
+   check never makes a phase `awaiting user`.
 3. Commit everything in one commit on `playlists`, titled
    `Playlists, phase N: <phase title>`, with a body summarizing the As-built
    note. Include the Co-Authored-By trailer. **Don't push**, and don't amend,
@@ -103,7 +106,9 @@ Your final message should give:
 - The commit hash.
 - Gate results: each check, pass or fail.
 - Anything the user must do or decide before the next phase runs (build
-  commands, manual checks, open questions, baselines to review).
+  commands, open questions, baselines to review). Manual checks wait for
+  the final Manual QA pass, so mention only the ones you added to that
+  checklist.
 
 If a check is failing, name it and paste the relevant output. Never mark the
 phase `done` unless every check passed or its failure is recorded as

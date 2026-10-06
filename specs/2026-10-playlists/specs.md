@@ -22,13 +22,15 @@ Each phase has a status line. Update it when a phase lands, so that a session st
 | 2 — Playlist query, entry math, lineage fix | done | |
 | 3 — One undo abstraction | done | |
 | 4 — Playlist tabs and the playlist page | done | |
-| 5 — Creating and managing playlists | done | Manual pass against the real server: create (explorer, folder menu, tab bar), convert (including one large query, to see the request-size failure reported), duplicate, rename, delete, and filter/sort/display/play on the result |
+| 5 — Creating and managing playlists | done | |
 | 6 — Removing tracks and committing conditions | not started | |
 | 7 — "Add to playlist…" | not started | |
 | 8 — Dragging result rows | not started | |
 | 9 — Rearranging tracks within a playlist | not started | |
 
-The "Owed by the user" column lists manual checks and actions that sessions can't do themselves (see "What a session can and can't run" below). They don't block later phases unless the phase says so.
+The "Owed by the user" column lists actions that sessions can't do themselves, such as a build or a decision (see "What a session can and can't run" below). They don't block later phases unless the phase says so.
+
+Manual QA doesn't go in this column. Every manual check is collected in **Manual QA (after phase 9)**, near the end of this document. The user runs that checklist once, after the last phase lands. A phase that needs a new manual check adds it to that checklist, and never sets its status to `awaiting user` for one.
 
 ## Starting a phase (read this every session)
 
@@ -334,7 +336,7 @@ Findings from research into the codebase (2026-10-06). The phases below rely on 
 
 ### What a session can and can't run
 
-- **No real backend.** A session may not run `cargo build` or `cargo run`, so it can't start the server. Every Playwright spec mocks `/api/rpc` (the harness through `src/dev/harness/mockApi.ts`, the behavioral specs through `page.route`). Anything that needs a real server goes in the "Owed by the user" column as a manual check.
+- **No real backend.** A session may not run `cargo build` or `cargo run`, so it can't start the server. Every Playwright spec mocks `/api/rpc` (the harness through `src/dev/harness/mockApi.ts`, the behavioral specs through `page.route`). Anything that needs a real server goes in the **Manual QA (after phase 9)** checklist.
 - **`probe.ts`** (in this folder) stands in for the server where it matters most. It copies the sample collection's database, applies migration `0006.sql` with the `duckdb` CLI, seeds a playlist, introspects the schema exactly as the app does, compiles playlist queries with the vendored Querydown WASM, runs them, and runs the vendored lineage WASM over the SQL. Extend it when a phase adds something it can check (phase 2 points it at the real generator).
 - **Cargo.** No phase touches a `Cargo.toml`, so sessions run cargo themselves, with one `-p` per invocation (memory: "cargo check --workspace rebuilds DuckDB"). `cargo xtask gen-api` is safe to run: `xtask` depends only on `api-schema` and `resvg`, never on DuckDB. Linking `cargo test -p backend` can fail with a `rust-lld` relocation error that has nothing to do with the code (memory: "Backend test link failure"). If it does, rely on `cargo check --all-targets` and `cargo clippy --all-targets`, record that in the As-built note, and **never** run `cargo clean -p backend`.
 - **WASM builds are the user's.** `track-lineage/build.sh` runs `wasm-pack`, a cargo build, and its output under `frontend/vendor/track-lineage/` is gitignored. A session changes `track-lineage/src/lib.rs`, checks it with `cargo check --target wasm32-unknown-unknown`, and then asks the user to run `./track-lineage/build.sh`.
@@ -460,7 +462,7 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - Until phase 4 the explorer shows only `kind === "query"` sources.
   - Update the harness `mockApi.ts`, `dev/fixtures.ts`, and every Playwright `page.route` mock that answers `query.list`.
 - **Verification:** the gate, plus the probe against the real `0006.sql` (compile and run checks pass; lineage checks fail until phase 2).
-- **Owed by the user:** back up the real database, start the server so the migration runs, and confirm that saved queries, folders, their order and open tabs all survived.
+- **Manual QA:** the migration check, in the final checklist (see "Manual QA (after phase 9)").
 
 #### As built
 
@@ -574,7 +576,7 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Wrench menu:** Rename and View SQL. Duplicate and Delete arrive in phase 5.
 - **Stories** (intended snapshot additions): the playlist tab handle, the sort options menu with "Playlist order", and the playlist toolbar.
 - **Tests:** compile routing per kind, a persisted playlist tab surviving a round trip, and a playlist page leaving out `playlist_track` records.
-- **Owed by the user:** nothing can create a playlist until phase 5, so manual checks wait until then.
+- **Manual QA:** in the final checklist (see "Manual QA (after phase 9)").
 
 #### As built
 
@@ -626,7 +628,7 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - It's available when the query's current results carry a track id column and the query isn't running or failed. That needs a new `When` predicate, since the set is fixed booleans.
   - It copies the rows in their displayed order, with positions 1…n.
   - The tab opens next to the query's tab.
-- **Owed by the user:** a manual pass against the real server, covering create, convert (including one large query to see the request-size failure reported), duplicate, rename, delete, and filter/sort/display/play on the result.
+- **Manual QA:** in the final checklist (see "Manual QA (after phase 9)").
 
 #### As built
 
@@ -705,7 +707,7 @@ Each phase leaves the app working and shippable: no phase depends on a later one
 - **Tests:**
   - A behavioral spec drives the mouse drag with `page.mouse` against the assembled app (`?expose=1`).
   - Unit tests cover the gesture state machine (hold, drag, release without moving) with synthetic pointer events if it can be factored out of the canvas class. Touch can't be screenshot-tested easily, so the user's device check covers it.
-- **Owed by the user:** a touch-device pass covering scroll, hold to drag, hold and release for the menu, and a drop onto a playlist.
+- **Manual QA:** the touch-device checks, in the final checklist (see "Manual QA (after phase 9)").
 
 ### Phase 9 — Rearranging tracks within a playlist
 
@@ -719,7 +721,47 @@ Each phase leaves the app working and shippable: no phase depends on a later one
   - If a sort applies, compute the final full order (sorted, then the move) and renumber everything in **one** request, which is a single undo step, rather than committing and then moving.
 - **Concurrency:** block a rearrangement while the page's write queue is busy. Other writes queue.
 - **Afterwards:** reload. A failure reloads the stored order and is reported.
-- **Owed by the user:** the final manual pass over the whole feature against the real server, on desktop and on a touch device.
+- **Manual QA:** once this phase lands, the user runs the final checklist below.
+
+## Manual QA (after phase 9)
+
+Every check that needs a real server or a real device is collected here. The user runs them all once, against a release build, after phase 9 has landed. They don't block any phase. A phase that adds a manual check appends it to the matching group below (or a new one), naming the phase it comes from.
+
+**Migration** (phase 1)
+
+- [ ] Back up the real database, then start the server so that migration `0006.sql` runs. Confirm that saved queries, folders, their order and open tabs all survived. Skip this if it was already done after phase 1.
+
+**Playlist pages** (phase 4)
+
+- [ ] A playlist opens in its own tab, with the playlist icon on its tab handle, its Opened row and its tree row.
+- [ ] Filter, sort ("Playlist order", presets, Shuffle) and display all work, and the definition autosaves.
+- [ ] Double-clicking a row plays it, with the rest of the results queued after it, and updates the source's `last_play`.
+- [ ] "Edit track" and "Results: Edit selected rows" edit the tracks, and a repeated track is edited once.
+- [ ] Undo and redo step through definition changes.
+
+**Creating and managing playlists** (phase 5)
+
+- [ ] Create a playlist from the explorer's section menu, from a folder's menu, and from the tab bar's "+" menu. Each one is named for the moment, sits at the top of its folder, and opens in a new, active tab.
+- [ ] Convert a query of tracks. The tracks come over in the order shown, the playlist goes at the top of the query's folder, and its tab opens beside the query's tab. Also convert one query of more than about 10,000 tracks, and check that the request-size failure is reported and nothing is written.
+- [ ] Duplicate a playlist, from the explorer and from the wrench menu. The copy has the same name, definition and tracks.
+- [ ] Rename a playlist from the explorer, from its tab handle and from its wrench menu.
+- [ ] Delete a playlist from the explorer and from the wrench menu. Its tab closes, and it stays gone after a refresh.
+- [ ] Filter, sort, change the display and play on the playlists created above.
+
+**Removing tracks and committing conditions** (phase 6)
+
+**"Add to playlist…"** (phase 7)
+
+**Dragging result rows** (phase 8)
+
+- [ ] On a touch device: a touch-drag scrolls, a hold picks the rows up for a drag, and a hold released without moving opens the context menu.
+- [ ] On a touch device and with a mouse: dropping rows onto a playlist in the sources tree adds them to its end.
+
+**Rearranging tracks** (phase 9)
+
+**Whole feature**
+
+- [ ] A final pass over the whole feature against the real server, on desktop and on a touch device.
 
 ## Deferred follow-ups
 
