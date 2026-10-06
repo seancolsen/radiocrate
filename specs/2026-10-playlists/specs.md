@@ -4,6 +4,53 @@ The app currently lets the user create and save queries. This document specifies
 
 A query's tracks are whatever its conditions select, in whatever order its sorting produces. A playlist's tracks are an explicit, stored list in a manually maintained order. The user can still view that list through filtering and sorting conditions, and can commit those conditions into the list itself.
 
+This document has three parts:
+
+1. **Running the work**: status, the rules every implementation session follows, and the definition of done.
+2. **Specification**: what the feature does. These sections are the product spec. Phases implement them and don't redefine them.
+3. **Implementation**: cross-cutting findings from research into the codebase, then nine sequential phases. Each phase is sized for one Claude session and ends in one commit on the `playlists` branch.
+
+Run the phases one per session with `/playlist-next` (`.claude/commands/playlist-next.md`).
+
+## Status
+
+Each phase has a status line. Update it when a phase lands, so that a session starting cold doesn't have to reconstruct progress from `git log`. Statuses are `not started`, `in progress` (with a few words on what remains), `awaiting user` (the phase's code has landed but needs something only the user can do, such as a build or a decision), and `done`.
+
+| Phase | Status | Owed by the user |
+| ----- | ------ | ---------------- |
+| 1 — Schema, migration and source RPCs | not started | |
+| 2 — Playlist query, entry math, lineage fix | not started | |
+| 3 — One undo abstraction | not started | |
+| 4 — Playlist tabs and the playlist page | not started | |
+| 5 — Creating and managing playlists | not started | |
+| 6 — Removing tracks and committing conditions | not started | |
+| 7 — "Add to playlist…" | not started | |
+| 8 — Dragging result rows | not started | |
+| 9 — Rearranging tracks within a playlist | not started | |
+
+The "Owed by the user" column lists manual checks and actions that sessions can't do themselves (see "What a session can and can't run" below). They don't block later phases unless the phase says so.
+
+## Starting a phase (read this every session)
+
+1. Read **Status**, this section, **Definition of done**, all of **Implementation notes**, and your phase.
+2. Read every earlier phase's **As built** note. They record where reality departed from the plan, and they override the plan text where the two disagree.
+3. Read the **Specification** sections your phase lists. The spec is the source of truth for behavior. If the spec and a phase's notes disagree, the spec wins, unless an As-built note records a decision the user made.
+4. Read `CLAUDE.md`. Its rules on cargo, React and stores apply throughout. The memory notes listed under "What a session can and can't run" apply too.
+5. Do your phase and only your phase. Put anything worth doing that is out of scope under **Deferred follow-ups**.
+
+## Definition of done (every phase)
+
+1. **Rust** (only when the phase touched Rust): `cargo check`, `cargo clippy` and `cargo fmt` are clean, run with **one `-p <crate>` per invocation** (never `--workspace`, and never several `-p` flags at once, which triggers the 20-minute `duckdb-sys` rebuild). Run `cargo test -p <crate>` for each crate whose tests changed. `track-lineage` is its own workspace: run its checks from `track-lineage/` with `--target wasm32-unknown-unknown`.
+2. **Frontend**, from `frontend/`: `bun run typecheck`, `bun run lint`, `bun run format:check` (run `bun run format` first), `bun run test:unit`, `bun run build`, and `bun run test:visual`.
+3. **Snapshots.** A screenshot that changed without the phase intending it is a bug. Find it, don't regenerate it (memory: "Visual snapshot failures are real"). When a phase *intends* a visual change (it says so in its scope), regenerate only those stories (`bun run test:visual:update --grep "<story>"`), look at every regenerated image, and list each one in the As-built note so the user can review them.
+4. **Probe** (from phase 1 on): `bun specs/2026-10-playlists/probe.ts` exits 0. Until the user rebuilds the lineage WASM after phase 2, its lineage checks are expected to fail and its compile/run checks must still pass.
+5. **Docs**: the Status row is updated, the phase has an `#### As built` note (what landed, departures from the plan and why, what's left, what the next phase needs to know), and anything deferred is under **Deferred follow-ups**.
+6. **One commit** on `playlists`, titled `Playlists, phase N: <title>`.
+
+---
+
+**Part 2: Specification.** The sections from here to "Changes to touch and pointer interactions for result rows" are the product spec.
+
 ## Terminology and iconography
 
 - A "source" is either a playlist or a query. Every playlist is a source, and so is every saved query. Users can add, remove, rename and rearrange their sources.
@@ -276,3 +323,306 @@ Currently, a touch-hold opens the context menu for the selected records. Change 
 - A touch-hold followed by a release without moving opens the context menu.
 
 Holding a row that is part of the selection drags the whole selection. Holding an unselected row first selects that row alone. With a mouse or pen, dragging a row past a small threshold starts the same drag (a mouse drag on the results currently does nothing).
+
+---
+
+**Part 3: Implementation.**
+
+## Implementation notes
+
+Findings from research into the codebase (2026-10-06). The phases below rely on them.
+
+### What a session can and can't run
+
+- **No real backend.** A session may not run `cargo build` or `cargo run`, so it can't start the server. Every Playwright spec mocks `/api/rpc` (the harness through `src/dev/harness/mockApi.ts`, the behavioral specs through `page.route`). Anything that needs a real server goes in the "Owed by the user" column as a manual check.
+- **`probe.ts`** (in this folder) stands in for the server where it matters most. It copies the sample collection's database, applies migration `0006.sql` with the `duckdb` CLI, seeds a playlist, introspects the schema exactly as the app does, compiles playlist queries with the vendored Querydown WASM, runs them, and runs the vendored lineage WASM over the SQL. Extend it when a phase adds something it can check (phase 2 points it at the real generator).
+- **Cargo.** No phase touches a `Cargo.toml`, so sessions run cargo themselves, with one `-p` per invocation (memory: "cargo check --workspace rebuilds DuckDB"). `cargo xtask gen-api` is safe to run: `xtask` depends only on `api-schema` and `resvg`, never on DuckDB. Linking `cargo test -p backend` can fail with a `rust-lld` relocation error that has nothing to do with the code (memory: "Backend test link failure"). If it does, rely on `cargo check --all-targets` and `cargo clippy --all-targets`, record that in the As-built note, and **never** run `cargo clean -p backend`.
+- **WASM builds are the user's.** `track-lineage/build.sh` runs `wasm-pack`, a cargo build, and its output under `frontend/vendor/track-lineage/` is gitignored. A session changes `track-lineage/src/lib.rs`, checks it with `cargo check --target wasm32-unknown-unknown`, and then asks the user to run `./track-lineage/build.sh`.
+
+### The migration (validated draft)
+
+This draft of `backend/src/migrations/0006.sql` applies in one transaction (as `db::run_migration` runs it) to a copy of the sample database on DuckDB 1.5.4, the version the `duckdb` crate bundles. The `CHECK` rejects a source that wraps neither a query nor a playlist, and the `unique` constraints reject two sources wrapping the same query. Writing to the new `source` table and only *reading* `query` before the `ALTER`s keeps to the rule in memory "DuckDB ALTER after UPDATE".
+
+```sql
+-- Phase 1: the new tables, and every read of the old ones.
+create table source (
+  id uuid primary key,
+  name text not null,
+  created_at timestamp_s not null,
+  modified_at timestamp_s not null,
+  last_play timestamp_s not null,
+  source_folder uuid,
+  position integer not null default 0,
+  query uuid unique,
+  playlist uuid unique,
+  check ((query is null) <> (playlist is null))
+);
+create table playlist (id uuid primary key, definition text);
+create table playlist_track (
+  id uuid primary key,
+  playlist uuid not null,
+  track uuid not null,
+  position double not null default 0
+);
+-- Each source reuses its query's id (see "Identity" in the spec).
+-- `query.position` was nullable (migration 0005).
+insert into source (id, name, created_at, modified_at, last_play, source_folder, position, query)
+select id, name, created_at, modified_at, last_play, parent, coalesce(position, 0), id from query;
+
+-- Phase 2: reshape.
+alter table query drop column name;
+alter table query drop column created_at;
+alter table query drop column modified_at;
+alter table query drop column last_play;
+alter table query drop column parent;
+alter table query drop column position;
+alter table query_folder rename to source_folder;
+```
+
+The scanner never hard-deletes tracks (deletions are recorded in the `deletion` table), so `playlist_track.track` can't be left dangling by a scan.
+
+### Lineage of duplicate column names (a blocker the spec didn't anticipate)
+
+The spec's playlist query compiles and runs correctly (`probe.ts`), but the lineage analysis gets it wrong. The SQL selects `"playlist_track"."id"` (the hidden `$id`) and, inside `$track.(…)`, `"track"."id"`. Both output columns are named `id`. The `track-lineage` binding calls `polyglot_sql::lineage::lineage(name, …)` once per output column *by name*, so both resolve to the first one and the track's id is reported as `playlist_track.id`. As a result `trackIdColumn` finds no `track.id` column: rows wouldn't be playable, the record editor couldn't open the track, and the rows couldn't be added to playlists.
+
+The probe confirms that giving the projections unique aliases fixes the analysis (`"track"."id" AS "c2"` traces to `track.id`). The fix belongs in `track-lineage/src/lib.rs` (phase 2): analyze each output column by its *position*, for example by re-aliasing the outermost projection list positionally before calling `lineage`, keeping the JSON contract unchanged. The same bug already affects a query today: a track query that displays both `$id` and `$album.id` loses its track id column. The fix covers that case too.
+
+### Writing through `dml`
+
+Constraints of `backend/src/dml.rs` that every playlist write has to respect:
+
+- **A `where` must name a non-null unique key.** Every `playlist_track` update or delete is therefore addressed by `{ id }`, one operation per row. There is no "delete where playlist = X".
+- **Deletes check for dangling references, against the live transaction.** Deleting a playlist must delete its `playlist_track` rows, then its `source` row, then its `playlist` row, in that order. Deleting a `track` through the record editor now fails while a playlist holds it. That's correct behavior, and the error is reported like any other.
+- **Values bind as JSON scalars.** Strings rely on DuckDB's implicit casts, so `timestamp_s` columns take a `'YYYY-MM-DD HH:MM:SS'` string. Numbers bind as `BIGINT` or `DOUBLE`, which suits both `position` columns. Verify the timestamp cast in the phase 1 backend tests by sending a `dml` insert into `source`.
+- **Operation ids must be unique within a request.** Use a counter (`e0`, `e1`, …), not row ids, which can repeat in a request that both deletes and re-inserts.
+- **Reads go through raw SQL.** Delete, duplicate, "add tracks" (maximum position) and "Keep only these tracks" all need entries the page hasn't loaded. Read them with `runSql` / `runSqlScalar` (`api/query.ts`). No Querydown is needed for these.
+
+### The results after a write
+
+`runQuery` treats a re-run that compiles to the same SQL as a *refresh* (`lastRunSql`, `setTabResult(…, refresh)`), keeping the selection, the record editor and the scroll position on the assumption that the rows haven't moved. After a write to `playlist_track` the SQL is the same but the rows have changed, so stale row indexes would point at the wrong tracks. Reload after a write as *new rows* (clear the selection), except where the phase says otherwise. A rearrangement keeps the moved rows selected at their new indexes.
+
+### Keyboard shortcuts can't share a chord yet
+
+Chords are globally unique. `commandForChord` returns the first command bound to a chord, and the shortcuts editor's assignment "steals" a chord from any other command. `Delete` already belongs to `selection.delete` (`when: "recordForm"`), and "Playlist: Remove selected tracks" needs `Delete` while a playlist's results have focus. Phase 6 makes dispatch pick the first command bound to the chord *whose `when` holds*, and makes the editor steal a chord only from a command whose context can overlap. The record form takes precedence: when it has focus, `Delete` belongs to it.
+
+### Names already in use
+
+- **"playlist" already means the play queue** in the store (`selectPlaylistAround` and its callers). Phase 2 renames those to "queue" so that "playlist" means only the new feature.
+- **Tab ids are source ids.** A query tab's id is its query's id today. After the migration the source reuses that id, so tabs persisted in `localStorage` keep working. The stored tab shape (`StoredTab` in `stores/app/persistence.ts`) gains a playlist variant **without** bumping `OPEN_TABS_VERSION`, since a bump would discard every open tab.
+- **`selectQueryTab` and `t.kind === "query"`** gate a lot of behavior that playlist tabs need too (runs, builders, results, undo, record editor). Phase 4 checks each call site and decides whether it means "a query tab" or "a tab with a results page". Narrowing is safer than widening by default.
+
+### Querydown details
+
+- `track{…}` scopes conditions to the related track. The prelude's track-scoped definitions (`artist:@x`, the default text search) work inside it (verified with the probe). An empty `track{}` is a parse error ("Invalid querydown code"), as the spec says. Empty `\\track.()` and `$track.()` are fine.
+- The playlist query is one whole query, so it goes through `compile`, not `compile_sections`. A syntax error in the user's filter text reports as a generic "Invalid querydown code" rather than one tied to the filter. The query page shows no compile errors yet (console only), so nothing regresses.
+- Shuffle's built-in fragment (`\\id|concat('<seed>')|md5`) works unchanged inside `\\track.(…)`.
+
+## Phases
+
+| Phase | Spec sections it implements |
+| ----- | --------------------------- |
+| 1 | Data model changes |
+| 2 | The playlist query (generation); Writing playlist entries (operation builders); the `position` rules from Adding tracks, Converting a query, Sorting (commit) and Manually rearranging |
+| 3 | Undo/redo within playlists (the shared abstraction) |
+| 4 | Terminology and iconography; The playlist tab; The playlist query; Filtering and Sorting (without their buttons); Customizing the display; Playing tracks; The record editor within the playlist page |
+| 5 | No ephemeral playlists; Listing playlists and queries in the explorer; Creating a new playlist from scratch; Other CRUD on playlists; Converting a query into a playlist |
+| 6 | Manually removing tracks; the filter builder's buttons; "Commit this track order to playlist" |
+| 7 | Adding tracks to a playlist (the "Add to playlist…" modal) |
+| 8 | Changes to touch and pointer interactions for result rows; Adding tracks to a playlist (the drag onto the sources tree) |
+| 9 | Manually rearranging tracks in a playlist |
+
+Each phase leaves the app working and shippable: no phase depends on a later one to undo a regression.
+
+### Phase 1 — Schema, migration and source RPCs
+
+**Goal:** the database holds sources, and the backend and frontend run on the new schema with no visible change.
+
+- **Migration `0006.sql`**, from the validated draft above, registered in `db.rs` (`MIGRATIONS`) and in `rpc.rs`'s test `setup()`.
+- **`api-schema`:**
+  - `Query` becomes `Source`: `id` (the source's), `kind` (`"query" | "playlist"`), `name`, the three timestamps, `definition` (from whichever row the source wraps), `parent` (from `source.source_folder`), `position`, and `queryId` / `playlistId` (one of them set).
+  - `QueryFolder` becomes `SourceFolder`, and `TreeItemKind::Query` becomes `TreeItemKind::Source`.
+- **RPCs:**
+  - `query.list` becomes `source.list`, and `query.rename`, `query.record_play` and `query.arrange` become `source.rename`, `source.record_play` and `source.arrange`, all keyed by source id.
+  - `query.update_definition` becomes `source.update_definition`, which writes the definition of whichever row the source wraps and bumps `source.modified_at`. Both pages' autosave uses it.
+  - `query.add` keeps its name and inserts the `query` row and its `source` row in one transaction. New queries get a query id distinct from their source id ("No code assumes that these ids are equal").
+  - `query.delete` takes a source id and deletes the source, then its query, in one transaction.
+  - `folder.*` targets `source_folder`.
+  - Playlists get **no** RPCs. They are created, duplicated and deleted through `dml` (phase 5).
+  - Update `METHODS` and run `cargo xtask gen-api`.
+- **Backend tests:**
+  - The migration carries over name, timestamps, `position` (including a null one), and folder. Ids are reused. The old columns are gone.
+  - The `CHECK` and `unique` constraints hold.
+  - `source.list` returns both kinds.
+  - A `dml` insert into `source` with string timestamps succeeds.
+  - Deleting a playlist in the wrong order fails, and in the right order succeeds.
+- **Frontend**, adapted with no visible change:
+  - The store's `queries`, `loadQueries` and `refetchQueries` become `sources`, `loadSources` and `refetchSources`. The explorer components and UI text are renamed in phase 5, not here.
+  - Until phase 4 the explorer shows only `kind === "query"` sources.
+  - Update the harness `mockApi.ts`, `dev/fixtures.ts`, and every Playwright `page.route` mock that answers `query.list`.
+- **Verification:** the gate, plus the probe against the real `0006.sql` (compile and run checks pass; lineage checks fail until phase 2).
+- **Owed by the user:** back up the real database, start the server so the migration runs, and confirm that saved queries, folders, their order and open tabs all survived.
+
+### Phase 2 — Playlist query, entry math and the lineage fix (no UI)
+
+**Goal:** every framework-free piece the later phases build on, unit-tested.
+
+- **Lineage fix** in `track-lineage/src/lib.rs`, as described above, keeping the JSON contract. Check it with `cargo check`, `clippy` and `fmt --target wasm32-unknown-unknown` from `track-lineage/`. Then set the status to `awaiting user` with the action "run `./track-lineage/build.sh`, then `bun specs/2026-10-playlists/probe.ts` must exit 0". Phase 3 doesn't need the rebuild. Phase 4 does.
+- **`frontend/src/query/playlist.ts`:**
+  - `PlaylistDefinition`: filter, sort and display, with no base and no full mode.
+  - Its stored-JSON round trip.
+  - The new-playlist definition (default `track` display preset, "Playlist order", no filter).
+  - The definition converted from a query's (display copied when the base is `track`).
+  - The playlist Querydown generator from the spec's template, with a variant that leaves out the filter (for committing a sort).
+  - A `compilePlaylist` beside `compileSavedQuery`.
+  - Represent "Playlist order" as a sort `SectionContent` variant (recommended: `{ builtin: { preset: "playlist_order" } }`, resolving to no fragment) so that the existing section plumbing and the options-menu radio carry it. Record the choice in the As-built note.
+- **`frontend/src/query/playlistEntries.ts`:**
+  - Position math: append (one above the ceiling of the maximum, or 1), between two neighbors (evenly spaced), top and bottom (consecutive integers past the floor or ceiling), and the "too close for distinct doubles" check that falls back to renumbering everything from 1.
+  - Builders for each `dml` request: create a playlist with entries; duplicate; delete; add entries; remove entries; set positions.
+  - Builders for the inverse of each entry write, for undo. A removal's inverse re-inserts the full records with their original ids and positions.
+  - Unit-test the edge cases: duplicate tracks, an empty playlist, neighbors 6 and 7, adjacent doubles, top and bottom drops.
+- **`frontend/src/api/playlist.ts`:** raw-SQL reads of a playlist's entries (`id`, `track`, `position`, in order) and of its maximum position.
+- **Probe:** switch `probe.ts` to import the real generator.
+- **Rename:** "playlist" meaning the play queue becomes "queue" (see "Names already in use").
+
+### Phase 3 — One undo abstraction
+
+**Goal:** the query page's snapshot history becomes a stack of transformations that playlist pages can share, with no behavior change on the query page.
+
+- Replace `UndoHistory` (`entries: QueryDefinition[]`, `index`) with a history of **steps**. Each step can carry:
+  - a definition transition (before and after),
+  - track writes (the redo operations and the undo operations), or
+  - both, as "Remove these tracks" does when it also clears the filter.
+- On the query page, every run still checkpoints, and an edit still waiting on its debounced run is undone first. The existing `undo and redo` tests in `stores/app/actions.test.ts` keep passing. Change them only where the state's shape changed, not their expectations.
+- **A per-source write queue**, framework-free: it serializes every write to one playlist's entries. Undoing or redoing a step with writes sends that step's operations through the queue as one request, moves the history's index only once the request succeeds, and then applies the definition half and reloads.
+  - A failure leaves the index where it was and is reported through the RPC error bar.
+  - Expose an "is writing" flag in page state for phase 9's block on rearranging.
+  - Disable Undo and Redo while a step is in flight.
+- **Tests:** steps with fake writes. Cover success, failure leaving the index unmoved, two queued writes running in order, and redo after undo.
+- **No UI change**, so no snapshot changes.
+
+### Phase 4 — Playlist tabs and the playlist page
+
+**Goal:** a playlist opens in its own kind of tab and works as a read-only page: filter, sort, display, play and edit tracks.
+
+**Precondition:** the lineage WASM has been rebuilt. If `probe.ts` doesn't exit 0, set the status to `awaiting user` and stop.
+
+- **Tab kind:**
+  - Add `PlaylistTab`: `kind: "playlist"`, `id` (the source id), `playlistId`, `name`, `live`, `saved`, `saveFailed`.
+  - Persist it in `StoredTab` (without a version bump).
+  - Add a `queue_music` icon to `icons.tsx` (`Icons.Playlist`) and return it from `tabIcon`.
+- **Explorer:** show playlist sources in the tree with that icon, and open them in playlist tabs. They already rearrange, because `source.arrange` doesn't care about kind.
+- **Page:** reuse `QueryPage`, `QueryToolbar`, the builders and `QueryResults`. Branch on kind only where the spec differs:
+  - `runQuery` compiles a playlist tab with `compilePlaylist`.
+  - Builder actions go through a kind-aware `editLive`.
+  - There's no base selector and no full mode.
+  - No preset applies by default.
+  - "Playlist order" is the first radio in the sort options menu. An empty custom sort also means playlist order.
+- **Autosave** goes through `source.update_definition` on the same `IdleQueue`. The Save button and the ✱ never show. A failed save is still reported through the error bar.
+- **Undo** of definition changes uses the phase 3 history.
+- **Playback** works as from a query, and `source.record_play` takes the source id.
+- **Record editor:** on a playlist page, leave the `playlist_track` entry out of the lineage mapping's `records`. "Edit track" and "Results: Edit selected rows" then begin at the track, and the existing de-duplication edits a repeated track once.
+  - Add a helper that reads a row's entry id and position from result columns 0 and 1 (positions before hidden columns are dropped). Phases 6 and 9 use it.
+- **Wrench menu:** Rename and View SQL. Duplicate and Delete arrive in phase 5.
+- **Stories** (intended snapshot additions): the playlist tab handle, the sort options menu with "Playlist order", and the playlist toolbar.
+- **Tests:** compile routing per kind, a persisted playlist tab surviving a round trip, and a playlist page leaving out `playlist_track` records.
+- **Owed by the user:** nothing can create a playlist until phase 5, so manual checks wait until then.
+
+### Phase 5 — Creating and managing playlists
+
+**Goal:** the user can create, convert, duplicate, rename and delete playlists, and the explorer is the "Sources" section.
+
+- **Rename** the explorer's Queries section to Sources, in code (`QueryTree` → `SourceTree`, `QueryRow` → `SourceRow`, `queryFilter` → `sourceFilter`, …) and in the UI ("Sources", "Filter sources"). This is an intended snapshot change for the explorer stories and the two `app.spec.ts` frames.
+- **"Add playlist":**
+  - Add it to the section's dropdown menu and to the folder context menu.
+  - Turn the tab bar's new-tab button into a dropdown with "New query" and "New playlist".
+  - Each one sends one `dml` request (source + playlist), placed at the top of its folder (follow how `addQuery` computes a top position), and opens the playlist in a new, active tab.
+- **Delete:**
+  - Keep the same confirmation modal as for queries.
+  - Read the playlist's entry ids, then send one `dml` request (entries, then source, then playlist) through the playlist's write queue.
+  - Close the playlist's tab.
+- **Duplicate:** read the entries, send one `dml` request, place the copy at the top of the original's folder, and open it in a new tab. Offer it from both the explorer and the wrench menu.
+- **Rename:** already generic through `source.rename`. Check the explorer, the tab handle and the wrench menu.
+- **"Query: Convert to playlist":**
+  - Add a command (no chord) and a wrench entry.
+  - It's available when the query's current results carry a track id column and the query isn't running or failed. That needs a new `When` predicate, since the set is fixed booleans.
+  - It copies the rows in their displayed order, with positions 1…n.
+  - The tab opens next to the query's tab.
+- **Owed by the user:** a manual pass against the real server, covering create, convert (including one large query to see the request-size failure reported), duplicate, rename, delete, and filter/sort/display/play on the result.
+
+### Phase 6 — Removing tracks and committing conditions
+
+**Goal:** every in-page write except rearranging, each one an undoable step.
+
+- **"Playlist: Remove selected tracks":**
+  - Add the command, with `Delete` as its default chord while a playlist's results have focus. This first needs the keymap change described in "Keyboard shortcuts can't share a chord yet", with tests for dispatch and for the editor's stealing.
+  - Add a "Remove from playlist" entry (`delete` icon) to the row context menu.
+  - It deletes the selected rows' entries in one request.
+- **"Remove these tracks" / "Keep only these tracks"** (under the filter builder, when a filter applies):
+  - Read the playlist's full entries and split them by the ids the filtered results hold (column 0).
+  - Delete one side in one request, then clear the filter.
+  - Record one step holding the writes and the definition change.
+  - Disable per the spec.
+- **"Commit this track order to playlist"** (under the sort builder, when a sort applies):
+  - Run the playlist query with the sort and without the filter, and read the entry ids and old positions in that order.
+  - Write positions 1…n in one request, then reset the sort to "Playlist order".
+  - Record one step holding the writes and the definition change.
+- **Reload** after each write as new rows (see "The results after a write").
+- **Stories** (intended additions): the filter builder with its two buttons, and the sort builder with its commit button.
+
+### Phase 7 — "Add to playlist…"
+
+**Goal:** add selected tracks to any playlist from a menu.
+
+- An "Add to playlist…" entry in the row context menu, and so in the multi-select toolbar's menu, which uses the same body. It shows when the rows are tracks (`lineage.trackIdColumn`).
+- **The modal:**
+  - A sources tree of playlists only. Folders with no playlist below them are left out.
+  - Expansion is seeded from the explorer's `expandedFolders` and kept local to the modal.
+  - A single click adds the tracks and closes the modal. Escape or a click outside closes it.
+  - Give it its own body component, since it seeds state on mount.
+- **`addTracksToPlaylist(sourceId, trackIds)`:**
+  - Runs in the target playlist's write queue.
+  - Reads the maximum position, then inserts the tracks in one request, keeping their relative order.
+  - Reloads the target's tab if it's open. The target's undo history gets no entry.
+- **Stories** (intended additions): the modal, with a nested folder and an omitted empty folder.
+
+### Phase 8 — Dragging result rows
+
+**Goal:** result rows respond to touch and pointer input as the explorer does, and can be dropped onto a playlist in the sources tree.
+
+- **`grid/canvasGrid.ts`:**
+  - A touch-drag still pans.
+  - A touch-hold (reuse `useTreeDrag`'s `LONG_PRESS_MS` / `LONG_PRESS_SLOP` / `HOLD_SLOP`, moved into a shared module) picks the rows up. A hold released without moving raises the context menu, which replaces the platform's long-press `contextmenu` on touch.
+  - A mouse or pen drag past `DRAG_THRESHOLD` starts the same drag.
+  - Holding an unselected row selects it alone first.
+- **The drag session:**
+  - Its state, `{ source tab, track ids, entry ids }`, lives somewhere both the grid and the explorer can reach, such as a store slot that holds plain data.
+  - A floating chip follows the pointer ("3 tracks").
+  - The explorer highlights the playlist row under the pointer (`document.elementFromPoint` → `[data-tree-row]`, with the source's kind and id as data attributes). Only playlists accept the drop, and not the playlist the rows came from.
+  - Dropping calls `addTracksToPlaylist`.
+- **Edge cases:** on a narrow layout where the explorer is a closed drawer, there's nothing to drop on. Record how that behaves.
+- **Tests:**
+  - A behavioral spec drives the mouse drag with `page.mouse` against the assembled app (`?expose=1`).
+  - Unit tests cover the gesture state machine (hold, drag, release without moving) with synthetic pointer events if it can be factored out of the canvas class. Touch can't be screenshot-tested easily, so the user's device check covers it.
+- **Owed by the user:** a touch-device pass covering scroll, hold to drag, hold and release for the menu, and a drop onto a playlist.
+
+### Phase 9 — Rearranging tracks within a playlist
+
+**Goal:** drag rows to a new place in a playlist.
+
+- **Drop indicator:** a drop line between rows, drawn on the canvas, with edge auto-scrolling while dragging. Match the tree's feel.
+- **Optimistic reorder:** `QueryResult` gains a reordered view (a new instance over a row-index map, with its row patches remapped). The page swaps it in, and the moved rows stay selected.
+- **Positions:**
+  - Use the phase 2 math. The neighbors are the adjacent *visible* rows.
+  - If the neighbors are too close, renumber everything.
+  - If a sort applies, compute the final full order (sorted, then the move) and renumber everything in **one** request, which is a single undo step, rather than committing and then moving.
+- **Concurrency:** block a rearrangement while the page's write queue is busy. Other writes queue.
+- **Afterwards:** reload. A failure reloads the stored order and is reported.
+- **Owed by the user:** the final manual pass over the whole feature against the real server, on desktop and on a touch device.
+
+## Deferred follow-ups
+
+(Add entries as phases defer work.)
+
+## Open questions
+
+- **"Add to playlist…" from a playlist page.** Should the modal list the playlist the rows came from? Dragging onto it isn't allowed, and the spec says there's no flow for adding tracks to a playlist from its own page. Phase 7 should leave it out unless the user says otherwise.
