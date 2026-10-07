@@ -6,7 +6,7 @@ use audiopus::coder::Encoder as OpusEncoder;
 use audiopus::{Application, Bitrate, Channels as OpusChannels, SampleRate};
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use ogg::writing::{PacketWriteEndInfo, PacketWriter};
@@ -17,10 +17,11 @@ use serde::Deserialize;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSourceStream, ReadBytes};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tokio::sync::{mpsc, oneshot};
+use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
@@ -31,6 +32,68 @@ use crate::server::AppState;
 const OPUS_SAMPLE_RATE: u32 = 48_000;
 const OPUS_FRAME_SAMPLES: usize = 960; // 20ms at 48kHz
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
+
+// ---------------------------------------------------------------------------
+// Pacing
+//
+// A stream sent as fast as the network will take it doesn't just finish
+// sooner: on a link with a bottleneck (a home uplink behind a tunnel, a phone on
+// a cell network) it fills that bottleneck's buffer, and every other response
+// then queues behind the audio already waiting there. A query that answers in
+// milliseconds on its own takes a second or more per round trip while a track
+// downloads — and a form that loads in two or three round trips takes several.
+//
+// So after a head start, enough to begin playback promptly, a stream is sent at
+// a fixed multiple of real time instead. That keeps the client comfortably
+// ahead of playback (a whole track is still fetched long before it ends) while
+// leaving the link's buffer empty for everything else.
+// ---------------------------------------------------------------------------
+
+/// How much faster than real time a stream is sent once past its head start.
+/// Generous on purpose: a file's byte rate is an estimate (see
+/// [`file_pacing`]), and a variable-bitrate file runs above its average in
+/// places, so this leaves room for both before playback could ever outrun the
+/// download.
+const PACE_MULTIPLE: f64 = 4.0;
+
+/// Seconds of audio a stream sends at full speed before pacing begins — what
+/// the client needs to start playing without waiting on the pace.
+const PACE_HEAD_START_SECS: f64 = 3.0;
+
+/// The lowest average byte rate (128 kbps) a file is paced at. Below it the
+/// estimate is more likely a bad duration than a real file, and pacing on a bad
+/// estimate could starve playback — whereas a file that small hardly loads the
+/// link anyway, so it's sent unpaced.
+const PACE_MIN_BYTES_PER_SEC: f64 = 16_000.0;
+
+/// Paces a stream to `rate` units per second after `head_start` units sent
+/// unpaced. The units are the caller's: bytes for a file served whole, seconds
+/// of audio for a transcode.
+struct Pacer {
+    started: std::time::Instant,
+    head_start: f64,
+    rate: f64,
+}
+
+impl Pacer {
+    fn new(head_start: f64, rate: f64) -> Self {
+        Pacer {
+            started: std::time::Instant::now(),
+            head_start,
+            rate,
+        }
+    }
+
+    /// How long to wait before sending, once `sent` units will have gone.
+    fn delay(&self, sent: f64) -> std::time::Duration {
+        self.delay_after(sent, self.started.elapsed())
+    }
+
+    fn delay_after(&self, sent: f64, elapsed: std::time::Duration) -> std::time::Duration {
+        let due = (sent - self.head_start).max(0.0) / self.rate;
+        std::time::Duration::from_secs_f64(due).saturating_sub(elapsed)
+    }
+}
 
 #[derive(Deserialize)]
 pub struct StreamParams {
@@ -73,6 +136,8 @@ fn format_content_type(format: &str) -> &'static str {
 struct TrackFile {
     path: PathBuf,
     format: String,
+    /// The file's length in seconds, as the scanner measured it.
+    duration: Option<f64>,
 }
 
 fn resolve_path(collection_path: &Path, relative: &str) -> PathBuf {
@@ -84,9 +149,10 @@ fn lookup_track(state: &AppState, track_id: &str) -> Result<TrackFile, StatusCod
     // Every step here fails the same way — a broken database, not a missing
     // track — so they share one error type and one log site, which is also the
     // one place that knows the track id worth recording.
-    let row = state.read(|conn| -> Result<Option<(String, String)>, duckdb::Error> {
+    type Row = (String, String, Option<f64>);
+    let row = state.read(|conn| -> Result<Option<Row>, duckdb::Error> {
         let mut stmt = conn.prepare(
-            "SELECT f.path, f.format::VARCHAR \
+            "SELECT f.path, f.format::VARCHAR, epoch(f.duration) \
              FROM track t JOIN file f ON t.file = f.id \
              WHERE t.id = TRY_CAST(? AS UUID)",
         )?;
@@ -94,13 +160,14 @@ fn lookup_track(state: &AppState, track_id: &str) -> Result<TrackFile, StatusCod
         let mut rows = stmt.query_map([track_id], |row| {
             let relative: String = row.get(0)?;
             let format: String = row.get(1)?;
-            Ok((relative, format))
+            let duration: Option<f64> = row.get(2)?;
+            Ok((relative, format, duration))
         })?;
 
         rows.next().transpose()
     });
 
-    let (relative, format) = match row {
+    let (relative, format, duration) = match row {
         Ok(Some(found)) => found,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -112,6 +179,7 @@ fn lookup_track(state: &AppState, track_id: &str) -> Result<TrackFile, StatusCod
     Ok(TrackFile {
         path: resolve_path(&state.collection_path, &relative),
         format,
+        duration,
     })
 }
 
@@ -121,12 +189,25 @@ pub async fn stream_track(
     Query(params): Query<StreamParams>,
     request: Request,
 ) -> Response {
-    let track = match lookup_track(&state, &track_id) {
-        Ok(t) => t,
-        Err(StatusCode::NOT_FOUND) => {
+    // On a blocking thread, like every other handler's database work: the
+    // connection lock can be held for a while (a checkpoint after a write, a
+    // query streaming to a slow client), and waiting on it here would stall a
+    // runtime worker and every request queued behind it.
+    let lookup = {
+        let state = Arc::clone(&state);
+        let track_id = track_id.clone();
+        tokio::task::spawn_blocking(move || lookup_track(&state, &track_id)).await
+    };
+    let track = match lookup {
+        Ok(Ok(t)) => t,
+        Ok(Err(StatusCode::NOT_FOUND)) => {
             return (StatusCode::NOT_FOUND, "track not found").into_response();
         }
-        Err(status) => return (status, "database error").into_response(),
+        Ok(Err(status)) => return (status, "database error").into_response(),
+        Err(_) => {
+            error!(track_id, "track lookup task panicked");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "track lookup panicked").into_response();
+        }
     };
 
     if !track.path.exists() {
@@ -148,6 +229,7 @@ pub async fn stream_track(
 
 async fn passthrough_response(track: &TrackFile, request: Request) -> Response {
     let content_type = format_content_type(&track.format);
+    let request_method = request.method().clone();
 
     let result = ServeFile::new(&track.path).oneshot(request).await;
     let mut response = match result {
@@ -166,7 +248,113 @@ async fn passthrough_response(track: &TrackFile, request: Request) -> Response {
         .headers_mut()
         .insert(header::CONTENT_TYPE, content_type.parse().unwrap());
 
+    // Only a body of audio is worth pacing: not a 304, a 416, or a HEAD.
+    let status = response.status();
+    if !(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT)
+        || request_method == Method::HEAD
+    {
+        return response;
+    }
+
+    let path = track.path.clone();
+    let duration = track.duration;
+    let Ok(Some(pacing)) = tokio::task::spawn_blocking(move || file_pacing(&path, duration)).await
+    else {
+        return response;
+    };
+
+    // A range request's body starts part-way into the file, perhaps past the
+    // metadata its head start would otherwise have to cover.
+    let start = range_start(&response);
+    let head_start = pacing.audio_offset.saturating_sub(start) as f64
+        + PACE_HEAD_START_SECS * pacing.bytes_per_sec;
+    let pacer = Pacer::new(head_start, PACE_MULTIPLE * pacing.bytes_per_sec);
+
+    // The `Content-Length` (and `Content-Range`) headers stay as `ServeFile` set
+    // them; hyper frames the response by them rather than by the stream.
+    let (parts, body) = response.into_parts();
+    Response::from_parts(parts, paced_body(body, pacer))
+}
+
+/// What pacing a file served whole needs to know: where its audio begins, and
+/// the rate its audio runs at in bytes per second.
+struct FilePacing {
+    audio_offset: u64,
+    bytes_per_sec: f64,
+}
+
+/// Works out how to pace the file at `path`, or `None` to send it unpaced.
+///
+/// A file's average byte rate is its size over its duration, but only once the
+/// metadata at its front is set aside: embedded cover art can run to megabytes,
+/// which would inflate the rate, and which the client must have before it can
+/// play a note — so it's sent in the head start, not at the pace. Probing the
+/// file reads past that metadata and stops where the audio begins. Should a
+/// reader end up somewhere else — past the audio, say, having read an index at
+/// the far end — the rate comes out too low to trust, and the file goes unpaced.
+fn file_pacing(path: &Path, duration: Option<f64>) -> Option<FilePacing> {
+    let duration = duration.filter(|d| d.is_finite() && *d > 0.0)?;
+    let file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let mss = MediaSourceStream::new(
+        Box::new(file),
+        symphonia::core::io::MediaSourceStreamOptions::default(),
+    );
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .ok()?;
+    let audio_offset = probed.format.into_inner().pos();
+
+    let bytes_per_sec = size.checked_sub(audio_offset)? as f64 / duration;
+    (bytes_per_sec >= PACE_MIN_BYTES_PER_SEC).then_some(FilePacing {
+        audio_offset,
+        bytes_per_sec,
+    })
+}
+
+/// Where a response's body starts within the file: the first byte of its
+/// `Content-Range` (`bytes 1000-1999/5000`), or zero for a whole file.
+fn range_start(response: &Response) -> u64 {
     response
+        .headers()
+        .get(header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes "))
+        .and_then(|v| v.split('-').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Re-sends `body` through a channel, holding each chunk back until `pacer`
+/// says it's due. The task ends when the body does, or as soon as the client
+/// goes away (the receiving stream is dropped and the send fails).
+fn paced_body(body: Body, pacer: Pacer) -> Body {
+    let (tx, rx) = mpsc::channel::<Result<Bytes, axum::Error>>(4);
+    tokio::spawn(async move {
+        let mut chunks = body.into_data_stream();
+        let mut sent = 0;
+        while let Some(chunk) = chunks.next().await {
+            if let Ok(bytes) = &chunk {
+                sent += bytes.len();
+                tokio::time::sleep(pacer.delay(sent as f64)).await;
+            }
+            let failed = chunk.is_err();
+            if tx.send(chunk).await.is_err() || failed {
+                return;
+            }
+        }
+    });
+    Body::from_stream(ReceiverStream::new(rx))
 }
 
 async fn transcode_response(track: &TrackFile, start: f64) -> Response {
@@ -410,6 +598,10 @@ fn transcode_inner(
         let mut sample_buf: Option<SampleBuffer<f32>> = None;
         let mut encode_out = vec![0u8; 4000];
         let mut granule_pos: u64 = 0;
+        // In seconds of audio, which the granule position counts exactly. Encoding
+        // runs many times faster than real time, so unpaced, a transcode floods
+        // the link just as a file would.
+        let pacer = Pacer::new(PACE_HEAD_START_SECS, PACE_MULTIPLE);
 
         loop {
             let packet = match format.next_packet() {
@@ -480,6 +672,11 @@ fn transcode_inner(
                 serial,
                 false,
             )?;
+
+            let delay = pacer.delay(granule_pos as f64 / f64::from(OPUS_SAMPLE_RATE));
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
         }
 
         // -- Flush remaining samples through the resampler --
@@ -570,4 +767,46 @@ fn encode_frames(
     ogg.inner_mut().flush()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn pacer_sends_the_head_start_unpaced() {
+        let pacer = Pacer::new(1000.0, 100.0);
+        assert_eq!(pacer.delay_after(1000.0, Duration::ZERO), Duration::ZERO);
+    }
+
+    #[test]
+    fn pacer_holds_back_whatever_is_early() {
+        let pacer = Pacer::new(1000.0, 100.0);
+        // 500 past the head start is due 5s in; at 2s, that's 3s to wait.
+        assert_eq!(
+            pacer.delay_after(1500.0, Duration::from_secs(2)),
+            Duration::from_secs(3)
+        );
+    }
+
+    #[test]
+    fn pacer_never_waits_once_behind() {
+        let pacer = Pacer::new(1000.0, 100.0);
+        assert_eq!(
+            pacer.delay_after(1500.0, Duration::from_secs(9)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn range_start_reads_content_range() {
+        let response = ([(header::CONTENT_RANGE, "bytes 1000-1999/5000")], "").into_response();
+        assert_eq!(range_start(&response), 1000);
+    }
+
+    #[test]
+    fn range_start_is_zero_for_a_whole_file() {
+        assert_eq!(range_start(&"".into_response()), 0);
+    }
 }
