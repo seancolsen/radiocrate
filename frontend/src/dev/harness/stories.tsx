@@ -42,6 +42,7 @@ import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
+import { ExportDataDialog } from "../../components/ExportDataModal";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
 import PageActionsMenu from "../../components/PageActionsMenu";
@@ -734,6 +735,22 @@ export const STORIES: Record<string, Story> = {
       <Menu defaultOpen width="210px" trigger={() => null}>
         <PageActionsMenu tabId={LEMONADE.id} />
       </Menu>
+    ),
+  },
+  // "Export results data" as it opens: all rows chosen, with some selected so
+  // "Selected rows" is on offer too.
+  "export-data/modal": {
+    render: () => (
+      <ExportDataDialog
+        rows="all"
+        selectedCount={3}
+        canExport
+        error={null}
+        onRowsChange={() => {}}
+        onCopy={() => {}}
+        onDownload={() => {}}
+        onClose={() => {}}
+      />
     ),
   },
 

@@ -143,6 +143,7 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
     "Rename",
     "Duplicate",
     "View SQL",
+    "Export results data",
     "Delete",
   ]);
 
@@ -165,6 +166,7 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
 
   // Enter picks the highlighted row — "Rename" starts the tab rename and the
   // menu dismisses, just as clicking the row would.
+  await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
@@ -336,4 +338,34 @@ test("a new query has no name and a Save button until it's saved", async ({
   await save.click();
   await expect(save).toHaveCount(0);
   await expect(tabBar.last()).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+});
+
+test("Export results data copies the selected rows, tab-separated", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openQueryPage(page, "grid=lemonade&expose=1");
+  await page.evaluate(() => {
+    const store = (window as unknown as AppWindow).__appStore;
+    const id = store.state.activeTabId ?? "";
+    store.clickRow(id, 4, { shift: false, ctrl: false });
+    store.clickRow(id, 2, { shift: false, ctrl: true });
+  });
+
+  await page.getByRole("button", { name: "Query actions" }).click();
+  await page.getByRole("menuitem", { name: "Export results data" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading")).toHaveText("Export data");
+  await dialog.getByLabel("Rows").selectOption("selected");
+  await dialog.getByRole("button", { name: "Copy to clipboard" }).click();
+  await expect(dialog).toBeHidden();
+
+  const lines = (
+    await page.evaluate(() => navigator.clipboard.readText())
+  ).split("\n");
+  // Rows 2 and 4, in the order shown; a list cell's values in one field.
+  expect(lines).toHaveLength(2);
+  expect(lines[0].split("\t")).toContain("Beyoncé, Jack White");
+  expect(lines[1].split("\t")).toContain("Beyoncé, The Weeknd");
 });

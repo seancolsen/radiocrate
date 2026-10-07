@@ -47,6 +47,19 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
+/** Which of a page's result rows "Export results data" writes out. */
+export type ExportRows = "all" | "selected";
+
+/** The "Export results data" dialog's state. */
+export interface ExportData {
+  /** The page whose results it exports. */
+  tabId: string;
+  rows: ExportRows;
+  /** Why the last copy or save failed, shown in the dialog (null when it
+   * hasn't). */
+  error: string | null;
+}
+
 /** A fixed sentinel id for the singleton Keyboard Shortcuts tab, so it flows
  * through the same id-keyed tab machinery (select / close / reorder) as
  * queries. Namespaced so it can't collide with a query id. */
@@ -359,6 +372,8 @@ export interface AppState {
   presetSave: PresetSave | null;
   /** The compiled SQL shown by the "View SQL" dialog, when open. */
   viewSql: string | null;
+  /** The "Export results data" dialog, when open. */
+  exportData: ExportData | null;
   /** The in-progress inline rename (tab handle field), when active. */
   renaming: { id: string; buffer: string } | null;
   /** The source pending delete confirmation (modal), when open: a query (saved
@@ -489,6 +504,7 @@ export function initialState(env: AppEnv): AppState {
     presetEdits: {},
     presetSave: null,
     viewSql: null,
+    exportData: null,
     renaming: null,
     pendingDelete: null,
     pendingAddToPlaylist: null,

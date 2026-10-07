@@ -3,7 +3,8 @@ import type { AppEnv } from "../env";
 
 /** A fake {@link AppEnv} for store unit tests: an in-memory `storage`, a
  * `matchMedia` that always reports light/no-match (tests that care about dark
- * mode pass their own), and a `setDocumentTheme` spy instead of a real DOM
+ * mode pass their own), and spies for `setDocumentTheme`, the clipboard and
+ * file saving instead of a real DOM
  * (vitest runs these tests in the `node` environment — see
  * `vitest.config.ts`). */
 export function fakeEnv(overrides: Partial<AppEnv> = {}): AppEnv {
@@ -27,6 +28,8 @@ export function fakeEnv(overrides: Partial<AppEnv> = {}): AppEnv {
         }) as unknown as MediaQueryList,
     ),
     setDocumentTheme: vi.fn(),
+    writeClipboardText: vi.fn(() => Promise.resolve()),
+    saveTextFile: vi.fn(() => Promise.resolve(true)),
     ...overrides,
   };
 }

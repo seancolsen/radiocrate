@@ -14,6 +14,7 @@ import UpdateBanner from "./components/UpdateBanner";
 import AboutModal from "./components/AboutModal";
 import AddToPlaylistModal from "./components/AddToPlaylistModal";
 import DeleteConfirmModal from "./components/DeleteConfirmModal";
+import ExportDataModal from "./components/ExportDataModal";
 import SettingModal from "./components/SettingModal";
 
 /** One tab's page: the one its kind calls for. The one place tab kinds fan out
@@ -114,6 +115,7 @@ export default function App(): JSX.Element {
       <DeleteConfirmModal />
       {/* Raised from a result row's menu, on any page of tracks. */}
       <AddToPlaylistModal />
+      <ExportDataModal />
     </div>
   );
 }

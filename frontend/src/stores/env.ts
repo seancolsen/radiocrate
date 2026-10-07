@@ -13,6 +13,62 @@ export interface AppEnv {
    * `themeColor` repoints the single `theme-color` meta so Android tints the
    * status bar behind the clock correctly (see `stores/app/theme.ts`). */
   setDocumentTheme: (attr: "light" | "dark" | null, themeColor: string) => void;
+  /** `navigator.clipboard.writeText`. Called synchronously from the click
+   * that asks for it: Safari only lets a gesture's own call stack write. */
+  writeClipboardText: (text: string) => Promise<void>;
+  /** Offers `text` to the user as a file named `name`, to be saved where they
+   * choose. Resolves `false` when they decline (cancel the save dialog). Called
+   * synchronously from the click that asks for it, like
+   * {@link AppEnv.writeClipboardText}: the save dialog needs the gesture too. */
+  saveTextFile: (name: string, text: string, type: string) => Promise<boolean>;
+}
+
+/** The File System Access API's save dialog, which TypeScript's DOM library
+ * doesn't declare yet — and which only Chromium has. */
+interface SaveFilePickerWindow {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<FileSystemFileHandle>;
+}
+
+/** Saves `text` as `name` through the browser's save dialog where there is one
+ * to call (Chromium), so the user picks where it goes. Elsewhere it's a plain
+ * download, which asks or doesn't as the browser's own settings say. */
+async function saveTextFile(
+  name: string,
+  text: string,
+  type: string,
+): Promise<boolean> {
+  const blob = new Blob([text], { type });
+  const picker = (window as SaveFilePickerWindow).showSaveFilePicker;
+  if (picker) {
+    const extension = name.slice(name.lastIndexOf("."));
+    let handle: FileSystemFileHandle;
+    try {
+      handle = await picker({
+        suggestedName: name,
+        types: [{ description: "CSV file", accept: { [type]: [extension] } }],
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return false;
+      }
+      throw err;
+    }
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  // Revoked on a later task, once the click has started the download.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return true;
 }
 
 /** The real browser environment — what `main.tsx` and the dev harness use. */
@@ -28,5 +84,7 @@ export function browserEnv(): AppEnv {
       );
       if (meta) meta.content = themeColor;
     },
+    writeClipboardText: (text) => navigator.clipboard.writeText(text),
+    saveTextFile,
   };
 }

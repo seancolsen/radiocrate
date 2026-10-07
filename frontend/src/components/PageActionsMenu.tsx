@@ -15,11 +15,11 @@ import { MenuItem, MenuSeparator } from "./ui/Menu";
  * an unsaved one is named as it's saved), Duplicate, Revert (only while a save
  * has failed, leaving the working query apart from what the backend holds),
  * Convert to playlist (only while the rows on screen are the query's tracks),
- * View SQL, and Delete (Pin remains deferred).
+ * View SQL, Export results data, and Delete (Pin remains deferred).
  *
  * A playlist's menu leaves out everything that's only a query's (the Base
- * submenu, Revert, Convert), and offers Rename, Duplicate, View SQL and
- * Delete. */
+ * submenu, Revert, Convert), and offers Rename, Duplicate, View SQL, Export
+ * results data and Delete. */
 export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
   const playlist = useApp(
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
@@ -33,8 +33,13 @@ export default function PageActionsMenu(props: { tabId: string }): JSX.Element {
 
 /** A playlist's wrench menu body. */
 function PlaylistActions(props: { tabId: string }): JSX.Element {
-  const { beginRename, duplicatePlaylist, openViewSql, requestDelete } =
-    useAppActions();
+  const {
+    beginRename,
+    duplicatePlaylist,
+    openViewSql,
+    openExportData,
+    requestDelete,
+  } = useAppActions();
   return (
     <>
       <MenuItem
@@ -51,6 +56,11 @@ function PlaylistActions(props: { tabId: string }): JSX.Element {
         icon={Icons.ViewSql}
         label="View SQL"
         onClick={() => openViewSql(props.tabId)}
+      />
+      <MenuItem
+        icon={Icons.Export}
+        label="Export results data"
+        onClick={() => openExportData(props.tabId)}
       />
       <MenuSeparator />
       <MenuItem
@@ -74,6 +84,7 @@ function QueryActions(props: { tabId: string }): JSX.Element {
     duplicateQuery,
     revertLive,
     openViewSql,
+    openExportData,
     requestDelete,
   } = useAppActions();
   return (
@@ -110,6 +121,11 @@ function QueryActions(props: { tabId: string }): JSX.Element {
         icon={Icons.ViewSql}
         label="View SQL"
         onClick={() => openViewSql(props.tabId)}
+      />
+      <MenuItem
+        icon={Icons.Export}
+        label="Export results data"
+        onClick={() => openExportData(props.tabId)}
       />
       <MenuSeparator />
       <MenuItem

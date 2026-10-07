@@ -498,6 +498,7 @@ export function createCommandsStore(
       a.pendingAddToPlaylist !== null ||
       a.rowDrag !== null ||
       a.viewSql !== null ||
+      a.exportData !== null ||
       a.presetSave !== null ||
       a.renaming !== null ||
       a.aboutOpen ||

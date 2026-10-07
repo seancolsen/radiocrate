@@ -134,6 +134,7 @@ import {
 import {
   selectEffectivePresets,
   selectCanConvertToPlaylist,
+  selectExportText,
   selectCanRedo,
   selectCanWriteFromRows,
   selectFilterApplied,
@@ -162,6 +163,7 @@ import {
   emptyPage,
   type AppState,
   type CurrentTrack,
+  type ExportRows,
   type PageTab,
   type PresetEdit,
   type PresetSave,
@@ -625,6 +627,18 @@ export interface AppActions {
   confirmPresetSave: (tabId: string) => void;
   openViewSql: (tabId: string) => void;
   closeViewSql: () => void;
+  /** Open the "Export results data" dialog on `tabId`'s results (the wrench
+   * menu's entry). */
+  openExportData: (tabId: string) => void;
+  setExportRows: (rows: ExportRows) => void;
+  closeExportData: () => void;
+  /** Copy the dialog's rows to the clipboard, closing it once they're there.
+   * A gesture action: call it from the click itself. */
+  copyExportData: () => void;
+  /** Save the dialog's rows to a file the user picks, closing it once they're
+   * saved (and leaving it open when they cancel the save dialog). A gesture
+   * action, like {@link AppActions.copyExportData}. */
+  downloadExportData: () => void;
   /** Open the About dialog — the Settings menu's entry and the
    * `app.check_for_updates` command's action. */
   openAbout: () => void;
@@ -654,6 +668,9 @@ export interface AppActions {
   dismissRpcError: () => void;
 }
 
+/** The file "Export results data" offers to save. */
+const EXPORT_FILE_NAME = "RadioCrate-export.csv";
+
 /** Builds the write half of the app store: every action closes over the
  * vanilla store's `getState`/`setState` plus the non-reactive internals that
  * never belonged in `AppState` (selection anchors, run tokens, debounce
@@ -675,6 +692,37 @@ export function createAppActions(
     ([tabs, activeTabId]) => persistTabs(env, tabs, activeTabId),
     { equalityFn: shallow },
   );
+
+  /** Settles a copy or save the export dialog started: closes the dialog once
+   * it's done (`true`), leaves it open when the user declined (`false`), and
+   * shows why when it failed. Only while it's still the dialog that started it
+   * — the user may have closed it, or changed what it exports, meanwhile. A
+   * failure shown from an earlier try is cleared as this one starts. */
+  const finishExport = (done: Promise<boolean>): void => {
+    set((s) => {
+      if (s.exportData) s.exportData.error = null;
+    });
+    const asked = get().exportData;
+    done.then(
+      (ok) => {
+        if (ok && get().exportData === asked) {
+          set((s) => {
+            s.exportData = null;
+          });
+        }
+      },
+      (err: unknown) => {
+        if (get().exportData !== asked) return;
+        set((s) => {
+          if (s.exportData) {
+            s.exportData.error = String(
+              err instanceof Error ? err.message : err,
+            );
+          }
+        });
+      },
+    );
+  };
 
   // Tabs that have been auto-run once (the "have I run this tab yet" guard).
   const autoRun = new Set<string>();
@@ -3135,6 +3183,35 @@ export function createAppActions(
       set((s) => {
         s.viewSql = null;
       }),
+    openExportData: (tabId) => {
+      if (!selectPageTab(get(), tabId)) return;
+      set((s) => {
+        s.exportData = { tabId, rows: "all", error: null };
+      });
+    },
+    setExportRows: (rows) =>
+      set((s) => {
+        if (s.exportData) {
+          s.exportData.rows = rows;
+          s.exportData.error = null;
+        }
+      }),
+    closeExportData: () =>
+      set((s) => {
+        s.exportData = null;
+      }),
+    copyExportData: () => {
+      const text = selectExportText(get());
+      if (text === undefined) return;
+      finishExport(env.writeClipboardText(text).then(() => true));
+    },
+    downloadExportData: () => {
+      const text = selectExportText(get());
+      if (text === undefined) return;
+      finishExport(
+        env.saveTextFile(EXPORT_FILE_NAME, text, "text/csv;charset=utf-8"),
+      );
+    },
     openAbout: () =>
       set((s) => {
         s.aboutOpen = true;

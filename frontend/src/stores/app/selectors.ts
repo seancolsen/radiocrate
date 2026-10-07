@@ -6,6 +6,7 @@ import {
   PLAYLIST_BASE,
   type Sections,
 } from "../../query/playlist";
+import { resultToCsv } from "../../query/exportCsv";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
@@ -130,6 +131,31 @@ export const selectRowSelection = (
   s: AppState,
   tabId: string,
 ): ReadonlySet<number> => s.pages[tabId]?.selection ?? EMPTY_SELECTION;
+
+/** The rows the open "Export results data" dialog would write out, as
+ * tab-separated text — `undefined` while it's closed or its page has no result
+ * yet. Builds a fresh string: for the actions, never subscribe to it. */
+export const selectExportText = (s: AppState): string | undefined => {
+  const pending = s.exportData;
+  const result = pending && s.pages[pending.tabId]?.result;
+  if (!pending || !result) return undefined;
+  return resultToCsv(
+    result,
+    pending.rows === "selected"
+      ? selectRowSelection(s, pending.tabId)
+      : undefined,
+  );
+};
+
+/** Whether the open export dialog has rows to write out: its page has a result,
+ * and — exporting the selected rows — some are selected. */
+export const selectCanExport = (s: AppState): boolean => {
+  const pending = s.exportData;
+  if (!pending || !s.pages[pending.tabId]?.result) return false;
+  return (
+    pending.rows === "all" || selectRowSelection(s, pending.tabId).size > 0
+  );
+};
 
 /** Whether a run of `tabId`'s query is in flight — what spins the toolbar's
  * Refresh icon. */

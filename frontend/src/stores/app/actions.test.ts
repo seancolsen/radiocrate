@@ -107,6 +107,7 @@ import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
 import {
   selectCanConvertToPlaylist,
+  selectCanExport,
   selectCanRedo,
   selectCanUndo,
   selectCanWriteFromRows,
@@ -2881,5 +2882,78 @@ describe("rearranging a playlist's rows", () => {
     expect(drag()?.gap).toBeNull();
     expect(bundle.actions.endRowDrag(true)).toBe(false);
     expect(dml).not.toHaveBeenCalled();
+  });
+});
+
+describe("exporting results data", () => {
+  let bundle: AppStoreBundle;
+  let env: ReturnType<typeof fakeEnv>;
+  beforeEach(() => {
+    env = fakeEnv();
+    bundle = createAppStore(env);
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults(
+      "a",
+      buildResultFromStringRows([
+        ["x", "1"],
+        ["y", "2"],
+        ["z", "3"],
+      ]),
+    );
+    bundle.actions.openExportData("a");
+  });
+
+  it("opens on all rows", () => {
+    expect(bundle.store.getState().exportData).toEqual({
+      tabId: "a",
+      rows: "all",
+      error: null,
+    });
+    expect(selectCanExport(bundle.store.getState())).toBe(true);
+  });
+
+  it("copies every row to the clipboard, then closes", async () => {
+    bundle.actions.copyExportData();
+    expect(env.writeClipboardText).toHaveBeenCalledWith("x\t1\ny\t2\nz\t3");
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().exportData).toBeNull(),
+    );
+  });
+
+  it("exports only the selected rows, in display order", () => {
+    bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: true });
+    bundle.actions.setExportRows("selected");
+    bundle.actions.downloadExportData();
+    expect(env.saveTextFile).toHaveBeenCalledWith(
+      "RadioCrate-export.csv",
+      "x\t1\nz\t3",
+      "text/csv;charset=utf-8",
+    );
+  });
+
+  it("has nothing to export from no selected rows", () => {
+    bundle.actions.setExportRows("selected");
+    expect(selectCanExport(bundle.store.getState())).toBe(false);
+  });
+
+  it("stays open when the save dialog is cancelled", async () => {
+    vi.mocked(env.saveTextFile).mockResolvedValueOnce(false);
+    bundle.actions.downloadExportData();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bundle.store.getState().exportData?.error).toBeNull();
+  });
+
+  it("shows why a copy failed, and stays open", async () => {
+    vi.mocked(env.writeClipboardText).mockRejectedValueOnce(
+      new Error("Write permission denied."),
+    );
+    bundle.actions.copyExportData();
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().exportData?.error).toBe(
+        "Write permission denied.",
+      ),
+    );
   });
 });

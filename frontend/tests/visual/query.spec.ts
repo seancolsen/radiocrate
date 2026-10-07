@@ -87,6 +87,18 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The "Export data" dialog: the Rows choice over Cancel, and the two ways
+  // out. Shot through the dialog (it portals out of the stage).
+  test(`export-data/modal - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "export-data/modal", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Rows")).toBeFocused();
+    await expect(dialog.getByLabel("Rows")).toHaveValue("all");
+    await expect(dialog).toHaveScreenshot(
+      snapshot("export-data/modal", colorScheme),
+    );
+  });
+
   // A playlist's sort options: "Playlist order" first, and checked.
   test(`sort-options/playlist - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "sort-options/playlist", colorScheme);

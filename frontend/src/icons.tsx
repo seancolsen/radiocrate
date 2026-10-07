@@ -44,6 +44,7 @@ import Shuffle from "~icons/material-symbols/shuffle";
 import Delete from "~icons/material-symbols/delete";
 import Check from "~icons/material-symbols/check";
 import ViewSql from "~icons/material-symbols/manufacturing";
+import Export from "~icons/material-symbols/file-export";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
 import Querydown from "~icons/material-symbols/code";
@@ -121,6 +122,7 @@ export const Icons = {
   Delete, // delete or remove: sources, folders, records, a playlist's tracks
   Check, // a playlist's "Keep only these tracks" and "Commit this track order"
   ViewSql, // View SQL menu entry
+  Export, // "Export results data" menu entry
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
   Querydown, // full-querydown mode: its Base-submenu entry and toolbar toggle
