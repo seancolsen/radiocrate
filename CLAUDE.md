@@ -139,3 +139,12 @@ rules.
 - **Portals** are `createPortal(…, document.body)`. React focus events bubble
   through portals, so a form that must ignore focus moving into its own portaled
   menu listens with a native `focusout` listener.
+
+## Committing your work
+
+Unless instructed otherwise, commit your work to git after each user prompt.
+
+- Use the current branch. Do not create new branches.
+- Use a concise but descriptive commit message subject. Then a blank line. Then write a brief summary of the change.
+- If your work includes refactoring, try to separate that refactoring out into separate commits that can stand on their own. Only do this if it's easy though.
+
