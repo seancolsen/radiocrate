@@ -298,13 +298,15 @@ for (const colorScheme of SCHEMES) {
       "Edit album",
       "Show album tracks",
       "Rate track",
+      "Artists",
     ]);
   });
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
   // the row carries, "Show album tracks" for an album, "Rate track" and "Add
-  // to playlist…" for a track, then "Select multiple". Shot through the menu (it portals out of the
-  // stage).
+  // to playlist…" for a track, the track's "Artists" (but not its "Album",
+  // whose entries are already there), then "Select multiple". Shot through the
+  // menu (it portals out of the stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
     const menu = page.getByRole("menu");
@@ -314,6 +316,7 @@ for (const colorScheme of SCHEMES) {
       "Show album tracks",
       "Rate track",
       "Add to playlist…",
+      "Artists",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
@@ -321,8 +324,8 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The same menu on a playlist's page: "Remove from playlist" before
-  // "Select multiple".
+  // The same menu on a playlist's page, on a track alone: "Remove from
+  // playlist", then the track's "Artists" and "Album".
   test(`result-row/playlist-context-menu - ${colorScheme}`, async ({
     page,
   }) => {
@@ -333,6 +336,8 @@ for (const colorScheme of SCHEMES) {
       "Rate track",
       "Add to playlist…",
       "Remove from playlist",
+      "Artists",
+      "Album",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
@@ -357,6 +362,7 @@ for (const colorScheme of SCHEMES) {
       "3: ⭐ (Prefer)",
       "4: ❤️ (Love)",
       "Add to playlist…",
+      "Artists",
       "Select multiple",
     ]);
     await expect(menu.getByRole("menu")).toHaveScreenshot(
@@ -373,6 +379,85 @@ for (const colorScheme of SCHEMES) {
     await expect(menu.getByText("Loading…")).toBeVisible();
     await expect(menu.getByRole("menu")).toHaveScreenshot(
       snapshot("result-row/rate-submenu-loading", colorScheme),
+    );
+  });
+
+  // A track's "Artists" submenu, opened out: the artists credited on it, in
+  // credit order. Shot through the nested panel.
+  test(`result-row/artists-submenu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/artists-submenu", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Artists" }).click();
+    const artists = menu.getByRole("menu");
+    await expect(artists.getByRole("menuitem")).toHaveText([
+      "Beyoncé",
+      "Jack White",
+    ]);
+    await expect(artists).toHaveScreenshot(
+      snapshot("result-row/artists-submenu", colorScheme),
+    );
+  });
+
+  // The same submenu with its credits still loading: a spinner in place of
+  // the artists.
+  test(`result-row/artists-submenu-loading - ${colorScheme}`, async ({
+    page,
+  }) => {
+    await openStory(page, "result-row/artists-submenu-loading", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Artists" }).click();
+    const artists = menu.getByRole("menu");
+    await expect(artists.getByText("Loading…")).toBeVisible();
+    await expect(artists).toHaveScreenshot(
+      snapshot("result-row/artists-submenu-loading", colorScheme),
+    );
+  });
+
+  // One artist in it, opened out: what an artist's own row offers.
+  test(`result-row/artist-submenu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/artist-submenu", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Artists" }).click();
+    await menu.getByRole("menuitem", { name: "Beyoncé" }).click();
+    const artist = menu.getByRole("menu").getByRole("menu");
+    await expect(artist.getByRole("menuitem")).toHaveText([
+      "Edit artist",
+      "Show artist tracks",
+      "Show artist albums",
+    ]);
+    await expect(artist).toHaveScreenshot(
+      snapshot("result-row/artist-submenu", colorScheme),
+    );
+  });
+
+  // A track's "Album" submenu, opened out: what its album's own row offers.
+  test(`result-row/album-submenu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/album-submenu", colorScheme);
+    const menu = page.getByRole("menu").first();
+    await menu.getByRole("menuitem", { name: "Album", exact: true }).click();
+    const album = menu.getByRole("menu");
+    await expect(album.getByRole("menuitem")).toHaveText([
+      "Edit album",
+      "Show album tracks",
+      "Artists",
+    ]);
+    await expect(album).toHaveScreenshot(
+      snapshot("result-row/album-submenu", colorScheme),
+    );
+  });
+
+  // An artist row's own context menu.
+  test(`result-row/artist-context-menu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/artist-context-menu", colorScheme);
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Edit artist",
+      "Show artist tracks",
+      "Show artist albums",
+      "Select multiple",
+    ]);
+    await expect(menu).toHaveScreenshot(
+      snapshot("result-row/artist-context-menu", colorScheme),
     );
   });
 

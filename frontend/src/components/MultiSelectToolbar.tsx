@@ -1,14 +1,11 @@
 import { forwardRef, useMemo } from "react";
 import { Icons } from "../icons";
 import {
-  recordsForRows,
+  recordGroupsForRows,
   selectPageTab,
-  selectRatings,
-  selectRatingsLoading,
   selectRowSelection,
-  selectTableRecordsForRows,
 } from "../stores/app";
-import { useApp, useAppActions, useStores } from "../stores/react";
+import { useApp, useAppActions } from "../stores/react";
 import IconButton from "./ui/IconButton";
 import { Menu } from "./ui/Menu";
 import RowActionsMenu from "./RowActionsMenu";
@@ -40,28 +37,18 @@ function selectionLabel(n: number): string {
  * to know how far above the first row to let the user scroll. */
 const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
   function MultiSelectToolbar(props, ref) {
-    const stores = useStores();
-    const {
-      loadRatings,
-      rateTracks,
-      removeRows,
-      requestAddToPlaylist,
-      setMultiSelect,
-      setRecordEditorRecords,
-      showChildRecords,
-    } = useAppActions();
+    const { loadRatings, removeRows, requestAddToPlaylist, setMultiSelect } =
+      useAppActions();
     // Three references already in state, combined here rather than through a
     // selector that would build a fresh array on every store write (state
     // management rule 2).
     const selection = useApp((s) => selectRowSelection(s, props.tabId));
     const result = useApp((s) => s.pages[props.tabId]?.result);
     const lineage = useApp((s) => s.pages[props.tabId]?.lineage);
-    const records = useMemo(
-      () => recordsForRows(result, lineage, selection),
+    const groups = useMemo(
+      () => recordGroupsForRows(result, lineage, selection),
       [result, lineage, selection],
     );
-    const ratings = useApp(selectRatings);
-    const ratingsLoading = useApp(selectRatingsLoading);
     // Tracks can be added to a playlist, and a playlist's rows can be removed
     // from it, whether or not they identify a record to edit.
     const tracks = lineage?.trackIdColumn !== undefined;
@@ -87,7 +74,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
               icon={Icons.More}
               label="Selection actions"
               active={api.open}
-              disabled={records.length === 0 && !tracks && !playlist}
+              disabled={groups.length === 0 && !tracks && !playlist}
               onClick={() => {
                 // Same as the row context menu: the rating vocabulary is
                 // fetched as the menu that offers it opens.
@@ -98,46 +85,8 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
           )}
         >
           <RowActionsMenu
-            records={records}
-            onEdit={(record) =>
-              setRecordEditorRecords(
-                props.tabId,
-                record.table,
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  selection,
-                  record.table,
-                ),
-              )
-            }
-            onShowTracks={() =>
-              showChildRecords(
-                props.tabId,
-                "album",
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  selection,
-                  "album",
-                ),
-                "track",
-              )
-            }
-            ratings={ratings}
-            ratingsLoading={ratingsLoading}
-            onRate={(ratingId) =>
-              rateTracks(
-                props.tabId,
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  selection,
-                  "track",
-                ),
-                ratingId,
-              )
-            }
+            tabId={props.tabId}
+            groups={groups}
             onAddToPlaylist={
               tracks
                 ? () => requestAddToPlaylist(props.tabId, selection)

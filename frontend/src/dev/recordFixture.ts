@@ -9,8 +9,9 @@
 // `?records=track,album` gives its rows the keys `track-1` … `track-5`, which is
 // what the ids below are.
 //
-// The fake query runner interprets only the shapes `query/recordForm.ts` and
-// `query/embeddedRecord.ts` generate — `col:="value"` conditions, `[{…} {…}]`
+// The fake query runner interprets only the shapes `query/recordForm.ts`,
+// `query/embeddedRecord.ts` and `query/relatedRecords.ts` generate —
+// `col:="value"` / `link.col:="value"` conditions, `[{…} {…}]`
 // alternatives, `$col` / `$link.col` / `$#table` display expressions, `\\col` /
 // `\\col \d` sorting — rather than being a SQL engine. If the generators learn a
 // new shape, this learns it too.
@@ -234,26 +235,27 @@ const TABLE_ROWS: Record<string, Row[]> = {
   ],
 };
 
-/** One parsed filter line: a column, a value, and whether the match is exact
- * (`:=`) or a substring (`:`). */
+/** One parsed filter line: a column path, a value, and whether the match is
+ * exact (`:=`) or a substring (`:`). */
 interface Condition {
-  column: string;
+  path: string;
   value: string;
   exact: boolean;
 }
 
-/** One condition per line: `col:="value"` as `keyConditions` writes them, and
+/** One condition per line: `col:="value"` as `keyConditions` writes them (or
+ * `link.col:="value"`, one hop through a link), and
  * the looser `col:value` / `col:"value"` substring form a user types into the
  * record picker's search box. */
 function parseConditions(filter: string): Condition[] {
   const conditions: Condition[] = [];
   for (const line of filter.split("\n")) {
-    const match = /^(\w+):(=?)\s*(?:"((?:[^"\\]|\\.)*)"|(\S+))$/.exec(
+    const match = /^([\w.]+):(=?)\s*(?:"((?:[^"\\]|\\.)*)"|(\S+))$/.exec(
       line.trim(),
     );
     if (!match) continue;
     conditions.push({
-      column: match[1],
+      path: match[1],
       value: (match[3] ?? match[4]).replace(/\\(.)/g, "$1"),
       exact: match[2] === "=",
     });
@@ -277,9 +279,9 @@ function parseFilter(filter: string): Condition[][] {
     : parseConditions(filter).map((condition) => [condition]);
 }
 
-/** Whether one row satisfies one condition. */
-function matches(row: Row, condition: Condition): boolean {
-  const cell = row[condition.column];
+/** Whether one row of `base` satisfies one condition. */
+function matches(base: string, row: Row, condition: Condition): boolean {
+  const cell = readPath(base, row, condition.path);
   if (condition.exact) return cell === condition.value;
   return (cell ?? "").toLowerCase().includes(condition.value.toLowerCase());
 }
@@ -320,7 +322,7 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
   const groups = parseFilter(q.filter);
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
     groups.some((conditions) =>
-      conditions.every((condition) => matches(row, condition)),
+      conditions.every((condition) => matches(q.base, row, condition)),
     ),
   );
   const terms = parseSort(q.sort);

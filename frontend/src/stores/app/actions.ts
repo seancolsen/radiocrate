@@ -100,6 +100,10 @@ import {
 } from "../../query/definition";
 import { querydownReady } from "../../query/querydown";
 import { fetchRatings } from "../../query/ratings";
+import {
+  artistAlbumsFilter,
+  artistTracksFilter,
+} from "../../query/relatedRecords";
 import { childRecordsTabQuery, embedSpec } from "../../query/embeddedRecord";
 import { buildFormFields, type RecordQuery } from "../../query/recordForm";
 import {
@@ -559,6 +563,16 @@ export interface AppActions {
     parentTable: string,
     parents: readonly RecordRef[],
     childTable: string,
+  ) => void;
+  /** Open the `table` records of `artists` — the tracks credited to them, or
+   * the albums holding those tracks — in a new query tab beside `tabId`: the
+   * row menu's "Show artist tracks" and "Show artist albums". The filter is
+   * exactly that; the sort and display are the table's defaults. A no-op when
+   * no artist has an `id` to point at. */
+  showArtistRecords: (
+    tabId: string,
+    artists: readonly RecordRef[],
+    table: "track" | "album",
   ) => void;
 
   /** Begin renaming query `id`, seeding the buffer with its current name. */
@@ -2665,6 +2679,24 @@ export function createAppActions(
           embedSpec(tables, field.table, field.column),
         ),
       );
+    },
+
+    showArtistRecords: (tabId, artists, table) => {
+      const ids = new Set<string>();
+      for (const artist of artists) {
+        const id = artist.key.find((k) => k.column === "id")?.value;
+        if (id) ids.add(id);
+      }
+      if (ids.size === 0) return;
+      const def = definitionForBase(table, selectEffectivePresets(get()));
+      def.filter = {
+        custom: (table === "track" ? artistTracksFilter : artistAlbumsFilter)([
+          ...ids,
+        ]),
+        presets: [],
+      };
+      const beside = get().tabs.findIndex((t) => t.id === tabId);
+      openUnsavedTab(def, { index: beside === -1 ? undefined : beside + 1 });
     },
 
     // Only a saved source has a name of its own to rename; a settings tab's

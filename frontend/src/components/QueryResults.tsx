@@ -12,17 +12,14 @@ import { CanvasGrid } from "../grid/canvasGrid";
 import {
   selectMultiSelect,
   selectPageTab,
-  selectRatings,
-  selectRatingsLoading,
-  selectRecordsForRows,
+  selectRecordGroupsForRows,
   selectResultCount,
   selectResultIsRefresh,
   selectResultsScroll,
   selectRowDropGap,
   selectRowRecords,
   selectRowSelection,
-  selectTableRecordsForRows,
-  type RecordRef,
+  type RecordGroup,
 } from "../stores/app";
 import { recordIdentity, selectModifiedRecords } from "../stores/forms";
 import type { Stores } from "../stores/createStores";
@@ -63,7 +60,7 @@ import RowDragChip from "./RowDragChip";
 // one for the grid.
 
 /** An open row context menu: where it was raised, the rows it acts on, and the
- * records it offers to edit.
+ * records those rows identify.
  *
  * The rows and records are captured when the menu is *raised* rather than read
  * from the store as it renders: the grid beneath is frozen and the menu blocks
@@ -79,10 +76,10 @@ interface RowMenu {
    * being assembled in multi-select mode), in which case every selected row
    * (the bulk case; see `RecordEditorTarget`). */
   rows: readonly number[];
-  /** One entry per table whose primary key those rows carry (a track row
+  /** One group per table whose primary key those rows carry (a track row
    * joined to its album offers both) — empty for rows that identify nothing,
    * where the menu still offers "Select multiple". */
-  records: readonly RecordRef[];
+  groups: readonly RecordGroup[];
 }
 
 /** The rows whose records the editor is holding unsaved changes for — a ✱ on
@@ -158,12 +155,9 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     endRowDrag,
     hoverRowDrag,
     loadRatings,
-    rateTracks,
     removeRows,
     requestAddToPlaylist,
     setMultiSelect,
-    setRecordEditorRecords,
-    showChildRecords,
     setResultsScroll,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
@@ -175,11 +169,6 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   const tracks = useApp(
     (s) => s.pages[props.tabId]?.lineage?.trackIdColumn !== undefined,
   );
-  // The "Rate track" submenu's rows. Read here rather than in the menu body so
-  // that body stays a function of its props — the multi-select toolbar renders
-  // the same one.
-  const ratings = useApp(selectRatings);
-  const ratingsLoading = useApp(selectRatingsLoading);
   // How many rows this page has in hand, while they're being dragged (0
   // otherwise): every one lists an entry on a playlist's page, and holds a
   // track elsewhere.
@@ -268,15 +257,15 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
           : selection.size > 1 && selection.has(index);
         if (!keep) clickRow(tabId, index, { shift: false, ctrl: false });
         const rows = [...selectRowSelection(store.getState(), tabId)];
-        const records = selectRecordsForRows(store.getState(), tabId, rows);
+        const groups = selectRecordGroupsForRows(store.getState(), tabId, rows);
         // Nothing editable in the targeted rows leaves the menu with only
         // "Select multiple" — and nothing at all once that mode is already on.
-        if (records.length === 0 && multiMode) return;
+        if (groups.length === 0 && multiMode) return;
         // The rating vocabulary is fetched the first time a menu that offers it
         // is raised, which is here — an event handler, so no effect has to
         // chase the menu's open state.
-        if (records.some((record) => record.table === "track")) loadRatings();
-        setRowMenu({ x, y, rows, records });
+        if (groups.some((group) => group.table === "track")) loadRatings();
+        setRowMenu({ x, y, rows, groups });
       },
       onRowDragStart: (index, x, y) => {
         dragPoint.current = { x, y };
@@ -467,46 +456,8 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       {rowMenu && (
         <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={closeMenu}>
           <RowActionsMenu
-            records={rowMenu.records}
-            onEdit={(record) =>
-              setRecordEditorRecords(
-                props.tabId,
-                record.table,
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  rowMenu.rows,
-                  record.table,
-                ),
-              )
-            }
-            onShowTracks={() =>
-              showChildRecords(
-                props.tabId,
-                "album",
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  rowMenu.rows,
-                  "album",
-                ),
-                "track",
-              )
-            }
-            ratings={ratings}
-            ratingsLoading={ratingsLoading}
-            onRate={(ratingId) =>
-              rateTracks(
-                props.tabId,
-                selectTableRecordsForRows(
-                  stores.app.store.getState(),
-                  props.tabId,
-                  rowMenu.rows,
-                  "track",
-                ),
-                ratingId,
-              )
-            }
+            tabId={props.tabId}
+            groups={rowMenu.groups}
             onAddToPlaylist={
               tracks
                 ? () => requestAddToPlaylist(props.tabId, rowMenu.rows)

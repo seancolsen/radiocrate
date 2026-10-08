@@ -401,6 +401,34 @@ export function MenuNote(props: { text: string }): JSX.Element {
   return <div className="text-ink-weak px-2 py-1 text-sm">{props.text}</div>;
 }
 
+/** A submenu's rows that arrive after it opens: a spinning note until
+ * `loading` clears, then `children`.
+ *
+ * A keyboard open moves focus to a submenu's first row as its panel mounts —
+ * which, while the rows are still loading, finds none and leaves focus on the
+ * row that opened it. So once they arrive, focus moves on to the first of
+ * them, unless something else has taken it in the meantime. */
+export function MenuLoader(props: {
+  loading: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  const { menu, depth } = useMenuLevel();
+  const { loading } = props;
+  useLayoutEffect(() => {
+    if (loading || !menu.tree.path[depth - 1]?.focus) return;
+    const active = document.activeElement;
+    const at = active ? menu.depthOf(active) : undefined;
+    if (at === undefined || at < depth) menu.rows(depth)[0]?.focus();
+  }, [loading, menu, depth]);
+  if (!loading) return <>{props.children}</>;
+  return (
+    <div className="text-ink-weak flex items-center gap-2 px-2 py-1 text-sm">
+      <Icons.Spinner className="size-4 shrink-0" />
+      Loading…
+    </div>
+  );
+}
+
 /** A hairline separator between menu groups. */
 export function MenuSeparator(): JSX.Element {
   return <div className="border-edge my-1 border-t" />;

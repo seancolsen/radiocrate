@@ -530,6 +530,74 @@ describe("showChildRecords", () => {
   });
 });
 
+describe("showArtistRecords", () => {
+  const artist = (id: string) => ({
+    table: "artist",
+    key: [{ column: "id", value: id }],
+  });
+  const preset = (id: string, section: "filter" | "sort" | "display") => ({
+    id,
+    name: id,
+    baseTable: "album",
+    section,
+    definition: "",
+    isDefault: true,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+
+  it("opens the artist's tracks in a tab beside the given one", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    openQueryTab(bundle, "b");
+    bundle.actions.showArtistRecords("a", [artist("x")], "track");
+    const s = bundle.store.getState();
+    const tab = s.tabs[1];
+    expect(s.tabs.map((t) => t.id)).toEqual(["a", tab.id, "b"]);
+    expect(s.activeTabId).toBe(tab.id);
+    expect(tab.kind === "query" && tab.live.base).toBe("track");
+    expect(tab.kind === "query" && tab.live.filter).toEqual({
+      custom: `++#credit{artist.id:="x"}`,
+      presets: [],
+    });
+  });
+
+  it("opens the artists' albums with the table's default sort and display, but not its default filter", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.store.setState((s) => {
+      s.presets.push(preset("f", "filter"), preset("s", "sort"));
+      s.presets.push(preset("d", "display"));
+    });
+    bundle.actions.showArtistRecords(
+      "a",
+      [artist("x"), artist("y"), artist("x")],
+      "album",
+    );
+    const tab = bundle.store.getState().tabs[1];
+    expect(tab.kind === "query" && tab.live).toEqual({
+      base: "album",
+      filter: {
+        custom: `++#track{++#credit{[\n  artist.id:="x"\n  artist.id:="y"\n]}}`,
+        presets: [],
+      },
+      sort: { preset: "s" },
+      display: { preset: "d" },
+    });
+  });
+
+  it("does nothing for artists with no id", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.showArtistRecords(
+      "a",
+      [{ table: "artist", key: [] }],
+      "track",
+    );
+    expect(bundle.store.getState().tabs).toHaveLength(1);
+  });
+});
+
 describe("loadRatings", () => {
   const loaded = [
     { id: "r1", value: "1", symbol: "🗑️", description: "Skip" },

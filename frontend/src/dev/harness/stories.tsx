@@ -246,8 +246,8 @@ const trackRecord = (n: number): RecordRef => ({
 
 /** The rating vocabulary the "Rate track" submenu lists — migration 0003's
  * seeded ratings, which is what a real database answers the ratings query with.
- * Canned rather than loaded: the menu body takes its rows as a prop, so the
- * story needs no store and no stand-in backend. */
+ * Put straight into the store rather than loaded, so the story needs no
+ * stand-in backend for it. */
 const RATINGS_FIXTURE: readonly Rating[] = [
   { id: "rating-1", value: "1", symbol: "🗑️", description: "Skip" },
   { id: "rating-2", value: "2", symbol: "✔️", description: "Like" },
@@ -255,26 +255,52 @@ const RATINGS_FIXTURE: readonly Rating[] = [
   { id: "rating-4", value: "4", symbol: "❤️", description: "Love" },
 ];
 
-/** A row context-menu story: the menu raised on a row carrying a track and its
- * album, with `ratings` in its "Rate track" submenu. */
+/** The record of `table` with `id` `id`, as a result row identifies it. */
+const idRecord = (table: string, id: string): RecordRef => ({
+  table,
+  key: [{ column: "id", value: id }],
+});
+
+/** A row context-menu story: the menu raised on a row carrying `records` —
+ * a track and its album, unless it says otherwise — with the "Rate track"
+ * submenu's ratings loaded (or, with `ratingsLoading`, still on their way).
+ * The submenus that look records up (a track's artists, its album) ask the
+ * record fixture, which holds every answer back `lookupDelay` ms. `playlist`
+ * raises it on a playlist's page. */
 function rowActionsMenu(
-  ratings: readonly Rating[],
-  ratingsLoading = false,
+  opts: {
+    records?: readonly RecordRef[];
+    ratingsLoading?: boolean;
+    lookupDelay?: number;
+    playlist?: boolean;
+  } = {},
 ): Story {
+  const records = opts.records ?? [
+    trackRecord(1),
+    idRecord("album", "album-1"),
+  ];
+  const groups = records.map((record) => ({
+    table: record.table,
+    records: [record],
+  }));
+  const tracks = records.some((record) => record.table === "track");
   return {
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      installRecordFixture(opts.lookupDelay ?? 0);
+      if (!opts.ratingsLoading) {
+        stores.app.store.setState((s) => {
+          s.ratings = { status: "ready", data: castDraft(RATINGS_FIXTURE) };
+        });
+      }
+    },
     render: () => (
       <ContextMenu x={8} y={8} onClose={() => {}}>
         <RowActionsMenu
-          records={[
-            trackRecord(1),
-            { table: "album", key: [{ column: "id", value: "album-1" }] },
-          ]}
-          onEdit={() => {}}
-          onShowTracks={() => {}}
-          ratings={ratings}
-          ratingsLoading={ratingsLoading}
-          onRate={() => {}}
-          onAddToPlaylist={() => {}}
+          tabId="row-menu"
+          groups={groups}
+          onAddToPlaylist={tracks ? () => {} : undefined}
+          onRemoveFromPlaylist={opts.playlist ? () => {} : undefined}
           onSelectMultiple={() => {}}
         />
       </ContextMenu>
@@ -1000,33 +1026,41 @@ export const STORIES: Record<string, Story> = {
     render: () => <QueryResults tabId={PLAYLIST_SOURCE.id} />,
   },
   // A row's context menu: one entry per table whose primary key the row
-  // carries, over the entry that turns multi-select mode on.
-  "result-row/context-menu": rowActionsMenu(RATINGS_FIXTURE),
+  // carries, the submenus leading on to related records, and the entry that
+  // turns multi-select mode on.
+  "result-row/context-menu": rowActionsMenu(),
   // A row's context menu on a playlist's page: "Edit track" (never the entry
-  // itself), and "Remove from playlist" before "Select multiple".
-  "result-row/playlist-context-menu": {
-    render: () => (
-      <ContextMenu x={8} y={8} onClose={() => {}}>
-        <RowActionsMenu
-          records={[trackRecord(1)]}
-          onEdit={() => {}}
-          onShowTracks={() => {}}
-          ratings={RATINGS_FIXTURE}
-          ratingsLoading={false}
-          onRate={() => {}}
-          onAddToPlaylist={() => {}}
-          onRemoveFromPlaylist={() => {}}
-          onSelectMultiple={() => {}}
-        />
-      </ContextMenu>
-    ),
-  },
+  // itself), and "Remove from playlist" before the track's "Artists" and
+  // "Album".
+  "result-row/playlist-context-menu": rowActionsMenu({
+    records: [trackRecord(1)],
+    playlist: true,
+  }),
   // Its "Rate track" submenu, opened out (the test does the opening): one entry
   // per record of the `rating` table, lowest value first.
-  "result-row/rate-submenu": rowActionsMenu(RATINGS_FIXTURE),
+  "result-row/rate-submenu": rowActionsMenu(),
   // The same submenu before its query has come back — what a menu raised in the
   // first moments of a session shows.
-  "result-row/rate-submenu-loading": rowActionsMenu([], true),
+  "result-row/rate-submenu-loading": rowActionsMenu({ ratingsLoading: true }),
+  // A track's "Artists" submenu, opened out: the two credited on the fixture's
+  // third track, lead first.
+  "result-row/artists-submenu": rowActionsMenu({
+    records: [trackRecord(3)],
+  }),
+  // The same submenu while its credits are still loading.
+  "result-row/artists-submenu-loading": rowActionsMenu({
+    records: [trackRecord(3)],
+    lookupDelay: 60_000,
+  }),
+  // One artist in it, opened out: the entries an artist's own row offers.
+  "result-row/artist-submenu": rowActionsMenu({ records: [trackRecord(3)] }),
+  // A track's "Album" submenu, opened out: the entries an album's own row
+  // offers, for the album the track is on.
+  "result-row/album-submenu": rowActionsMenu({ records: [trackRecord(3)] }),
+  // An artist row's own context menu.
+  "result-row/artist-context-menu": rowActionsMenu({
+    records: [idRecord("artist", "artist-1")],
+  }),
   // "Add to playlist…" for three tracks: the sources tree with only its
   // playlists. "Favorites" is open and holds a nested, open "Road trip"; the
   // closed "Parties" holds one more. The query Lemonade, and both "Archive"

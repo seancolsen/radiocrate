@@ -59,6 +59,9 @@ import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
 import SelectMultiple from "~icons/material-symbols/select-check-box";
 import Rate from "~icons/material-symbols/star";
+import Album from "~icons/material-symbols/album";
+import Artists from "~icons/material-symbols/group";
+import Artist from "~icons/material-symbols/person";
 import OpenInTab from "~icons/material-symbols/open-in-new";
 import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
@@ -140,6 +143,9 @@ export const Icons = {
   Duplicate, // duplicate query (wrench menu)
   SelectMultiple, // results row menu: enter multi-select mode
   Rate, // results row menu: the "Rate track" submenu
+  Album, // results row menu: a track's "Album" submenu
+  Artists, // results row menu: the "Artists" submenu (credited artists)
+  Artist, // results row menu: one artist in the "Artists" submenu
   OpenInTab, // record editor: open a multi-record field's records as a query tab
   Play, // now-playing bar: resume
   Pause, // now-playing bar: pause

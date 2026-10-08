@@ -135,6 +135,7 @@ test("the toolbar's actions menu acts on the whole selection", async ({
     "Edit album",
     "Show album tracks",
     "Rate track",
+    "Artists",
   ]);
 
   await menu.getByRole("menuitem", { name: "Edit track" }).click();

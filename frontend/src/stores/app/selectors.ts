@@ -294,50 +294,55 @@ export function rowRecords(
   return records;
 }
 
-/** What a menu raised on `rows` offers to edit: one record per table those
- * rows carry a primary key for, in first-row-first order (a track row joined
- * to its album offers both). Builds a fresh array on every call. */
-export function recordsForRows(
+/** Every record of one table that a menu's rows identify — what that table's
+ * entries in the menu act on. */
+export interface RecordGroup {
+  table: string;
+  records: readonly RecordRef[];
+}
+
+/** What a menu raised on `rows` acts on: one group per table those rows carry
+ * a primary key for, in first-row-first order (a track row joined to its album
+ * offers both), each holding every distinct record of that table the rows
+ * identify, in row order. Builds a fresh array on every call. */
+export function recordGroupsForRows(
   result: QueryResult | undefined,
   lineage: LineageMapping | undefined,
   rows: Iterable<number>,
-): RecordRef[] {
-  const byTable = new Map<string, RecordRef>();
+): RecordGroup[] {
+  const byTable = new Map<
+    string,
+    { seen: Set<string>; records: RecordRef[] }
+  >();
   for (const row of rows) {
     for (const record of rowRecords(result, lineage, row)) {
-      if (!byTable.has(record.table)) byTable.set(record.table, record);
+      let group = byTable.get(record.table);
+      if (!group) {
+        group = { seen: new Set(), records: [] };
+        byTable.set(record.table, group);
+      }
+      // A track on two rows (or joined to itself) is still one track.
+      const identity = JSON.stringify(record.key);
+      if (group.seen.has(identity)) continue;
+      group.seen.add(identity);
+      group.records.push(record);
     }
   }
-  return [...byTable.values()];
+  return [...byTable].map(([table, { records }]) => ({ table, records }));
 }
 
-/** {@link recordsForRows} against the whole state. Builds a fresh array on
- * every call. */
-export function selectRecordsForRows(
+/** {@link recordGroupsForRows} against the whole state. Builds a fresh array
+ * on every call. */
+export function selectRecordGroupsForRows(
   s: AppState,
   tabId: string,
   rows: Iterable<number>,
-): RecordRef[] {
-  return recordsForRows(s.pages[tabId]?.result, s.pages[tabId]?.lineage, rows);
-}
-
-/** Every record of `table` that `rows` identify, in row order — what opening
- * the editor on a (possibly multi-row) selection edits. Duplicates are left in;
- * `setRecordEditorRecords` takes each record once. Builds a fresh array on
- * every call. */
-export function selectTableRecordsForRows(
-  s: AppState,
-  tabId: string,
-  rows: Iterable<number>,
-  table: string,
-): RecordRef[] {
-  const records: RecordRef[] = [];
-  for (const row of rows) {
-    for (const record of selectRowRecords(s, tabId, row)) {
-      if (record.table === table) records.push(record);
-    }
-  }
-  return records;
+): RecordGroup[] {
+  return recordGroupsForRows(
+    s.pages[tabId]?.result,
+    s.pages[tabId]?.lineage,
+    rows,
+  );
 }
 
 export const selectRecordEditor = (

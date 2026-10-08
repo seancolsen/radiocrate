@@ -112,6 +112,7 @@ test("a row's context menu offers one entry per table it identifies", async ({
     "Edit album",
     "Show album tracks",
     "Rate track",
+    "Artists",
     "Select multiple",
   ]);
   // Right-clicking a row also selects it, so the menu's target is visible.
