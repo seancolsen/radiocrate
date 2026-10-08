@@ -631,6 +631,15 @@ export interface AppActions {
    * menu's entry). */
   openExportData: (tabId: string) => void;
   setExportRows: (rows: ExportRows) => void;
+  /** Check or uncheck "All columns". Checking it puts every column back in,
+   * as displayed; unchecking it changes nothing else — the columns all stay
+   * in, now listed. */
+  setExportAllColumns: (all: boolean) => void;
+  /** Put a column (by its `ResultColumn.index`) in the export or leave it
+   * out. "All columns" stays as it is, even once every column is back in. */
+  setExportColumnIncluded: (column: number, included: boolean) => void;
+  /** Write a formatted column as raw data, or as it's displayed. */
+  setExportColumnRaw: (column: number, raw: boolean) => void;
   closeExportData: () => void;
   /** Copy the dialog's rows to the clipboard, closing it once they're there.
    * A gesture action: call it from the click itself. */
@@ -3185,8 +3194,18 @@ export function createAppActions(
       }),
     openExportData: (tabId) => {
       if (!selectPageTab(get(), tabId)) return;
+      // One selected row is more likely the row the menu happened to be opened
+      // beside than a choice of what to export; several are a choice.
+      const selected = selectRowSelection(get(), tabId).size;
       set((s) => {
-        s.exportData = { tabId, rows: "all", error: null };
+        s.exportData = {
+          tabId,
+          rows: selected > 1 ? "selected" : "all",
+          allColumns: true,
+          excludedColumns: [],
+          rawColumns: [],
+          error: null,
+        };
       });
     },
     setExportRows: (rows) =>
@@ -3195,6 +3214,30 @@ export function createAppActions(
           s.exportData.rows = rows;
           s.exportData.error = null;
         }
+      }),
+    setExportAllColumns: (all) =>
+      set((s) => {
+        if (!s.exportData) return;
+        s.exportData.allColumns = all;
+        if (all) {
+          s.exportData.excludedColumns = [];
+          s.exportData.rawColumns = [];
+        }
+        s.exportData.error = null;
+      }),
+    setExportColumnIncluded: (column, included) =>
+      set((s) => {
+        if (!s.exportData) return;
+        const rest = s.exportData.excludedColumns.filter((c) => c !== column);
+        s.exportData.excludedColumns = included ? rest : [...rest, column];
+        s.exportData.error = null;
+      }),
+    setExportColumnRaw: (column, raw) =>
+      set((s) => {
+        if (!s.exportData) return;
+        const rest = s.exportData.rawColumns.filter((c) => c !== column);
+        s.exportData.rawColumns = raw ? [...rest, column] : rest;
+        s.exportData.error = null;
       }),
     closeExportData: () =>
       set((s) => {

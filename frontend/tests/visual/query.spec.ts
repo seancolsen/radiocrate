@@ -87,15 +87,33 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The "Export data" dialog: the Rows choice over Cancel, and the two ways
+  // The "Export data" dialog: the Rows choice, "All columns" and the two ways
   // out. Shot through the dialog (it portals out of the stage).
   test(`export-data/modal - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "export-data/modal", colorScheme);
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Rows")).toBeFocused();
     await expect(dialog.getByLabel("Rows")).toHaveValue("all");
+    await expect(dialog.getByLabel("All columns")).toBeChecked();
     await expect(dialog).toHaveScreenshot(
       snapshot("export-data/modal", colorScheme),
+    );
+  });
+
+  // The column list "All columns" hides: a line per column, its sample, and
+  // the displayed/raw choice for a formatted one. No rows selected, so no Rows
+  // field, and "All columns" takes focus in its place.
+  test(`export-data/columns - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "export-data/columns", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Rows")).toHaveCount(0);
+    await expect(dialog.getByLabel("All columns")).toBeFocused();
+    await expect(
+      dialog.getByLabel("Column 1", { exact: true }),
+    ).not.toBeChecked();
+    await expect(dialog.getByLabel("Column 3 data")).toHaveValue("raw");
+    await expect(dialog).toHaveScreenshot(
+      snapshot("export-data/columns", colorScheme),
     );
   });
 

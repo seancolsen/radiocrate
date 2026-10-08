@@ -1,18 +1,24 @@
-import type { JSX } from "react";
+import { forwardRef } from "react";
 import { cx } from "./cx";
 
 /** A labelled checkbox matching the builder's "Apply by default" control. The
- * box is a bordered square that fills accent-blue with a check when checked. */
-export function Checkbox(props: {
-  checked: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-}): JSX.Element {
+ * box is a bordered square that fills accent-blue with a check when checked,
+ * and rings when the (visually hidden) input has keyboard focus.
+ *
+ * The ref forwards to the `<input>`, so a caller can focus it. */
+export const Checkbox = forwardRef<
+  HTMLInputElement,
+  {
+    checked: boolean;
+    label: string;
+    onChange: (checked: boolean) => void;
+  }
+>(function Checkbox(props, ref) {
   return (
-    <label className="text-ink flex cursor-pointer items-center gap-2 text-sm select-none">
+    <label className="group text-ink flex cursor-pointer items-center gap-2 text-sm select-none">
       <span
         className={cx(
-          "border-ink-weak flex size-4 shrink-0 items-center justify-center rounded-sm border",
+          "border-ink-weak group-has-focus-visible:ring-accent flex size-4 shrink-0 items-center justify-center rounded-sm border group-has-focus-visible:ring-2",
           { "bg-accent border-accent": props.checked },
         )}
       >
@@ -35,6 +41,7 @@ export function Checkbox(props: {
       </span>
       <span>{props.label}</span>
       <input
+        ref={ref}
         type="checkbox"
         className="sr-only"
         checked={props.checked}
@@ -42,4 +49,4 @@ export function Checkbox(props: {
       />
     </label>
   );
-}
+});

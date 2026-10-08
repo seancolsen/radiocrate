@@ -45,6 +45,9 @@ import Delete from "~icons/material-symbols/delete";
 import Check from "~icons/material-symbols/check";
 import ViewSql from "~icons/material-symbols/manufacturing";
 import Export from "~icons/material-symbols/file-export";
+// One glyph, two concepts: `Copy` and `Duplicate` share the same icon.
+import Copy from "~icons/material-symbols/content-copy";
+import Download from "~icons/material-symbols/download";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
 import Querydown from "~icons/material-symbols/code";
@@ -123,6 +126,8 @@ export const Icons = {
   Check, // a playlist's "Keep only these tracks" and "Commit this track order"
   ViewSql, // View SQL menu entry
   Export, // "Export results data" menu entry
+  Copy, // export dialog: "Copy to clipboard"
+  Download, // export dialog: "Download CSV"
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
   Querydown, // full-querydown mode: its Base-submenu entry and toolbar toggle

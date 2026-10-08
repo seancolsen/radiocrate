@@ -2903,13 +2903,71 @@ describe("exporting results data", () => {
     bundle.actions.openExportData("a");
   });
 
-  it("opens on all rows", () => {
-    expect(bundle.store.getState().exportData).toEqual({
+  const exportData = () => bundle.store.getState().exportData;
+
+  it("opens on all rows and all columns", () => {
+    expect(exportData()).toEqual({
       tabId: "a",
       rows: "all",
+      allColumns: true,
+      excludedColumns: [],
+      rawColumns: [],
       error: null,
     });
     expect(selectCanExport(bundle.store.getState())).toBe(true);
+  });
+
+  it("opens on all rows with one row selected, and the selected rows with several", () => {
+    bundle.actions.closeExportData();
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.openExportData("a");
+    expect(exportData()?.rows).toBe("all");
+
+    bundle.actions.closeExportData();
+    bundle.actions.clickRow("a", 2, { shift: false, ctrl: true });
+    bundle.actions.openExportData("a");
+    expect(exportData()?.rows).toBe("selected");
+  });
+
+  it("exports only the columns left in", () => {
+    bundle.actions.setExportAllColumns(false);
+    bundle.actions.setExportColumnIncluded(0, false);
+    bundle.actions.copyExportData();
+    expect(env.writeClipboardText).toHaveBeenCalledWith("1\n2\n3");
+  });
+
+  it("keeps every column in when All columns is unchecked", () => {
+    bundle.actions.setExportAllColumns(false);
+    expect(exportData()?.excludedColumns).toEqual([]);
+  });
+
+  it("puts every column back in, as displayed, when All columns is checked", () => {
+    bundle.actions.setExportAllColumns(false);
+    bundle.actions.setExportColumnIncluded(0, false);
+    bundle.actions.setExportColumnRaw(1, true);
+    bundle.actions.setExportAllColumns(true);
+    expect(exportData()).toMatchObject({
+      allColumns: true,
+      excludedColumns: [],
+      rawColumns: [],
+    });
+  });
+
+  it("leaves All columns unchecked when every column is checked by hand", () => {
+    bundle.actions.setExportAllColumns(false);
+    bundle.actions.setExportColumnIncluded(0, false);
+    bundle.actions.setExportColumnIncluded(0, true);
+    expect(exportData()).toMatchObject({
+      allColumns: false,
+      excludedColumns: [],
+    });
+  });
+
+  it("has nothing to export with every column left out", () => {
+    bundle.actions.setExportAllColumns(false);
+    bundle.actions.setExportColumnIncluded(0, false);
+    bundle.actions.setExportColumnIncluded(1, false);
+    expect(selectCanExport(bundle.store.getState())).toBe(false);
   });
 
   it("copies every row to the clipboard, then closes", async () => {

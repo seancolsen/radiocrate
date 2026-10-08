@@ -42,7 +42,10 @@ import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
-import { ExportDataDialog } from "../../components/ExportDataModal";
+import {
+  ExportDataDialog,
+  type ExportColumnOption,
+} from "../../components/ExportDataModal";
 import Explorer from "../../components/Explorer";
 import NowPlaying from "../../components/NowPlaying";
 import PageActionsMenu from "../../components/PageActionsMenu";
@@ -365,6 +368,53 @@ function NestedMenuBody(): JSX.Element {
     </>
   );
 }
+
+/** The export dialog's callbacks, all inert. */
+const EXPORT_DIALOG_HANDLERS = {
+  onRowsChange: () => {},
+  onAllColumnsChange: () => {},
+  onColumnIncludedChange: () => {},
+  onColumnRawChange: () => {},
+  onCopy: () => {},
+  onDownload: () => {},
+  onClose: () => {},
+};
+
+/** A track query's columns as the export dialog lists them. */
+const EXPORT_COLUMNS: ExportColumnOption[] = [
+  {
+    index: 1,
+    label: "Column 0",
+    sample: "Hold Up",
+    formatted: false,
+    included: true,
+    raw: false,
+  },
+  {
+    index: 2,
+    label: "Column 1",
+    sample: "Beyoncé, Jack White",
+    formatted: false,
+    included: false,
+    raw: false,
+  },
+  {
+    index: 3,
+    label: "Column 2",
+    sample: "3:41",
+    formatted: true,
+    included: true,
+    raw: false,
+  },
+  {
+    index: 4,
+    label: "Column 3",
+    sample: "2026-09-14 08:12:55",
+    formatted: true,
+    included: true,
+    raw: true,
+  },
+];
 
 export const STORIES: Record<string, Story> = {
   // ── The app's left sidebar, as a general-purpose panel ────────────────────
@@ -738,18 +788,33 @@ export const STORIES: Record<string, Story> = {
     ),
   },
   // "Export results data" as it opens: all rows chosen, with some selected so
-  // "Selected rows" is on offer too.
+  // "Selected rows" is on offer too, and all columns.
   "export-data/modal": {
     render: () => (
       <ExportDataDialog
+        {...EXPORT_DIALOG_HANDLERS}
         rows="all"
         selectedCount={3}
+        allColumns
+        columns={EXPORT_COLUMNS}
         canExport
         error={null}
-        onRowsChange={() => {}}
-        onCopy={() => {}}
-        onDownload={() => {}}
-        onClose={() => {}}
+      />
+    ),
+  },
+  // "All columns" unchecked, with nothing selected (so no Rows field): one
+  // line per column — one left out, two formatted ones offering raw data, one
+  // of them switched to it.
+  "export-data/columns": {
+    render: () => (
+      <ExportDataDialog
+        {...EXPORT_DIALOG_HANDLERS}
+        rows="all"
+        selectedCount={0}
+        allColumns={false}
+        columns={EXPORT_COLUMNS}
+        canExport
+        error={null}
       />
     ),
   },

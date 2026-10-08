@@ -55,6 +55,15 @@ export interface ExportData {
   /** The page whose results it exports. */
   tabId: string;
   rows: ExportRows;
+  /** The "All columns" box: every visible column, as displayed. Kept apart
+   * from the per-column choices below rather than derived from them — checking
+   * it resets them, but unchecking it (or checking every column by hand) leaves
+   * them as they are, so the list stays on screen to be edited. */
+  allColumns: boolean;
+  /** Visible columns left out, by `ResultColumn.index`. */
+  excludedColumns: readonly number[];
+  /** Formatted columns written as raw data rather than display text. */
+  rawColumns: readonly number[];
   /** Why the last copy or save failed, shown in the dialog (null when it
    * hasn't). */
   error: string | null;

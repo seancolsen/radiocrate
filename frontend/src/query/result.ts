@@ -127,6 +127,14 @@ export class QueryResult {
     );
   }
 
+  /** A list cell's values in their plain string form — no formatter, prefix or
+   * suffix, as {@link QueryResult.keyText} is to {@link QueryResult.text}. */
+  rawPills(row: number, column: ResultColumn): readonly string[] {
+    const raw = this.value(row, column.index);
+    if (raw == null) return [];
+    return Array.from(raw as Iterable<unknown>, (e) => stringifyArrowValue(e));
+  }
+
   /** The same rows in another order: display row `i` of the new result is row
    * `order[i]` of this one. `order` lists every row once. A re-read row keeps
    * its patch at its new place. Nothing is copied: the new result reads this

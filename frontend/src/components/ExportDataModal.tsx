@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type JSX } from "react";
+import { useLayoutEffect, useMemo, useRef, type JSX } from "react";
+import { exportCellText, hasFormatting } from "../query/exportCsv";
 import {
   selectCanExport,
   selectRowSelection,
@@ -6,55 +7,116 @@ import {
   type ExportRows,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
+import { Icons } from "../icons";
+import { Checkbox } from "./ui/Checkbox";
+import IconButton from "./ui/IconButton";
 import { Modal } from "./ui/Modal";
 
-/** The "Export data" dialog: which rows to export, and where to — the
- * clipboard, or a CSV file. Takes its values as props, like
+/** One visible result column as the export dialog lists it. */
+export interface ExportColumnOption {
+  /** The column's `ResultColumn.index`, which the choices are keyed by. */
+  index: number;
+  /** "Column 0", "Column 1", … by position among the visible columns. */
+  label: string;
+  /** One of its cells as it would be exported. */
+  sample: string;
+  /** Whether it has a formatter, prefix or suffix — and so a choice between
+   * its displayed and raw data. */
+  formatted: boolean;
+  included: boolean;
+  raw: boolean;
+}
+
+const SELECT_CLASS =
+  "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
+
+/** The "Export data" dialog: which rows and columns to export, and where to —
+ * the clipboard, or a CSV file. Takes its values as props, like
  * {@link import("./SettingModal").SettingDialog}, so the visual harness can
  * render it without a store; {@link ExportDataModal} is the wired version.
  *
- * "Selected rows" is offered only while some are selected. Copy and Download
- * hand their click straight to the caller, which must start the clipboard
- * write or the save dialog within it. */
+ * The Rows field shows only while some rows are selected; with none, every row
+ * is exported. The column list shows only while "All columns" is unchecked.
+ * Copy and Download hand their click straight to the caller, which must start
+ * the clipboard write or the save dialog within it. */
 export function ExportDataDialog(props: {
   rows: ExportRows;
   selectedCount: number;
+  allColumns: boolean;
+  columns: readonly ExportColumnOption[];
   canExport: boolean;
   error: string | null;
   onRowsChange: (rows: ExportRows) => void;
+  onAllColumnsChange: (all: boolean) => void;
+  onColumnIncludedChange: (column: number, included: boolean) => void;
+  onColumnRawChange: (column: number, raw: boolean) => void;
   onCopy: () => void;
   onDownload: () => void;
   onClose: () => void;
 }): JSX.Element {
-  const fieldRef = useRef<HTMLSelectElement>(null);
+  const showRows = props.selectedCount > 0;
+  const rowsRef = useRef<HTMLSelectElement>(null);
+  const allColumnsRef = useRef<HTMLInputElement>(null);
+  // The first field takes focus as the dialog opens.
   useLayoutEffect(() => {
-    fieldRef.current?.focus();
+    (rowsRef.current ?? allColumnsRef.current)?.focus();
   }, []);
 
   return (
-    <Modal onClose={() => props.onClose()} width="400px">
-      <h2 className="text-ink mb-3 text-base font-semibold">Export data</h2>
+    <Modal onClose={() => props.onClose()} width="480px">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-ink text-base font-semibold">Export data</h2>
+        <IconButton
+          icon={Icons.Close}
+          label="Close"
+          onClick={() => props.onClose()}
+        />
+      </div>
       <form
         onSubmit={(e) => e.preventDefault()}
-        className="flex items-center gap-3"
+        className="flex flex-col gap-4"
       >
-        <label htmlFor="export-rows" className="text-ink text-sm">
-          Rows
-        </label>
-        <select
-          id="export-rows"
-          ref={fieldRef}
-          className="bg-panel border-edge text-ink focus:border-accent flex-1 rounded-md border px-2 py-1.5 text-sm outline-none"
-          value={props.rows}
-          onChange={(e) =>
-            props.onRowsChange(e.currentTarget.value as ExportRows)
-          }
-        >
-          <option value="all">All rows</option>
-          <option value="selected" disabled={props.selectedCount === 0}>
-            Selected rows
-          </option>
-        </select>
+        {showRows && (
+          <div className="flex items-center gap-3">
+            <label htmlFor="export-rows" className="text-ink text-sm">
+              Rows
+            </label>
+            <select
+              id="export-rows"
+              ref={rowsRef}
+              className={`${SELECT_CLASS} flex-1`}
+              value={props.rows}
+              onChange={(e) =>
+                props.onRowsChange(e.currentTarget.value as ExportRows)
+              }
+            >
+              <option value="all">All rows</option>
+              <option value="selected">Selected rows</option>
+            </select>
+          </div>
+        )}
+        <fieldset className="flex min-w-0 flex-col gap-2">
+          <legend className="text-ink mb-2 text-sm">Columns</legend>
+          <Checkbox
+            ref={allColumnsRef}
+            label="All columns"
+            checked={props.allColumns}
+            onChange={(all) => props.onAllColumnsChange(all)}
+          />
+          {!props.allColumns &&
+            props.columns.map((column) => (
+              <ColumnRow
+                key={column.index}
+                column={column}
+                onIncludedChange={(included) =>
+                  props.onColumnIncludedChange(column.index, included)
+                }
+                onRawChange={(raw) =>
+                  props.onColumnRawChange(column.index, raw)
+                }
+              />
+            ))}
+        </fieldset>
       </form>
       {props.error !== null && (
         <p role="alert" className="text-danger mt-3 text-sm">
@@ -64,25 +126,20 @@ export function ExportDataDialog(props: {
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
-          className="text-ink hover:bg-hover mr-auto rounded-md px-3 py-1.5 text-sm"
-          onClick={() => props.onClose()}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
           disabled={!props.canExport}
-          className="text-ink border-edge hover:bg-hover rounded-md border px-3 py-1.5 text-sm disabled:opacity-40"
+          className="text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40"
           onClick={() => props.onCopy()}
         >
+          <Icons.Copy className="size-4" />
           Copy to clipboard
         </button>
         <button
           type="button"
           disabled={!props.canExport}
-          className="bg-accent text-panel rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
+          className="bg-accent text-panel flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
           onClick={() => props.onDownload()}
         >
+          <Icons.Download className="size-4" />
           Download CSV
         </button>
       </div>
@@ -90,22 +147,97 @@ export function ExportDataDialog(props: {
   );
 }
 
+/** One column's line in the list: whether it's exported, a sample of it, and —
+ * for a formatted column — whether as displayed or raw. */
+function ColumnRow(props: {
+  column: ExportColumnOption;
+  onIncludedChange: (included: boolean) => void;
+  onRawChange: (raw: boolean) => void;
+}): JSX.Element {
+  const { column } = props;
+  return (
+    <div className="flex min-h-8 items-center gap-3 pl-6">
+      <Checkbox
+        label={column.label}
+        checked={column.included}
+        onChange={(included) => props.onIncludedChange(included)}
+      />
+      <span
+        className="text-ink-weak min-w-0 flex-1 truncate text-sm"
+        title={column.sample}
+      >
+        {column.sample}
+      </span>
+      {column.formatted && (
+        <select
+          aria-label={`${column.label} data`}
+          className={SELECT_CLASS}
+          value={column.raw ? "raw" : "displayed"}
+          onChange={(e) => props.onRawChange(e.currentTarget.value === "raw")}
+        >
+          <option value="displayed">Displayed data</option>
+          <option value="raw">Raw data</option>
+        </select>
+      )}
+    </div>
+  );
+}
+
 /** The export dialog wired to the store, for the page `pending` names. Its own
- * component so the rows field is focused afresh each time the dialog opens. */
+ * component so the first field is focused afresh each time the dialog opens. */
 function ExportDataModalBody(props: { pending: ExportData }): JSX.Element {
-  const { tabId, rows, error } = props.pending;
-  const selectedCount = useApp((s) => selectRowSelection(s, tabId).size);
+  const { tabId, rows, allColumns, excludedColumns, rawColumns, error } =
+    props.pending;
+  const result = useApp((s) => s.pages[tabId]?.result);
+  const selection = useApp((s) => selectRowSelection(s, tabId));
   const canExport = useApp(selectCanExport);
-  const { setExportRows, copyExportData, downloadExportData, closeExportData } =
-    useAppActions();
+  const {
+    setExportRows,
+    setExportAllColumns,
+    setExportColumnIncluded,
+    setExportColumnRaw,
+    copyExportData,
+    downloadExportData,
+    closeExportData,
+  } = useAppActions();
+
+  const columns = useMemo((): ExportColumnOption[] => {
+    if (!result) return [];
+    // Samples come from the first selected row, or the first row with none.
+    let sampleRow: number | undefined;
+    for (const row of selection) {
+      if (row < result.rowCount && (sampleRow === undefined || row < sampleRow))
+        sampleRow = row;
+    }
+    if (sampleRow === undefined && result.rowCount > 0) sampleRow = 0;
+    return result.visible.map((column, position) => {
+      const raw = rawColumns.includes(column.index);
+      return {
+        index: column.index,
+        label: `Column ${position}`,
+        sample:
+          sampleRow === undefined
+            ? ""
+            : exportCellText(result, sampleRow, column, raw),
+        formatted: hasFormatting(column.meta),
+        included: !excludedColumns.includes(column.index),
+        raw,
+      };
+    });
+  }, [result, selection, excludedColumns, rawColumns]);
 
   return (
     <ExportDataDialog
       rows={rows}
-      selectedCount={selectedCount}
+      selectedCount={selection.size}
+      allColumns={allColumns}
+      columns={columns}
       canExport={canExport}
       error={error}
       onRowsChange={setExportRows}
+      onAllColumnsChange={setExportAllColumns}
+      onColumnIncludedChange={setExportColumnIncluded}
+      onColumnRawChange={setExportColumnRaw}
       onCopy={copyExportData}
       onDownload={downloadExportData}
       onClose={closeExportData}

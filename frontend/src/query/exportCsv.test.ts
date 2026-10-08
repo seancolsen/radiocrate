@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as arrow from "apache-arrow";
 import type { AnnotationValue } from "querydown-js";
-import { resultToCsv } from "./exportCsv";
+import { defaultColumnMetadata } from "./columns";
+import { hasFormatting, resultToCsv } from "./exportCsv";
 import { buildResultFromArrow } from "./result";
 
 function listColumn(rows: (string[] | null)[]): arrow.Vector {
@@ -38,13 +39,13 @@ describe("resultToCsv", () => {
   });
 
   it("joins a list cell's values with a comma and space, and quotes a field holding a tab or a quote", () => {
-    expect(resultToCsv(result, [1])).toBe(
+    expect(resultToCsv(result, { rows: [1] })).toBe(
       '"Say ""Hi""\tthere"\tBeyoncé, Jack White\t3:54 min',
     );
   });
 
   it("writes a NULL as an empty field", () => {
-    expect(resultToCsv(result, [2])).toBe("\t\t1:00 min");
+    expect(resultToCsv(result, { rows: [2] })).toBe("\t\t1:00 min");
   });
 
   it("separates records with a bare newline, with none after the last", () => {
@@ -53,12 +54,36 @@ describe("resultToCsv", () => {
   });
 
   it("writes only the given rows, in display order", () => {
-    expect(resultToCsv(result, [2, 0, 0, 7])).toBe(
+    expect(resultToCsv(result, { rows: [2, 0, 0, 7] })).toBe(
       "Hold Up\tBeyoncé\t3:41 min\n\t\t1:00 min",
     );
   });
 
   it("writes nothing for no rows", () => {
-    expect(resultToCsv(result, [])).toBe("");
+    expect(resultToCsv(result, { rows: [] })).toBe("");
+  });
+
+  it("leaves out the excluded columns", () => {
+    expect(resultToCsv(result, { rows: [0], excluded: [2] })).toBe(
+      "Hold Up\t3:41 min",
+    );
+  });
+
+  it("writes a raw column without its formatter, prefix or suffix", () => {
+    expect(resultToCsv(result, { rows: [0], raw: [3] })).toBe(
+      "Hold Up\tBeyoncé\t221",
+    );
+  });
+});
+
+describe("hasFormatting", () => {
+  it("is true of a formatter, a prefix or a suffix, and nothing else", () => {
+    const plain = defaultColumnMetadata();
+    expect(hasFormatting(plain)).toBe(false);
+    expect(hasFormatting({ ...plain, prefix: "#" })).toBe(true);
+    expect(hasFormatting({ ...plain, suffix: " min" })).toBe(true);
+    expect(hasFormatting({ ...plain, formatter: { type: "duration" } })).toBe(
+      true,
+    );
   });
 });
