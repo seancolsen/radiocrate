@@ -372,7 +372,7 @@ function NestedMenuBody(): JSX.Element {
 /** The export dialog's callbacks, all inert. */
 const EXPORT_DIALOG_HANDLERS = {
   onRowsChange: () => {},
-  onAllColumnsChange: () => {},
+  onAllColumnsIncludedChange: () => {},
   onColumnIncludedChange: () => {},
   onColumnRawChange: () => {},
   onCopy: () => {},
@@ -788,30 +788,29 @@ export const STORIES: Record<string, Story> = {
     ),
   },
   // "Export results data" as it opens: all rows chosen, with some selected so
-  // "Selected rows" is on offer too, and all columns.
+  // "Selected rows" is on offer too, and the columns folded away — three of
+  // four checked.
   "export-data/modal": {
     render: () => (
       <ExportDataDialog
         {...EXPORT_DIALOG_HANDLERS}
         rows="all"
         selectedCount={3}
-        allColumns
         columns={EXPORT_COLUMNS}
         canExport
         error={null}
       />
     ),
   },
-  // "All columns" unchecked, with nothing selected (so no Rows field): one
-  // line per column — one left out, two formatted ones offering raw data, one
-  // of them switched to it.
+  // Nothing selected, so no Rows field. The test unfolds the columns: one line
+  // per column — one left out, two formatted ones offering raw data, one of
+  // them switched to it.
   "export-data/columns": {
     render: () => (
       <ExportDataDialog
         {...EXPORT_DIALOG_HANDLERS}
         rows="all"
         selectedCount={0}
-        allColumns={false}
         columns={EXPORT_COLUMNS}
         canExport
         error={null}

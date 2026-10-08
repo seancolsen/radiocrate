@@ -87,31 +87,43 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The "Export data" dialog: the Rows choice, "All columns" and the two ways
-  // out. Shot through the dialog (it portals out of the stage).
+  // The "Export data" dialog: the Rows choice, the folded column list and the
+  // two ways out. Shot through the dialog (it portals out of the stage).
   test(`export-data/modal - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "export-data/modal", colorScheme);
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Rows")).toBeFocused();
     await expect(dialog.getByLabel("Rows")).toHaveValue("all");
-    await expect(dialog.getByLabel("All columns")).toBeChecked();
+    await expect(dialog.getByText("Columns")).toContainText("(3/4)");
+    await expect(
+      dialog.getByRole("button", { name: "Check all", exact: true }),
+    ).toBeHidden();
     await expect(dialog).toHaveScreenshot(
       snapshot("export-data/modal", colorScheme),
     );
   });
 
-  // The column list "All columns" hides: a line per column, its sample, and
-  // the displayed/raw choice for a formatted one. No rows selected, so no Rows
-  // field, and "All columns" takes focus in its place.
+  // The column list unfolded: Check all / Uncheck all beside its summary, then
+  // a line per column, its sample, and the displayed/raw choice for a formatted
+  // one. No rows selected, so no Rows field, and the Columns summary takes
+  // focus instead.
   test(`export-data/columns - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "export-data/columns", colorScheme);
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Rows")).toHaveCount(0);
-    await expect(dialog.getByLabel("All columns")).toBeFocused();
+    const summary = dialog.getByText("Columns");
+    await expect(summary).toBeFocused();
+    await summary.click();
     await expect(
       dialog.getByLabel("Column 1", { exact: true }),
     ).not.toBeChecked();
     await expect(dialog.getByLabel("Column 3 data")).toHaveValue("raw");
+    // The buttons beside the summary don't fold the list back up.
+    await dialog
+      .getByRole("button", { name: "Check all", exact: true })
+      .click();
+    await expect(dialog.getByLabel("Column 0", { exact: true })).toBeVisible();
+    await page.mouse.move(0, 0);
     await expect(dialog).toHaveScreenshot(
       snapshot("export-data/columns", colorScheme),
     );

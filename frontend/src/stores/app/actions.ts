@@ -631,12 +631,11 @@ export interface AppActions {
    * menu's entry). */
   openExportData: (tabId: string) => void;
   setExportRows: (rows: ExportRows) => void;
-  /** Check or uncheck "All columns". Checking it puts every column back in,
-   * as displayed; unchecking it changes nothing else — the columns all stay
-   * in, now listed. */
-  setExportAllColumns: (all: boolean) => void;
+  /** Put every visible column in the export ("Check all"), or leave them all
+   * out ("Uncheck all"). */
+  setExportAllColumnsIncluded: (included: boolean) => void;
   /** Put a column (by its `ResultColumn.index`) in the export or leave it
-   * out. "All columns" stays as it is, even once every column is back in. */
+   * out. */
   setExportColumnIncluded: (column: number, included: boolean) => void;
   /** Write a formatted column as raw data, or as it's displayed. */
   setExportColumnRaw: (column: number, raw: boolean) => void;
@@ -3201,7 +3200,6 @@ export function createAppActions(
         s.exportData = {
           tabId,
           rows: selected > 1 ? "selected" : "all",
-          allColumns: true,
           excludedColumns: [],
           rawColumns: [],
           error: null,
@@ -3215,14 +3213,12 @@ export function createAppActions(
           s.exportData.error = null;
         }
       }),
-    setExportAllColumns: (all) =>
+    setExportAllColumnsIncluded: (included) =>
       set((s) => {
         if (!s.exportData) return;
-        s.exportData.allColumns = all;
-        if (all) {
-          s.exportData.excludedColumns = [];
-          s.exportData.rawColumns = [];
-        }
+        const result = s.pages[s.exportData.tabId]?.result;
+        s.exportData.excludedColumns =
+          included || !result ? [] : result.visible.map((c) => c.index);
         s.exportData.error = null;
       }),
     setExportColumnIncluded: (column, included) =>

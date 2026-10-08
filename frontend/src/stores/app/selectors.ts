@@ -156,10 +156,7 @@ export const selectCanExport = (s: AppState): boolean => {
   const pending = s.exportData;
   const result = pending && s.pages[pending.tabId]?.result;
   if (!pending || !result) return false;
-  if (
-    !pending.allColumns &&
-    result.visible.every((c) => pending.excludedColumns.includes(c.index))
-  ) {
+  if (result.visible.every((c) => pending.excludedColumns.includes(c.index))) {
     return false;
   }
   return (

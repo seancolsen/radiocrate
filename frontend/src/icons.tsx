@@ -48,6 +48,8 @@ import Export from "~icons/material-symbols/file-export";
 // One glyph, two concepts: `Copy` and `Duplicate` share the same icon.
 import Copy from "~icons/material-symbols/content-copy";
 import Download from "~icons/material-symbols/download";
+import CheckAll from "~icons/material-symbols/check-small";
+import UncheckAll from "~icons/material-symbols/close-small";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
 import Querydown from "~icons/material-symbols/code";
@@ -128,6 +130,8 @@ export const Icons = {
   Export, // "Export results data" menu entry
   Copy, // export dialog: "Copy to clipboard"
   Download, // export dialog: "Download CSV"
+  CheckAll, // export dialog: "Check all" columns
+  UncheckAll, // export dialog: "Uncheck all" columns
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
   Querydown, // full-querydown mode: its Base-submenu entry and toolbar toggle

@@ -27,6 +27,13 @@ export interface ExportColumnOption {
   raw: boolean;
 }
 
+const BUTTON_CLASS =
+  "text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40";
+
+/** A button that shows its border only on hover or focus. */
+const QUIET_BUTTON_CLASS =
+  "text-ink enabled:hover:border-edge focus-visible:border-accent flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-sm outline-none disabled:opacity-40";
+
 const SELECT_CLASS =
   "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
 
@@ -36,18 +43,18 @@ const SELECT_CLASS =
  * render it without a store; {@link ExportDataModal} is the wired version.
  *
  * The Rows field shows only while some rows are selected; with none, every row
- * is exported. The column list shows only while "All columns" is unchecked.
- * Copy and Download hand their click straight to the caller, which must start
- * the clipboard write or the save dialog within it. */
+ * is exported. The column list is folded away under a "Columns" summary that
+ * counts the columns checked. Copy and Download hand their click straight to
+ * the caller, which must start the clipboard write or the save dialog within
+ * it. */
 export function ExportDataDialog(props: {
   rows: ExportRows;
   selectedCount: number;
-  allColumns: boolean;
   columns: readonly ExportColumnOption[];
   canExport: boolean;
   error: string | null;
   onRowsChange: (rows: ExportRows) => void;
-  onAllColumnsChange: (all: boolean) => void;
+  onAllColumnsIncludedChange: (included: boolean) => void;
   onColumnIncludedChange: (column: number, included: boolean) => void;
   onColumnRawChange: (column: number, raw: boolean) => void;
   onCopy: () => void;
@@ -56,11 +63,14 @@ export function ExportDataDialog(props: {
 }): JSX.Element {
   const showRows = props.selectedCount > 0;
   const rowsRef = useRef<HTMLSelectElement>(null);
-  const allColumnsRef = useRef<HTMLInputElement>(null);
+  const columnsRef = useRef<HTMLElement>(null);
   // The first field takes focus as the dialog opens.
   useLayoutEffect(() => {
-    (rowsRef.current ?? allColumnsRef.current)?.focus();
+    (rowsRef.current ?? columnsRef.current)?.focus();
   }, []);
+
+  const total = props.columns.length;
+  const included = props.columns.filter((c) => c.included).length;
 
   return (
     <Modal onClose={() => props.onClose()} width="480px">
@@ -95,16 +105,43 @@ export function ExportDataDialog(props: {
             </select>
           </div>
         )}
-        <fieldset className="flex min-w-0 flex-col gap-2">
-          <legend className="text-ink mb-2 text-sm">Columns</legend>
-          <Checkbox
-            ref={allColumnsRef}
-            label="All columns"
-            checked={props.allColumns}
-            onChange={(all) => props.onAllColumnsChange(all)}
-          />
-          {!props.allColumns &&
-            props.columns.map((column) => (
+        {/* Check all / Uncheck all sit at the right of the summary's line, but
+            outside the summary itself — a button nested in the toggle would
+            be an interactive control inside another — and so show only while
+            the list is unfolded. */}
+        <details className="group/columns relative">
+          <summary
+            ref={columnsRef}
+            className="text-ink focus-visible:ring-accent -mx-1 flex min-h-7 w-fit cursor-pointer items-center gap-1 rounded-sm px-1 text-sm outline-none select-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden"
+          >
+            <Icons.ExpandClosed className="text-ink-weak size-4 group-open/columns:rotate-90" />
+            Columns
+            <span className="text-ink-weak">
+              ({included === total ? "All" : `${included}/${total}`})
+            </span>
+          </summary>
+          <div className="absolute top-0 right-0 flex h-7 items-center gap-1">
+            <button
+              type="button"
+              disabled={included === total}
+              className={QUIET_BUTTON_CLASS}
+              onClick={() => props.onAllColumnsIncludedChange(true)}
+            >
+              <Icons.CheckAll className="size-4" />
+              Check all
+            </button>
+            <button
+              type="button"
+              disabled={included === 0}
+              className={QUIET_BUTTON_CLASS}
+              onClick={() => props.onAllColumnsIncludedChange(false)}
+            >
+              <Icons.UncheckAll className="size-4" />
+              Uncheck all
+            </button>
+          </div>
+          <div className="mt-2 flex flex-col gap-2 pl-5">
+            {props.columns.map((column) => (
               <ColumnRow
                 key={column.index}
                 column={column}
@@ -116,7 +153,8 @@ export function ExportDataDialog(props: {
                 }
               />
             ))}
-        </fieldset>
+          </div>
+        </details>
       </form>
       {props.error !== null && (
         <p role="alert" className="text-danger mt-3 text-sm">
@@ -127,7 +165,7 @@ export function ExportDataDialog(props: {
         <button
           type="button"
           disabled={!props.canExport}
-          className="text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40"
+          className={BUTTON_CLASS}
           onClick={() => props.onCopy()}
         >
           <Icons.Copy className="size-4" />
@@ -156,7 +194,7 @@ function ColumnRow(props: {
 }): JSX.Element {
   const { column } = props;
   return (
-    <div className="flex min-h-8 items-center gap-3 pl-6">
+    <div className="flex min-h-8 items-center gap-3">
       <Checkbox
         label={column.label}
         checked={column.included}
@@ -186,14 +224,13 @@ function ColumnRow(props: {
 /** The export dialog wired to the store, for the page `pending` names. Its own
  * component so the first field is focused afresh each time the dialog opens. */
 function ExportDataModalBody(props: { pending: ExportData }): JSX.Element {
-  const { tabId, rows, allColumns, excludedColumns, rawColumns, error } =
-    props.pending;
+  const { tabId, rows, excludedColumns, rawColumns, error } = props.pending;
   const result = useApp((s) => s.pages[tabId]?.result);
   const selection = useApp((s) => selectRowSelection(s, tabId));
   const canExport = useApp(selectCanExport);
   const {
     setExportRows,
-    setExportAllColumns,
+    setExportAllColumnsIncluded,
     setExportColumnIncluded,
     setExportColumnRaw,
     copyExportData,
@@ -230,12 +267,11 @@ function ExportDataModalBody(props: { pending: ExportData }): JSX.Element {
     <ExportDataDialog
       rows={rows}
       selectedCount={selection.size}
-      allColumns={allColumns}
       columns={columns}
       canExport={canExport}
       error={error}
       onRowsChange={setExportRows}
-      onAllColumnsChange={setExportAllColumns}
+      onAllColumnsIncludedChange={setExportAllColumnsIncluded}
       onColumnIncludedChange={setExportColumnIncluded}
       onColumnRawChange={setExportColumnRaw}
       onCopy={copyExportData}

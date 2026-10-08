@@ -2905,11 +2905,10 @@ describe("exporting results data", () => {
 
   const exportData = () => bundle.store.getState().exportData;
 
-  it("opens on all rows and all columns", () => {
+  it("opens on all rows and every column, as displayed", () => {
     expect(exportData()).toEqual({
       tabId: "a",
       rows: "all",
-      allColumns: true,
       excludedColumns: [],
       rawColumns: [],
       error: null,
@@ -2930,43 +2929,21 @@ describe("exporting results data", () => {
   });
 
   it("exports only the columns left in", () => {
-    bundle.actions.setExportAllColumns(false);
     bundle.actions.setExportColumnIncluded(0, false);
     bundle.actions.copyExportData();
     expect(env.writeClipboardText).toHaveBeenCalledWith("1\n2\n3");
   });
 
-  it("keeps every column in when All columns is unchecked", () => {
-    bundle.actions.setExportAllColumns(false);
+  it("checks and unchecks every column at once", () => {
+    bundle.actions.setExportColumnIncluded(0, false);
+    bundle.actions.setExportAllColumnsIncluded(true);
     expect(exportData()?.excludedColumns).toEqual([]);
-  });
-
-  it("puts every column back in, as displayed, when All columns is checked", () => {
-    bundle.actions.setExportAllColumns(false);
-    bundle.actions.setExportColumnIncluded(0, false);
-    bundle.actions.setExportColumnRaw(1, true);
-    bundle.actions.setExportAllColumns(true);
-    expect(exportData()).toMatchObject({
-      allColumns: true,
-      excludedColumns: [],
-      rawColumns: [],
-    });
-  });
-
-  it("leaves All columns unchecked when every column is checked by hand", () => {
-    bundle.actions.setExportAllColumns(false);
-    bundle.actions.setExportColumnIncluded(0, false);
-    bundle.actions.setExportColumnIncluded(0, true);
-    expect(exportData()).toMatchObject({
-      allColumns: false,
-      excludedColumns: [],
-    });
+    bundle.actions.setExportAllColumnsIncluded(false);
+    expect(exportData()?.excludedColumns).toEqual([0, 1]);
   });
 
   it("has nothing to export with every column left out", () => {
-    bundle.actions.setExportAllColumns(false);
-    bundle.actions.setExportColumnIncluded(0, false);
-    bundle.actions.setExportColumnIncluded(1, false);
+    bundle.actions.setExportAllColumnsIncluded(false);
     expect(selectCanExport(bundle.store.getState())).toBe(false);
   });
 
