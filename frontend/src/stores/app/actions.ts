@@ -37,6 +37,7 @@ import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
 import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
+import { PlaybackLog } from "../../audio/playbackLog";
 import {
   addInferredLinks,
   INTROSPECTION_SQL,
@@ -665,6 +666,13 @@ export interface AppActions {
    * `app.check_for_updates` command's action. */
   openAbout: () => void;
   closeAbout: () => void;
+  /** Copy the playback log — the engine's record of what it and the page did,
+   * for diagnosing playback that stalls out of sight — to the clipboard.
+   * Resolves to the number of lines copied. A gesture action: call it from the
+   * click itself. */
+  copyPlaybackLog: () => Promise<number>;
+  /** Empty the playback log, so a test run starts from a clean slate. */
+  clearPlaybackLog: () => void;
 
   /** Store a setting's value and re-run the open queries under it. A value
    * equal to the default is stored as a *deletion* — the reset path. */
@@ -1441,6 +1449,9 @@ export function createAppActions(
 
   // ── Playback ────────────────────────────────────────────────────────────────
 
+  // What the engine did, kept across reloads (see `audio/playbackLog.ts`).
+  const playbackLog = new PlaybackLog(env.storage);
+
   // The audio engine, built on the first play so a session that never plays
   // anything creates no <audio> element and claims no OS media session.
   let audio: AudioEngine | undefined;
@@ -1454,6 +1465,7 @@ export function createAppActions(
         onStreamRequest: () => saves.touch(),
       },
       () => get().audioQuality,
+      playbackLog,
     ));
 
   /** Mirrors the engine's transport state into the store for the bar to render.
@@ -3291,6 +3303,11 @@ export function createAppActions(
       set((s) => {
         s.aboutOpen = false;
       }),
+    copyPlaybackLog: () => {
+      const lines = playbackLog.length;
+      return env.writeClipboardText(playbackLog.text()).then(() => lines);
+    },
+    clearPlaybackLog: () => playbackLog.clear(),
     saveSetting: (key, value) => {
       const next = withSetting(get().settingOverrides, key, value);
       set((s) => {

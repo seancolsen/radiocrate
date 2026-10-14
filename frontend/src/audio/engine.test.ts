@@ -11,6 +11,8 @@ class FakeAudio extends EventTarget {
   paused = true;
   ended = false;
   muted = false;
+  volume = 1;
+  error = null;
   networkState = 0;
   preload = "";
   style = {};
@@ -444,5 +446,52 @@ describe("the duration", () => {
     engine.setMetadata(null, null, 180);
 
     expect(engine.duration).toBe(180);
+  });
+});
+
+describe("a traced engine", () => {
+  it("records a track boundary: the handoff and the events around it", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", { addEventListener: () => {} });
+    vi.stubGlobal("navigator", { userAgent: "test" });
+    vi.stubGlobal("document", {
+      body: { appendChild: () => {} },
+      addEventListener: () => {},
+      visibilityState: "hidden",
+    });
+    const lines: string[] = [];
+    const engine = new AudioEngine(
+      {
+        onTrackChange: () => {},
+        onPlayCompleted: () => {},
+        onQueueDry: () => {},
+        onTransport: () => {},
+        onStreamRequest: () => {},
+      },
+      () => "higher",
+      {
+        add: (kind, detail) => lines.push(detail ? `${kind} ${detail}` : kind),
+        flush: () => {},
+      },
+    );
+    engine.setQueue([], "t1", ["t2"]);
+    const [first] = created;
+    finishDownload(first!);
+    first!.dispatchEvent(new Event("ended"));
+    vi.advanceTimersByTime(3000);
+    vi.useRealTimers();
+
+    const kinds = lines.map((line) => line.split(" ")[0]);
+    expect(kinds.slice(0, 3)).toEqual([
+      "engine-start",
+      "cmd:set-queue",
+      "load",
+    ]);
+    expect(kinds).toContain("prime");
+    expect(kinds.indexOf("ev:ended")).toBeLessThan(kinds.indexOf("handoff"));
+    expect(lines.find((l) => l.startsWith("prime"))).toBe("prime t2 on B");
+    expect(lines.at(-1)).toMatch(
+      /^hb t2 vis=hidden ms=- \| B\* t=0\.00 .* src=t2 \| A /,
+    );
   });
 });

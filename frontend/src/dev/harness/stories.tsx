@@ -720,6 +720,8 @@ export const STORIES: Record<string, Story> = {
         version={STUB_VERSION}
         onCheck={() => {}}
         onReloadFresh={() => {}}
+        onCopyPlaybackLog={() => Promise.resolve(0)}
+        onClearPlaybackLog={() => {}}
         onClose={() => {}}
       />
     ),

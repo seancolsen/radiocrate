@@ -74,6 +74,73 @@ export interface EngineEvents {
   onStreamRequest: () => void;
 }
 
+/** Where the engine reports what it does, for diagnosing playback that goes
+ * wrong out of sight — see `playbackLog.ts`, which is what implements it. */
+export interface EngineTrace {
+  add(kind: string, detail?: string): void;
+  /** Persists what's been added; called when the page may be about to stop. */
+  flush(): void;
+}
+
+/** The element events traced, beyond the ones the engine acts on. `progress`
+ * and `timeupdate` are left out: they fire several times a second, and the
+ * heartbeat already samples what they'd show. */
+const TRACED_EVENTS = [
+  "loadstart",
+  "loadedmetadata",
+  "loadeddata",
+  "canplay",
+  "canplaythrough",
+  "play",
+  "playing",
+  "pause",
+  "waiting",
+  "stalled",
+  "suspend",
+  "emptied",
+  "abort",
+  "ended",
+  "error",
+  "seeking",
+  "seeked",
+  "volumechange",
+  "ratechange",
+] as const;
+
+/** Page events traced: visibility, and the Page Lifecycle API's `freeze` and
+ * `resume`, which Chrome fires around freezing a backgrounded page. */
+const TRACED_PAGE_EVENTS = [
+  "visibilitychange",
+  "freeze",
+  "resume",
+  "pagehide",
+  "pageshow",
+] as const;
+
+/** How often the heartbeat samples the players while the page is hidden —
+ * where the trouble is — and while it's visible. */
+const HIDDEN_HEARTBEAT_MS = 3000;
+const VISIBLE_HEARTBEAT_MS = 15000;
+
+/** Chrome's count of audio bytes an element has decoded: it climbs while the
+ * media pipeline is running, whatever comes out of the speaker. */
+interface DecodedByteCount {
+  webkitAudioDecodedByteCount?: number;
+}
+
+/** A track id, shortened for the trace. */
+function shortId(id: string | undefined): string {
+  return id === undefined ? "none" : id.slice(0, 8);
+}
+
+/** An element's `src`, shortened for the trace: the track id and query. */
+function shortSrc(src: string | null): string {
+  if (!src) return "none";
+  if (src.startsWith("data:")) return "silence";
+  const m = /\/api\/tracks\/([^/]+)\/stream(\?.*)?$/.exec(src);
+  return m ? `${shortId(decodeURIComponent(m[1]!))}${m[2] ?? ""}` : src;
+}
+
 /** Artwork for the lock screen and notification shade. The collection has no
  * cover art, so this is the app icon — which still beats the generic globe the
  * OS falls back to for a web page. */
@@ -87,7 +154,13 @@ const ARTWORK: MediaImage[] = [
  * audio — without it a home-screen PWA's audio stops when the screen locks, and
  * the ringer switch mutes it. Not in lib.dom yet. */
 interface AudioSessionNavigator {
-  audioSession?: { type: string };
+  audioSession?: {
+    type: string;
+    /** Read only by the trace: whether the platform has the session active,
+     * inactive or interrupted. */
+    state?: string;
+    addEventListener?: (type: string, listener: () => void) => void;
+  };
 }
 
 /** `HTMLMediaElement.HAVE_METADATA`, spelled out so the engine loads outside a
@@ -159,10 +232,20 @@ export class AudioEngine {
    * `Content-Length`, no range support — so its element reports an infinite
    * duration, and this is the only length it has. */
   private knownDuration: number | null = null;
+  /** Where to report what happens, if anywhere. */
+  private readonly tracer: EngineTrace | undefined;
+  /** The last heartbeat's wall-clock time and track position, so the next can
+   * say how far each moved in between. */
+  private lastBeat: { wall: number; position: number } | undefined;
 
-  constructor(events: EngineEvents, getQuality: () => AudioQualityPref) {
+  constructor(
+    events: EngineEvents,
+    getQuality: () => AudioQualityPref,
+    tracer?: EngineTrace,
+  ) {
     this.events = events;
     this.getQuality = getQuality;
+    this.tracer = tracer;
 
     // Both elements are created up front and kept in the document (hidden) for
     // the app's lifetime. iOS ties the permission earned by the first
@@ -179,6 +262,7 @@ export class AudioEngine {
     if (nav.audioSession) nav.audioSession.type = "playback";
 
     this.installHandlers();
+    if (tracer) this.installDiagnostics(tracer);
   }
 
   /** The element currently playing. */
@@ -229,6 +313,10 @@ export class AudioEngine {
    * back through, `upcoming` the ones after it that auto-advance and "next" walk
    * forward through. */
   setQueue(preceding: string[], current: string, upcoming: string[]): void {
+    this.trace(
+      "cmd:set-queue",
+      () => `${shortId(current)} upcoming=${upcoming.length}`,
+    );
     // Starting a fresh track abandons whatever was playing. If that track was
     // already past its halfway mark it counts as a completed play — note it
     // before `load` swaps in the new track's position.
@@ -248,6 +336,7 @@ export class AudioEngine {
    * if one is now due. */
   updateQueue(preceding: string[], upcoming: string[]): void {
     if (this.current === undefined) return;
+    this.trace("update-queue", () => `next=${shortId(upcoming[0])}`);
     this.history = preceding;
     this.queue = upcoming;
     this.yieldStandby();
@@ -256,12 +345,14 @@ export class AudioEngine {
   }
 
   play(): void {
+    this.trace("cmd:play");
     this.wantPlaying = true;
-    void this.audio.play().catch(() => {});
+    void this.startPlaying(this.audio, "resume").catch(() => {});
     this.setPlaybackState("playing");
   }
 
   pause(): void {
+    this.trace("cmd:pause");
     this.wantPlaying = false;
     this.audio.pause();
     this.setPlaybackState("paused");
@@ -274,6 +365,7 @@ export class AudioEngine {
 
   /** Stops playback and tears down the play context and OS media session. */
   stop(): void {
+    this.trace("cmd:stop");
     this.wantPlaying = false;
     for (const el of this.elements) {
       el.pause();
@@ -306,6 +398,7 @@ export class AudioEngine {
     artist: string | null,
     duration: number | null,
   ): void {
+    this.trace("metadata", () => `duration=${duration}`);
     this.knownDuration = duration !== null && duration > 0 ? duration : null;
     this.updatePositionState();
     this.events.onTransport();
@@ -346,10 +439,11 @@ export class AudioEngine {
     // metadata fetch already supplied.
     if (id !== this.current) this.knownDuration = null;
     this.offset = 0;
+    this.trace("load", () => `${shortId(id)} on ${this.name(this.audio)}`);
     this.activeQuality = streamQualityParam(this.getQuality());
     this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
     this.wantPlaying = true;
-    void this.audio.play().catch(() => {});
+    void this.startPlaying(this.audio, "load").catch(() => {});
     this.current = id;
     this.setPlaybackState("playing");
     // A previous `stop()` may have unwired the transport actions; this track
@@ -382,6 +476,7 @@ export class AudioEngine {
    * in flight; removing the attribute alone lets it run on. */
   private releaseStandby(): void {
     const el = this.standby;
+    this.trace("release-standby", () => this.describe(el));
     el.pause();
     el.removeAttribute("src");
     el.load();
@@ -404,6 +499,7 @@ export class AudioEngine {
     if (this.primed === next && el.getAttribute("src")) return;
     if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
+    this.trace("prime", () => `${shortId(next)} on ${this.name(el)}`);
     this.primedQuality = streamQualityParam(this.getQuality());
     this.fetchStream(el, trackStreamUrl(next, this.primedQuality));
     this.primed = next;
@@ -414,13 +510,19 @@ export class AudioEngine {
    * `ended` handler of a page that has, for the moment, stopped rendering audio
    * and is therefore at its most freezable. */
   private handoff(id: string): void {
+    this.trace(
+      "handoff",
+      () => `${shortId(id)} to ${this.describe(this.standby)}`,
+    );
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
     this.activeQuality = this.primedQuality;
     this.offset = 0;
     this.knownDuration = null;
     this.current = id;
     this.wantPlaying = true;
-    void this.audio.play().catch(() => this.handoffFailed(id));
+    void this.startPlaying(this.audio, "handoff").catch(() =>
+      this.handoffFailed(id),
+    );
     // The outgoing element is the standby now. `ended` already stopped it; a
     // *skip* did not, and a skipped track may still be downloading.
     this.releaseStandby();
@@ -436,6 +538,7 @@ export class AudioEngine {
    * that does have permission and never hand off again. */
   private handoffFailed(id: string): void {
     if (this.current !== id) return; // superseded by a later navigation
+    this.trace("handoff-failed", () => shortId(id));
     this.handoffBlocked = true;
     const stranded = this.audio;
     stranded.pause();
@@ -456,8 +559,8 @@ export class AudioEngine {
     const borrowed = !el.getAttribute("src");
     if (borrowed) el.src = SILENCE;
     el.muted = true;
-    void el
-      .play()
+    this.trace("unlock", () => this.describe(el));
+    void this.startPlaying(el, "unlock")
       .then(() => {
         el.pause();
         if (!borrowed) {
@@ -492,6 +595,10 @@ export class AudioEngine {
     // reported after it: `onPlayCompleted` and `onTrackChange` both put requests
     // on the wire, and nothing may share the boundary with getting audio going
     // again.
+    this.trace(
+      "next",
+      () => `${shortId(next)} ended=${ended} primed=${this.primed === next}`,
+    );
     const completed = this.completedPlay(ended);
     const previous = this.current;
     if (this.primed === next) this.handoff(next);
@@ -508,6 +615,7 @@ export class AudioEngine {
   private goPrev(): boolean {
     const prev = this.history.pop();
     if (prev === undefined) return false;
+    this.trace("prev", () => shortId(prev));
     const completed = this.completedPlay(false);
     if (this.current !== undefined) this.queue.unshift(this.current);
     this.load(prev);
@@ -556,6 +664,7 @@ export class AudioEngine {
    * seeks in place only within what it has already buffered. Anywhere else the
    * stream is restarted from the target (see {@link restartAt}). */
   seek(seconds: number): void {
+    this.trace("cmd:seek", () => seconds.toFixed(2));
     const duration = this.duration;
     let target = Math.max(seconds, 0);
     if (duration !== null) target = Math.min(target, duration);
@@ -586,10 +695,11 @@ export class AudioEngine {
     }
     const start = Math.round(target * 1000) / 1000;
     const el = this.audio;
+    this.trace("restart", () => `${shortId(id)} at ${start}`);
     this.offset = start;
     this.fetchStream(el, trackStreamUrl(id, this.activeQuality, start));
     this.yieldStandby();
-    if (this.wantPlaying) void el.play().catch(() => {});
+    if (this.wantPlaying) void this.startPlaying(el, "restart").catch(() => {});
     this.updatePositionState();
     this.events.onTransport();
   }
@@ -608,6 +718,16 @@ export class AudioEngine {
       // The standby element loads and buffers while the active one plays; only
       // the active one's events describe the transport the user can see.
       const active = () => el === this.audio;
+
+      // Registered first, so each event's line comes before anything the
+      // handlers below go on to do about it.
+      if (this.tracer) {
+        for (const type of TRACED_EVENTS) {
+          el.addEventListener(type, () =>
+            this.trace(`ev:${type}`, () => this.describe(el)),
+          );
+        }
+      }
 
       el.addEventListener("play", () => {
         if (active()) transport();
@@ -673,7 +793,8 @@ export class AudioEngine {
       if (document.visibilityState !== "visible") return;
       if (!this.wantPlaying || this.current === undefined) return;
       if (!this.audio.paused || this.audio.ended) return;
-      void this.audio.play().catch(() => {});
+      this.trace("visible-retry");
+      void this.startPlaying(this.audio, "visible-retry").catch(() => {});
     });
 
     this.installMediaActionHandlers();
@@ -720,10 +841,135 @@ export class AudioEngine {
     action: MediaSessionAction,
     handler: MediaSessionActionHandler | null,
   ): void {
+    const traced: MediaSessionActionHandler | null =
+      handler && this.tracer
+        ? (details) => {
+            this.trace(`session:${action}`, () =>
+              details.seekTime != null ? `to ${details.seekTime}` : "",
+            );
+            handler(details);
+          }
+        : handler;
     try {
-      this.media?.setActionHandler(action, handler);
+      this.media?.setActionHandler(action, traced);
     } catch {
       // An action this browser doesn't know about — nothing to degrade.
     }
+  }
+
+  // ── Diagnostics ────────────────────────────────────────────────────────────
+
+  /** Reports `kind` to the tracer, if there is one. `detail` is a thunk so an
+   * engine without one never pays for describing its state. */
+  private trace(kind: string, detail?: () => string): void {
+    if (this.tracer) this.tracer.add(kind, detail?.());
+  }
+
+  /** Calls `play()` on `el`, tracing how the browser answers it. */
+  private startPlaying(el: HTMLAudioElement, why: string): Promise<void> {
+    const playing = el.play();
+    if (this.tracer) {
+      playing.then(
+        () => this.trace("play-ok", () => `${why} ${this.name(el)}`),
+        (err: unknown) =>
+          this.trace(
+            "play-rejected",
+            () =>
+              `${why} ${this.name(el)} ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+          ),
+      );
+    }
+    return playing;
+  }
+
+  /** `A` or `B`, starred while it's the active element. */
+  private name(el: HTMLAudioElement): string {
+    return `${el === this.elements[0] ? "A" : "B"}${el === this.audio ? "*" : ""}`;
+  }
+
+  /** One element's state, in a line's worth of `key=value`s. */
+  private describe(el: HTMLAudioElement): string {
+    const parts = [
+      this.name(el),
+      `t=${el.currentTime.toFixed(2)}`,
+      `rs=${el.readyState}`,
+      `ns=${el.networkState}`,
+      el.ended ? "ended" : el.paused ? "paused" : "playing",
+    ];
+    if (el.muted) parts.push("muted");
+    if (el.volume !== 1) parts.push(`vol=${el.volume}`);
+    if (el.error) parts.push(`err=${el.error.code}:${el.error.message}`);
+    const ranges: string[] = [];
+    for (let i = 0; i < el.buffered.length; i++) {
+      ranges.push(
+        `${el.buffered.start(i).toFixed(1)}-${el.buffered.end(i).toFixed(1)}`,
+      );
+    }
+    parts.push(`buf=${ranges.join(",") || "none"}`);
+    const decoded = (el as HTMLAudioElement & DecodedByteCount)
+      .webkitAudioDecodedByteCount;
+    if (decoded !== undefined) parts.push(`dec=${decoded}`);
+    parts.push(`src=${shortSrc(el.getAttribute("src"))}`);
+    return parts.join(" ");
+  }
+
+  /** Traces the page around the players — its visibility and lifecycle, the
+   * network, the audio session where there is one — and starts the heartbeat.
+   * Only an engine with a tracer does any of this. */
+  private installDiagnostics(tracer: EngineTrace): void {
+    const nav = navigator as Navigator & AudioSessionNavigator;
+    const session = nav.audioSession;
+    this.trace(
+      "engine-start",
+      () =>
+        `vis=${document.visibilityState} audioSession=${session ? `${session.type}/${session.state ?? "?"}` : "absent"} ua=${navigator.userAgent}`,
+    );
+    session?.addEventListener?.("statechange", () =>
+      this.trace("audio-session", () => `state=${session.state ?? "?"}`),
+    );
+
+    for (const type of TRACED_PAGE_EVENTS) {
+      document.addEventListener(type, () => {
+        this.trace(
+          `page:${type}`,
+          () => `vis=${document.visibilityState} ${this.describe(this.audio)}`,
+        );
+        // Any of these can be the last moment the page runs for a while.
+        tracer.flush();
+      });
+    }
+    for (const type of ["online", "offline"]) {
+      window.addEventListener(type, () => this.trace(`net:${type}`));
+    }
+
+    // The engine lives as long as the app, so the interval is never cleared.
+    setInterval(() => this.heartbeat(), HIDDEN_HEARTBEAT_MS);
+  }
+
+  /** Samples both players while a track is loaded — often while the page is
+   * hidden, rarely while it's on screen. Each beat says how far the wall clock
+   * and the track position moved since the last: a track whose position keeps
+   * pace with the clock is playing, whatever the speaker says; a long gap
+   * between beats means the page wasn't running at all. */
+  private heartbeat(): void {
+    if (this.current === undefined) {
+      this.lastBeat = undefined;
+      return;
+    }
+    const wall = Date.now();
+    const last = this.lastBeat;
+    const hidden = document.visibilityState === "hidden";
+    if (!hidden && last && wall - last.wall < VISIBLE_HEARTBEAT_MS) return;
+    const position = this.position;
+    this.lastBeat = { wall, position };
+    const session = (navigator as Navigator & AudioSessionNavigator)
+      .audioSession;
+    this.trace("hb", () => {
+      const moved = last
+        ? ` dwall=${((wall - last.wall) / 1000).toFixed(1)} dpos=${(position - last.position).toFixed(1)}`
+        : "";
+      const os = `ms=${this.media?.playbackState ?? "-"}${session ? ` as=${session.state ?? "?"}` : ""}`;
+      return `${shortId(this.current)} vis=${document.visibilityState}${moved} ${os} | ${this.describe(this.audio)} | ${this.describe(this.standby)}`;
+    });
   }
 }
