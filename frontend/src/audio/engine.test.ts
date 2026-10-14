@@ -119,9 +119,8 @@ beforeEach(() => {
 });
 
 describe("the next track", () => {
-  // Primed unpaced: see the engine's header.
-  const t2 = "/api/tracks/t2/stream?quality=opus128&pace=false";
-  const t3 = "/api/tracks/t3/stream?quality=opus128&pace=false";
+  const t2 = "/api/tracks/t2/stream?quality=opus128";
+  const t3 = "/api/tracks/t3/stream?quality=opus128";
 
   it("isn't fetched until the current track has downloaded", () => {
     const { engine } = setup();
@@ -134,8 +133,6 @@ describe("the next track", () => {
 
     finishDownload(active!);
     expect(standby!.src).toBe(t2);
-    // The track being played is the one left paced.
-    expect(active!.src).toBe("/api/tracks/t1/stream?quality=opus128");
   });
 
   it("is primed at once after a handoff to a track already downloaded", () => {
@@ -178,9 +175,7 @@ describe("the next track", () => {
 
     expect(standby!.src).not.toContain("/api/");
     finishDownload(active!);
-    expect(standby!.src).toBe(
-      "/api/tracks/t6/stream?quality=opus128&pace=false",
-    );
+    expect(standby!.src).toBe("/api/tracks/t6/stream?quality=opus128");
   });
 });
 

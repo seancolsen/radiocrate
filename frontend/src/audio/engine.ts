@@ -35,13 +35,6 @@
 // ahead as it intends to). A fresh load on the active element likewise drops a
 // prime still in flight. A boundary reached before the prime is ready falls back
 // to a fresh load.
-//
-// And a prime asks the server not to pace it. The backend paces streams to a
-// multiple of real time so a download doesn't hog the link, which suits a
-// playing element: it keeps reading. A *paused* element in a backgrounded page
-// on Android can stop reading once it has its first few seconds, so a paced
-// prime held only those, and the boundary played them and then stalled until
-// the app was opened. Sent unpaced, the whole track lands while it still can.
 
 import { trackStreamUrl } from "api-client";
 
@@ -412,13 +405,7 @@ export class AudioEngine {
     if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
     this.primedQuality = streamQualityParam(this.getQuality());
-    // Unpaced (see the header): a paused element may stop reading a paced
-    // stream before the boundary, and then has nothing to play past its first
-    // few seconds.
-    this.fetchStream(
-      el,
-      trackStreamUrl(next, this.primedQuality, undefined, false),
-    );
+    this.fetchStream(el, trackStreamUrl(next, this.primedQuality));
     this.primed = next;
   }
 

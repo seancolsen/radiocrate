@@ -134,20 +134,16 @@ async function sendQuery(sql: string): Promise<ArrayBuffer> {
  * a lossy file streams unchanged either way). `start` mirrors
  * `StreamParams.start`: the position, in seconds, a transcode begins from —
  * its timeline then counts from zero at that point. A file streamed as-is
- * ignores it (it is served whole, seekable by range request). `pace` mirrors
- * `StreamParams.pace`: pass `false` to have the stream sent at full speed
- * rather than paced to playback, for a track buffered ahead of time.
+ * ignores it (it is served whole, seekable by range request).
  */
 export function trackStreamUrl(
   id: string,
   quality?: string,
   start?: number,
-  pace?: boolean,
 ): string {
   const params = new URLSearchParams();
   if (quality) params.set("quality", quality);
   if (start) params.set("start", String(start));
-  if (pace === false) params.set("pace", "false");
   const q = params.toString();
   return `/api/tracks/${encodeURIComponent(id)}/stream${q ? `?${q}` : ""}`;
 }

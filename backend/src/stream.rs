@@ -47,14 +47,6 @@ const RESAMPLE_CHUNK_SIZE: usize = 1024;
 // a fixed multiple of real time instead. That keeps the client comfortably
 // ahead of playback (a whole track is still fetched long before it ends) while
 // leaving the link's buffer empty for everything else.
-//
-// Only a stream that's being played can be paced, though. The client buffers
-// the next track into a paused player while the current one plays, and on
-// Android, a paused player in a backgrounded page can stop reading soon after
-// its first few seconds arrive. Paced, that may be all it ever holds: the
-// boundary then plays the head start and stalls on a fetch the locked phone
-// won't make. So that fetch asks for `pace=false`, and gets the whole track at once,
-// as it did before pacing.
 // ---------------------------------------------------------------------------
 
 /// How much faster than real time a stream is sent once past its head start.
@@ -109,19 +101,10 @@ pub struct StreamParams {
     quality: String,
     #[serde(default)]
     start: f64,
-    /// Whether to pace the stream (see "Pacing" above). The client turns it off
-    /// when it's buffering a track ahead of time, into a player that isn't
-    /// playing yet.
-    #[serde(default = "default_pace")]
-    pace: bool,
 }
 
 fn default_quality() -> String {
     "original".to_string()
-}
-
-fn default_pace() -> bool {
-    true
 }
 
 fn is_lossless(format: &str) -> bool {
@@ -238,13 +221,13 @@ pub async fn stream_track(
     let should_transcode = params.quality == "opus128" && is_lossless(&track.format);
 
     if should_transcode {
-        transcode_response(&track, params.start, params.pace).await
+        transcode_response(&track, params.start).await
     } else {
-        passthrough_response(&track, request, params.pace).await
+        passthrough_response(&track, request).await
     }
 }
 
-async fn passthrough_response(track: &TrackFile, request: Request, pace: bool) -> Response {
+async fn passthrough_response(track: &TrackFile, request: Request) -> Response {
     let content_type = format_content_type(&track.format);
     let request_method = request.method().clone();
 
@@ -267,8 +250,7 @@ async fn passthrough_response(track: &TrackFile, request: Request, pace: bool) -
 
     // Only a body of audio is worth pacing: not a 304, a 416, or a HEAD.
     let status = response.status();
-    if !pace
-        || !(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT)
+    if !(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT)
         || request_method == Method::HEAD
     {
         return response;
@@ -375,13 +357,13 @@ fn paced_body(body: Body, pacer: Pacer) -> Body {
     Body::from_stream(ReceiverStream::new(rx))
 }
 
-async fn transcode_response(track: &TrackFile, start: f64, pace: bool) -> Response {
+async fn transcode_response(track: &TrackFile, start: f64) -> Response {
     let (tx, rx) = mpsc::channel::<io::Result<Bytes>>(16);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     let file_path = track.path.clone();
 
     tokio::task::spawn_blocking(move || {
-        run_transcode_pipeline(file_path.as_path(), start, pace, &tx, ready_tx);
+        run_transcode_pipeline(file_path.as_path(), start, &tx, ready_tx);
     });
 
     match ready_rx.await {
@@ -406,13 +388,12 @@ async fn transcode_response(track: &TrackFile, start: f64, pace: bool) -> Respon
 fn run_transcode_pipeline(
     file_path: &Path,
     start: f64,
-    pace: bool,
     tx: &mpsc::Sender<io::Result<Bytes>>,
     ready_tx: oneshot::Sender<Result<(), String>>,
 ) {
     let mut ready_tx = Some(ready_tx);
 
-    let result = transcode_inner(file_path, start, pace, tx, &mut ready_tx);
+    let result = transcode_inner(file_path, start, tx, &mut ready_tx);
 
     if let Err(ref e) = result {
         if let Some(ready) = ready_tx {
@@ -492,7 +473,6 @@ fn build_opus_tags() -> Vec<u8> {
 fn transcode_inner(
     file_path: &Path,
     start: f64,
-    pace: bool,
     tx: &mpsc::Sender<io::Result<Bytes>>,
     ready_tx: &mut Option<oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -621,7 +601,7 @@ fn transcode_inner(
         // In seconds of audio, which the granule position counts exactly. Encoding
         // runs many times faster than real time, so unpaced, a transcode floods
         // the link just as a file would.
-        let pacer = pace.then(|| Pacer::new(PACE_HEAD_START_SECS, PACE_MULTIPLE));
+        let pacer = Pacer::new(PACE_HEAD_START_SECS, PACE_MULTIPLE);
 
         loop {
             let packet = match format.next_packet() {
@@ -693,11 +673,9 @@ fn transcode_inner(
                 false,
             )?;
 
-            if let Some(pacer) = &pacer {
-                let delay = pacer.delay(granule_pos as f64 / f64::from(OPUS_SAMPLE_RATE));
-                if !delay.is_zero() {
-                    std::thread::sleep(delay);
-                }
+            let delay = pacer.delay(granule_pos as f64 / f64::from(OPUS_SAMPLE_RATE));
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
             }
         }
 
