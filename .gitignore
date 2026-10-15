@@ -43,3 +43,6 @@ __pycache__/
 # The database the backend creates in whichever collection root it is pointed at,
 # including the sample collections under sample-data/.
 radiocrate.db
+
+# Temporary files used for AI prompts
+/tmp
