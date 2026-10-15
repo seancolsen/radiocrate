@@ -82,6 +82,52 @@ export interface EngineTrace {
   flush(): void;
 }
 
+/** Switchable changes to how the engine crosses a track boundary while the
+ * page is hidden, for finding out — on the device that misbehaves — which of
+ * them keeps locked playback from going silent a few seconds into a track. All
+ * off is the engine's normal behavior. */
+export interface PlaybackExperiments {
+  /** {@link AudioEngine.unlock} plays the silence it borrows unmuted: it's
+   * silence, so the mute only ever flipped the element's state. */
+  unmutedUnlock: boolean;
+  /** After a hidden handoff, the next track isn't primed until the new one has
+   * played for {@link HELD_PRIME_MS} — where, if loading a paused element in a
+   * hidden page is what silences the one playing, the silence moves to. */
+  holdPrime: boolean;
+  /** {@link RESTART_AFTER_MS} into a track reached by a hidden handoff, pause
+   * and play again, as the lock screen's buttons do — which brings the sound
+   * back when it's gone. */
+  restartAfterHandoff: boolean;
+}
+
+export const NO_EXPERIMENTS: PlaybackExperiments = {
+  unmutedUnlock: false,
+  holdPrime: false,
+  restartAfterHandoff: false,
+};
+
+/** The experiments switched on, for the trace: `none`, or their names. */
+function describeExperiments(experiments: PlaybackExperiments): string {
+  const on = Object.entries(experiments)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name);
+  return on.length > 0 ? on.join(",") : "none";
+}
+
+/** How long {@link PlaybackExperiments.holdPrime} holds off priming. */
+const HELD_PRIME_MS = 20_000;
+/** How far into a track {@link PlaybackExperiments.restartAfterHandoff}
+ * pauses it, and how long it stays paused. */
+const RESTART_AFTER_MS = 8000;
+const RESTART_PAUSE_MS = 300;
+
+/** What an engine needs to diagnose itself: somewhere to trace to, and the
+ * experiments to run. */
+export interface EngineDiagnostics {
+  trace: EngineTrace;
+  experiments: () => PlaybackExperiments;
+}
+
 /** The element events traced, beyond the ones the engine acts on. `progress`
  * and `timeupdate` are left out: they fire several times a second, and the
  * heartbeat already samples what they'd show. */
@@ -234,6 +280,13 @@ export class AudioEngine {
   private knownDuration: number | null = null;
   /** Where to report what happens, if anywhere. */
   private readonly tracer: EngineTrace | undefined;
+  /** The experiments in force, read afresh at each use. */
+  private readonly experiments: () => PlaybackExperiments;
+  /** Until when (`Date.now()` time) {@link primeNext} holds off, under
+   * {@link PlaybackExperiments.holdPrime}. */
+  private primeHeldUntil = 0;
+  /** The pending step of a {@link PlaybackExperiments.restartAfterHandoff}. */
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
   /** The last heartbeat's wall-clock time and track position, so the next can
    * say how far each moved in between. */
   private lastBeat: { wall: number; position: number } | undefined;
@@ -241,11 +294,12 @@ export class AudioEngine {
   constructor(
     events: EngineEvents,
     getQuality: () => AudioQualityPref,
-    tracer?: EngineTrace,
+    diagnostics?: EngineDiagnostics,
   ) {
     this.events = events;
     this.getQuality = getQuality;
-    this.tracer = tracer;
+    this.tracer = diagnostics?.trace;
+    this.experiments = diagnostics?.experiments ?? (() => NO_EXPERIMENTS);
 
     // Both elements are created up front and kept in the document (hidden) for
     // the app's lifetime. iOS ties the permission earned by the first
@@ -262,7 +316,7 @@ export class AudioEngine {
     if (nav.audioSession) nav.audioSession.type = "playback";
 
     this.installHandlers();
-    if (tracer) this.installDiagnostics(tracer);
+    if (this.tracer) this.installDiagnostics(this.tracer);
   }
 
   /** The element currently playing. */
@@ -366,6 +420,7 @@ export class AudioEngine {
   /** Stops playback and tears down the play context and OS media session. */
   stop(): void {
     this.trace("cmd:stop");
+    this.cancelExperiments();
     this.wantPlaying = false;
     for (const el of this.elements) {
       el.pause();
@@ -410,6 +465,19 @@ export class AudioEngine {
     });
   }
 
+  /** Writes the circumstances to the trace — the page, the quality, the
+   * experiments in force, the browser — so a log, or a stretch of one, says
+   * what it was recorded under. */
+  traceContext(): void {
+    const session = (navigator as Navigator & AudioSessionNavigator)
+      .audioSession;
+    this.trace(
+      "context",
+      () =>
+        `vis=${document.visibilityState} quality=${this.getQuality()} experiments=${describeExperiments(this.experiments())} audioSession=${session ? `${session.type}/${session.state ?? "?"}` : "absent"} ua=${navigator.userAgent}`,
+    );
+  }
+
   /** Whether playback of the current track has reached its halfway point —
    * the threshold at which an abandoned track still counts as a play. `false`
    * when the duration isn't known yet. */
@@ -440,6 +508,7 @@ export class AudioEngine {
     if (id !== this.current) this.knownDuration = null;
     this.offset = 0;
     this.trace("load", () => `${shortId(id)} on ${this.name(this.audio)}`);
+    this.cancelExperiments();
     this.activeQuality = streamQualityParam(this.getQuality());
     this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
     this.wantPlaying = true;
@@ -490,6 +559,7 @@ export class AudioEngine {
    * primed does nothing, and an empty queue releases the buffer. */
   private primeNext(): void {
     if (this.handoffBlocked) return;
+    if (Date.now() < this.primeHeldUntil) return;
     const next = this.queue[0];
     const el = this.standby;
     if (next === undefined) {
@@ -527,9 +597,45 @@ export class AudioEngine {
     // *skip* did not, and a skipped track may still be downloading.
     this.releaseStandby();
     this.setPlaybackState("playing");
+    this.cancelExperiments();
+    if (document.visibilityState === "hidden") {
+      const experiments = this.experiments();
+      if (experiments.holdPrime) {
+        this.primeHeldUntil = Date.now() + HELD_PRIME_MS;
+        this.trace("prime-held", () => `${HELD_PRIME_MS / 1000}s`);
+        setTimeout(() => this.primeNext(), HELD_PRIME_MS + 100);
+      }
+      if (experiments.restartAfterHandoff) this.scheduleRestart(id);
+    }
     // Primes straight away if the incoming track finished downloading while it
     // waited; otherwise its `suspend` will.
     this.primeNext();
+  }
+
+  /** Pauses `id` {@link RESTART_AFTER_MS} from now and plays it again a moment
+   * later, through the same commands the lock screen's buttons use (see
+   * {@link PlaybackExperiments.restartAfterHandoff}). Skipped if the track has
+   * changed, or the user paused it, in the meantime. */
+  private scheduleRestart(id: string): void {
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      if (this.current !== id || !this.wantPlaying || this.audio.paused) return;
+      this.trace("restart:pause");
+      this.pause();
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = undefined;
+        if (this.current !== id || this.wantPlaying) return;
+        this.trace("restart:play");
+        this.play();
+      }, RESTART_PAUSE_MS);
+    }, RESTART_AFTER_MS);
+  }
+
+  /** Drops whatever an experiment has pending: a new track starts afresh. */
+  private cancelExperiments(): void {
+    this.primeHeldUntil = 0;
+    if (this.restartTimer !== undefined) clearTimeout(this.restartTimer);
+    this.restartTimer = undefined;
   }
 
   /** The standby element was refused playback — Safari grants that permission
@@ -558,7 +664,7 @@ export class AudioEngine {
     const el = this.standby;
     const borrowed = !el.getAttribute("src");
     if (borrowed) el.src = SILENCE;
-    el.muted = true;
+    el.muted = !(borrowed && this.experiments().unmutedUnlock);
     this.trace("unlock", () => this.describe(el));
     void this.startPlaying(el, "unlock")
       .then(() => {
@@ -917,13 +1023,9 @@ export class AudioEngine {
    * network, the audio session where there is one — and starts the heartbeat.
    * Only an engine with a tracer does any of this. */
   private installDiagnostics(tracer: EngineTrace): void {
-    const nav = navigator as Navigator & AudioSessionNavigator;
-    const session = nav.audioSession;
-    this.trace(
-      "engine-start",
-      () =>
-        `vis=${document.visibilityState} audioSession=${session ? `${session.type}/${session.state ?? "?"}` : "absent"} ua=${navigator.userAgent}`,
-    );
+    const session = (navigator as Navigator & AudioSessionNavigator)
+      .audioSession;
+    this.traceContext();
     session?.addEventListener?.("statechange", () =>
       this.trace("audio-session", () => `state=${session.state ?? "?"}`),
     );

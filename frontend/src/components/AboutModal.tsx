@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import type { AppVersion } from "api-client";
+import { NO_EXPERIMENTS, type PlaybackExperiments } from "../audio/engine";
 import {
   useApp,
   useAppActions,
@@ -8,6 +9,7 @@ import {
 } from "../stores/react";
 import { clientBuildId } from "../stores/update";
 import { DEV_BUILD_ID, isClientStale } from "../state/updatePolicy";
+import { Checkbox } from "./ui/Checkbox";
 import { Modal } from "./ui/Modal";
 
 /** One label/value row of the version table. */
@@ -57,10 +59,22 @@ function VersionVerdict(props: {
   );
 }
 
+/** The playback experiments' labels, in the order they're listed. */
+const EXPERIMENT_LABELS: Record<keyof PlaybackExperiments, string> = {
+  unmutedUnlock: "Unlock the second player without muting it",
+  holdPrime: "Load the next track 20 s into each new one",
+  restartAfterHandoff: "Pause and resume 8 s into each new track",
+};
+
 /** Copies or clears the playback log (see `audio/playbackLog.ts`): what the
  * player did while nobody could watch, to paste into a bug report. The status
  * line says how it went, since on a phone the clipboard gives no other sign. */
 function PlaybackLogSection(props: {
+  experiments: PlaybackExperiments;
+  onToggleExperiment: (
+    experiment: keyof PlaybackExperiments,
+    enabled: boolean,
+  ) => void;
   onCopy: () => Promise<number>;
   onClear: () => void;
 }): JSX.Element {
@@ -107,6 +121,23 @@ function PlaybackLogSection(props: {
           </span>
         )}
       </div>
+      <p className="text-ink-weak mt-3 text-sm">
+        Experiments, to try one at a time:
+      </p>
+      <div className="mt-2 flex flex-col gap-2">
+        {(Object.keys(EXPERIMENT_LABELS) as (keyof PlaybackExperiments)[]).map(
+          (experiment) => (
+            <Checkbox
+              key={experiment}
+              label={EXPERIMENT_LABELS[experiment]}
+              checked={props.experiments[experiment]}
+              onChange={(enabled) =>
+                props.onToggleExperiment(experiment, enabled)
+              }
+            />
+          ),
+        )}
+      </div>
     </section>
   );
 }
@@ -130,6 +161,12 @@ export function AboutDialog(props: {
   onReloadFresh: () => void;
   onCopyPlaybackLog: () => Promise<number>;
   onClearPlaybackLog: () => void;
+  /** Defaults to every experiment off. */
+  playbackExperiments?: PlaybackExperiments;
+  onTogglePlaybackExperiment?: (
+    experiment: keyof PlaybackExperiments,
+    enabled: boolean,
+  ) => void;
   onClose: () => void;
 }): JSX.Element {
   const [confirming, setConfirming] = useState(false);
@@ -153,6 +190,10 @@ export function AboutDialog(props: {
         checking={props.checking ?? false}
       />
       <PlaybackLogSection
+        experiments={props.playbackExperiments ?? NO_EXPERIMENTS}
+        onToggleExperiment={(experiment, enabled) =>
+          props.onTogglePlaybackExperiment?.(experiment, enabled)
+        }
         onCopy={props.onCopyPlaybackLog}
         onClear={props.onClearPlaybackLog}
       />
@@ -220,6 +261,7 @@ export function AboutDialog(props: {
  * same thing on demand. */
 function AboutModalBody(): JSX.Element {
   const version = useUpdate((s) => s.version);
+  const playbackExperiments = useApp((s) => s.playbackExperiments);
   const updateActions = useUpdateActions();
   const appActions = useAppActions();
   // Starts `true`: the dialog runs its check immediately on mount (see the
@@ -258,6 +300,10 @@ function AboutModalBody(): JSX.Element {
       onReloadFresh={() => void updateActions.resetAppData()}
       onCopyPlaybackLog={() => appActions.copyPlaybackLog()}
       onClearPlaybackLog={() => appActions.clearPlaybackLog()}
+      playbackExperiments={playbackExperiments}
+      onTogglePlaybackExperiment={(experiment, enabled) =>
+        appActions.setPlaybackExperiment(experiment, enabled)
+      }
       onClose={() => appActions.closeAbout()}
     />
   );

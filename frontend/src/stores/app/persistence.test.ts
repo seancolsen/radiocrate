@@ -115,3 +115,33 @@ describe("open tabs", () => {
     bundle.dispose();
   });
 });
+
+describe("playback experiments", () => {
+  it("come back after a reload", () => {
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    before.actions.setPlaybackExperiment("holdPrime", true);
+    before.dispose();
+
+    const after = createAppStore(env);
+    expect(after.store.getState().playbackExperiments).toEqual({
+      unmutedUnlock: false,
+      holdPrime: true,
+      restartAfterHandoff: false,
+    });
+  });
+
+  it("ignore a stored value that isn't one of them, or isn't true", () => {
+    const env = fakeEnv();
+    env.storage.setItem(
+      "playbackExperiments",
+      JSON.stringify({ gone: true, unmutedUnlock: "yes", holdPrime: true }),
+    );
+    const s = createAppStore(env).store.getState();
+    expect(s.playbackExperiments).toEqual({
+      unmutedUnlock: false,
+      holdPrime: true,
+      restartAfterHandoff: false,
+    });
+  });
+});
