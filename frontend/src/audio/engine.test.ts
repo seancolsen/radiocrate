@@ -1,10 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AudioEngine,
-  NO_EXPERIMENTS,
-  type AudioQualityPref,
-  type PlaybackExperiments,
-} from "./engine";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AudioEngine, type AudioQualityPref } from "./engine";
 
 /** Just enough of an `<audio>` element for the engine. Its transport state is
  * plain fields, which a test sets to stage what the browser would report. */
@@ -475,12 +470,8 @@ describe("a traced engine", () => {
       },
       () => "higher",
       {
-        trace: {
-          add: (kind, detail) =>
-            lines.push(detail ? `${kind} ${detail}` : kind),
-          flush: () => {},
-        },
-        experiments: () => NO_EXPERIMENTS,
+        add: (kind, detail) => lines.push(detail ? `${kind} ${detail}` : kind),
+        flush: () => {},
       },
     );
     engine.setQueue([], "t1", ["t2"]);
@@ -498,84 +489,5 @@ describe("a traced engine", () => {
     expect(lines.at(-1)).toMatch(
       /^hb t2 vis=hidden ms=- \| B\* t=0\.00 .* src=t2 \| A /,
     );
-  });
-});
-
-describe("a playback experiment", () => {
-  /** An engine running `on`, in a hidden page, with fake timers: playing t1,
-   * t2 primed and fully fetched, t3 queued behind it. */
-  function hiddenEngine(on: Partial<PlaybackExperiments>) {
-    vi.useFakeTimers();
-    vi.stubGlobal("window", { addEventListener: () => {} });
-    vi.stubGlobal("navigator", { userAgent: "test" });
-    vi.stubGlobal("document", {
-      body: { appendChild: () => {} },
-      addEventListener: () => {},
-      visibilityState: "hidden",
-    });
-    const engine = new AudioEngine(
-      {
-        onTrackChange: () => {},
-        onPlayCompleted: () => {},
-        onQueueDry: () => {},
-        onTransport: () => {},
-        onStreamRequest: () => {},
-      },
-      () => "higher",
-      {
-        trace: { add: () => {}, flush: () => {} },
-        experiments: () => ({ ...NO_EXPERIMENTS, ...on }),
-      },
-    );
-    engine.setQueue([], "t1", ["t2", "t3"]);
-    const [first, second] = created;
-    finishDownload(first!);
-    second!.networkState = NETWORK_IDLE;
-    return { engine, first: first!, second: second! };
-  }
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("unmutedUnlock leaves the standby unmuted while it plays silence", () => {
-    hiddenEngine({});
-    expect(created[1]!.muted).toBe(true);
-    created.length = 0;
-    hiddenEngine({ unmutedUnlock: true });
-    expect(created[1]!.muted).toBe(false);
-  });
-
-  it("holdPrime primes the next track only 20 s into the new one", () => {
-    const { first } = hiddenEngine({ holdPrime: true });
-    first.dispatchEvent(new Event("ended"));
-    expect(first.src).toBe("");
-
-    vi.advanceTimersByTime(19_000);
-    expect(first.src).toBe("");
-    vi.advanceTimersByTime(1_200);
-    expect(first.src).toBe("/api/tracks/t3/stream");
-  });
-
-  it("restartAfterHandoff pauses 8 s into the new track, then plays", () => {
-    const { first, second } = hiddenEngine({ restartAfterHandoff: true });
-    first.dispatchEvent(new Event("ended"));
-    expect(second.paused).toBe(false);
-
-    vi.advanceTimersByTime(8_000);
-    expect(second.paused).toBe(true);
-    vi.advanceTimersByTime(300);
-    expect(second.paused).toBe(false);
-  });
-
-  it("restartAfterHandoff leaves alone a track the user paused", () => {
-    const { engine, first, second } = hiddenEngine({
-      restartAfterHandoff: true,
-    });
-    first.dispatchEvent(new Event("ended"));
-    engine.pause();
-
-    vi.advanceTimersByTime(10_000);
-    expect(second.paused).toBe(true);
   });
 });

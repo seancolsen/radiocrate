@@ -1,8 +1,4 @@
-import {
-  NO_EXPERIMENTS,
-  type AudioQualityPref,
-  type PlaybackExperiments,
-} from "../../audio/engine";
+import type { AudioQualityPref } from "../../audio/engine";
 import {
   definitionFromStored,
   definitionToStored,
@@ -80,47 +76,6 @@ export function persistAudioQuality(env: AppEnv, pref: AudioQualityPref): void {
   try {
     if (pref === "higher") env.storage.removeItem(AUDIO_QUALITY_KEY);
     else env.storage.setItem(AUDIO_QUALITY_KEY, pref);
-  } catch {
-    // ignore
-  }
-}
-
-const PLAYBACK_EXPERIMENTS_KEY = "playbackExperiments";
-
-/** The playback experiments switched on, as JSON. Only a key that's
- * still an experiment, holding `true`, is read back: one an older build
- * stored, or one since dropped, means nothing. */
-export function storedPlaybackExperiments(env: AppEnv): PlaybackExperiments {
-  const experiments = { ...NO_EXPERIMENTS };
-  try {
-    const raw = env.storage.getItem(PLAYBACK_EXPERIMENTS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    if (parsed && typeof parsed === "object") {
-      for (const key of Object.keys(NO_EXPERIMENTS)) {
-        if ((parsed as Record<string, unknown>)[key] === true) {
-          experiments[key as keyof PlaybackExperiments] = true;
-        }
-      }
-    }
-  } catch {
-    // Unreadable or denied: every experiment off.
-  }
-  return experiments;
-}
-
-export function persistPlaybackExperiments(
-  env: AppEnv,
-  experiments: PlaybackExperiments,
-): void {
-  try {
-    if (Object.values(experiments).some(Boolean)) {
-      env.storage.setItem(
-        PLAYBACK_EXPERIMENTS_KEY,
-        JSON.stringify(experiments),
-      );
-    } else {
-      env.storage.removeItem(PLAYBACK_EXPERIMENTS_KEY);
-    }
   } catch {
     // ignore
   }

@@ -6,7 +6,7 @@ import type {
   SourceFolder,
   SourceKind,
 } from "api-client";
-import type { AudioQualityPref, PlaybackExperiments } from "../../audio/engine";
+import type { AudioQualityPref } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
@@ -19,7 +19,6 @@ import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
 import type { AppEnv } from "../env";
 import {
   storedAudioQuality,
-  storedPlaybackExperiments,
   storedExpandedFolders,
   storedRecordSidebarWidth,
   storedSidebarOpen,
@@ -433,9 +432,6 @@ export interface AppState {
   settingOverrides: SettingOverrides;
   /** The audio-streaming quality preference (persisted, like theme). */
   audioQuality: AudioQualityPref;
-  /** Which playback experiments are switched on (persisted) — diagnostics for
-   * locked-screen playback, toggled from the About dialog. */
-  playbackExperiments: PlaybackExperiments;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
    * query page) and persisted, like the explorer's open state. */
   recordSidebarWidth: number;
@@ -529,7 +525,6 @@ export function initialState(env: AppEnv): AppState {
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
     audioQuality: storedAudioQuality(env),
-    playbackExperiments: storedPlaybackExperiments(env),
     recordSidebarWidth: storedRecordSidebarWidth(env),
     rowPatch: undefined,
     rowReveal: undefined,

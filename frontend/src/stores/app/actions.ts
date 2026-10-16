@@ -36,11 +36,7 @@ import {
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
 import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
-import {
-  AudioEngine,
-  type AudioQualityPref,
-  type PlaybackExperiments,
-} from "../../audio/engine";
+import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
 import { PlaybackLog } from "../../audio/playbackLog";
 import {
   addInferredLinks,
@@ -134,7 +130,6 @@ import { applyThemeToDocument, watchSystemTheme } from "./theme";
 import {
   clampRecordSidebarWidth,
   persistAudioQuality,
-  persistPlaybackExperiments,
   persistExpandedFolders,
   persistRecordSidebarWidth,
   persistSidebar,
@@ -678,12 +673,6 @@ export interface AppActions {
   copyPlaybackLog: () => Promise<number>;
   /** Empty the playback log, so a test run starts from a clean slate. */
   clearPlaybackLog: () => void;
-  /** Switch a playback experiment on or off (see `PlaybackExperiments`). It
-   * applies from the next track boundary, and the log notes the change. */
-  setPlaybackExperiment: (
-    experiment: keyof PlaybackExperiments,
-    enabled: boolean,
-  ) => void;
 
   /** Store a setting's value and re-run the open queries under it. A value
    * equal to the default is stored as a *deletion* — the reset path. */
@@ -1476,10 +1465,7 @@ export function createAppActions(
         onStreamRequest: () => saves.touch(),
       },
       () => get().audioQuality,
-      {
-        trace: playbackLog,
-        experiments: () => get().playbackExperiments,
-      },
+      playbackLog,
     ));
 
   /** Mirrors the engine's transport state into the store for the bar to render.
@@ -2155,6 +2141,7 @@ export function createAppActions(
         s.audioQuality = pref;
       });
       persistAudioQuality(env, pref);
+      audio?.traceContext();
     },
     openTab: (source) => openSource(source),
     openShortcutsTab: () => {
@@ -3324,13 +3311,6 @@ export function createAppActions(
     clearPlaybackLog: () => {
       playbackLog.clear();
       // A cleared log still says what it's being recorded under.
-      audio?.traceContext();
-    },
-    setPlaybackExperiment: (experiment, enabled) => {
-      set((s) => {
-        s.playbackExperiments[experiment] = enabled;
-      });
-      persistPlaybackExperiments(env, get().playbackExperiments);
       audio?.traceContext();
     },
     saveSetting: (key, value) => {
