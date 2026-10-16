@@ -39,23 +39,78 @@
 //
 // ## Why a keep-alive (Android)
 //
-// Two elements keep the network off the boundary, but not a moment with
-// nothing playing: the outgoing track fires `ended`, and only then does the
-// incoming one start. Since Chrome 155 on Android 17, that moment is enough to
-// lose the right to be heard. Chrome holds its foreground media service only
-// while something plays, and a page in the background can't win it back on its
-// own: the incoming track starts, plays a few seconds, and goes silent — still
-// "playing", its position advancing, until the app is opened or a lock-screen
-// control is pressed (the user's tap is what Android lets reclaim it). A
-// `play()` the page issues itself after a pause fares worse: Chrome pauses the
-// element again within a tenth of a second.
+// A third element loops ten seconds of silence for as long as playback is meant
+// to be running. It looks like a hack; it's the page-side form of what Android
+// asks native players to do, and it has to stay until Chrome does it itself.
 //
-// So on Android a third element loops a few seconds of silence for as long as
-// playback is meant to be running — started with the track, stopped only when
-// the user pauses or playback ends — and Chrome never sees playback stop, not
-// even for the length of a boundary. It's left unmuted, and its loop is long
-// enough not to count as a sound effect: Chrome leaves short or muted players
-// out of the media session, and this one has to be in it.
+// The problem: two elements keep the network off a track boundary, but not a
+// moment with nothing playing. The outgoing track fires `ended`, and only then
+// does the incoming one start. Since Chrome 155 on Android 17 (October 2026),
+// that moment is enough to lose the right to be heard: on a locked phone the
+// incoming track plays two to five seconds, then goes silent — still "playing",
+// position advancing, decoder running — until the app is opened or a
+// lock-screen control is pressed. A `play()` the page issues itself after a
+// pause fares worse: Chrome pauses the element again ~70 ms later.
+//
+// Why, as best we've been able to trace it (verified on the device with the
+// playback log, then explained by research into the Android docs and Chromium
+// source):
+//
+// - Android 17's "background audio hardening" requires an app playing from the
+//   background to hold a foreground service with *while-in-use* capability,
+//   which a service started from the background doesn't get — only one started
+//   while the app was visible, or from a notification tap or media key.
+//   Violations fail silently: playback is muted, and audio focus requests fail.
+//   It binds apps that target API 37.
+//   https://developer.android.com/about/versions/17/changes/bg-audio
+// - Chrome 155 is the first Chrome to target API 37
+//   (https://chromium-review.googlesource.com/c/chromium/src/+/8353288), which
+//   is why this began with a Chrome update rather than the OS one.
+// - Chrome holds its media-playback foreground service only while its media
+//   session has a player playing, and drops it at once when the session goes
+//   idle on a locked device — which a track's `ended` does. The next `play()`
+//   restarts it from the background, without while-in-use, so it's muted.
+//   Android's guidance is the opposite — keep the service through gaps under
+//   ten minutes — and the lock-screen tap works because it's an exempt start.
+// - When Chrome's audio focus request is refused, it pauses the player: that's
+//   the stray pause after a page-initiated `play()`.
+//
+// So the fix is never to let Chrome's session go idle while the user means to
+// be listening. The keep-alive starts with the first track, inside the user's
+// gesture, while the page is visible — so the service it holds up was started
+// legitimately — and keeps it up across every boundary. It stops only when the
+// user pauses, playback stops, or a track fails; resuming is then the user's
+// own action again, which Android allows.
+//
+// What it relies on — Chrome internals, not web-platform guarantees:
+//
+// - Longer than five seconds: Chrome treats shorter media as a one-shot sound,
+//   which doesn't hold the session up (`KEEP_ALIVE_SECS`).
+// - Unmuted, volume above zero: Chrome counts a never-unmuted player as having
+//   no audio, and pauses zero-volume audio in the background.
+// - A real `<audio>` element: Web Audio is an "ambient" player Chrome ignores
+//   for audio focus, and would be muted itself.
+// - Never paused and replayed by the page while hidden: that `play()` can't
+//   reclaim the service (see above), and gets paused.
+//
+// Silence is below Chrome's audibility threshold; that's fine today (it still
+// counts as a playing player), but a future rule against inaudible background
+// media could break this. Others hit the same wall the same week and landed on
+// the same fix (https://github.com/radio4000/r4-svelte/pull/223).
+//
+// Alternatives considered: starting the next track before the current one
+// ends is fragile (it must be audible and already playing at `ended`); a
+// single element fed by Media Source Extensions would never end between tracks
+// and is the principled replacement — gapless, too — but Chrome's MSE takes
+// neither raw FLAC nor Ogg, so the server would have to remux into fMP4/WebM.
+//
+// It can go once Chrome keeps its media service through short gaps — not
+// merely once a Chrome stops targeting API 37. The target change was reverted
+// on Chromium's main branch (M158) two weeks after landing, for an unrelated
+// reason, and is bound to come back. To test the real thing: drop the
+// keep-alive, play from a locked phone across a boundary, and
+// read the playback log (About → Playback log) — or `adb logcat | grep
+// AudioHardening`, which logs "background playback muted" when it bites.
 
 import { trackStreamUrl } from "api-client";
 
@@ -197,8 +252,10 @@ const NETWORK_IDLE = 1;
 const SILENCE =
   "data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
 
-/** How long the keep-alive's loop of silence is: Chrome treats a player under
- * five seconds as a one-shot sound effect, outside the media session. */
+/** How long the keep-alive's loop of silence is. Chrome classes media of five
+ * seconds or less as a transient one-shot sound, which doesn't hold its media
+ * session (or the foreground service behind it) up; this is comfortably past
+ * that. See "Why a keep-alive" above. */
 const KEEP_ALIVE_SECS = 10;
 
 /** `seconds` of silent WAV — 8 kHz, 8-bit mono, so 8 KB a second — for the
@@ -311,6 +368,10 @@ export class AudioEngine {
     // never be allowed to start. Creating both now lets {@link unlock} claim
     // that permission for the pair while a real gesture is still on the stack.
     this.elements = [this.createElement(), this.createElement()];
+    // Android only: that's where Chrome's media service and Android's
+    // background-audio rules make it necessary (see "Why a keep-alive"), and
+    // elsewhere a silent player is a risk for nothing — iOS, say, could pick
+    // it for its lock-screen "now playing".
     if (/Android/i.test(navigator.userAgent)) {
       const keepAlive = this.createElement();
       keepAlive.loop = true;
@@ -721,7 +782,12 @@ export class AudioEngine {
     if (id !== undefined) this.events.onPlayCompleted(id);
   }
 
-  /** Starts the keep-alive, if there is one and it isn't going already. */
+  /** Starts the keep-alive, if there is one and it isn't going already.
+   * Called wherever playback starts. It only gets anywhere from a user's
+   * action, or while the page is visible: once Chrome's media service has
+   * lapsed, a `play()` from a hidden page is refused (see "Why a keep-alive").
+   * That's why {@link releaseSession} is never called on the engine's own
+   * initiative. */
   private holdSession(): void {
     const keepAlive = this.keepAlive;
     if (keepAlive?.paused) {
@@ -729,7 +795,9 @@ export class AudioEngine {
     }
   }
 
-  /** Stops the keep-alive: playback is meant to stop too. */
+  /** Stops the keep-alive: playback is meant to stop too. Only for a stop the
+   * user asked for (pause, stop) or can't be helped (a failed track) — never
+   * between tracks, which is the gap the keep-alive exists to cover. */
   private releaseSession(): void {
     this.keepAlive?.pause();
   }
