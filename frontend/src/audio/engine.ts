@@ -1,5 +1,6 @@
-// The playback engine: a pair of long-lived `<audio>` elements plus the play
-// context (history / current / queue) they navigate.
+// The playback engine: a pair of long-lived `<audio>` elements (and, on
+// Android, a third that keeps the media session alive) plus the play context
+// (history / current / queue) they navigate.
 //
 // Everything that advances playback lives *here*, off the UI: the queue of
 // upcoming track ids is snapshotted when playback starts, and the element's
@@ -35,6 +36,26 @@
 // ahead as it intends to). A fresh load on the active element likewise drops a
 // prime still in flight. A boundary reached before the prime is ready falls back
 // to a fresh load.
+//
+// ## Why a keep-alive (Android)
+//
+// Two elements keep the network off the boundary, but not a moment with
+// nothing playing: the outgoing track fires `ended`, and only then does the
+// incoming one start. Since Chrome 155 on Android 17, that moment is enough to
+// lose the right to be heard. Chrome holds its foreground media service only
+// while something plays, and a page in the background can't win it back on its
+// own: the incoming track starts, plays a few seconds, and goes silent — still
+// "playing", its position advancing, until the app is opened or a lock-screen
+// control is pressed (the user's tap is what Android lets reclaim it). A
+// `play()` the page issues itself after a pause fares worse: Chrome pauses the
+// element again within a tenth of a second.
+//
+// So on Android a third element loops a few seconds of silence for as long as
+// playback is meant to be running — started with the track, stopped only when
+// the user pauses or playback ends — and Chrome never sees playback stop, not
+// even for the length of a boundary. It's left unmuted, and its loop is long
+// enough not to count as a sound effect: Chrome leaves short or muted players
+// out of the media session, and this one has to be in it.
 
 import { trackStreamUrl } from "api-client";
 
@@ -176,6 +197,39 @@ const NETWORK_IDLE = 1;
 const SILENCE =
   "data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
 
+/** How long the keep-alive's loop of silence is: Chrome treats a player under
+ * five seconds as a one-shot sound effect, outside the media session. */
+const KEEP_ALIVE_SECS = 10;
+
+/** `seconds` of silent WAV — 8 kHz, 8-bit mono, so 8 KB a second — for the
+ * keep-alive. Built here rather than fetched, so it costs no request. */
+export function silentWav(seconds: number): Blob {
+  const rate = 8000;
+  const samples = rate * seconds;
+  const bytes = new Uint8Array(44 + samples);
+  const view = new DataView(bytes.buffer);
+  const ascii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) {
+      bytes[offset + i] = text.charCodeAt(i);
+    }
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + samples, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, rate, true); // sample rate
+  view.setUint32(28, rate, true); // byte rate
+  view.setUint16(32, 1, true); // block align
+  view.setUint16(34, 8, true); // bits per sample
+  ascii(36, "data");
+  view.setUint32(40, samples, true);
+  bytes.fill(0x80, 44); // 8-bit PCM is unsigned: 0x80 is the zero line
+  return new Blob([bytes], { type: "audio/wav" });
+}
+
 /** Whether `t` falls inside one of `ranges`. */
 function inRanges(ranges: TimeRanges, t: number): boolean {
   for (let i = 0; i < ranges.length; i++) {
@@ -190,6 +244,9 @@ export class AudioEngine {
   private readonly elements: readonly [HTMLAudioElement, HTMLAudioElement];
   /** Which of {@link elements} is the active player. */
   private activeIndex: 0 | 1 = 0;
+  /** On Android, the element looping silence so playback never stops between
+   * tracks (see "Why a keep-alive" above); `undefined` elsewhere. */
+  private readonly keepAlive: HTMLAudioElement | undefined;
   private readonly events: EngineEvents;
   /** `navigator.mediaSession`, absent on browsers that don't support it. */
   private readonly media: MediaSession | undefined;
@@ -254,6 +311,12 @@ export class AudioEngine {
     // never be allowed to start. Creating both now lets {@link unlock} claim
     // that permission for the pair while a real gesture is still on the stack.
     this.elements = [this.createElement(), this.createElement()];
+    if (/Android/i.test(navigator.userAgent)) {
+      const keepAlive = this.createElement();
+      keepAlive.loop = true;
+      keepAlive.src = URL.createObjectURL(silentWav(KEEP_ALIVE_SECS));
+      this.keepAlive = keepAlive;
+    }
 
     this.media =
       "mediaSession" in navigator ? navigator.mediaSession : undefined;
@@ -348,6 +411,7 @@ export class AudioEngine {
     this.trace("cmd:play");
     this.wantPlaying = true;
     void this.startPlaying(this.audio, "resume").catch(() => {});
+    this.holdSession();
     this.setPlaybackState("playing");
   }
 
@@ -355,6 +419,7 @@ export class AudioEngine {
     this.trace("cmd:pause");
     this.wantPlaying = false;
     this.audio.pause();
+    this.releaseSession();
     this.setPlaybackState("paused");
   }
 
@@ -371,6 +436,7 @@ export class AudioEngine {
       el.pause();
       el.removeAttribute("src");
     }
+    this.releaseSession();
     this.current = undefined;
     this.primed = undefined;
     this.offset = 0;
@@ -457,6 +523,7 @@ export class AudioEngine {
     this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
     this.wantPlaying = true;
     void this.startPlaying(this.audio, "load").catch(() => {});
+    this.holdSession();
     this.current = id;
     this.setPlaybackState("playing");
     // A previous `stop()` may have unwired the transport actions; this track
@@ -654,6 +721,19 @@ export class AudioEngine {
     if (id !== undefined) this.events.onPlayCompleted(id);
   }
 
+  /** Starts the keep-alive, if there is one and it isn't going already. */
+  private holdSession(): void {
+    const keepAlive = this.keepAlive;
+    if (keepAlive?.paused) {
+      void this.startPlaying(keepAlive, "keep-alive").catch(() => {});
+    }
+  }
+
+  /** Stops the keep-alive: playback is meant to stop too. */
+  private releaseSession(): void {
+    this.keepAlive?.pause();
+  }
+
   private setPlaybackState(state: MediaSessionPlaybackState): void {
     if (this.media) this.media.playbackState = state;
   }
@@ -793,6 +873,7 @@ export class AudioEngine {
         if (this.current === undefined) return; // teardown, not a real failure
         console.error("audio stream failed", el.error?.message ?? "");
         this.wantPlaying = false;
+        this.releaseSession();
         this.setPlaybackState("paused");
         transport();
       });
@@ -808,7 +889,19 @@ export class AudioEngine {
       if (!this.audio.paused || this.audio.ended) return;
       this.trace("visible-retry");
       void this.startPlaying(this.audio, "visible-retry").catch(() => {});
+      this.holdSession();
     });
+
+    // The keep-alive's own transport, which nothing else reports: if Chrome
+    // pauses it, that's the moment the page stands to lose its audio.
+    if (this.keepAlive && this.tracer) {
+      const keepAlive = this.keepAlive;
+      for (const type of ["play", "playing", "pause", "error"]) {
+        keepAlive.addEventListener(type, () =>
+          this.trace(`ev:${type}`, () => this.describe(keepAlive)),
+        );
+      }
+    }
 
     this.installMediaActionHandlers();
   }
@@ -895,8 +988,9 @@ export class AudioEngine {
     return playing;
   }
 
-  /** `A` or `B`, starred while it's the active element. */
+  /** `A` or `B`, starred while it's the active element; `K`, the keep-alive. */
   private name(el: HTMLAudioElement): string {
+    if (el === this.keepAlive) return "K";
     return `${el === this.elements[0] ? "A" : "B"}${el === this.audio ? "*" : ""}`;
   }
 
@@ -978,7 +1072,10 @@ export class AudioEngine {
         ? ` dwall=${((wall - last.wall) / 1000).toFixed(1)} dpos=${(position - last.position).toFixed(1)}`
         : "";
       const os = `ms=${this.media?.playbackState ?? "-"}${session ? ` as=${session.state ?? "?"}` : ""}`;
-      return `${shortId(this.current)} vis=${document.visibilityState}${moved} ${os} | ${this.describe(this.audio)} | ${this.describe(this.standby)}`;
+      const keepAlive = this.keepAlive
+        ? ` | K ${this.keepAlive.paused ? "paused" : "playing"} t=${this.keepAlive.currentTime.toFixed(1)}`
+        : "";
+      return `${shortId(this.current)} vis=${document.visibilityState}${moved} ${os} | ${this.describe(this.audio)} | ${this.describe(this.standby)}${keepAlive}`;
     });
   }
 }

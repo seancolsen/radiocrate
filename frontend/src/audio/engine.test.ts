@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AudioEngine, type AudioQualityPref } from "./engine";
+import { AudioEngine, silentWav, type AudioQualityPref } from "./engine";
 
 /** Just enough of an `<audio>` element for the engine. Its transport state is
  * plain fields, which a test sets to stage what the browser would report. */
@@ -11,6 +11,7 @@ class FakeAudio extends EventTarget {
   paused = true;
   ended = false;
   muted = false;
+  loop = false;
   volume = 1;
   error = null;
   networkState = 0;
@@ -489,5 +490,82 @@ describe("a traced engine", () => {
     expect(lines.at(-1)).toMatch(
       /^hb t2 vis=hidden ms=- \| B\* t=0\.00 .* src=t2 \| A /,
     );
+  });
+});
+
+describe("on Android", () => {
+  /** An engine whose navigator says Android, playing t1 with t2 primed and
+   * fully fetched; `keepAlive` is the third element it creates. */
+  function androidEngine() {
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Linux; Android 10; K) Chrome/155.0.0.0",
+    });
+    const { engine } = setup();
+    engine.setQueue([], "t1", ["t2"]);
+    const [first, second, keepAlive] = created;
+    finishDownload(first!);
+    second!.networkState = NETWORK_IDLE;
+    return { engine, first: first!, second: second!, keepAlive: keepAlive! };
+  }
+
+  it("loops silence alongside the track", () => {
+    const { keepAlive } = androidEngine();
+    expect(created).toHaveLength(3);
+    expect(keepAlive.loop).toBe(true);
+    expect(keepAlive.src).toMatch(/^blob:/);
+    expect(keepAlive.paused).toBe(false);
+  });
+
+  it("keeps it playing across a track boundary", () => {
+    const { first, second, keepAlive } = androidEngine();
+    let gap = false;
+    first.addEventListener("ended", () => {
+      gap ||= keepAlive.paused;
+    });
+    first.dispatchEvent(new Event("ended"));
+    expect(second.paused).toBe(false);
+    expect(gap).toBe(false);
+    expect(keepAlive.paused).toBe(false);
+  });
+
+  it("stops it when the user pauses, and starts it again on play", () => {
+    const { engine, keepAlive } = androidEngine();
+    engine.pause();
+    expect(keepAlive.paused).toBe(true);
+    engine.play();
+    expect(keepAlive.paused).toBe(false);
+  });
+
+  it("stops it when playback stops", () => {
+    const { engine, keepAlive } = androidEngine();
+    engine.stop();
+    expect(keepAlive.paused).toBe(true);
+  });
+
+  it("stops it when the track fails to load", () => {
+    const { first, keepAlive } = androidEngine();
+    first.dispatchEvent(new Event("error"));
+    expect(keepAlive.paused).toBe(true);
+  });
+});
+
+describe("elsewhere", () => {
+  it("there's no keep-alive", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    expect(created).toHaveLength(2);
+  });
+});
+
+describe("the keep-alive's silence", () => {
+  it("is a WAV of the length asked for, all on the zero line", async () => {
+    const wav = silentWav(10);
+    expect(wav.type).toBe("audio/wav");
+    const bytes = new Uint8Array(await wav.arrayBuffer());
+    expect(bytes.length).toBe(44 + 80_000);
+    expect(String.fromCharCode(...bytes.slice(0, 4))).toBe("RIFF");
+    expect(String.fromCharCode(...bytes.slice(8, 12))).toBe("WAVE");
+    expect(new DataView(bytes.buffer).getUint32(24, true)).toBe(8000);
+    expect(bytes.slice(44).every((b) => b === 0x80)).toBe(true);
   });
 });
