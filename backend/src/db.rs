@@ -88,8 +88,17 @@ pub fn get_db(db_path: &Path) -> Result<Connection, Box<dyn std::error::Error>> 
         .filter(|m| m.version > current_version)
         .collect::<Vec<_>>();
 
-    for migration in pending_migrations {
+    for migration in &pending_migrations {
         run_migration(&mut conn, migration)?;
+    }
+
+    // Flush the migrated schema and data out of the WAL into the main file, as
+    // every other write does (see `AppState::write`). Without this the WAL
+    // lingers until something else checkpoints — the startup scan, which
+    // `--no-scan` skips, or a clean shutdown.
+    if !pending_migrations.is_empty() {
+        conn.execute_batch("CHECKPOINT;")?;
+        info!("checkpointed after migrations");
     }
 
     Ok(conn)
@@ -107,5 +116,25 @@ pub(crate) fn migrate_through(conn: &mut Connection, version: u32) {
         .filter(|m| m.version > current && m.version <= version)
     {
         run_migration(conn, migration).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrating_leaves_no_wal_behind() {
+        let dir = std::env::temp_dir().join(format!("radiocrate-db-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let wal_path = dir.join("test.db.wal");
+
+        let conn = get_db(&db_path).unwrap();
+        let wal_exists = wal_path.exists();
+        drop(conn);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(!wal_exists, "migrations left a WAL file behind");
     }
 }
