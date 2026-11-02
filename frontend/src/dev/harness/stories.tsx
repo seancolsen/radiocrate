@@ -749,6 +749,22 @@ export const STORIES: Record<string, Story> = {
       </>
     ),
   },
+  // The failed-RPC bar on a phone, given a message far longer than it has room
+  // for: it stays a few lines tall, scrolls the rest, and keeps Dismiss in
+  // reach.
+  "error/banner-long": {
+    width: 360,
+    render: () => (
+      <RpcErrorBar
+        notice={{
+          method: "dml",
+          message: `500 ${"database is locked; ".repeat(60)}`,
+          count: 1,
+        }}
+        onDismiss={() => {}}
+      />
+    ),
+  },
   // The About dialog on a *mismatched* pair of build ids — the state it exists
   // to explain. Both ids are pinned here (the client's by prop, the server's by
   // `STUB_VERSION`) rather than read from `__BUILD_ID__`, so the baseline

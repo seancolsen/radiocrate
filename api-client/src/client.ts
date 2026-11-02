@@ -3,7 +3,7 @@
 // changing it, and commit the result.
 
 import type { AppVersion, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
-import { handleAuthRedirect, rpcCall, trackRequest } from "./rpc";
+import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
   return (await rpcCall("source.list", null)) as Source[];
@@ -122,7 +122,7 @@ async function sendQuery(sql: string): Promise<ArrayBuffer> {
     redirect: "manual",
   });
   handleAuthRedirect(res, "/api/query");
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw await httpError(res);
   return res.arrayBuffer();
 }
 

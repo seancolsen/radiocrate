@@ -84,6 +84,41 @@ export type DmlResult = Record<string, Record<string, JsonValue>>;";
     format!("{BANNER}\n{dml}\n\n{}\n", type_decls().join("\n\n"))
 }
 
+/// `httpError` and its helpers, for `rpc.ts`: how both transports turn a
+/// non-2xx response into an error a person can read.
+const HTTP_ERROR_TS: &str = "\
+/**
+ * The error for a response that isn't 2xx: its status, and the reason its body
+ * gives. The API's own reasons are short plain text, kept as they are. But a
+ * proxy in front of it (a tunnel that can't reach the server, say) answers with
+ * a whole HTML page, far too long to show anyone, so a page is boiled down to
+ * its `<title>`.
+ */
+export async function httpError(res: Response): Promise<Error> {
+  const body = await res.text();
+  const reason = /^\\s*<(!doctype|html)\\b/i.test(body) ? htmlTitle(body) : body;
+  return new Error(reason ? `${res.status} ${reason}` : String(res.status));
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: \"&\",
+  lt: \"<\",
+  gt: \">\",
+  quot: '\"',
+  apos: \"'\",
+  nbsp: \" \",
+};
+
+/** An HTML page's `<title>`, on one line, with its common named entities
+ * decoded; empty when it has none. */
+function htmlTitle(html: string): string {
+  const title = /<title[^>]*>([\\s\\S]*?)<\\/title>/i.exec(html)?.[1] ?? \"\";
+  return title
+    .replace(/&([a-z]+);/gi, (entity, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? entity)
+    .replace(/\\s+/g, \" \")
+    .trim();
+}";
+
 /// The JSON-RPC transport, ported from the retired hand-written shim.
 fn rpc_ts() -> String {
     let body = "\
@@ -210,8 +245,8 @@ export function handleAuthRedirect(res: Response, url: string): void {
     location.assign(REAUTH_PATH);
   }
   throw new AuthRedirectError(url);
-}
-
+}";
+    let call = "\
 /**
  * POSTs a single JSON-RPC 2.0 call to `/api/rpc` and returns its result. The wire
  * is already camelCase (the server renames via serde), so callers can cast the
@@ -244,12 +279,12 @@ async function send(method: string, params: unknown): Promise<unknown> {
     redirect: \"manual\",
   });
   handleAuthRedirect(res, \"/api/rpc\");
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw await httpError(res);
   const env = (await res.json()) as RpcEnvelope;
   if (env.error) throw new Error(env.error.message ?? \"rpc error\");
   return env.result ?? null;
 }";
-    format!("{BANNER}\n{body}\n")
+    format!("{BANNER}\n{body}\n\n{HTTP_ERROR_TS}\n\n{call}\n")
 }
 
 /// The per-method client functions plus the two non-RPC transports.
@@ -305,7 +340,7 @@ async function sendQuery(sql: string): Promise<ArrayBuffer> {
     redirect: \"manual\",
   });
   handleAuthRedirect(res, \"/api/query\");
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw await httpError(res);
   return res.arrayBuffer();
 }
 
@@ -332,7 +367,7 @@ export function trackStreamUrl(
 }";
 
     format!(
-        "{BANNER}\nimport type {{ {imports} }} from \"./types\";\nimport {{ handleAuthRedirect, rpcCall, trackRequest }} from \"./rpc\";\n\n{fns}{transports}\n"
+        "{BANNER}\nimport type {{ {imports} }} from \"./types\";\nimport {{ handleAuthRedirect, httpError, rpcCall, trackRequest }} from \"./rpc\";\n\n{fns}{transports}\n"
     )
 }
 
@@ -341,6 +376,6 @@ fn index_ts() -> String {
 export * from \"./types\";
 export * from \"./client\";
 export type { ApiRequest, RpcError, RpcFailure } from \"./rpc\";
-export { AuthRedirectError, onRequest, onRpcFailure } from \"./rpc\";";
+export { AuthRedirectError, httpError, onRequest, onRpcFailure } from \"./rpc\";";
     format!("{BANNER}\n{body}\n")
 }

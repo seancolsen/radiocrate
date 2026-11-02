@@ -39,9 +39,12 @@ export function RpcErrorBar(props: {
     <div
       data-testid="rpc-error-banner"
       role="alert"
-      className="bg-split-active border-edge flex shrink-0 items-center gap-2 border-t px-2 py-1.5"
+      className="bg-split-active border-edge flex shrink-0 items-start gap-2 border-t px-2 py-1.5"
     >
-      <div className="min-w-0 flex-1 text-sm">
+      {/* However long the message, the bar stays a few lines tall and scrolls
+          it, so it never crowds out the page or pushes Dismiss out of reach.
+          The padding centers one line on the button beside it. */}
+      <div className="max-h-24 min-w-0 flex-1 overflow-y-auto py-[3px] text-sm">
         <span className="text-danger font-medium">
           {action} failed{count > 1 ? ` (${count} times)` : ""}.
         </span>{" "}

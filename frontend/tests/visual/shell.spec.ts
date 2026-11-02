@@ -138,6 +138,18 @@ for (const colorScheme of SCHEMES) {
     await expect(stage).toHaveScreenshot(snapshot("error/banner", colorScheme));
   });
 
+  // The failed-RPC bar on a phone with an enormous message: bounded, with
+  // Dismiss still on screen.
+  test(`error/banner-long - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "error/banner-long", colorScheme);
+    const bar = stage.getByRole("alert");
+    await expect(bar.getByRole("button", { name: "Dismiss" })).toBeInViewport();
+    expect((await bar.boundingBox())?.height).toBeLessThan(120);
+    await expect(stage).toHaveScreenshot(
+      snapshot("error/banner-long", colorScheme),
+    );
+  });
+
   // The About dialog on a mismatched pair of build ids, so the "didn't come
   // from the server that's running" verdict shows. Shot through the dialog: it
   // portals out of the stage.
