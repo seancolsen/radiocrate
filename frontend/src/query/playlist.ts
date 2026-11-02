@@ -62,9 +62,9 @@ export function pageDefinitionToStored(def: PageDefinition): string {
     : playlistDefinitionToStored(def);
 }
 
-/** The display a new playlist starts with: the first default `track` display
- * preset, as a new query of tracks gets (`definitionForBase`), or an empty
- * custom display when there's none. */
+/** The display a new playlist starts with: the default `track` display preset,
+ * as a new query of tracks gets (`definitionForBase`), or an empty custom
+ * display when there's none. */
 function defaultDisplay(presets: readonly Preset[]): SectionContent {
   const preset = presets.find(
     (p) =>

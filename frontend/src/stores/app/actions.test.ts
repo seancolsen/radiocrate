@@ -7,7 +7,7 @@ import {
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
 
-// `settingSet`/`settingDelete`/`dml` and the query-tree writes are the only
+// `settingSet`/`settingDelete`/`dml`, the query-tree writes and the preset writes are the only
 // api-client calls the tests below exercise directly; every other export is used as-is (its return value
 // is never awaited by the assertions here).
 vi.mock("api-client", async (importOriginal) => {
@@ -26,6 +26,8 @@ vi.mock("api-client", async (importOriginal) => {
     sourceUpdateDefinition: vi.fn(() => Promise.resolve(null)),
     queryDelete: vi.fn(() => Promise.resolve(null)),
     collectionRescan: vi.fn(() => Promise.resolve(null)),
+    presetAdd: vi.fn(() => Promise.resolve(null)),
+    presetUpdate: vi.fn(() => Promise.resolve(null)),
   };
 });
 // A playlist's entries, read as raw SQL, so duplicating and deleting one can be
@@ -393,6 +395,73 @@ describe("toggleFilterPreset", () => {
     bundle.actions.toggleFilterPreset("a", "p1");
     bundle.actions.toggleFilterPreset("a", "p1");
     expect(bundle.store.getState().pages["a"]?.expandedPreset).toBe("other");
+  });
+});
+
+describe("default presets", () => {
+  const preset = (
+    id: string,
+    section: "filter" | "sort" | "display",
+    baseTable = "track",
+  ) => ({
+    id,
+    name: id,
+    baseTable,
+    section,
+    definition: "",
+    isDefault: true,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+  const defaults = (bundle: AppStoreBundle) =>
+    bundle.store
+      .getState()
+      .presets.filter((p) => p.isDefault)
+      .map((p) => p.id);
+
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.openTab({
+      id: "a",
+      name: "a",
+      definition: JSON.stringify({ base: "track" }),
+    });
+    bundle.store.setState((s) => {
+      s.presets.push(
+        preset("f", "filter"),
+        preset("s", "sort"),
+        preset("d", "display"),
+        preset("s-album", "sort", "album"),
+      );
+    });
+  });
+
+  it("saving a new default sort displaces the table's old one", () => {
+    bundle.actions.openPresetSave("sort", "\\\\title");
+    bundle.actions.patchPresetSave({ name: "by title", isDefault: true });
+    bundle.actions.confirmPresetSave("a");
+    const added = bundle.store.getState().presets.at(-1)!.id;
+    expect(defaults(bundle)).toEqual(["f", "d", "s-album", added]);
+  });
+
+  it("saving a new default filter keeps the others", () => {
+    bundle.actions.openPresetSave("filter", "jazz");
+    bundle.actions.patchPresetSave({ name: "jazz", isDefault: true });
+    bundle.actions.confirmPresetSave("a");
+    const added = bundle.store.getState().presets.at(-1)!.id;
+    expect(defaults(bundle)).toEqual(["f", "s", "d", "s-album", added]);
+  });
+
+  it("making a display the default displaces the old one, and its open edit", () => {
+    bundle.store.setState((s) => {
+      s.presets.push({ ...preset("d2", "display"), isDefault: false });
+    });
+    bundle.actions.beginPresetEdit("d");
+    bundle.actions.patchPresetEdit("d2", { isDefault: true });
+    bundle.actions.commitPresetEdit("a", "d2");
+    expect(defaults(bundle)).toEqual(["f", "s", "s-album", "d2"]);
+    expect(bundle.store.getState().presetEdits["d"]?.isDefault).toBe(false);
   });
 });
 

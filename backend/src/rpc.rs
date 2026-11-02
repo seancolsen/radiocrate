@@ -223,14 +223,11 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "preset.add" => {
             let preset: Preset = from_params(params)?;
-            state.write(|conn| {
-                add_preset(conn, &preset)?;
-                Ok(Value::Null)
-            })
+            state.write_mut(|conn| add_preset(conn, &preset).map(|()| Value::Null))
         }
         "preset.update" => {
             let p: PresetUpdateParams = from_params(params)?;
-            state.write(|conn| {
+            state.write_mut(|conn| {
                 update_preset(
                     conn,
                     &p.id,
@@ -238,8 +235,8 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                     &p.definition,
                     p.is_default,
                     p.modified_at,
-                )?;
-                Ok(Value::Null)
+                )
+                .map(|()| Value::Null)
             })
         }
         "preset.delete" => {
@@ -527,8 +524,34 @@ fn list_presets(conn: &Connection) -> Result<Vec<Preset>, String> {
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
-fn add_preset(conn: &Connection, preset: &Preset) -> Result<(), String> {
+/// Clears `is_default` on whichever other preset is the table's default for
+/// `section`, so that the preset `id` can take its place. A table has at most one
+/// default sort and one default display (see migration 0007). Filter defaults
+/// combine, so they never displace one another.
+fn displace_default(
+    conn: &Connection,
+    id: &str,
+    base_table: &str,
+    section: &str,
+) -> Result<(), String> {
     conn.execute(
+        "UPDATE preset SET is_default = false \
+         WHERE is_default AND section IN ('sort', 'display') \
+         AND base_table = ? AND section = ? AND id <> TRY_CAST(? AS UUID)",
+        duckdb::params![base_table, section, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Inserts a preset, in one transaction with displacing the default it replaces
+/// when it's a default itself.
+fn add_preset(conn: &mut Connection, preset: &Preset) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if preset.is_default {
+        displace_default(&tx, &preset.id, &preset.base_table, &preset.section)?;
+    }
+    tx.execute(
         "INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
          VALUES (TRY_CAST(? AS UUID), ?, ?, ?, ?, ?, make_timestamp(? * 1000000)::timestamp_s, \
          make_timestamp(? * 1000000)::timestamp_s)",
@@ -544,25 +567,41 @@ fn add_preset(conn: &Connection, preset: &Preset) -> Result<(), String> {
         ],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
+/// Rewrites a preset's editable fields, in one transaction with displacing the
+/// default it replaces when it's now a default.
 fn update_preset(
-    conn: &Connection,
+    conn: &mut Connection,
     id: &str,
     name: &str,
     definition: &str,
     is_default: bool,
     modified_at: i64,
 ) -> Result<(), String> {
-    conn.execute(
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if is_default {
+        let slot: Option<(String, String)> = tx
+            .query_row(
+                "SELECT base_table, section FROM preset WHERE id = TRY_CAST(? AS UUID)",
+                duckdb::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((base_table, section)) = slot {
+            displace_default(&tx, id, &base_table, &section)?;
+        }
+    }
+    tx.execute(
         "UPDATE preset SET name = ?, definition = ?, is_default = ?, \
          modified_at = make_timestamp(? * 1000000)::timestamp_s \
          WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, definition, is_default, modified_at, id],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
@@ -756,6 +795,116 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(columns, ["id", "definition"]);
+    }
+
+    fn preset(id: &str, name: &str, base_table: &str, section: &str, is_default: bool) -> Preset {
+        Preset {
+            id: id.to_string(),
+            name: name.to_string(),
+            base_table: base_table.to_string(),
+            section: section.to_string(),
+            definition: String::new(),
+            is_default,
+            created_at: 1_700_000_000,
+            modified_at: 1_700_000_000,
+        }
+    }
+
+    /// Every preset's name, with whether it's a default, in name order.
+    fn preset_defaults(conn: &Connection) -> Vec<(String, bool)> {
+        list_presets(conn)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.name, p.is_default))
+            .collect()
+    }
+
+    #[test]
+    fn migration_0007_keeps_one_default_sort_and_display_per_table() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 6);
+        conn.execute_batch(&format!(
+            "INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at)
+             VALUES ('{S1}', 'filter b', 'track', 'filter', '', true, now(), now()),
+                    ('{S2}', 'filter a', 'track', 'filter', '', true, now(), now()),
+                    ('{Q1}', 'sort z', 'track', 'sort', '', true, now(), now()),
+                    ('{Q2}', 'sort m', 'track', 'sort', '', true, now(), now()),
+                    ('{P1}', 'album sort', 'album', 'sort', '', true, now(), now()),
+                    ('{F1}', 'display', 'track', 'display', '', false, now(), now());"
+        ))
+        .unwrap();
+
+        crate::db::migrate_through(&mut conn, 7);
+
+        // The first default sort by name keeps it; filter defaults all keep theirs,
+        // and so does another table's sort.
+        assert_eq!(
+            preset_defaults(&conn),
+            [
+                ("album sort".to_string(), true),
+                ("display".to_string(), false),
+                ("filter a".to_string(), true),
+                ("filter b".to_string(), true),
+                ("sort m".to_string(), true),
+                ("sort z".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_table_has_at_most_one_default_sort_and_display() {
+        let conn = setup();
+        let insert = |id: &str, base_table: &str, section: &str, is_default: bool| {
+            conn.execute_batch(&format!(
+                "INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
+                 VALUES ('{id}', 'x', '{base_table}', '{section}', '', {is_default}, now(), now())"
+            ))
+        };
+        insert(S1, "track", "filter", true).unwrap();
+        insert(S2, "track", "filter", true).unwrap();
+        insert(Q1, "track", "sort", true).unwrap();
+        insert(Q2, "track", "sort", false).unwrap();
+        assert!(
+            insert(P1, "track", "sort", true).is_err(),
+            "two default sorts"
+        );
+        insert(P1, "album", "sort", true).unwrap();
+        insert(F1, "track", "display", true).unwrap();
+    }
+
+    #[test]
+    fn a_new_default_sort_displaces_the_old_one() {
+        let mut conn = setup();
+        add_preset(&mut conn, &preset(S1, "a", "track", "sort", true)).unwrap();
+        add_preset(&mut conn, &preset(S2, "b", "album", "sort", true)).unwrap();
+        add_preset(&mut conn, &preset(Q1, "c", "track", "filter", true)).unwrap();
+
+        add_preset(&mut conn, &preset(Q2, "d", "track", "sort", true)).unwrap();
+        assert_eq!(
+            preset_defaults(&conn),
+            [
+                ("a".to_string(), false),
+                ("b".to_string(), true),
+                ("c".to_string(), true),
+                ("d".to_string(), true),
+            ]
+        );
+
+        update_preset(&mut conn, S1, "a", "", true, 1_700_000_001).unwrap();
+        assert_eq!(preset_defaults(&conn)[0], ("a".to_string(), true));
+        assert_eq!(preset_defaults(&conn)[3], ("d".to_string(), false));
+    }
+
+    #[test]
+    fn default_filters_never_displace_one_another() {
+        let mut conn = setup();
+        add_preset(&mut conn, &preset(S1, "a", "track", "filter", true)).unwrap();
+        add_preset(&mut conn, &preset(S2, "b", "track", "filter", false)).unwrap();
+        update_preset(&mut conn, S2, "b", "", true, 1_700_000_001).unwrap();
+        assert_eq!(
+            preset_defaults(&conn),
+            [("a".to_string(), true), ("b".to_string(), true)]
+        );
     }
 
     #[test]

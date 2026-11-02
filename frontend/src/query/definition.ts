@@ -102,16 +102,16 @@ export function cloneDefinition(def: QueryDefinition): QueryDefinition {
   return structuredClone(def);
 }
 
-/** Whether a sort/display section holds nothing at all — the empty custom
- * fragment {@link emptyDefinition} starts it out with. */
-function isEmptySection(content: SectionContent): boolean {
-  return "custom" in content && content.custom.trim() === "";
+/** Whether a table has at most one default preset for `section`. A filter
+ * combines any number of presets, so it may have several defaults; a sort or a
+ * display holds exactly one thing, so it has at most one (the database's
+ * `preset_single_default` index enforces this). */
+export function hasSingleDefault(section: string): boolean {
+  return section === "sort" || section === "display";
 }
 
 /** A fresh definition for `base`, seeded with that table's default presets:
- * every default filter preset (the filter combines them), and the first default
- * sort / display preset (each of those sections holds exactly one thing, so any
- * further default for it is ignored). */
+ * every default filter preset, plus the default sort and display, if any. */
 export function definitionForBase(
   base: string,
   presets: readonly Preset[],
@@ -122,9 +122,9 @@ export function definitionForBase(
     if (!preset.isDefault || preset.baseTable !== base) continue;
     if (preset.section === "filter") {
       def.filter.presets.push(preset.id);
-    } else if (preset.section === "sort" && isEmptySection(def.sort)) {
+    } else if (preset.section === "sort") {
       def.sort = { preset: preset.id };
-    } else if (preset.section === "display" && isEmptySection(def.display)) {
+    } else if (preset.section === "display") {
       def.display = { preset: preset.id };
     }
   }

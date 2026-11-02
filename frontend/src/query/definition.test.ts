@@ -40,13 +40,6 @@ const PRESETS: Preset[] = [
     definition: "$title $year",
     isDefault: true,
   }),
-  preset({
-    id: "album-display-2",
-    baseTable: "album",
-    section: "display",
-    definition: "$title",
-    isDefault: true,
-  }),
   preset({ id: "album-filter", baseTable: "album", definition: "year:>1990" }),
 ];
 
@@ -68,7 +61,7 @@ describe("definitionForBase", () => {
     expect(definitionForBase("album", PRESETS).filter.presets).toEqual([]);
   });
 
-  it("takes only the first default for a section that holds one thing", () => {
+  it("seeds the default display", () => {
     expect(definitionForBase("album", PRESETS).display).toEqual({
       preset: "album-display",
     });

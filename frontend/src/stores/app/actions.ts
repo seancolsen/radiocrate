@@ -91,6 +91,7 @@ import {
   definitionForBase,
   definitionFromStored,
   definitionToStored,
+  hasSingleDefault,
   playlistOrderContent,
   rebasedDefinition,
   shuffleContent,
@@ -1268,6 +1269,29 @@ export function createAppActions(
    * kind. */
   const replaceLive = (tabId: string, def: PageDefinition) =>
     changeLive(tabId, (t) => assignDefinition(t, "live", def), "now");
+
+  /** Makes `preset` the only default for its section on its table, where that
+   * section takes just one ({@link hasSingleDefault}), mirroring the backend:
+   * whichever other preset was the default stops being it. Its edit buffer, if
+   * open, follows, so the editor doesn't show a default the preset lost. */
+  const displaceDefault = (
+    s: Draft<AppState>,
+    preset: Pick<Preset, "id" | "baseTable" | "section">,
+  ) => {
+    if (!hasSingleDefault(preset.section)) return;
+    for (const other of s.presets) {
+      if (
+        other.id === preset.id ||
+        other.baseTable !== preset.baseTable ||
+        other.section !== preset.section
+      ) {
+        continue;
+      }
+      other.isDefault = false;
+      const edit = s.presetEdits[other.id];
+      if (edit) edit.isDefault = false;
+    }
+  };
 
   const beginPresetEdit = (id: string) => {
     const preset = get().presets.find((p) => p.id === id);
@@ -3147,12 +3171,14 @@ export function createAppActions(
       if (idx !== -1) {
         const modifiedAt = nowEpoch();
         set((s) => {
-          Object.assign(s.presets[idx], {
+          const preset = s.presets[idx];
+          Object.assign(preset, {
             name,
             definition: edit.definition,
             isDefault: edit.isDefault,
             modifiedAt,
           });
+          if (preset.isDefault) displaceDefault(s, preset);
         });
         void presetUpdate({
           id,
@@ -3200,6 +3226,7 @@ export function createAppActions(
       };
       set((s) => {
         s.presets.push(preset);
+        if (preset.isDefault) displaceDefault(s, preset);
       });
       void presetAdd(preset).catch((err) =>
         console.error("preset add failed", err),
