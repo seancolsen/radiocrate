@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Preset } from "api-client";
-import { groupPresets } from "./presetGroups";
+import { groupPresets, presetTables } from "./presetGroups";
 
 const preset = (name: string, baseTable: string, section: string): Preset => ({
   id: `${baseTable}-${section}-${name}`,
@@ -21,8 +21,8 @@ const PRESETS = [
 ];
 
 /** The groups as `table/section: names`, empty sections left out. */
-const shape = (presets: readonly Preset[], search = "") =>
-  groupPresets(presets, search).flatMap((g) =>
+const shape = (presets: readonly Preset[], tables: string[] = []) =>
+  groupPresets(presets, tables).flatMap((g) =>
     g.sections
       .filter((s) => s.presets.length > 0)
       .map(
@@ -41,7 +41,7 @@ describe("groupPresets", () => {
   });
 
   it("lists every section of a table, even an empty one", () => {
-    const album = groupPresets(PRESETS, "")[0];
+    const album = groupPresets(PRESETS, [])[0];
     expect(album.sections.map((s) => [s.section, s.presets.length])).toEqual([
       ["filter", 0],
       ["sort", 1],
@@ -49,11 +49,23 @@ describe("groupPresets", () => {
     ]);
   });
 
-  it("narrows by name, ignoring case", () => {
-    expect(shape(PRESETS, "VET")).toEqual(["track/filter: Vetted"]);
+  it("lists every table given, with or without presets", () => {
+    expect(
+      groupPresets(PRESETS, ["track", "artist"]).map((g) => [g.table, g.count]),
+    ).toEqual([
+      ["album", 1],
+      ["artist", 0],
+      ["track", 3],
+    ]);
   });
+});
 
-  it("narrows by table, dropping tables with nothing left", () => {
-    expect(shape(PRESETS, "alb")).toEqual(["album/sort: by year"]);
+describe("presetTables", () => {
+  it("adds the tables presets are for to those given, in name order", () => {
+    expect(presetTables(PRESETS, ["Genre", "track"])).toEqual([
+      "album",
+      "Genre",
+      "track",
+    ]);
   });
 });

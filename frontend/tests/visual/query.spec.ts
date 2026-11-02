@@ -212,12 +212,34 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The preset manager: two tables' presets by section, the album's empty
-  // sections included, with the Default badges.
+  // The preset manager as it opens: every table collapsed to its heading and
+  // preset count, those with none included.
+  test(`preset-manager/collapsed - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "preset-manager/collapsed",
+      colorScheme,
+    );
+    await expect(stage.getByRole("heading", { name: /^artist/ })).toBeVisible();
+    await expect(
+      stage.getByRole("heading", { name: "track 4 presets" }),
+    ).toBeVisible();
+    await expect(stage.getByText("Default")).toHaveCount(0);
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/collapsed", colorScheme),
+    );
+  });
+
+  // Two tables' presets by section, the album's empty sections ("None")
+  // included, with the Default badges.
   test(`preset-manager/basic - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "preset-manager/basic", colorScheme);
-    await expect(stage.getByRole("heading", { name: "album" })).toBeVisible();
-    await expect(stage.getByRole("heading", { name: "track" })).toBeVisible();
+    await expect(
+      stage.getByRole("heading", { name: "album 1 preset" }),
+    ).toBeVisible();
+    await expect(
+      stage.getByRole("heading", { name: "track 4 presets" }),
+    ).toBeVisible();
     await expect(stage.getByText("Default")).toHaveCount(3);
     await expect(stage).toHaveScreenshot(
       snapshot("preset-manager/basic", colorScheme),
@@ -228,7 +250,7 @@ for (const colorScheme of SCHEMES) {
   test(`preset-manager/narrow - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "preset-manager/narrow", colorScheme);
     await expect(
-      stage.getByRole("button", { name: "New preset" }),
+      stage.getByRole("button", { name: "New filter preset for track" }),
     ).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("preset-manager/narrow", colorScheme),
@@ -248,23 +270,28 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // "vetted" being renamed in place, its name selected in the field.
-  test(`preset-manager/rename - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(page, "preset-manager/rename", colorScheme);
-    await expect(stage.getByLabel("Rename preset")).toBeFocused();
+  // Hovering an open preset's heading, right of its ⋮ — which toggles it too:
+  // the accent border around the whole preset.
+  test(`preset-manager/hover - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/expanded", colorScheme);
+    const toggle = stage.getByRole("button", { name: /^vetted/ });
+    const box = (await toggle.boundingBox())!;
+    await page.mouse.move(box.x + 400, box.y + box.height / 2);
     await expect(stage).toHaveScreenshot(
-      snapshot("preset-manager/rename", colorScheme),
+      snapshot("preset-manager/hover", colorScheme),
     );
   });
 
-  // The Duplicate dialog on "vetted". Shot through the dialog — it portals
-  // out of the stage.
-  test(`preset-manager/duplicate - ${colorScheme}`, async ({ page }) => {
-    await openStory(page, "preset-manager/duplicate", colorScheme);
-    const dialog = page.getByRole("dialog");
-    await expect(dialog.getByLabel("Preset name")).toHaveValue("vetted copy");
-    await expect(dialog).toHaveScreenshot(
-      snapshot("preset-manager/duplicate", colorScheme),
+  // New presets at the top of their sections, in the editor a saved one
+  // opens: one written from scratch, one a copy.
+  test(`preset-manager/draft - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/draft", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: "Create preset" }),
+    ).toHaveCount(2);
+    await expect(stage.getByLabel("Preset name").first()).toHaveValue(/ copy$/);
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/draft", colorScheme),
     );
   });
 

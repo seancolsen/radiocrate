@@ -43,7 +43,6 @@ import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import PresetDeleteModal from "../../components/PresetDeleteModal";
-import PresetDraftModal from "../../components/PresetDraftModal";
 import PresetManager from "../../components/PresetManager";
 import {
   ExportDataDialog,
@@ -177,7 +176,8 @@ function RoadTripSortOptions(): JSX.Element | null {
 
 /** Adds three `track` presets to the fixture's two — a default filter, a sort
  * and a default display — so the preset manager has a table with something
- * in every section, and one with an empty section or two. */
+ * in every section, and one with an empty section or two. With no schema
+ * loaded, those two are the tables it lists. */
 function seedManagedPresets(stores: Stores): void {
   const preset = (
     n: number,
@@ -202,6 +202,14 @@ function seedManagedPresets(stores: Stores): void {
       preset(3, "compact", "display", "$title $artist.name $year", true),
     );
   });
+}
+
+/** {@link seedManagedPresets}, with the two tables that have presets
+ * expanded in the manager. */
+function seedExpandedTables(stores: Stores): void {
+  seedManagedPresets(stores);
+  stores.app.actions.toggleManagedTable("album", false);
+  stores.app.actions.toggleManagedTable("track", false);
 }
 
 /** Opens "Lemonade" carrying `def` as its (saved) query. */
@@ -954,21 +962,32 @@ export const STORIES: Record<string, Story> = {
   },
 
   // ── The preset manager ───────────────────────────────────────────────────
+  // As it opens: every table of the schema collapsed, with its preset count.
+  "preset-manager/collapsed": {
+    width: 720,
+    height: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      seedManagedPresets(stores);
+    },
+    render: () => <PresetManager />,
+  },
   // Two tables' presets, by section: `album` with only a (default) sort,
   // `track` with something in every section.
   "preset-manager/basic": {
     width: 720,
-    height: 520,
+    height: 640,
     frame: "flex flex-col",
-    setup: seedManagedPresets,
+    setup: seedExpandedTables,
     render: () => <PresetManager />,
   },
-  // Phone width: a row's definition gives way to its name and badges.
+  // Phone width.
   "preset-manager/narrow": {
     width: 360,
-    height: 520,
+    height: 720,
     frame: "flex flex-col",
-    setup: seedManagedPresets,
+    setup: seedExpandedTables,
     render: () => <PresetManager />,
   },
   // "vetted" open in the builders' inline editor, with an edit to its
@@ -976,10 +995,10 @@ export const STORIES: Record<string, Story> = {
   // editor.
   "preset-manager/expanded": {
     width: 720,
-    height: 520,
+    height: 640,
     frame: "flex flex-col",
     setup: (stores) => {
-      seedManagedPresets(stores);
+      seedExpandedTables(stores);
       stores.app.actions.toggleManagedPreset(VETTED_PRESET_ID);
       stores.app.actions.patchPresetEdit(VETTED_PRESET_ID, {
         definition: "rating.value:>=4",
@@ -987,22 +1006,25 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <PresetManager />,
   },
-  // "vetted" being renamed in place.
-  "preset-manager/rename": {
+  // A new `track` filter being written at the top of its section, and a copy
+  // of `album`'s default sort at the top of its own.
+  "preset-manager/draft": {
     width: 720,
-    height: 520,
+    height: 640,
     frame: "flex flex-col",
     setup: (stores) => {
       seedManagedPresets(stores);
-      stores.app.actions.beginPresetRename(VETTED_PRESET_ID);
+      stores.app.actions.openPresetDraft("track", "filter");
+      stores.app.actions.patchPresetDraft("track", "filter", {
+        name: "nineties",
+        definition: "year:>=1990 year:<2000",
+      });
+      const albumSort = stores.app.store
+        .getState()
+        .presets.find((p) => p.baseTable === "album");
+      if (albumSort) stores.app.actions.duplicatePreset(albumSort.id);
     },
     render: () => <PresetManager />,
-  },
-  // Duplicating "vetted": its copy's name, table, section and definition,
-  // not the default.
-  "preset-manager/duplicate": {
-    setup: (stores) => stores.app.actions.duplicatePreset(VETTED_PRESET_ID),
-    render: () => <PresetDraftModal />,
   },
   // Deleting "vetted", which a saved query and an open playlist both use.
   "preset-manager/delete": {

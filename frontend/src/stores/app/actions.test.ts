@@ -8,6 +8,8 @@ import {
 } from "./index";
 import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
+import { presetTables } from "../../query/presetGroups";
+import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
 
 // `settingSet`/`settingDelete`/`dml`, the query-tree writes and the preset writes are the only
 // api-client calls the tests below exercise directly; every other export is used as-is (its return value
@@ -510,58 +512,48 @@ describe("the preset manager", () => {
 
   it("starts afresh once its tab has closed", () => {
     bundle.actions.openPresetsTab();
-    bundle.actions.setPresetSearch("vet");
+    bundle.actions.toggleManagedTable("track", false);
     bundle.actions.toggleManagedPreset("f");
+    bundle.actions.openPresetDraft("track", "sort");
     bundle.actions.closeTab(PRESETS_TAB_ID);
     expect(bundle.store.getState().presetManager).toEqual({
-      search: "",
+      expandedTables: [],
       expanded: null,
-      renaming: null,
+      drafts: {},
     });
   });
 
-  it("renames a preset, keeping the rest of an edit in progress", () => {
-    bundle.actions.patchPresetEdit("f", { definition: "year:1999" });
-    bundle.actions.beginPresetRename("f");
-    bundle.actions.renamePreset("f", "  Nineties  ");
-    const s = bundle.store.getState();
-    expect(s.presetManager.renaming).toBeNull();
-    expect(s.presets[0].name).toBe("Nineties");
-    expect(s.presetEdits["f"]).toMatchObject({
-      name: "Nineties",
-      definition: "year:1999",
-    });
-    // Only the name is written: the definition being edited isn't saved yet.
-    expect(presetUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "f",
-        name: "Nineties",
-        definition: "f definition",
-      }),
+  it("expands one table, or every table on a Ctrl+Click", () => {
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+    const all = presetTables(
+      presets(bundle),
+      bundle.store.getState().schema.tables.map((t) => t.name),
     );
-  });
-
-  it("ignores a blank name", () => {
-    bundle.actions.renamePreset("f", "  ");
-    expect(presets(bundle)[0].name).toBe("f");
-    expect(presetUpdate).not.toHaveBeenCalled();
+    const expanded = () => bundle.store.getState().presetManager.expandedTables;
+    bundle.actions.toggleManagedTable("track", false);
+    expect(expanded()).toEqual(["track"]);
+    // A collapsed table expands them all…
+    bundle.actions.toggleManagedTable("album", true);
+    expect([...expanded()].sort()).toEqual([...all].sort());
+    expect(all.length).toBeGreaterThan(2);
+    // …and an expanded one collapses them all.
+    bundle.actions.toggleManagedTable("album", true);
+    expect(expanded()).toEqual([]);
   });
 
   it("duplicates a preset as an ordinary one, opened in the manager", () => {
-    bundle.actions.setPresetSearch("nothing matches this");
     bundle.actions.duplicatePreset("s");
-    expect(bundle.store.getState().presetDraft).toEqual({
-      duplicateOf: "s",
-      baseTable: "track",
-      section: "sort",
+    const draft = bundle.store.getState().presetManager.drafts["sort:track"];
+    expect(draft).toMatchObject({
       name: "s copy",
       definition: "s definition",
       isDefault: false,
     });
-    bundle.actions.confirmPresetDraft();
+    bundle.actions.confirmPresetDraft("track", "sort");
     const s = bundle.store.getState();
     const copy = s.presets.at(-1)!;
     expect(copy).toMatchObject({
+      id: draft.id,
       name: "s copy",
       section: "sort",
       isDefault: false,
@@ -569,15 +561,24 @@ describe("the preset manager", () => {
     expect(copy.id).not.toBe("s");
     // The original stays the default.
     expect(s.presets.find((p) => p.id === "s")?.isDefault).toBe(true);
-    expect(s.presetDraft).toBeNull();
-    expect(s.presetManager).toMatchObject({ search: "", expanded: copy.id });
+    expect(s.presetManager.drafts).toEqual({});
+    expect(s.presetManager).toMatchObject({
+      expandedTables: ["track"],
+      expanded: copy.id,
+    });
     expect(presetAdd).toHaveBeenCalledWith(copy);
   });
 
   it("creates a preset on another table, taking over its default", () => {
-    bundle.actions.openPresetDraft({ baseTable: "album", section: "sort" });
-    bundle.actions.patchPresetDraft({ name: "by year", isDefault: true });
-    bundle.actions.confirmPresetDraft();
+    bundle.actions.openPresetDraft("album", "sort");
+    expect(bundle.store.getState().presetManager.expandedTables).toEqual([
+      "album",
+    ]);
+    bundle.actions.patchPresetDraft("album", "sort", {
+      name: "by year",
+      isDefault: true,
+    });
+    bundle.actions.confirmPresetDraft("album", "sort");
     // The album's default sort doesn't displace the track's.
     expect(
       presets(bundle)
@@ -589,11 +590,30 @@ describe("the preset manager", () => {
     ]);
   });
 
+  it("keeps a new preset being written when its section's + is pressed again", () => {
+    bundle.actions.openPresetDraft("track", "filter");
+    bundle.actions.patchPresetDraft("track", "filter", { name: "half done" });
+    bundle.actions.openPresetDraft("track", "filter");
+    bundle.actions.openPresetDraft("track", "display");
+    const { drafts } = bundle.store.getState().presetManager;
+    expect(drafts["filter:track"]?.name).toBe("half done");
+    expect(Object.keys(drafts).sort()).toEqual([
+      "display:track",
+      "filter:track",
+    ]);
+    bundle.actions.cancelPresetDraft("track", "filter");
+    expect(Object.keys(bundle.store.getState().presetManager.drafts)).toEqual([
+      "display:track",
+    ]);
+  });
+
   it("won't create a preset without a name", () => {
-    bundle.actions.openPresetDraft();
-    bundle.actions.confirmPresetDraft();
+    bundle.actions.openPresetDraft("track", "filter");
+    bundle.actions.confirmPresetDraft("track", "filter");
     expect(presets(bundle)).toHaveLength(2);
-    expect(bundle.store.getState().presetDraft).not.toBeNull();
+    expect(
+      bundle.store.getState().presetManager.drafts["filter:track"],
+    ).toBeDefined();
   });
 
   it("deletes a preset, and whatever was open on it", () => {

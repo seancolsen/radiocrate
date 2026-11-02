@@ -78,7 +78,6 @@ import {
 import {
   isQueryDefinition,
   newPlaylistDefinition,
-  PLAYLIST_BASE,
   pageDefinitionToStored,
   pageDefsEqual,
   playlistDefinitionFromQuery,
@@ -104,6 +103,7 @@ import {
   type Section,
   type SectionContent,
 } from "../../query/definition";
+import { presetTables } from "../../query/presetGroups";
 import { querydownReady } from "../../query/querydown";
 import { fetchRatings } from "../../query/ratings";
 import {
@@ -174,11 +174,11 @@ import {
   SHORTCUTS_TAB_NAME,
   emptyPage,
   initialPresetManager,
+  presetDraftKey,
   type AppState,
   type CurrentTrack,
   type ExportRows,
   type PageTab,
-  type PresetDraft,
   type PresetEdit,
   type PresetSave,
   type QueryTab,
@@ -657,26 +657,28 @@ export interface AppActions {
   /** Open (or focus) the singleton preset manager tab — the Settings menu's
    * and the `presets.manage` command's action. */
   openPresetsTab: () => void;
-  setPresetSearch: (text: string) => void;
+  /** Expand table `table`'s sections in the manager, or collapse them if
+   * they're shown. With `all` (a Ctrl+Click), every table follows suit. */
+  toggleManagedTable: (table: string, all: boolean) => void;
   /** Open preset `id`'s inline editor in the manager, or close it if it's the
    * one open. */
   toggleManagedPreset: (id: string) => void;
-  /** Start editing preset `id`'s name in place, in its manager row. */
-  beginPresetRename: (id: string) => void;
-  /** Stop editing a preset's name in place, leaving it as it was. */
-  cancelPresetRename: () => void;
-  /** Renames preset `id` and ends the in-place rename. A blank name is
-   * ignored. Any other edit in progress on the preset is left as it is. */
-  renamePreset: (id: string, name: string) => void;
-  /** Open the "New preset" dialog: on `init`'s table and section when given
-   * (a section heading's "+"), or a `track` filter otherwise. */
-  openPresetDraft: (init?: { baseTable: string; section: Section }) => void;
-  /** Open the "Duplicate preset" dialog on a copy of preset `id`. */
+  /** Start a new preset at the top of `baseTable`'s `section` in the manager
+   * (a section heading's "+"), expanding the table. One already being written
+   * there is kept. */
+  openPresetDraft: (baseTable: string, section: Section) => void;
+  /** Start a copy of preset `id` at the top of its own section in the
+   * manager, in place of any new preset already being written there. */
   duplicatePreset: (id: string) => void;
-  patchPresetDraft: (patch: Partial<PresetDraft>) => void;
-  cancelPresetDraft: () => void;
-  /** Creates the preset the dialog describes, and opens it in the manager. */
-  confirmPresetDraft: () => void;
+  patchPresetDraft: (
+    baseTable: string,
+    section: Section,
+    patch: Partial<PresetEdit>,
+  ) => void;
+  cancelPresetDraft: (baseTable: string, section: Section) => void;
+  /** Creates the preset being written in `baseTable`'s `section`, and opens
+   * it in the manager. A blank name is refused. */
+  confirmPresetDraft: (baseTable: string, section: Section) => void;
   requestPresetDelete: (id: string) => void;
   cancelPresetDelete: () => void;
   /** Deletes the preset pending confirmation. A definition that uses it is
@@ -3314,72 +3316,53 @@ export function createAppActions(
         s.activeTabId = PRESETS_TAB_ID;
       });
     },
-    setPresetSearch: (text) =>
+    toggleManagedTable: (table, all) =>
       set((s) => {
-        s.presetManager.search = text;
+        const m = s.presetManager;
+        const open = m.expandedTables.includes(table);
+        if (all) {
+          m.expandedTables = open
+            ? []
+            : presetTables(
+                s.presets,
+                s.schema.tables.map((t) => t.name),
+              );
+        } else if (open) {
+          m.expandedTables = m.expandedTables.filter((t) => t !== table);
+        } else {
+          m.expandedTables.push(table);
+        }
       }),
     toggleManagedPreset: (id) =>
       set((s) => {
         const m = s.presetManager;
         m.expanded = m.expanded === id ? null : id;
       }),
-    beginPresetRename: (id) =>
+    openPresetDraft: (baseTable, section) =>
       set((s) => {
-        s.presetManager.renaming = id;
-      }),
-    cancelPresetRename: () =>
-      set((s) => {
-        s.presetManager.renaming = null;
-      }),
-    renamePreset: (id, name) => {
-      set((s) => {
-        s.presetManager.renaming = null;
-      });
-      const trimmed = name.trim();
-      const preset = get().presets.find((p) => p.id === id);
-      if (!preset || trimmed === "" || trimmed === preset.name) return;
-      const modifiedAt = nowEpoch();
-      set((s) => {
-        const p = s.presets.find((x) => x.id === id);
-        if (p) Object.assign(p, { name: trimmed, modifiedAt });
-        // An open editor shows the new name, not the one it was opened on.
-        const edit = s.presetEdits[id];
-        if (edit) edit.name = trimmed;
-      });
-      void presetUpdate({
-        id,
-        name: trimmed,
-        definition: preset.definition,
-        isDefault: preset.isDefault,
-        modifiedAt,
-      }).catch((err) => console.error("preset rename failed", err));
-    },
-    openPresetDraft: (init) => {
-      const tables = get().schema.tables;
-      const fallback = tables.some((t) => t.name === PLAYLIST_BASE)
-        ? PLAYLIST_BASE
-        : (tables[0]?.name ?? PLAYLIST_BASE);
-      set((s) => {
-        s.presetDraft = {
-          duplicateOf: null,
-          baseTable: init?.baseTable ?? fallback,
-          section: init?.section ?? "filter",
+        const m = s.presetManager;
+        if (!m.expandedTables.includes(baseTable))
+          m.expandedTables.push(baseTable);
+        const key = presetDraftKey(baseTable, section);
+        m.drafts[key] ??= {
+          id: newUuid(),
           name: "",
           definition: "",
           isDefault: false,
         };
-      });
-    },
+      }),
     duplicatePreset: (id) => {
       // The copy is of the preset as the user is seeing it: with any edit
       // they have in progress on it.
       const preset = selectEffectivePresets(get()).find((p) => p.id === id);
       if (!preset) return;
       set((s) => {
-        s.presetDraft = {
-          duplicateOf: id,
-          baseTable: preset.baseTable,
-          section: asSection(preset.section),
+        const m = s.presetManager;
+        if (!m.expandedTables.includes(preset.baseTable))
+          m.expandedTables.push(preset.baseTable);
+        const key = presetDraftKey(preset.baseTable, asSection(preset.section));
+        m.drafts[key] = {
+          id: newUuid(),
           name: `${preset.name} copy`,
           definition: preset.definition,
           // Two defaults would displace one another (sort, display) or
@@ -3388,26 +3371,28 @@ export function createAppActions(
         };
       });
     },
-    patchPresetDraft: (patch) =>
+    patchPresetDraft: (baseTable, section, patch) =>
       set((s) => {
-        if (s.presetDraft) Object.assign(s.presetDraft, patch);
+        const draft =
+          s.presetManager.drafts[presetDraftKey(baseTable, section)];
+        if (draft) Object.assign(draft, patch);
       }),
-    cancelPresetDraft: () =>
+    cancelPresetDraft: (baseTable, section) =>
       set((s) => {
-        s.presetDraft = null;
+        delete s.presetManager.drafts[presetDraftKey(baseTable, section)];
       }),
-    confirmPresetDraft: () => {
-      const draft = get().presetDraft;
+    confirmPresetDraft: (baseTable, section) => {
+      const key = presetDraftKey(baseTable, section);
+      const draft = get().presetManager.drafts[key];
       if (!draft) return;
       const name = draft.name.trim();
-      const baseTable = draft.baseTable.trim();
-      if (name === "" || baseTable === "") return;
+      if (name === "") return;
       const now = nowEpoch();
       const preset: Preset = {
-        id: newUuid(),
+        id: draft.id,
         name,
         baseTable,
-        section: draft.section,
+        section,
         definition: draft.definition,
         isDefault: draft.isDefault,
         createdAt: now,
@@ -3416,9 +3401,7 @@ export function createAppActions(
       set((s) => {
         s.presets.push(preset);
         if (preset.isDefault) displaceDefault(s, preset);
-        s.presetDraft = null;
-        // Show it: open, and not hidden by a search it might not match.
-        s.presetManager.search = "";
+        delete s.presetManager.drafts[key];
         s.presetManager.expanded = preset.id;
       });
       void presetAdd(preset).catch((err) =>
@@ -3442,7 +3425,6 @@ export function createAppActions(
         delete s.presetEdits[id];
         const m = s.presetManager;
         if (m.expanded === id) m.expanded = null;
-        if (m.renaming === id) m.renaming = null;
         for (const page of Object.values(s.pages)) {
           if (page.expandedPreset === id) page.expandedPreset = null;
         }

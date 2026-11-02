@@ -47,35 +47,34 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
-/** The preset manager's "New preset" / "Duplicate preset" dialog: a preset not
- * yet created, every field of it editable — the table and section included, so
- * a duplicate can be made for another table. */
-export interface PresetDraft {
-  /** The preset this copies, for a duplicate (`null` for a new preset). */
-  duplicateOf: string | null;
-  baseTable: string;
-  section: Section;
-  name: string;
-  definition: string;
-  isDefault: boolean;
+/** A new preset being written in the preset manager, inline at the top of its
+ * table's section: the fields its editor edits, and the id it'll be created
+ * with. */
+export interface PresetDraft extends PresetEdit {
+  id: string;
 }
 
-/** The preset manager's own state: what it lists and how. Kept in the store
- * (not the page) so the dialogs it raises and the actions that create a
+/** Where a {@link PresetDraft} sits: its table and section, as one key. */
+export const presetDraftKey = (baseTable: string, section: Section): string =>
+  `${section}:${baseTable}`;
+
+/** The preset manager's own state: what it shows open, and the presets being
+ * written in it. Kept in the store (not the page) so the actions that create a
  * preset can steer it — a new preset opens expanded. */
 export interface PresetManagerState {
-  /** The search field's text; only presets whose name or table contains it
-   * are listed. */
-  search: string;
+  /** The tables whose sections are shown; every other table is collapsed to
+   * its heading. */
+  expandedTables: string[];
   /** The preset whose inline editor is open (null = none). */
   expanded: string | null;
-  /** The preset whose name is being edited in place in its row, if any. */
-  renaming: string | null;
+  /** New presets being written, by {@link presetDraftKey} — at most one per
+   * table's section. */
+  drafts: Record<string, PresetDraft>;
 }
 
-/** The preset manager as it opens: everything listed, nothing open. */
+/** The preset manager as it opens: every table collapsed, nothing open. */
 export function initialPresetManager(): PresetManagerState {
-  return { search: "", expanded: null, renaming: null };
+  return { expandedTables: [], expanded: null, drafts: {} };
 }
 
 /** Which of a page's result rows "Export results data" writes out. */
@@ -423,9 +422,6 @@ export interface AppState {
   presetSave: PresetSave | null;
   /** The preset manager's listing state. */
   presetManager: PresetManagerState;
-  /** The preset manager's "New preset" / "Duplicate preset" dialog, when
-   * open. */
-  presetDraft: PresetDraft | null;
   /** The preset pending delete confirmation (modal), by id, when open. */
   pendingPresetDelete: string | null;
   /** The compiled SQL shown by the "View SQL" dialog, when open. */
@@ -571,7 +567,6 @@ export function initialState(env: AppEnv): AppState {
     presetEdits: {},
     presetSave: null,
     presetManager: initialPresetManager(),
-    presetDraft: null,
     pendingPresetDelete: null,
     viewSql: null,
     exportData: null,

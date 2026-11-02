@@ -14,36 +14,42 @@ export interface PresetSectionGroup {
  * whether or not it holds any. */
 export interface PresetTableGroup {
   table: string;
+  /** How many presets the table has, over all its sections. */
+  count: number;
   sections: PresetSectionGroup[];
 }
 
 const byName = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: "base" });
 
-/** `presets` grouped by table (in name order), then section, then name —
- * narrowed to those whose name or table contains `search` (ignoring case). A
- * table with no presets left after the search isn't listed. */
+/** The tables the preset manager lists, in name order: every one of `tables`
+ * (the schema's), and any other a preset is for. */
+export function presetTables(
+  presets: readonly Preset[],
+  tables: readonly string[],
+): string[] {
+  const names = new Set(tables);
+  for (const preset of presets) names.add(preset.baseTable);
+  return [...names].sort(byName);
+}
+
+/** `presets` grouped by table, then section, then name — one group for each of
+ * {@link presetTables}, so a table with no presets is listed too. */
 export function groupPresets(
   presets: readonly Preset[],
-  search: string,
+  tables: readonly string[],
 ): PresetTableGroup[] {
-  const needle = search.trim().toLowerCase();
-  const matches = (p: Preset) =>
-    needle === "" ||
-    p.name.toLowerCase().includes(needle) ||
-    p.baseTable.toLowerCase().includes(needle);
-
   const byTable = new Map<string, Preset[]>();
   for (const preset of presets) {
-    if (!matches(preset)) continue;
     const list = byTable.get(preset.baseTable);
     if (list) list.push(preset);
     else byTable.set(preset.baseTable, [preset]);
   }
-  return [...byTable.keys()].sort(byName).map((table) => {
+  return presetTables(presets, tables).map((table) => {
     const list = byTable.get(table) ?? [];
     return {
       table,
+      count: list.length,
       sections: SECTIONS.map((section) => ({
         section,
         presets: list

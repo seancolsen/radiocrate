@@ -45,17 +45,21 @@ test("the preset manager creates, renames and deletes a preset", async ({
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("menuitem", { name: "Query presets" }).click();
   const manager = page.getByTestId("preset-manager");
+  // Every table starts collapsed.
+  const track = manager.getByRole("button", { name: /^track \d/ });
+  await expect(track).toHaveAttribute("aria-expanded", "false");
+  await track.click();
   await expect(manager.getByRole("button", { name: /^vetted/ })).toBeVisible();
 
-  // Create: a sort for `track`, from its section heading's "+".
+  // Create: a sort for `track`, from its section heading's "+", inline.
   await manager
     .getByRole("button", { name: "New sorting preset for track" })
     .click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Preset name").fill("by year");
-  await dialog.getByLabel("Preset definition").fill("\\\\year");
-  await dialog.getByRole("button", { name: "Create" }).click();
-  await expect(dialog).toBeHidden();
+  const name = manager.getByLabel("Preset name");
+  await expect(name).toBeFocused();
+  await name.fill("by year");
+  await manager.getByLabel("Preset definition").fill("\\\\year");
+  await manager.getByRole("button", { name: "Create preset" }).click();
   // It opens in the editor, as saved.
   await expect(
     manager.getByRole("button", { name: /^by year/ }),
@@ -69,11 +73,9 @@ test("the preset manager creates, renames and deletes a preset", async ({
     isDefault: false,
   });
 
-  // Rename, from the row's menu.
-  await manager.getByRole("button", { name: "Actions for by year" }).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
-  await manager.getByLabel("Rename preset").fill("by decade");
-  await manager.getByLabel("Rename preset").press("Enter");
+  // Rename, in its editor.
+  await manager.getByLabel("Preset name").fill("by decade");
+  await manager.getByRole("button", { name: "Save preset" }).click();
   await expect(
     manager.getByRole("button", { name: /^by decade/ }),
   ).toBeVisible();
@@ -93,4 +95,32 @@ test("the preset manager creates, renames and deletes a preset", async ({
     0,
   );
   await expect.poll(methods).toContain("preset.delete");
+});
+
+test("Ctrl+Click on a table expands or collapses every table", async ({
+  page,
+}) => {
+  await mockRpc(page);
+  await page.goto("/?sidebar=open");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("menuitem", { name: "Query presets" }).click();
+  const manager = page.getByTestId("preset-manager");
+  const headings = manager.getByRole("heading").getByRole("button");
+  await expect(headings.first()).toBeVisible();
+  const count = await headings.count();
+  expect(count).toBeGreaterThan(1);
+
+  await manager
+    .getByRole("button", { name: /^track \d/ })
+    .click({ modifiers: ["ControlOrMeta"] });
+  await expect(
+    manager.getByRole("heading").getByRole("button", { expanded: true }),
+  ).toHaveCount(count);
+
+  await manager
+    .getByRole("button", { name: /^album \d/ })
+    .click({ modifiers: ["ControlOrMeta"] });
+  await expect(
+    manager.getByRole("heading").getByRole("button", { expanded: true }),
+  ).toHaveCount(0);
 });

@@ -1,6 +1,10 @@
 import { useEffect, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
-import { selectPresetDirty, selectPresetEdit } from "../../stores/app";
+import {
+  selectPresetDirty,
+  selectPresetEdit,
+  type PresetEdit,
+} from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
@@ -34,6 +38,33 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once seed, see comment above
   }, []);
 
+  return (
+    <PresetEditorPanel
+      edit={edit}
+      dirty={dirty}
+      onPatch={(patch) => patchPresetEdit(props.presetId, patch)}
+      onRevert={() => revertPresetEdit(props.presetId)}
+      onSave={() => commitPresetEdit(props.presetId)}
+    />
+  );
+}
+
+/** The editor's panel, over any buffer: a saved preset's edits (above), or a
+ * preset not yet created (the preset manager's drafts, which are always
+ * "dirty" — their revert discards them and their save creates them, under
+ * the labels given). `autoFocus` focuses the name field on mount. */
+export function PresetEditorPanel(props: {
+  edit: PresetEdit | undefined;
+  dirty: boolean;
+  onPatch: (patch: Partial<PresetEdit>) => void;
+  onRevert: () => void;
+  onSave: () => void;
+  revertLabel?: string;
+  saveLabel?: string;
+  autoFocus?: boolean;
+}): JSX.Element {
+  const { edit, dirty } = props;
+
   // Wrap the checkbox onto its own line when the row can't hold the name field,
   // the dirty controls, and the checkbox side by side.
   const frameRef = useRef<HTMLDivElement>(null);
@@ -45,9 +76,7 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
     <Checkbox
       label="Apply by default"
       checked={edit?.isDefault ?? false}
-      onChange={(checked) =>
-        patchPresetEdit(props.presetId, { isDefault: checked })
-      }
+      onChange={(checked) => props.onPatch({ isDefault: checked })}
     />
   );
 
@@ -61,12 +90,12 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
           <div className="flex items-center gap-2">
             <input
               type="text"
+              autoFocus={props.autoFocus}
+              aria-label="Preset name"
               placeholder="Preset name"
               className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-[180px] rounded-md border px-2.5 py-1.5 text-sm outline-none"
               value={edit.name}
-              onChange={(e) =>
-                patchPresetEdit(props.presetId, { name: e.currentTarget.value })
-              }
+              onChange={(e) => props.onPatch({ name: e.currentTarget.value })}
             />
             {dirty && (
               <>
@@ -76,14 +105,14 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
                 />
                 <IconButton
                   icon={Icons.Revert}
-                  label="Revert preset changes"
-                  onClick={() => revertPresetEdit(props.presetId)}
+                  label={props.revertLabel ?? "Revert preset changes"}
+                  onClick={props.onRevert}
                 />
                 <IconButton
                   icon={Icons.Save}
-                  label="Save preset"
+                  label={props.saveLabel ?? "Save preset"}
                   disabled={!nameOk}
-                  onClick={() => commitPresetEdit(props.presetId)}
+                  onClick={props.onSave}
                 />
               </>
             )}
@@ -91,14 +120,13 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
           </div>
           {wrapDefault && applyByDefault}
           <textarea
+            aria-label="Preset definition"
             className="bg-panel border-edge text-ink focus:border-accent block w-full resize-none rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none"
             rows={Math.max(1, edit.definition.split("\n").length)}
             spellCheck={false}
             value={edit.definition}
             onChange={(e) =>
-              patchPresetEdit(props.presetId, {
-                definition: e.currentTarget.value,
-              })
+              props.onPatch({ definition: e.currentTarget.value })
             }
           />
         </>
