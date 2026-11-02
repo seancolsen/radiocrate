@@ -1212,9 +1212,44 @@ describe("a refresh", () => {
     expect(page?.selection).toBeUndefined();
     expect(page?.multiSelect).toBe(false);
     expect(page?.scrollOffset).toBe(0);
-    // The editor goes with the selection it was standing on — but that's the
-    // resync's doing, not this action's (see `createStores`).
+    // The editor outlives the selection it was standing on: the rows moved,
+    // the user didn't put them down.
     bundle.actions.resyncRecordEditors();
+    expect(bundle.store.getState().pages["a"]?.recordEditor?.records).toEqual([
+      { table: "track", key: [{ column: "id", value: "2" }] },
+    ]);
+  });
+
+  it("keeps the editor open when it trims the selection to nothing", async () => {
+    const bundle = await tabWithRowsInUse();
+
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["1"]]),
+    );
+    await run(bundle, "a");
+    bundle.actions.resyncRecordEditors();
+
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.selection).toBeUndefined();
+    expect(page?.recordEditor?.records).toEqual([
+      { table: "track", key: [{ column: "id", value: "2" }] },
+    ]);
+  });
+
+  it("leaves deselecting to close the editor once rows are selected again", async () => {
+    const bundle = await tabWithRowsInUse();
+
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 2",
+      columnAnnotations: [],
+    });
+    await run(bundle, "a");
+    bundle.actions.resyncRecordEditors();
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.resyncRecordEditors();
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: true });
+    bundle.actions.resyncRecordEditors();
+
     expect(bundle.store.getState().pages["a"]?.recordEditor).toBeNull();
   });
 

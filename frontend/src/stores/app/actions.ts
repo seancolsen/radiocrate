@@ -830,6 +830,13 @@ export function createAppActions(
   // Non-reactive: the selection it leads to is what renders.
   const rearranged = new Map<string, ReadonlySet<string>>();
 
+  // Tabs whose result-row selection was emptied by their rows being replaced
+  // (a re-run), not by the user, and hasn't been added to since. The record
+  // editor's resync reads it to tell the two apart: the user putting the rows
+  // down closes the editor, the rows changing underneath it doesn't (see
+  // `resyncRecordEditors`). Non-reactive: the selection is what renders.
+  const sweptSelections = new Set<string>();
+
   // Trailing-debounced re-runs, keyed by tab id, so a burst of keystrokes in a
   // builder text input collapses into one query run once the user pauses.
   const runTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -942,7 +949,11 @@ export function createAppActions(
    * selection, multi-select mode, the open record editor, the scroll position,
    * the lineage mapping — standing instead of being swept away. The one thing a
    * refresh still has to touch is a selected row that came back shorter than
-   * the rows it pointed into. */
+   * the rows it pointed into.
+   *
+   * Either way the open record editor stays open: a selection these rows empty
+   * is noted in `sweptSelections`, so the resync leaves the editor where it
+   * is rather than reading it as the user deselecting. */
   const setTabResult = (
     tabId: string,
     result: QueryResult,
@@ -956,10 +967,14 @@ export function createAppActions(
     // is" — including leaving the reference alone, so the record editor's
     // resync doesn't wake up for a refresh that moved nothing.
     let trimmed: Set<number> | undefined;
+    const selected = get().pages[tabId]?.selection ?? EMPTY_SELECTION;
     if (refresh) {
-      const rows = [...(get().pages[tabId]?.selection ?? EMPTY_SELECTION)];
+      const rows = [...selected];
       const kept = rows.filter((row) => row < result.rowCount);
       if (kept.length !== rows.length) trimmed = new Set(kept);
+    }
+    if (selected.size !== 0 && (!refresh || trimmed?.size === 0)) {
+      sweptSelections.add(tabId);
     }
     set((s) => {
       // `castDraft` here (and at the other `readonly`-bearing assignments
@@ -1395,6 +1410,7 @@ export function createAppActions(
     runTokens.delete(id);
     lastRunSql.delete(id);
     rearranged.delete(id);
+    sweptSelections.delete(id);
   };
 
   /** Opens saved source `source` in a tab — a query tab, or a playlist tab
@@ -1699,8 +1715,10 @@ export function createAppActions(
    * tab's current result-row selection rather than the row(s) it was opened
    * on — selecting a different row re-points it, widening the selection puts
    * the editor on every record it covers, and clearing the selection closes
-   * it. Opening the sidebar from nothing is *not* this action's job (the
-   * context menu and the `results.edit_selected` command do that).
+   * it. A selection emptied by the rows being replaced is not the user
+   * clearing it, though, so the editor stays open on what it has. Opening the
+   * sidebar from nothing is *not* this action's job (the context menu and the
+   * `results.edit_selected` command do that).
    *
    * It must react only to the selection (or lineage), never to its own write to
    * the editor target — otherwise it would loop. That's why it reads `get()`
@@ -1710,10 +1728,17 @@ export function createAppActions(
   const resyncRecordEditors = () => {
     const s = get();
     for (const [tabId, page] of Object.entries(s.pages)) {
+      const selection = page.selection ?? EMPTY_SELECTION;
+      // Selecting rows again ends the sweep: emptying *this* selection is the
+      // user's doing.
+      if (selection.size !== 0) sweptSelections.delete(tabId);
       const current = page.recordEditor;
       if (!current) continue;
-      const selection = page.selection ?? EMPTY_SELECTION;
       if (selection.size === 0) {
+        // A re-run took the rows the editor was opened from, which is no
+        // reason to close it: it keeps the record(s) it has, the same as
+        // below, until a row is selected again.
+        if (sweptSelections.has(tabId)) continue;
         set((draft) => {
           pageDraft(draft, tabId).recordEditor = null;
         });
@@ -1730,9 +1755,10 @@ export function createAppActions(
       // it has. It stays fully usable — it loaded that record from the database
       // and saves it back there — it simply has no row to write through any
       // more: nothing to patch in place after a save, nowhere to put the ✱.
-      // Only an *emptied selection* closes the sidebar (above), because that's
-      // the user putting the rows down; this is the rows moving out from under
-      // a still-open editor, which a refresh can do at any moment.
+      // Only the user *emptying the selection* closes the sidebar (above),
+      // because that's the user putting the rows down; this is the rows moving
+      // out from under a still-open editor, which a refresh can do at any
+      // moment.
       if (records.length === 0) continue;
       setRecordEditorRecords(tabId, current.table, records);
     }

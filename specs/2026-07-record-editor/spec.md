@@ -78,7 +78,7 @@ When the record editor panel is open, it should update to reflect changes in que
 
 - When the user selects a different row, the record editor should load that record's data.
 - When multiple rows are selected, the heading should display "Edit N [table] records" and show all primary keys. A message "Bulk modification not yet supported" should display in place of the form. (Bulk modification is deferred for separate UI work.)
-- When all rows are deselected, the panel should close.
+- When all rows are deselected, the panel should close. Rows the query results replace (a re-run) are not deselected by the user, though: the panel stays open on the record(s) it has until a row is selected again.
 
 The user can still interact with the query results while the sidebar is open. When the user clicks "Cancel", the sidebar should close.
 
