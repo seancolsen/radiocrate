@@ -27,10 +27,7 @@ pub fn scan(collection_path: &Path, conn: &Connection) -> Result<(), Box<dyn std
 
     classify::resolve_conflicts(&mut results);
 
-    let deleted_ids = classify::detect_deletions(&results, &existing_files);
-    info!(deleted = deleted_ids.len(), "detected deletions");
-
-    let staging_data = prepare::prepare_staging_data(&results, &existing_artists, deleted_ids);
+    let staging_data = prepare::prepare_staging_data(&results, &existing_artists);
 
     staging::create_staging_tables(conn)?;
     staging::insert_staging_data(conn, &staging_data)?;

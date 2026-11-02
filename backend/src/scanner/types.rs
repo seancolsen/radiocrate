@@ -139,11 +139,6 @@ pub struct StagingModified {
     pub mtime: i64,
 }
 
-pub struct StagingDeleted {
-    pub file_id: Uuid,
-    pub deletion_id: Uuid,
-}
-
 pub struct StagingData {
     pub artists: Vec<StagingArtist>,
     pub albums: Vec<StagingAlbum>,
@@ -153,5 +148,4 @@ pub struct StagingData {
     pub credits: Vec<StagingCredit>,
     pub moved: Vec<StagingMoved>,
     pub modified: Vec<StagingModified>,
-    pub deleted: Vec<StagingDeleted>,
 }

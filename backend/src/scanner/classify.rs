@@ -203,31 +203,6 @@ pub fn resolve_conflicts(results: &mut ScanResults) {
     }
 }
 
-/// Compare scanned filesystem paths against the DB to find deleted files.
-pub fn detect_deletions(results: &ScanResults, existing: &ExistingFiles) -> Vec<Uuid> {
-    let mut known_paths: HashSet<&str> = HashSet::new();
-
-    for p in &results.skipped {
-        known_paths.insert(p);
-    }
-    for m in &results.moved {
-        known_paths.insert(&m.path);
-    }
-    for n in &results.new_files {
-        known_paths.insert(&n.path);
-    }
-    for m in &results.modified {
-        known_paths.insert(&m.path);
-    }
-
-    existing
-        .by_path
-        .iter()
-        .filter(|(path, _)| !known_paths.contains(path.as_str()))
-        .map(|(_, (id, _, _, _))| *id)
-        .collect()
-}
-
 /// Discover audio files and classify them in parallel against existing DB state.
 pub fn classify_all(collection_path: &Path, existing: &ExistingFiles) -> ScanResults {
     let canonical_root =

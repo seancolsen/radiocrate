@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::types::{
-    ScanResults, StagingAlbum, StagingArtist, StagingCredit, StagingData, StagingDeleted,
-    StagingFile, StagingModified, StagingMoved, StagingTrack, StagingTrackTag,
+    ScanResults, StagingAlbum, StagingArtist, StagingCredit, StagingData, StagingFile,
+    StagingModified, StagingMoved, StagingTrack, StagingTrackTag,
 };
 
 static DISC_FOLDER_PATTERN: &[&str] = &["disc", "cd", "disk"];
@@ -78,10 +78,7 @@ fn collect_albums(results: &ScanResults) -> (HashMap<(String, PathBuf), Uuid>, V
     (album_map, staging_albums)
 }
 
-fn collect_changes(
-    results: &ScanResults,
-    deleted_ids: Vec<Uuid>,
-) -> (Vec<StagingMoved>, Vec<StagingModified>, Vec<StagingDeleted>) {
+fn collect_changes(results: &ScanResults) -> (Vec<StagingMoved>, Vec<StagingModified>) {
     let staging_moved: Vec<StagingMoved> = results
         .moved
         .iter()
@@ -104,22 +101,12 @@ fn collect_changes(
         })
         .collect();
 
-    let deletion_id = Uuid::new_v4();
-    let staging_deleted: Vec<StagingDeleted> = deleted_ids
-        .into_iter()
-        .map(|file_id| StagingDeleted {
-            file_id,
-            deletion_id,
-        })
-        .collect();
-
-    (staging_moved, staging_modified, staging_deleted)
+    (staging_moved, staging_modified)
 }
 
 pub fn prepare_staging_data(
     results: &ScanResults,
     existing_artists: &HashMap<String, Uuid>,
-    deleted_ids: Vec<Uuid>,
 ) -> StagingData {
     let (all_artists, new_artist_records) = collect_artists(results, existing_artists);
     let (album_map, staging_albums) = collect_albums(results);
@@ -175,7 +162,7 @@ pub fn prepare_staging_data(
         }
     }
 
-    let (staging_moved, staging_modified, staging_deleted) = collect_changes(results, deleted_ids);
+    let (staging_moved, staging_modified) = collect_changes(results);
 
     StagingData {
         artists: new_artist_records,
@@ -186,6 +173,5 @@ pub fn prepare_staging_data(
         credits: staging_credits,
         moved: staging_moved,
         modified: staging_modified,
-        deleted: staging_deleted,
     }
 }

@@ -90,7 +90,7 @@ export const PRESETS_FIXTURE: Preset[] = [
     name: "vetted",
     baseTable: "track",
     section: "filter",
-    definition: "rating.value:>=4 !++#tag{name:duplicate} file.deletion:@null",
+    definition: "rating.value:>=4 !++#tag{name:duplicate}",
     isDefault: false,
     createdAt: 1_700_000_000,
     modifiedAt: 1_700_000_000,
@@ -120,7 +120,7 @@ export const FILTER_DEF: QueryDefinition = {
  * one hand-written string, which is all a full-mode query carries. */
 export const FULL_DEF: QueryDefinition = {
   ...FILTER_DEF,
-  full: "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate} file.deletion:@null\n$title $album.title",
+  full: "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate}\n$title $album.title",
 };
 
 /** A sort section holding the built-in Shuffle preset (fixed seed → stable). */

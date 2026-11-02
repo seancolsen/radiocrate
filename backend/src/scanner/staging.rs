@@ -24,8 +24,7 @@ pub fn load_existing_artists(conn: &Connection) -> Result<HashMap<String, Uuid>,
 }
 
 pub fn load_existing_files(conn: &Connection) -> Result<ExistingFiles, duckdb::Error> {
-    let mut stmt =
-        conn.prepare("SELECT id, path, hash, size, mtime FROM file WHERE deletion IS NULL")?;
+    let mut stmt = conn.prepare("SELECT id, path, hash, size, mtime FROM file")?;
     let rows = stmt.query_map([], |row| {
         let id_str: String = row.get(0)?;
         let path: String = row.get(1)?;
@@ -70,7 +69,6 @@ pub fn create_staging_tables(conn: &Connection) -> Result<(), duckdb::Error> {
         CREATE TEMP TABLE staging_credit (track UUID, artist UUID, \"order\" REAL, role TEXT);
         CREATE TEMP TABLE staging_moved (id UUID, new_path TEXT, mtime BIGINT);
         CREATE TEMP TABLE staging_modified (id UUID, hash BLOB, size UINTEGER, duration REAL, mtime BIGINT);
-        CREATE TEMP TABLE staging_deleted (file_id UUID, deletion_id UUID);
         ",
     )
 }
@@ -171,14 +169,6 @@ pub fn insert_staging_data(conn: &Connection, data: &StagingData) -> Result<(), 
         app.flush()?;
     }
 
-    {
-        let mut app = conn.appender("staging_deleted")?;
-        for d in &data.deleted {
-            app.append_row(params![d.file_id.to_string(), d.deletion_id.to_string()])?;
-        }
-        app.flush()?;
-    }
-
     Ok(())
 }
 
@@ -203,8 +193,8 @@ SELECT uuid(), role FROM staging_credit
 WHERE role IS NOT NULL AND role NOT IN (SELECT name FROM role)
 GROUP BY role;
 
-INSERT INTO file (id, path, hash, size, format, duration, mtime, added, deletion)
-SELECT id, path, hash, size, format, to_seconds(duration), mtime, now(), NULL FROM staging_file;
+INSERT INTO file (id, path, hash, size, format, duration, mtime, added)
+SELECT id, path, hash, size, format, to_seconds(duration), mtime, now() FROM staging_file;
 
 INSERT INTO track (id, file, start_position, end_position, title, album,
                    disc_number, track_number, rating)
@@ -224,12 +214,6 @@ FROM staging_moved sm WHERE file.id = sm.id;
 
 UPDATE file SET hash = sm.hash, size = sm.size, duration = to_seconds(sm.duration), mtime = sm.mtime
 FROM staging_modified sm WHERE file.id = sm.id;
-
-INSERT INTO deletion (id, timestamp)
-SELECT DISTINCT deletion_id, now() FROM staging_deleted;
-
-UPDATE file SET deletion = sd.deletion_id
-FROM staging_deleted sd WHERE file.id = sd.file_id;
 
 COMMIT;
 ";
@@ -252,7 +236,6 @@ pub fn drop_staging_tables(conn: &Connection) -> Result<(), duckdb::Error> {
         DROP TABLE staging_credit;
         DROP TABLE staging_moved;
         DROP TABLE staging_modified;
-        DROP TABLE staging_deleted;
         ",
     )
 }

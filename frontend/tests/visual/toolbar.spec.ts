@@ -109,7 +109,7 @@ test("Full Querydown flattens the query into one editable field", async ({
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Querydown" })).toBeVisible();
   await expect(page.getByPlaceholder("Querydown")).toHaveValue(
-    "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate} file.deletion:@null",
+    "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate}",
   );
 
   // Editing it writes back to the working definition…
