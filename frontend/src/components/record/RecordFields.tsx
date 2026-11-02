@@ -11,20 +11,28 @@ import {
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel from "./FieldLabel";
-import FieldValue, { type EditExit } from "./FieldValue";
+import FieldValue, {
+  OneLineValue,
+  ValueInput,
+  type EditExit,
+} from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
 import {
+  distinctItemId,
   distinctValues,
   fieldItemId,
+  listedValues,
   listId,
   scalarChildId,
   selectCountMax,
   selectCountMin,
   selectDistinctCount,
+  selectDistinctEdit,
   selectFieldModified,
   selectHasLinkedRecord,
   selectIsExpanded,
   selectIsSelected,
+  selectListsDistinct,
   selectRecordCount,
   selectRecordModified,
   selectSharedValue,
@@ -38,6 +46,7 @@ import {
 import { useFormState } from "../../stores/react";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
+import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
 import type {
   FormField,
@@ -147,7 +156,7 @@ function fieldExpandable(
   // A scalar field the records disagree on opens into the distinct values they
   // hold, whichever kind it is — that list is the only way such a field gets a
   // value at all, so it always opens.
-  if (selectSharedValue(s, recordId, field.column) === VARIED) return true;
+  if (selectListsDistinct(s, recordId, field.column)) return true;
   if (field.kind === "scalarLink") {
     return selectHasLinkedRecord(s, recordId, field);
   }
@@ -205,8 +214,15 @@ function FieldRow(props: {
   /** Whether the records the form is on disagree about this field — the state
    * with no value of its own to show, which expands into the values they hold
    * instead (`DistinctValues`). Never true on one record, which cannot disagree
-   * with itself. */
-  const varied = value === VARIED;
+   * with itself. Still true while one of those values is being edited, though
+   * the edit may have brought the records into agreement for now: the list
+   * stays up under the editor until the edit is done. */
+  const varied = useFormState(
+    model,
+    (s) =>
+      field.kind !== "multiRecord" &&
+      selectListsDistinct(s, recordId, field.column),
+  );
   /** How many different values that is — what the row shows in place of one. */
   const distinct = useFormState(model, (s) =>
     varied ? selectDistinctCount(s, recordId, field.column) : 0,
@@ -448,7 +464,7 @@ function FieldRow(props: {
             model={model}
             recordId={recordId}
             field={field}
-            value={value}
+            value={varied ? VARIED : value}
             distinct={distinct}
             expanded={false}
             onBeginEdit={beginEdit}
@@ -576,7 +592,15 @@ function DistinctValues(props: {
     model,
     (s) => s.records[recordId]?.values[field.column],
   );
-  const values = useMemo(() => distinctValues(column), [column]);
+  // An edit to one of the values holds the list still while it's typed (see
+  // `listedValues`).
+  const edit = useFormState(model, (s) =>
+    selectDistinctEdit(s, recordId, field.column),
+  );
+  const values = useMemo(
+    () => distinctValues(listedValues(column, edit)),
+    [column, edit],
+  );
   return (
     <>
       {values.map((distinct) => (
@@ -595,7 +619,13 @@ function DistinctValues(props: {
 /** One of those values: how many records hold it, the value itself, and the
  * paint roller that gives it to the rest of them. Its own component so that a
  * preview landing — or the record behind it being opened — re-renders one row
- * rather than the list. */
+ * rather than the list.
+ *
+ * The value is editable where it stands, and the edit is to *it*: whatever the
+ * user types goes into every record holding it, the rest keeping theirs. A
+ * primitive value opens an editor, exactly as a field's value does; a linked
+ * record opens the record picker. A text value cut off on its one line expands,
+ * like a field's, into the whole of it below its row. */
 function DistinctValueRow(props: {
   model: RecordFormModel;
   recordId: string;
@@ -607,16 +637,18 @@ function DistinctValueRow(props: {
   const readOnly = field.kind === "primitive" && field.readOnly;
 
   /** The record this value points at, when it names one: a linked record field
-   * whose value is neither NULL nor blank. Everything else is a value to read
-   * and take, with nothing to open. */
+   * whose value is neither NULL nor blank. Everything else is a value to read,
+   * edit and take, with nothing to open. */
   const childId =
     field.kind === "scalarLink" && value != null && value !== ""
       ? variedChildId(recordId, field.key, value)
       : undefined;
-  const expanded = useFormState(
-    model,
-    (s) => childId !== undefined && selectIsExpanded(s, childId),
-  );
+  /** The id the value itself is edited — and, when it's text with no record to
+   * open, expanded — under. */
+  const itemId = distinctItemId(recordId, field.key, value);
+  const expandId = childId ?? itemId;
+  const expanded = useFormState(model, (s) => selectIsExpanded(s, expandId));
+  const editing = useFormState(model, (s) => s.editing === itemId);
   const cells = useFormState(
     model,
     (s) => (childId && s.embeds[childId]?.cells) || NO_CELLS,
@@ -626,23 +658,71 @@ function DistinctValueRow(props: {
     (s) => childId !== undefined && s.embeds[childId]?.status !== "loaded",
   );
 
+  // Whether the value is cut off on its one line — reported up from the line
+  // itself, as a field's is (see `FieldRow`).
+  const [overflowing, setOverflowing] = useState(false);
+  /** Text with something in it: what can wrap, below the row. */
+  const text =
+    field.kind === "primitive" &&
+    field.valueType === "text" &&
+    value != null &&
+    value !== "";
+  /** Whether that text is what the row expands into. An expanded value has no
+   * line left to overflow, so having been expanded is reason enough to keep the
+   * toggle that closes it. */
+  const textBelow = text && expanded;
+  const expandable =
+    childId !== undefined || (text && (overflowing || expanded));
+
   /** What the expansion toggle's aria-label names: the preview, while it has
    * one, falling back to the id it was loaded from. */
   const label = cells.filter(Boolean).join(" ") || (value ?? "");
+  const records = `${count} ${count === 1 ? "record" : "records"}`;
+
+  const beginEdit = () => {
+    if (readOnly) return;
+    if (field.kind === "scalarLink") {
+      model.openPicker(recordId, field.key, { value });
+    } else {
+      model.beginEditDistinct(recordId, field, value);
+    }
+  };
+
+  /** Leaving edit mode, as a field's editor does (see `FieldRow`) — except
+   * that focus goes back to the field's label, the value itself not being an
+   * item the keyboard moves between. */
+  const commit = (input: string, exit: EditExit) => {
+    model.commitDistinct(input);
+    if (exit === "none") return;
+    const fieldId = fieldItemId(recordId, field.key);
+    queueMicrotask(() => {
+      model.focusItem(fieldId);
+      if (exit === "self") return;
+      model.focusAdjacent(exit === "next");
+      model.beginEditAtFocused(true);
+    });
+  };
+
+  const input = (
+    <ValueInput
+      initial={value ?? ""}
+      multiline={field.kind === "primitive" && field.valueType === "text"}
+      selectAll={false}
+      onInput={(input) => model.editDistinct(input)}
+      onCommit={commit}
+    />
+  );
 
   return (
     <>
       <div className="flex min-h-[26px] items-center gap-1 py-0.5">
         <ExpansionToggle
-          expandable={childId !== undefined}
+          expandable={expandable}
           expanded={expanded}
           label={label}
-          onToggle={() => childId && model.toggleChild(childId)}
+          onToggle={() => model.toggleChild(expandId)}
         />
-        <span
-          className={BUBBLE}
-          aria-label={`${count} ${count === 1 ? "record" : "records"}`}
-        >
+        <span className={BUBBLE} aria-label={records}>
           {count}
         </span>
         {childId !== undefined ? (
@@ -652,8 +732,28 @@ function DistinctValueRow(props: {
               onDblClick={() => model.toggleChild(childId)}
             />
           </LoadingRegion>
+        ) : textBelow ? (
+          <span className="flex-1" />
+        ) : editing ? (
+          <div className="min-w-0 flex-1">{input}</div>
         ) : (
-          <DistinctText value={value} />
+          <DistinctText
+            value={value}
+            editable={!readOnly}
+            onClick={beginEdit}
+            onOverflow={setOverflowing}
+          />
+        )}
+        {/* A linked record has no text to click into: re-pointing the records
+            that hold it is a button of its own. */}
+        {childId !== undefined && (
+          <IconButton
+            icon={Icons.Edit}
+            label={`Pick another record for ${records}`}
+            size="sm"
+            tabIndex={-1}
+            onClick={beginEdit}
+          />
         )}
         {/* A primary key is issued by the database, not the user: its values
             are worth reading side by side, but none of them is one to hand to
@@ -668,6 +768,27 @@ function DistinctValueRow(props: {
           />
         )}
       </div>
+      {/* Expanded text: the whole value, given the full width below the row,
+          the way a field's expanded text is. */}
+      {textBelow && (
+        <Subtree>
+          <div className="pr-1 pb-1">
+            {editing ? (
+              input
+            ) : (
+              <span
+                className={cx(
+                  "text-ink block w-full text-sm/5 break-words whitespace-pre-wrap",
+                  readOnly ? "cursor-default" : "cursor-text",
+                )}
+                onClick={beginEdit}
+              >
+                {value}
+              </span>
+            )}
+          </div>
+        </Subtree>
+      )}
       {expanded && childId !== undefined && (
         <Subtree>
           <RecordNodeView model={model} recordId={childId} />
@@ -677,21 +798,36 @@ function DistinctValueRow(props: {
   );
 }
 
-/** One distinct value as text: what it says, or what it is when it says
- * nothing — the two empties a column can hold are named rather than drawn as a
- * blank line, since a list of values has to distinguish them. */
-function DistinctText(props: { value: string | null }): JSX.Element {
+/** One distinct value as text, on one line: what it says, or what it is when
+ * it says nothing — the two empties a column can hold are named rather than
+ * drawn as a blank line, since a list of values has to distinguish them. */
+function DistinctText(props: {
+  value: string | null;
+  editable: boolean;
+  onClick: () => void;
+  onOverflow: (overflowing: boolean) => void;
+}): JSX.Element {
+  const cursor = props.editable ? "cursor-text" : "cursor-default";
   if (props.value === null || props.value === "") {
     return (
-      <span className="text-ink-weak min-w-0 flex-1 truncate text-sm/5 italic">
+      <span
+        className={cx(
+          "text-ink-weak min-w-0 flex-1 truncate text-sm/5 italic",
+          cursor,
+        )}
+        onClick={() => props.onClick()}
+      >
         {props.value === null ? "NULL" : "(empty string)"}
       </span>
     );
   }
   return (
-    <span className="text-ink min-w-0 flex-1 truncate text-sm/5">
-      {props.value.replace(/\s*\r?\n\s*/g, " ")}
-    </span>
+    <OneLineValue
+      text={props.value}
+      className={cx("text-ink block min-w-0 flex-1 truncate text-sm/5", cursor)}
+      onClick={props.onClick}
+      onOverflow={props.onOverflow}
+    />
   );
 }
 

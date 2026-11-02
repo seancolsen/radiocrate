@@ -10,8 +10,9 @@
 // That agreement is the form's one real question about how many records it's
 // editing, and it's asked here rather than at any branch above: a field whose
 // records agree is a field the user edits exactly as they always have, and the
-// edit lands on all of them; a field they disagree on shows "(varied)" and, for
-// now, isn't editable at all.
+// edit lands on all of them; a field they disagree on has no one value to edit,
+// and lists the values they hold instead — each editable on its own, the edit
+// landing on the records that hold it.
 
 /** Stands for a column the records don't agree on. */
 export const VARIED = Symbol("varied");

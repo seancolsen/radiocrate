@@ -78,3 +78,16 @@ export function newChildId(list: string, seq: number): string {
 export function fieldItemId(recordId: string, fieldKey: string): string {
   return `${recordId}:${fieldKey}`;
 }
+
+/** The id one *distinct value* of a scalar field is expanded and edited under,
+ * when the records the form is on disagree about that field — its field's id,
+ * qualified by the value. NULL and the string `"null"` are two different
+ * values, and both can be in one list. */
+export function distinctItemId(
+  recordId: string,
+  fieldKey: string,
+  value: string | null,
+): string {
+  const field = fieldItemId(recordId, fieldKey);
+  return value === null ? `${field}!null` : `${field}=${value}`;
+}

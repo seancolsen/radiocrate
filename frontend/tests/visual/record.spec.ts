@@ -149,6 +149,26 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The values a text field's records disagree on, edited where they stand:
+  // the long one expanded below its row, and another in an open editor.
+  test(`record-editor/varied-editing - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/varied-editing",
+      colorScheme,
+    );
+    await expect(stage.getByRole("heading")).toHaveText("Edit 3 track records");
+    await stage.getByRole("button", { name: "Expand title" }).click();
+    await stage
+      .getByRole("button", { name: /^Expand Don't Hurt Yourself/ })
+      .click();
+    await stage.getByText("Hold Up", { exact: true }).click();
+    await expect(stage.getByRole("textbox")).toBeFocused();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/varied-editing", colorScheme),
+    );
+  });
+
   // The modal picker on its own: the search box with its sort and display
   // buttons, and the results as the embedded records they're about to become.
   // Shot through the dialog (it portals out of the stage).

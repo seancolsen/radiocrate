@@ -34,11 +34,12 @@ export default function FieldRecordPicker(props: {
     // than from where the last one left off. (The picker is modal, so it always
     // closes — unmounting this — before it can be opened again.)
     <PickerAdapter
-      key={`${open.recordId}\n${open.fieldKey}`}
+      key={`${open.recordId}\n${open.fieldKey}\n${open.distinct ? `=${open.distinct.value}` : ""}`}
       model={model}
       schemaJson={props.schemaJson}
       recordId={open.recordId}
       field={field}
+      distinct={open.distinct}
     />
   );
 }
@@ -48,8 +49,11 @@ function PickerAdapter(props: {
   schemaJson: string;
   recordId: string;
   field: ScalarLinkField;
+  /** The distinct value whose records the pick re-points, when the field's
+   * records disagree — absent for an ordinary pick, which re-points them all. */
+  distinct?: { value: string | null };
 }): JSX.Element {
-  const { model, schemaJson, recordId, field } = props;
+  const { model, schemaJson, recordId, field, distinct } = props;
   // One instance belongs to one field for its whole life (the key above
   // rebuilds it otherwise), so its subject is read once.
   const [itemId] = useState(() => fieldItemId(recordId, field.key));
@@ -69,17 +73,34 @@ function PickerAdapter(props: {
       initialDisplay={spec.display.join(" ")}
       runQuery={(query) => runRecordQuery(query, schemaJson)}
       onPick={(keyValue, cells) => {
-        model.pickRecord(recordId, field, keyValue, cells);
+        if (distinct) {
+          model.pickDistinctRecord(
+            recordId,
+            field,
+            distinct.value,
+            keyValue,
+            cells,
+          );
+        } else {
+          model.pickRecord(recordId, field, keyValue, cells);
+        }
         restoreFocus();
       }}
       onCancel={() => {
         model.closePicker();
         restoreFocus();
       }}
-      onCreate={(seed) => {
-        model.closePicker();
-        model.addLinkedRecord(recordId, field, seed);
-      }}
+      // A record created for a field points every record the form is on at
+      // it (`planSave` references the insert from all of them), so it isn't
+      // offered for a pick meant to re-point only some of them.
+      onCreate={
+        distinct
+          ? undefined
+          : (seed) => {
+              model.closePicker();
+              model.addLinkedRecord(recordId, field, seed);
+            }
+      }
     />
   );
 }

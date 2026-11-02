@@ -14,6 +14,7 @@ import {
 } from "../forms";
 import {
   createRecordForm,
+  distinctItemId,
   fieldItemId,
   listId,
   ROOT_ID,
@@ -21,9 +22,11 @@ import {
   selectCountMax,
   selectCountMin,
   distinctValues,
+  selectDistinctCount,
   selectFieldModified,
   selectFormModified,
   selectIsBulkBlocked,
+  selectListsDistinct,
   selectSharedValue,
   VARIED,
   variedChildId,
@@ -469,6 +472,136 @@ describe("a field the records disagree on", () => {
     expect(s.records[variedChildId(ROOT_ID, "album", "a2")]).toBeUndefined();
     // A link has no text to type, so nothing is put into edit mode.
     expect(s.editing).toBeNull();
+  });
+
+  it("edits one value for the records holding it, and only those", async () => {
+    serveThree();
+    const runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(
+      () => Promise.resolve({}),
+    );
+    const model = form([trackKey("t1"), trackKey("t2"), trackKey("t3")], {
+      runDml,
+    });
+    model.start();
+    await flush();
+
+    const genre = fieldOf(model, ROOT_ID, "genre");
+    if (genre.kind !== "primitive") throw new Error("genre is a primitive");
+    model.toggleField(ROOT_ID, genre, true);
+    model.beginEditDistinct(ROOT_ID, genre, "Rock");
+    expect(model.store.getState().editing).toBe(
+      distinctItemId(ROOT_ID, "genre", "Rock"),
+    );
+
+    // Typing writes through to t2 and t3 as it goes. Passing through "Pop" —
+    // what t1 holds — brings every record into agreement for a moment, but the
+    // field keeps listing the values as they were when the edit began, so the
+    // editor stays where it is.
+    model.editDistinct("Pop");
+    let s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["genre"]).toEqual(["Pop", "Pop", "Pop"]);
+    expect(selectListsDistinct(s, ROOT_ID, "genre")).toBe(true);
+    expect(selectDistinctCount(s, ROOT_ID, "genre")).toBe(2);
+
+    model.editDistinct("Pop rock");
+    model.commitDistinct("Pop rock");
+    s = model.store.getState();
+    expect(s.editing).toBeNull();
+    expect(s.records[ROOT_ID]?.values["genre"]).toEqual([
+      "Pop",
+      "Pop rock",
+      "Pop rock",
+    ]);
+    expect(selectFieldModified(s, ROOT_ID, "genre")).toBe(true);
+    // Still disagreeing, so the field stays open on its two values.
+    expect(s.expanded[fieldItemId(ROOT_ID, "genre")]).toBe(true);
+
+    await model.save();
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "track",
+        where: { id: "t2" },
+        values: { genre: "Pop rock" },
+      },
+      {
+        operation: "update",
+        id: "op2",
+        table: "track",
+        where: { id: "t3" },
+        values: { genre: "Pop rock" },
+      },
+    ]);
+  });
+
+  it("closes onto one value when an edit brings every record into agreement", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const genre = fieldOf(model, ROOT_ID, "genre");
+    if (genre.kind !== "primitive") throw new Error("genre is a primitive");
+    model.toggleField(ROOT_ID, genre, true);
+    // An expanded value stays expanded under its new value…
+    model.toggleChild(distinctItemId(ROOT_ID, "genre", "Pop"), true);
+    model.beginEditDistinct(ROOT_ID, genre, "Pop");
+    model.commitDistinct("Rock");
+
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["genre"]).toEqual([
+      "Rock",
+      "Rock",
+      "Rock",
+    ]);
+    expect(selectSharedValue(s, ROOT_ID, "genre")).toBe("Rock");
+    expect(selectListsDistinct(s, ROOT_ID, "genre")).toBe(false);
+    // …but with nothing left to list, the field itself closes.
+    expect(s.expanded[fieldItemId(ROOT_ID, "genre")]).toBe(false);
+    expect(s.expanded[distinctItemId(ROOT_ID, "genre", "Rock")]).toBe(true);
+  });
+
+  it("re-points the records holding one linked record at another", async () => {
+    serveThree();
+    const model = threeTracks();
+    model.start();
+    await flush();
+
+    const album = fieldOf(model, ROOT_ID, "album");
+    if (album.kind !== "scalarLink") throw new Error("album is a link");
+    model.toggleField(ROOT_ID, album, true);
+    await flush();
+    const a1 = variedChildId(ROOT_ID, "album", "a1");
+    model.toggleChild(a1, true);
+
+    model.openPicker(ROOT_ID, "album", { value: "a1" });
+    expect(model.store.getState().picker).toEqual({
+      recordId: ROOT_ID,
+      fieldKey: "album",
+      distinct: { value: "a1" },
+    });
+    model.pickDistinctRecord(ROOT_ID, album, "a1", "a3", ["Renaissance"]);
+
+    let s = model.store.getState();
+    expect(s.picker).toBeNull();
+    expect(s.records[ROOT_ID]?.values["album"]).toEqual(["a3", "a2", "a2"]);
+    // The record it pointed at goes, with whatever was opened under it; the one
+    // it points at now is previewed from what the picker loaded.
+    expect(s.records[a1]).toBeUndefined();
+    expect(s.expanded[a1]).toBeUndefined();
+    const a3 = variedChildId(ROOT_ID, "album", "a3");
+    expect(s.embeds[a3]?.cells).toEqual(["Renaissance"]);
+    expect(s.records[a3]?.status).toBe("unloaded");
+
+    // Re-pointing the last of them onto the others' record is taking it for
+    // all: the field is an ordinary link again, showing that record.
+    model.pickDistinctRecord(ROOT_ID, album, "a3", "a2", ["4"]);
+    s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["album"]).toEqual(["a2", "a2", "a2"]);
+    expect(s.embeds[scalarChildId(ROOT_ID, "album")]?.cells).toEqual(["4"]);
+    expect(s.records[a3]).toBeUndefined();
+    expect(s.expanded[fieldItemId(ROOT_ID, "album")]).toBe(false);
   });
 });
 

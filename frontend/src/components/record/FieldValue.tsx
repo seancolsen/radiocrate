@@ -39,7 +39,7 @@ export type EditExit = "self" | "next" | "previous" | "none";
  * The form doesn't wait for any of them, though: `onInput` writes each keystroke
  * through to the form as it happens, so the value (and the star marking it
  * modified) tracks the typing. */
-function ValueInput(props: {
+export function ValueInput(props: {
   initial: string;
   /** Whether Enter inserts a newline rather than ending the edit, when the
    * value already has one — see `onKeyDown`. */
@@ -126,8 +126,8 @@ function ValueInput(props: {
  * many different things they say, rather than any one of them. There is nothing
  * here to edit — typing into it would flatten differences the user can't see —
  * so the field expands instead, into those values one by one
- * (`RecordFields.tsx`'s `DistinctValues`), any of which can be taken for every
- * record and edited from there. */
+ * (`RecordFields.tsx`'s `DistinctValues`), each of which can be edited where it
+ * stands or taken for every record. */
 export function VariedValue(props: { distinct: number }): JSX.Element {
   return (
     <span className="text-ink-weak cursor-default text-sm/5 italic">
@@ -143,11 +143,11 @@ export function VariedValue(props: { distinct: number }): JSX.Element {
  * (the sidebar being dragged). A value with a linebreak in it never fits on one
  * line, whatever the width. The effect re-runs when the text does, and the
  * observer covers the width. */
-function OneLineValue(props: {
+export function OneLineValue(props: {
   text: string;
   className: string;
   onClick: () => void;
-  onContextMenu: (e: MouseEvent<HTMLElement>) => void;
+  onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
 }): JSX.Element {
   const ref = useRef<HTMLSpanElement>(null);
@@ -161,7 +161,7 @@ function OneLineValue(props: {
       ref={ref}
       className={props.className}
       onClick={() => props.onClick()}
-      onContextMenu={(e) => props.onContextMenu(e)}
+      onContextMenu={(e) => props.onContextMenu?.(e)}
     >
       {text.replace(/\s*\r?\n\s*/g, " ")}
     </span>

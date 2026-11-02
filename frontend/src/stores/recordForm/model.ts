@@ -59,7 +59,7 @@ import {
   type RecordQuery,
   type ScalarLinkField,
 } from "../../query/recordForm";
-import { isShared, type ColumnValues } from "../../record/formValues";
+import { isShared, VARIED, type ColumnValues } from "../../record/formValues";
 import {
   childRecordsQuery,
   childRecordsTabQuery,
@@ -77,6 +77,7 @@ import {
 import {
   childId,
   deletedChildId,
+  distinctItemId,
   fieldItemId,
   listId,
   newChildId,
@@ -260,8 +261,15 @@ export interface RecordFormActions {
   closeMenu: () => void;
 
   /** Open the modal record picker on a scalar linked record field, and close it
-   * (leaving the field as it was). */
-  openPicker: (recordId: string, fieldKey: string) => void;
+   * (leaving the field as it was). `distinct` opens it on one of the distinct
+   * values of a field the records disagree on instead — for
+   * {@link RecordFormActions.pickDistinctRecord}, which re-points only the
+   * records holding that value. */
+  openPicker: (
+    recordId: string,
+    fieldKey: string,
+    distinct?: { value: string | null },
+  ) => void;
   closePicker: () => void;
   /** Point a scalar linked record field at an existing record the user chose in
    * the picker, closing it. `cells` is the preview the picker already loaded, so
@@ -285,6 +293,37 @@ export interface RecordFormActions {
     recordId: string,
     field: PrimitiveField | ScalarLinkField,
     value: string | null,
+  ) => void;
+
+  /** Put one of the distinct values of a primitive field the records disagree
+   * on into edit mode. The edit is to that value, wherever it's held: what the
+   * user types goes into every record holding it, and only those — the others
+   * keep theirs. */
+  beginEditDistinct: (
+    recordId: string,
+    field: PrimitiveField,
+    value: string | null,
+  ) => void;
+  /** Take what's in that value's input as the value of the records it's
+   * editing, without leaving edit mode — the distinct-value counterpart of
+   * {@link RecordFormActions.editValue}, called on every keystroke. */
+  editDistinct: (text: string) => void;
+  /** Leave that edit mode, keeping `text` as those records' value, with the
+   * same NULL rule as {@link RecordFormActions.commitEdit}. The list of
+   * distinct values is re-read from what the records now hold: the edited value
+   * may have joined another row, or — every record now agreeing — the field may
+   * be an ordinary one again, which closes onto that one value. */
+  commitDistinct: (text: string) => void;
+  /** Point the records holding one distinct value of a scalar linked record
+   * field at a record the user chose in the picker, closing it — the
+   * distinct-value counterpart of {@link RecordFormActions.pickRecord}. The
+   * rest of the records keep pointing where they did. */
+  pickDistinctRecord: (
+    recordId: string,
+    field: ScalarLinkField,
+    from: string | null,
+    keyValue: string,
+    cells: readonly (string | null)[],
   ) => void;
 }
 
@@ -490,6 +529,42 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const n = s.records[recordId];
       if (n) n.values[column] = n.keys.map(() => value);
     });
+
+  /** Writes one value into a column of *some* of the records a node stands for —
+   * those at `indices`, the ones holding a distinct value of a column they
+   * disagree on that the user is editing. */
+  const setColumnAt = (
+    recordId: string,
+    column: string,
+    indices: readonly number[],
+    value: string | null,
+  ) =>
+    set((s) => {
+      const n = s.records[recordId];
+      const values = n?.values[column];
+      if (!n || !values) return;
+      const next = [...values];
+      for (const i of indices) next[i] = value;
+      n.values[column] = next;
+    });
+
+  /** What a finished edit stores for the text left in its input: an empty
+   * string is NULL, unless the column is non-nullable text — the one kind of
+   * field an empty string is itself a legitimate value for. */
+  const storedValue = (
+    recordId: string,
+    column: string,
+    text: string,
+  ): string | null => {
+    const field = get().records[recordId]?.fields.find(
+      (f) => f.kind !== "multiRecord" && f.column === column,
+    );
+    const nonNullableText =
+      field?.kind === "primitive" &&
+      field.valueType === "text" &&
+      !field.nullable;
+    return text === "" && !nonNullableText ? null : text;
+  };
 
   /** Likewise for a multi-record field's related-record count, which the form
    * keeps in step with the records it holds under that field. */
@@ -1153,6 +1228,59 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         : [];
   };
 
+  /** Takes one of the values the form's records disagree on for all of them
+   * (see `useValueForAll`). `preview` is the embedded record a linked record
+   * field's value shows, when the caller has one in hand that the list of
+   * distinct values didn't — a record just picked for some of them. */
+  const takeValueForAll = (
+    recordId: string,
+    field: PrimitiveField | ScalarLinkField,
+    value: string | null,
+    preview?: EmbedNode,
+  ) => {
+    // A primary key is the database's to issue, never the user's to spread
+    // across records — the one field whose distinct values are only to read.
+    if (field.kind === "primitive" && field.readOnly) return;
+    const itemId = fieldItemId(recordId, field.key);
+    if (field.kind === "scalarLink") {
+      // Read off the list that is about to be dismissed: the preview of the
+      // chosen record becomes the field's own, so the embedded record it now
+      // shows renders without a second request. (Before the column is
+      // written — the ids are derived from the values it is replacing.)
+      const chosen =
+        preview ??
+        (value == null || value === ""
+          ? undefined
+          : get().embeds[variedChildId(recordId, field.key, value)]);
+      dropVariedChildren(recordId, field);
+      const id = scalarChildId(recordId, field.key);
+      set((s) => {
+        delete s.embeds[id];
+        delete s.records[id];
+        if (chosen) s.embeds[id] = castDraft(chosen);
+      });
+      tokens.set(id, ++tokenSeq);
+    }
+    setColumn(recordId, field.column, value);
+    // The list it was expanded into is gone, so the field closes — onto the
+    // one value it now holds, which a primitive field opens straight into
+    // edit mode so the chosen value can be adjusted rather than only taken.
+    setExpandedItem(itemId, false);
+    if (field.kind !== "primitive") return;
+    set((s) => {
+      s.editing = itemId;
+      s.editingSelectAll = false;
+    });
+  };
+
+  /** The edit to a distinct value in progress, if one is. */
+  const activeDistinctEdit = () => {
+    const { editing, distinctEdit } = get();
+    return distinctEdit && editing === distinctEdit.itemId
+      ? distinctEdit
+      : null;
+  };
+
   const model: RecordFormModel = {
     store,
     start: () => {
@@ -1221,7 +1349,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const field = selectFieldOf(get(), recordId, fieldKey);
       if (field?.kind === "primitive" && field.readOnly) return;
       // A field the records disagree on has no value to start the edit from;
-      // it shows "(varied)" and stays as it is.
+      // its distinct values are edited one at a time (`beginEditDistinct`).
       if (field && beyondBulk(recordId, field)) return;
       // Adding a timestamp starts from now, rather than blank — a blank one is
       // no more likely to be right than the moment the user opened it, and is
@@ -1245,18 +1373,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     },
     editValue: (recordId, column, value) => setColumn(recordId, column, value),
     commitEdit: (recordId, column, value) => {
-      const field = get().records[recordId]?.fields.find(
-        (f) => f.kind !== "multiRecord" && f.column === column,
-      );
-      const nonNullableText =
-        field?.kind === "primitive" &&
-        field.valueType === "text" &&
-        !field.nullable;
-      setColumn(
-        recordId,
-        column,
-        value === "" && !nonNullableText ? null : value,
-      );
+      setColumn(recordId, column, storedValue(recordId, column, value));
       set((s) => {
         s.editing = null;
       });
@@ -1493,14 +1610,18 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         s.menu = null;
       }),
 
-    openPicker: (recordId, fieldKey) => {
+    openPicker: (recordId, fieldKey, distinct) => {
       const field = selectFieldOf(get(), recordId, fieldKey);
-      if (field && beyondBulk(recordId, field)) return;
+      // A field the records disagree on has no one record to re-point — only
+      // the records holding one of its values, which is what `distinct` names.
+      if (field && !distinct && beyondBulk(recordId, field)) return;
       // The picker is often reached *from* the field's context menu, and takes
       // the keyboard from it.
       set((s) => {
         s.menu = null;
-        s.picker = { recordId, fieldKey };
+        s.picker = distinct
+          ? { recordId, fieldKey, distinct }
+          : { recordId, fieldKey };
       });
     },
     closePicker: () =>
@@ -1526,38 +1647,103 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         s.picker = null;
       });
     },
-    useValueForAll: (recordId, field, value) => {
-      // A primary key is the database's to issue, never the user's to spread
-      // across records — the one field whose distinct values are only to read.
-      if (field.kind === "primitive" && field.readOnly) return;
-      const itemId = fieldItemId(recordId, field.key);
-      if (field.kind === "scalarLink") {
-        // Read off the list that is about to be dismissed: the preview of the
-        // chosen record becomes the field's own, so the embedded record it now
-        // shows renders without a second request. (Before the column is
-        // written — the ids are derived from the values it is replacing.)
-        const chosen =
-          value == null || value === ""
-            ? undefined
-            : get().embeds[variedChildId(recordId, field.key, value)];
-        dropVariedChildren(recordId, field);
-        const id = scalarChildId(recordId, field.key);
-        set((s) => {
-          delete s.embeds[id];
-          delete s.records[id];
-          if (chosen) s.embeds[id] = castDraft(chosen);
-        });
-        tokens.set(id, ++tokenSeq);
-      }
-      setColumn(recordId, field.column, value);
-      // The list it was expanded into is gone, so the field closes — onto the
-      // one value it now holds, which a primitive field opens straight into
-      // edit mode so the chosen value can be adjusted rather than only taken.
-      setExpandedItem(itemId, false);
-      if (field.kind !== "primitive") return;
+    useValueForAll: (recordId, field, value) =>
+      takeValueForAll(recordId, field, value),
+
+    beginEditDistinct: (recordId, field, value) => {
+      // A primary key is the database's to issue, whichever of its values.
+      if (field.readOnly) return;
+      const values = get().records[recordId]?.values[field.column] ?? [];
+      const indices = values.flatMap((held, i) => (held === value ? [i] : []));
+      if (indices.length === 0) return;
+      const itemId = distinctItemId(recordId, field.key, value);
       set((s) => {
         s.editing = itemId;
         s.editingSelectAll = false;
+        s.distinctEdit = {
+          itemId,
+          recordId,
+          fieldKey: field.key,
+          column: field.column,
+          from: value,
+          indices,
+        };
+      });
+    },
+    editDistinct: (text) => {
+      const edit = activeDistinctEdit();
+      if (!edit) return;
+      setColumnAt(edit.recordId, edit.column, edit.indices, text);
+    },
+    commitDistinct: (text) => {
+      const edit = activeDistinctEdit();
+      if (!edit) return;
+      const { recordId, fieldKey, column } = edit;
+      const value = storedValue(recordId, column, text);
+      setColumnAt(recordId, column, edit.indices, value);
+      // The value is a new one now, so it's listed under a new id — and an
+      // expanded value stays expanded, under that id, rather than snapping
+      // shut as the user finishes editing it. (Unless it's been emptied: there
+      // is nothing left to expand into.)
+      const moved = distinctItemId(recordId, fieldKey, value);
+      set((s) => {
+        if (s.expanded[edit.itemId]) {
+          delete s.expanded[edit.itemId];
+          if (value != null && value !== "") s.expanded[moved] = true;
+        }
+        s.editing = null;
+        s.distinctEdit = null;
+      });
+      // Every record agreeing now, there is no list to show: the field closes
+      // onto the one value it holds, as it does when one is taken for all.
+      if (selectSharedValue(get(), recordId, column) !== VARIED) {
+        setExpandedItem(fieldItemId(recordId, fieldKey), false);
+      }
+    },
+    pickDistinctRecord: (recordId, field, from, keyValue, cells) => {
+      set((s) => {
+        s.picker = null;
+      });
+      const values = get().records[recordId]?.values[field.column] ?? [];
+      const indices = values.flatMap((held, i) => (held === from ? [i] : []));
+      if (indices.length === 0 || from === keyValue) return;
+      const preview: EmbedNode = { status: "loaded", cells };
+      // Re-pointing the last records that disagreed leaves them all on one
+      // record — the same as taking it for every one of them.
+      if (values.every((held) => held === from || held === keyValue)) {
+        takeValueForAll(recordId, field, keyValue, preview);
+        return;
+      }
+      // The value the records held is gone from the list, and with it the
+      // record it opened into — the same discarding `pickRecord` does to the
+      // record a field used to point at. The value they hold now gets a node of
+      // its own, unless other records already held it, previewed by what the
+      // picker loaded.
+      const old =
+        from == null || from === ""
+          ? undefined
+          : variedChildId(recordId, field.key, from);
+      if (old) {
+        tokens.set(old, ++tokenSeq);
+        set((s) => {
+          delete s.records[old];
+          delete s.embeds[old];
+          delete s.expanded[old];
+        });
+      }
+      setColumnAt(recordId, field.column, indices, keyValue);
+      const next = variedChildId(recordId, field.key, keyValue);
+      if (!get().records[next]) {
+        addRecord(
+          next,
+          field.table,
+          [[{ column: field.keyColumn, value: keyValue }]],
+          [],
+          "unloaded",
+        );
+      }
+      set((s) => {
+        if (!s.embeds[next]) s.embeds[next] = castDraft(preview);
       });
     },
   };

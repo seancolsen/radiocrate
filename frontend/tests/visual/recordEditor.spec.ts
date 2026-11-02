@@ -638,6 +638,92 @@ test("taking a linked record points every record at it", async ({ page }) => {
   ]);
 });
 
+test("a value the records disagree on expands, and edits the records holding it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 1); // track-2
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4); // tracks 2…5, four titles
+
+  await editor.getByRole("button", { name: "Expand title" }).click();
+  // Track 3's long title is cut off on its line, so it expands — below its
+  // row, the whole of it, as the field itself would on that one record.
+  await editor
+    .getByRole("button", { name: /^Expand Don't Hurt Yourself — Live/ })
+    .click();
+  await expect(editor.getByText(/nobody had rehearsed/)).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: /^Collapse Don't Hurt Yourself/ }),
+  ).toBeVisible();
+
+  // Clicking a value edits it where it stands.
+  await editor.getByText("Hold Up", { exact: true }).click();
+  const input = editor.getByRole("textbox");
+  await expect(input).toHaveValue("Hold Up");
+  await input.fill("Hold On");
+  await page.keyboard.press("Escape");
+  await expect(input).toBeHidden();
+  await expect(editor.getByText("Hold On", { exact: true })).toBeVisible();
+  await expect(star(editor, "title")).toBeVisible();
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  // Only the track that held it is written.
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-2" },
+      values: { title: "Hold On" },
+    },
+  ]);
+});
+
+test("picking a record for one linked value re-points the records holding it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 1); // track-2
+  const editor = editorPanel(page);
+  await extendSelectionTo(page, 4); // tracks 2…5, rated 4, 4, 4 and 4.5
+
+  await editor.getByRole("button", { name: "Expand rating" }).click();
+  await expect(embeddedRecords(editor)).toHaveCount(2);
+  await editor
+    .getByRole("button", { name: "Pick another record for 1 record" })
+    .click();
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick rating");
+  // A record created here would be pointed at by every track, so the picker
+  // offers none.
+  await expect(
+    picker(page).getByRole("button", { name: "New record" }),
+  ).toBeHidden();
+  await searchPicker(page, "value:3.5");
+  await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "1");
+  await pickerCanvas(page).click({ position: { x: 100, y: 15 } });
+  await expect(picker(page)).toBeHidden();
+
+  // Still two values: the three tracks rated 4, and the one now rated 3.5.
+  await expect(embeddedRecords(editor)).toHaveCount(2);
+  await expect(embeddedRecords(editor).nth(1)).toHaveText("3.5");
+
+  await saveButton(editor).click();
+  await expect(saveButton(editor)).toBeHidden();
+  expect(calls[0]).toEqual([
+    {
+      operation: "update",
+      id: "op1",
+      table: "track",
+      where: { id: "track-5" },
+      values: { rating: "rating-35" },
+    },
+  ]);
+});
+
 test("a multi-record field groups the records that say the same thing", async ({
   page,
 }) => {

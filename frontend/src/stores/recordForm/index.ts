@@ -11,6 +11,7 @@ export {
 // The ids and the shared-value vocabulary are the model's own, so callers reach
 // them through it.
 export {
+  distinctItemId,
   fieldItemId,
   listId,
   ROOT_ID,

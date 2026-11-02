@@ -23,7 +23,13 @@ import {
   type SharedValue,
 } from "../../record/formValues";
 import type { RecordFormSummary } from "../forms";
-import type { EmbedNode, FormState, ListNode, RecordNode } from "./state";
+import type {
+  DistinctEdit,
+  EmbedNode,
+  FormState,
+  ListNode,
+  RecordNode,
+} from "./state";
 
 /** A record node by id — `undefined` before it exists (nothing expanded yet). */
 export const selectRecord = (
@@ -118,13 +124,66 @@ export function distinctValues(
     );
 }
 
+/** The edit to one of a column's distinct values that is in progress, or null —
+ * a reference already in state. A {@link FormState.distinctEdit} left behind by
+ * an edit that something else has since replaced (another field's editor
+ * opening) no longer counts. */
+export function selectDistinctEdit(
+  s: FormState,
+  recordId: string,
+  column: string,
+): DistinctEdit | null {
+  const edit = s.distinctEdit;
+  return edit !== null &&
+    s.editing === edit.itemId &&
+    edit.recordId === recordId &&
+    edit.column === column
+    ? edit
+    : null;
+}
+
+/** A column's values as its list of distinct values shows them: as they are,
+ * except that the records an edit in progress is writing to still read as the
+ * value they held when it began. So the list holds still while the user types —
+ * the row being edited keeps its place, and isn't merged into another row (or
+ * the whole field back into one value, closing the editor) just because the
+ * text passes through a value some other records hold. A fresh array while an
+ * edit is in progress; the column itself otherwise. */
+export function listedValues(
+  values: ColumnValues | undefined,
+  edit: DistinctEdit | null,
+): ColumnValues | undefined {
+  if (!values || !edit) return values;
+  const listed = [...values];
+  for (const i of edit.indices) listed[i] = edit.from;
+  return listed;
+}
+
 /** How many of them there are — the primitive a row shows in place of the one
  * value it hasn't got. */
 export const selectDistinctCount = (
   s: FormState,
   recordId: string,
   column: string,
-): number => distinctValues(s.records[recordId]?.values[column]).length;
+): number =>
+  distinctValues(
+    listedValues(
+      s.records[recordId]?.values[column],
+      selectDistinctEdit(s, recordId, column),
+    ),
+  ).length;
+
+/** Whether a scalar field shows its distinct values rather than one value: the
+ * records disagree about it, or one of its distinct values is being edited —
+ * which may have brought them into agreement for now, but the list stays up
+ * under the editor until the edit is done. */
+export const selectListsDistinct = (
+  s: FormState,
+  recordId: string,
+  column: string,
+): boolean =>
+  selectSharedValue(s, recordId, column) === VARIED ||
+  selectDistinctEdit(s, recordId, column) !== null;
 
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>
@@ -145,9 +204,9 @@ export const selectFieldOf = (
 /** Whether a field is beyond what the form will do to several records at once:
  * a scalar field the records disagree on, which has no one value to edit from,
  * clear, or point somewhere else. It still *expands* — into the distinct values
- * the records hold, any one of which the user can take for all of them
- * (`RecordFields.tsx`'s `DistinctValues`), which is how such a field gets a
- * value to edit in the first place. False for a single record, which can
+ * the records hold (`RecordFields.tsx`'s `DistinctValues`), each of which the
+ * user can edit where it stands, for the records holding it, or take for all of
+ * them, which is how such a field gets one value to edit. False for a single record, which can
  * neither disagree with itself nor be a bulk anything — this is the whole of
  * the form's behavioral difference between one record and many.
  *

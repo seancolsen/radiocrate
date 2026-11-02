@@ -112,6 +112,28 @@ export interface FormMenu {
 export interface PickerTarget {
   recordId: string;
   fieldKey: string;
+  /** Set when the pick is for one of the *distinct* values of a field the
+   * records disagree on: the records holding `value` are the ones it re-points,
+   * and the rest keep what they hold. */
+  distinct?: { value: string | null };
+}
+
+/** An edit to one of the distinct values of a scalar field the records
+ * disagree on, in progress. The records it writes to are fixed as it begins —
+ * the ones holding `from` — rather than re-derived from what they hold as the
+ * user types, which would gather up other records the moment the typed text
+ * happened to pass through their value. */
+export interface DistinctEdit {
+  /** The {@link FormState.editing} id the edit belongs to — the value's own
+   * (`distinctItemId`), as of when the edit began. */
+  itemId: string;
+  recordId: string;
+  fieldKey: string;
+  column: string;
+  /** The value the edited records held when the edit began. */
+  from: string | null;
+  /** Those records, by index into the node's keys. */
+  indices: readonly number[];
 }
 
 export interface FormState {
@@ -127,6 +149,10 @@ export interface FormState {
    * whole value rather than place the caret at the end — set when edit mode was
    * entered by Tabbing in from another field's editor. */
   editingSelectAll: boolean;
+  /** Which records an edit to a distinct value writes to — set alongside
+   * {@link FormState.editing} when that's what is being edited, and only
+   * meaningful while it still names the same item (see `selectDistinctEdit`). */
+  distinctEdit: DistinctEdit | null;
   /** The item id holding focus within this form, or null when focus is
    * elsewhere. */
   focused: string | null;
@@ -178,6 +204,7 @@ export function initialFormState(): FormState {
     expanded: {},
     editing: null,
     editingSelectAll: false,
+    distinctEdit: null,
     focused: null,
     selection: [],
     menu: null,

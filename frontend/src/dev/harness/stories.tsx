@@ -1266,6 +1266,11 @@ export const STORIES: Record<string, Story> = {
   // of those is opened into its own form, the way a field they agreed on would
   // open into the single record it points at.
   "record-editor/varied-expanded": recordEditor([1, 2, 3]),
+  // …and those values edited where they stand (the test does the opening and
+  // the editing): `title`'s long value expanded below its row, wrapped and
+  // keeping its linebreak, and "Hold Up" in an open editor — an edit to the
+  // one record holding it.
+  "record-editor/varied-editing": recordEditor([1, 2, 3]),
   // The modal record picker on its own: the search box with its sort and
   // display buttons, the results as the embedded records they're about to
   // become, and the "New record" way out. `initialSort`/`initialDisplay` are
