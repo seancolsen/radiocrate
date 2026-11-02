@@ -212,6 +212,74 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The preset manager: two tables' presets by section, the album's empty
+  // sections included, with the Default badges.
+  test(`preset-manager/basic - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/basic", colorScheme);
+    await expect(stage.getByRole("heading", { name: "album" })).toBeVisible();
+    await expect(stage.getByRole("heading", { name: "track" })).toBeVisible();
+    await expect(stage.getByText("Default")).toHaveCount(3);
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/basic", colorScheme),
+    );
+  });
+
+  // Phone width.
+  test(`preset-manager/narrow - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/narrow", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: "New preset" }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/narrow", colorScheme),
+    );
+  });
+
+  // "vetted" open in the inline editor with an unsaved edit: ✱ on the row and
+  // in the editor, beside Revert and Save.
+  test(`preset-manager/expanded - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/expanded", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: "Save preset" }),
+    ).toBeVisible();
+    await expect(stage.getByLabel("Unsaved changes")).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/expanded", colorScheme),
+    );
+  });
+
+  // "vetted" being renamed in place, its name selected in the field.
+  test(`preset-manager/rename - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "preset-manager/rename", colorScheme);
+    await expect(stage.getByLabel("Rename preset")).toBeFocused();
+    await expect(stage).toHaveScreenshot(
+      snapshot("preset-manager/rename", colorScheme),
+    );
+  });
+
+  // The Duplicate dialog on "vetted". Shot through the dialog — it portals
+  // out of the stage.
+  test(`preset-manager/duplicate - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "preset-manager/duplicate", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Preset name")).toHaveValue("vetted copy");
+    await expect(dialog).toHaveScreenshot(
+      snapshot("preset-manager/duplicate", colorScheme),
+    );
+  });
+
+  // Deleting "vetted", which a saved query and an open playlist use: the
+  // confirmation names both.
+  test(`preset-manager/delete - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "preset-manager/delete", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Road Trip")).toBeVisible();
+    await expect(dialog.getByText("Lemonade")).toBeVisible();
+    await expect(dialog).toHaveScreenshot(
+      snapshot("preset-manager/delete", colorScheme),
+    );
+  });
+
   // A playlist's filter, applying a condition: its two buttons at the foot.
   test(`filter-builder/playlist - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "filter-builder/playlist", colorScheme);

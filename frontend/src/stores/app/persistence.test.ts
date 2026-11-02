@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyDefinition } from "../../query/definition";
 import { createAppStore } from "./index";
-import { SHORTCUTS_TAB_ID } from "./state";
+import { PRESETS_TAB_ID, SHORTCUTS_TAB_ID } from "./state";
 import { fakeEnv } from "./testEnv";
 
 describe("open tabs", () => {
@@ -14,15 +14,21 @@ describe("open tabs", () => {
     before.actions.setTabDefinitions("q1", emptyDefinition(), live);
     before.actions.duplicateQuery("q1");
     before.actions.openShortcutsTab();
+    before.actions.openPresetsTab();
     before.actions.selectTab("q1");
     before.dispose();
 
     // A fresh store over the same storage stands in for the reloaded page.
     const after = createAppStore(env);
     const s = after.store.getState();
-    expect(s.tabs.map((t) => t.kind)).toEqual(["query", "query", "shortcuts"]);
+    expect(s.tabs.map((t) => t.kind)).toEqual([
+      "query",
+      "query",
+      "shortcuts",
+      "presets",
+    ]);
     expect(s.activeTabId).toBe("q1");
-    const [restored, duplicate, shortcuts] = s.tabs;
+    const [restored, duplicate, shortcuts, presets] = s.tabs;
     expect(restored).toMatchObject({
       id: "q1",
       name: "Lemonade",
@@ -37,6 +43,11 @@ describe("open tabs", () => {
       persisted: false,
     });
     expect(shortcuts.id).toBe(SHORTCUTS_TAB_ID);
+    expect(presets).toEqual({
+      kind: "presets",
+      id: PRESETS_TAB_ID,
+      name: "Query presets",
+    });
     after.dispose();
   });
 

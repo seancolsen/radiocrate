@@ -7,6 +7,7 @@ import Explorer from "./components/Explorer";
 import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
+import PresetManager from "./components/PresetManager";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
 import RpcErrorBanner from "./components/RpcErrorBanner";
@@ -32,6 +33,7 @@ function TabPage(props: { tabId: string }): JSX.Element | null {
     return <QueryPage tabId={props.tabId} />;
   }
   if (kind === "shortcuts") return <ShortcutsPage />;
+  if (kind === "presets") return <PresetManager />;
   return null;
 }
 

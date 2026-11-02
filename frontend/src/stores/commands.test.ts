@@ -218,19 +218,19 @@ describe("commands store", () => {
     });
 
     it("clamps the highlight to the current list and wraps when moved", () => {
-      // With no active tab, only the four "always" commands are available
+      // With no active tab, only the five "always" commands are available
       // (everything else needs `trackLoaded`/`queryTab`/`results`/
       // `recordForm`/`activeTab`) — a small, fixed-order, deterministic list
       // to clamp and wrap around.
       commands.store.setState({ paletteIndex: 10 }); // out of range
       commands.actions.movePaletteIndex(0); // clamps first, then moves by 0
-      expect(commands.store.getState().paletteIndex).toBe(3);
+      expect(commands.store.getState().paletteIndex).toBe(4);
 
       commands.actions.movePaletteIndex(1); // wraps past the end
       expect(commands.store.getState().paletteIndex).toBe(0);
 
       commands.actions.movePaletteIndex(-1); // wraps past the start
-      expect(commands.store.getState().paletteIndex).toBe(3);
+      expect(commands.store.getState().paletteIndex).toBe(4);
     });
 
     it("resets the index to 0 whenever the query changes", () => {

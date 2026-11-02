@@ -47,6 +47,37 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
+/** The preset manager's "New preset" / "Duplicate preset" dialog: a preset not
+ * yet created, every field of it editable — the table and section included, so
+ * a duplicate can be made for another table. */
+export interface PresetDraft {
+  /** The preset this copies, for a duplicate (`null` for a new preset). */
+  duplicateOf: string | null;
+  baseTable: string;
+  section: Section;
+  name: string;
+  definition: string;
+  isDefault: boolean;
+}
+
+/** The preset manager's own state: what it lists and how. Kept in the store
+ * (not the page) so the dialogs it raises and the actions that create a
+ * preset can steer it — a new preset opens expanded. */
+export interface PresetManagerState {
+  /** The search field's text; only presets whose name or table contains it
+   * are listed. */
+  search: string;
+  /** The preset whose inline editor is open (null = none). */
+  expanded: string | null;
+  /** The preset whose name is being edited in place in its row, if any. */
+  renaming: string | null;
+}
+
+/** The preset manager as it opens: everything listed, nothing open. */
+export function initialPresetManager(): PresetManagerState {
+  return { search: "", expanded: null, renaming: null };
+}
+
 /** Which of a page's result rows "Export results data" writes out. */
 export type ExportRows = "all" | "selected";
 
@@ -72,6 +103,13 @@ export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
 /** The Keyboard Shortcuts tab's handle text — its "name", so every generic tab
  * surface (the tab bar, the explorer's "Opened" list) reads one field. */
 export const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
+
+/** A fixed sentinel id for the singleton preset manager tab, namespaced like
+ * {@link SHORTCUTS_TAB_ID}. */
+export const PRESETS_TAB_ID = "settings:query-presets";
+
+/** The preset manager tab's handle text. */
+export const PRESETS_TAB_NAME = "Query presets";
 
 /** An open query tab. Tab id == source id. Carries the working (`live`) query
  * definition the builder edits, and the `saved` one the backend is known to
@@ -134,12 +172,21 @@ export interface ShortcutsTab {
   name: string;
 }
 
-/** An open tab: a query page, a playlist page, or the singleton
- * keyboard-shortcuts editor. More page kinds (artists, …) slot in here as
+/** The preset manager tab, which lists, edits, creates and deletes every
+ * table's presets. There is at most one; its UI state is the app store's
+ * `presetManager`. */
+export interface PresetsTab {
+  kind: "presets";
+  id: typeof PRESETS_TAB_ID;
+  name: string;
+}
+
+/** An open tab: a query page, a playlist page, or one of the singleton
+ * settings pages (the keyboard-shortcuts editor, the preset manager). More page kinds (artists, …) slot in here as
  * further variants — the tab bar, the explorer's "Opened" list and the tab
  * commands all work off the shared `kind` / `id` / `name` fields, and only
  * `selectQueryTab` / `selectPageTab` narrow to a page's own state. */
-export type Tab = QueryTab | PlaylistTab | ShortcutsTab;
+export type Tab = QueryTab | PlaylistTab | ShortcutsTab | PresetsTab;
 
 /** A tab whose page is the results page — a query's or a playlist's: a working
  * definition built with the filter, sort and display builders, run, and shown
@@ -374,6 +421,13 @@ export interface AppState {
   presetEdits: Record<string, PresetEdit>;
   /** The "Save as preset" dialog, when open. */
   presetSave: PresetSave | null;
+  /** The preset manager's listing state. */
+  presetManager: PresetManagerState;
+  /** The preset manager's "New preset" / "Duplicate preset" dialog, when
+   * open. */
+  presetDraft: PresetDraft | null;
+  /** The preset pending delete confirmation (modal), by id, when open. */
+  pendingPresetDelete: string | null;
   /** The compiled SQL shown by the "View SQL" dialog, when open. */
   viewSql: string | null;
   /** The "Export results data" dialog, when open. */
@@ -472,7 +526,7 @@ export interface RowDrag {
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 
 /** The open tabs a previous visit left (see `storedTabs`), as tabs: the
- * shortcuts editor gets its fixed id and name back, and an active id that names
+ * shortcuts editor and the preset manager get their fixed ids and names back, and an active id that names
  * no restored tab falls back to the first one. A restored query or playlist tab
  * has no page yet; its query runs again when it's first viewed. */
 function restoredTabs(env: AppEnv): {
@@ -480,11 +534,20 @@ function restoredTabs(env: AppEnv): {
   activeTabId: string | null;
 } {
   const stored = storedTabs(env);
-  const tabs = stored.tabs.map((t): Tab =>
-    t.kind === "shortcuts"
-      ? { kind: "shortcuts", id: SHORTCUTS_TAB_ID, name: SHORTCUTS_TAB_NAME }
-      : { ...t, saveFailed: false },
-  );
+  const tabs = stored.tabs.map((t): Tab => {
+    switch (t.kind) {
+      case "shortcuts":
+        return {
+          kind: "shortcuts",
+          id: SHORTCUTS_TAB_ID,
+          name: SHORTCUTS_TAB_NAME,
+        };
+      case "presets":
+        return { kind: "presets", id: PRESETS_TAB_ID, name: PRESETS_TAB_NAME };
+      default:
+        return { ...t, saveFailed: false };
+    }
+  });
   const activeTabId = tabs.some((t) => t.id === stored.activeTabId)
     ? stored.activeTabId
     : (tabs[0]?.id ?? null);
@@ -507,6 +570,9 @@ export function initialState(env: AppEnv): AppState {
     presets: [],
     presetEdits: {},
     presetSave: null,
+    presetManager: initialPresetManager(),
+    presetDraft: null,
+    pendingPresetDelete: null,
     viewSql: null,
     exportData: null,
     renaming: null,

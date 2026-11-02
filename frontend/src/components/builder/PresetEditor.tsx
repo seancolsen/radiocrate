@@ -6,16 +6,15 @@ import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
 import { useElementWidth } from "../ui/useElementWidth";
 
-/** Inline detail editor for an expanded preset. A pink-tinted panel with an
+/** Inline detail editor for an expanded preset — in a query's builder, or in
+ * the preset manager. A pink-tinted panel with an
  * editable name and definition and the "Apply by default" checkbox; while the
  * preset has unsaved edits it also shows the red ✱ marker plus revert and save
  * controls (save enabled once the name is non-empty). The checkbox wraps onto
  * its own line when the panel is too narrow to hold the name, controls, and
- * checkbox side by side. Saving commits locally and re-runs. */
-export default function PresetEditor(props: {
-  tabId: string;
-  presetId: string;
-}): JSX.Element {
+ * checkbox side by side. Saving commits the preset and re-runs every open
+ * page that uses it. */
+export default function PresetEditor(props: { presetId: string }): JSX.Element {
   const edit = useApp((s) => selectPresetEdit(s, props.presetId));
   const dirty = useApp((s) => selectPresetDirty(s, props.presetId));
   const {
@@ -84,7 +83,7 @@ export default function PresetEditor(props: {
                   icon={Icons.Save}
                   label="Save preset"
                   disabled={!nameOk}
-                  onClick={() => commitPresetEdit(props.tabId, props.presetId)}
+                  onClick={() => commitPresetEdit(props.presetId)}
                 />
               </>
             )}

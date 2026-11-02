@@ -11,5 +11,7 @@ export function tabIcon(kind: TabKind): IconComponent {
       return Icons.Playlist;
     case "shortcuts":
       return Icons.Keyboard;
+    case "presets":
+      return Icons.Presets;
   }
 }

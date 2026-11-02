@@ -166,7 +166,8 @@ export type StoredTab =
       saved: PlaylistDefinition;
       live: PlaylistDefinition;
     }
-  | { kind: "shortcuts" };
+  | { kind: "shortcuts" }
+  | { kind: "presets" };
 
 /** The open tabs a previous visit left, in tab-bar order, and the id of the one
  * that was active. */
@@ -207,6 +208,7 @@ interface OpenTabsRecord {
         live: string;
       }
     | { kind: "shortcuts" }
+    | { kind: "presets" }
   >;
 }
 
@@ -231,12 +233,16 @@ export function storedTabs(env: AppEnv): StoredTabs {
   const tabs: StoredTab[] = [];
   const ids = new Set<string>();
   let shortcuts = false;
+  let presets = false;
   for (const entry of record.tabs as unknown[]) {
     if (typeof entry !== "object" || entry === null) continue;
     const t = entry as Record<string, unknown>;
     if (t.kind === "shortcuts" && !shortcuts) {
       shortcuts = true;
       tabs.push({ kind: "shortcuts" });
+    } else if (t.kind === "presets" && !presets) {
+      presets = true;
+      tabs.push({ kind: "presets" });
     } else if (
       t.kind === "query" &&
       typeof t.id === "string" &&
@@ -318,6 +324,8 @@ export function persistTabs(
             };
           case "shortcuts":
             return { kind: "shortcuts" };
+          case "presets":
+            return { kind: "presets" };
         }
       }),
     };

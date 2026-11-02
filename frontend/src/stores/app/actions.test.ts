@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAppStore,
+  presetUsers,
+  PRESETS_TAB_ID,
   type AppStoreBundle,
   type PreparedStep,
 } from "./index";
@@ -28,6 +30,7 @@ vi.mock("api-client", async (importOriginal) => {
     collectionRescan: vi.fn(() => Promise.resolve(null)),
     presetAdd: vi.fn(() => Promise.resolve(null)),
     presetUpdate: vi.fn(() => Promise.resolve(null)),
+    presetDelete: vi.fn(() => Promise.resolve(null)),
   };
 });
 // A playlist's entries, read as raw SQL, so duplicating and deleting one can be
@@ -90,6 +93,9 @@ import {
   folderAdd,
   folderDelete,
   folderRename,
+  presetAdd,
+  presetDelete,
+  presetUpdate,
   queryAdd,
   sourceArrange,
   queryDelete,
@@ -459,9 +465,216 @@ describe("default presets", () => {
     });
     bundle.actions.beginPresetEdit("d");
     bundle.actions.patchPresetEdit("d2", { isDefault: true });
-    bundle.actions.commitPresetEdit("a", "d2");
+    bundle.actions.commitPresetEdit("d2");
     expect(defaults(bundle)).toEqual(["f", "s", "s-album", "d2"]);
     expect(bundle.store.getState().presetEdits["d"]?.isDefault).toBe(false);
+  });
+});
+
+describe("the preset manager", () => {
+  const preset = (
+    id: string,
+    section: "filter" | "sort" | "display",
+    isDefault = false,
+  ) => ({
+    id,
+    name: id,
+    baseTable: "track",
+    section,
+    definition: `${id} definition`,
+    isDefault,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+  const presets = (bundle: AppStoreBundle) => bundle.store.getState().presets;
+
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.mocked(presetAdd).mockClear();
+    vi.mocked(presetUpdate).mockClear();
+    vi.mocked(presetDelete).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.store.setState((s) => {
+      s.presets.push(preset("f", "filter"), preset("s", "sort", true));
+    });
+  });
+
+  it("opens one tab, however often it's asked for", () => {
+    bundle.actions.openPresetsTab();
+    bundle.actions.openTab({ id: "a", name: "a", definition: "{}" });
+    bundle.actions.openPresetsTab();
+    const s = bundle.store.getState();
+    expect(s.tabs.map((t) => t.kind)).toEqual(["presets", "query"]);
+    expect(s.activeTabId).toBe(PRESETS_TAB_ID);
+  });
+
+  it("starts afresh once its tab has closed", () => {
+    bundle.actions.openPresetsTab();
+    bundle.actions.setPresetSearch("vet");
+    bundle.actions.toggleManagedPreset("f");
+    bundle.actions.closeTab(PRESETS_TAB_ID);
+    expect(bundle.store.getState().presetManager).toEqual({
+      search: "",
+      expanded: null,
+      renaming: null,
+    });
+  });
+
+  it("renames a preset, keeping the rest of an edit in progress", () => {
+    bundle.actions.patchPresetEdit("f", { definition: "year:1999" });
+    bundle.actions.beginPresetRename("f");
+    bundle.actions.renamePreset("f", "  Nineties  ");
+    const s = bundle.store.getState();
+    expect(s.presetManager.renaming).toBeNull();
+    expect(s.presets[0].name).toBe("Nineties");
+    expect(s.presetEdits["f"]).toMatchObject({
+      name: "Nineties",
+      definition: "year:1999",
+    });
+    // Only the name is written: the definition being edited isn't saved yet.
+    expect(presetUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "f",
+        name: "Nineties",
+        definition: "f definition",
+      }),
+    );
+  });
+
+  it("ignores a blank name", () => {
+    bundle.actions.renamePreset("f", "  ");
+    expect(presets(bundle)[0].name).toBe("f");
+    expect(presetUpdate).not.toHaveBeenCalled();
+  });
+
+  it("duplicates a preset as an ordinary one, opened in the manager", () => {
+    bundle.actions.setPresetSearch("nothing matches this");
+    bundle.actions.duplicatePreset("s");
+    expect(bundle.store.getState().presetDraft).toEqual({
+      duplicateOf: "s",
+      baseTable: "track",
+      section: "sort",
+      name: "s copy",
+      definition: "s definition",
+      isDefault: false,
+    });
+    bundle.actions.confirmPresetDraft();
+    const s = bundle.store.getState();
+    const copy = s.presets.at(-1)!;
+    expect(copy).toMatchObject({
+      name: "s copy",
+      section: "sort",
+      isDefault: false,
+    });
+    expect(copy.id).not.toBe("s");
+    // The original stays the default.
+    expect(s.presets.find((p) => p.id === "s")?.isDefault).toBe(true);
+    expect(s.presetDraft).toBeNull();
+    expect(s.presetManager).toMatchObject({ search: "", expanded: copy.id });
+    expect(presetAdd).toHaveBeenCalledWith(copy);
+  });
+
+  it("creates a preset on another table, taking over its default", () => {
+    bundle.actions.openPresetDraft({ baseTable: "album", section: "sort" });
+    bundle.actions.patchPresetDraft({ name: "by year", isDefault: true });
+    bundle.actions.confirmPresetDraft();
+    // The album's default sort doesn't displace the track's.
+    expect(
+      presets(bundle)
+        .filter((p) => p.isDefault)
+        .map((p) => [p.baseTable, p.name]),
+    ).toEqual([
+      ["track", "s"],
+      ["album", "by year"],
+    ]);
+  });
+
+  it("won't create a preset without a name", () => {
+    bundle.actions.openPresetDraft();
+    bundle.actions.confirmPresetDraft();
+    expect(presets(bundle)).toHaveLength(2);
+    expect(bundle.store.getState().presetDraft).not.toBeNull();
+  });
+
+  it("deletes a preset, and whatever was open on it", () => {
+    bundle.actions.openTab({
+      id: "a",
+      name: "a",
+      definition: JSON.stringify({
+        base: "track",
+        filter: { custom: "", presets: ["f"] },
+      }),
+    });
+    bundle.actions.toggleExpandPreset("a", "f");
+    bundle.actions.toggleManagedPreset("f");
+    bundle.actions.patchPresetEdit("f", { name: "renamed" });
+    bundle.actions.requestPresetDelete("f");
+    bundle.actions.confirmPresetDelete();
+    const s = bundle.store.getState();
+    expect(s.presets.map((p) => p.id)).toEqual(["s"]);
+    expect(s.presetEdits).toEqual({});
+    expect(s.presetManager.expanded).toBeNull();
+    expect(s.pages["a"]?.expandedPreset).toBeNull();
+    expect(s.pendingPresetDelete).toBeNull();
+    expect(presetDelete).toHaveBeenCalledWith({ id: "f" });
+  });
+
+  it("re-runs the open pages that use a preset once an edit to it is saved", () => {
+    const open = (id: string, filterPresets: string[]) =>
+      bundle.actions.openTab({
+        id,
+        name: id,
+        definition: JSON.stringify({
+          base: "track",
+          filter: { custom: "", presets: filterPresets },
+        }),
+      });
+    open("uses", ["f"]);
+    open("doesnt", []);
+    bundle.actions.patchPresetEdit("f", { definition: "year:1999" });
+    bundle.actions.commitPresetEdit("f");
+    const pages = bundle.store.getState().pages;
+    expect(pages["uses"]?.running).toBe(true);
+    expect(pages["doesnt"]?.running ?? false).toBe(false);
+  });
+});
+
+describe("presetUsers", () => {
+  const def = (filterPresets: string[]) =>
+    JSON.stringify({
+      base: "track",
+      filter: { custom: "", presets: filterPresets },
+    });
+  const source = (id: string, definition: string): Source => ({
+    id,
+    kind: "query",
+    name: id,
+    createdAt: 0,
+    modifiedAt: 0,
+    lastPlay: 0,
+    definition,
+    parent: null,
+    position: 0,
+    queryId: id,
+    playlistId: null,
+  });
+
+  it("reads an open page by its working definition, the rest as stored", () => {
+    const bundle = createAppStore(fakeEnv());
+    // Open, and stored without the preset — but working on a definition with it.
+    bundle.actions.openTab({ id: "open", name: "Open", definition: def([]) });
+    bundle.actions.toggleFilterPreset("open", "p");
+    const s = bundle.store.getState();
+    const users = presetUsers(
+      s.tabs,
+      [
+        source("open", def([])),
+        source("stored", def(["p"])),
+        source("other", def(["q"])),
+      ],
+      "p",
+    );
+    expect(users.map((u) => u.id)).toEqual(["open", "stored"]);
   });
 });
 

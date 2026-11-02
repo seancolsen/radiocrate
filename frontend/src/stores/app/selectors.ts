@@ -1,9 +1,15 @@
-import type { Preset } from "api-client";
+import type { Preset, Source, SourceKind } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
-import { defsEqual, type Section } from "../../query/definition";
+import {
+  defsEqual,
+  definitionFromStored,
+  usesPreset,
+  type Section,
+} from "../../query/definition";
 import {
   pageDefsEqual,
   PLAYLIST_BASE,
+  playlistDefinitionFromStored,
   type Sections,
 } from "../../query/playlist";
 import { resultToCsv } from "../../query/exportCsv";
@@ -395,6 +401,53 @@ export const selectPresetEdit = (
   s: AppState,
   id: string,
 ): PresetEdit | undefined => s.presetEdits[id];
+
+/** A query or playlist whose definition uses a preset. `name` is empty for a
+ * query that's never been saved. */
+export interface PresetUser {
+  id: string;
+  kind: SourceKind;
+  name: string;
+}
+
+/** Every query and playlist whose definition uses preset `id` — what deleting
+ * it leaves referring to nothing. An open page counts by its working
+ * definition (which may hold edits not yet saved, or belong to a query that
+ * never was), and any other saved source by its stored one. Open pages first,
+ * in tab order, then the rest in list order.
+ *
+ * Not a selector: it parses every saved definition, so it's called from a
+ * component's `useMemo` over `tabs` and `sources.data`. */
+export function presetUsers(
+  tabs: readonly Tab[],
+  sources: readonly Source[],
+  id: string,
+): PresetUser[] {
+  const users: PresetUser[] = [];
+  const open = new Set<string>();
+  for (const t of tabs) {
+    if (t.kind !== "query" && t.kind !== "playlist") continue;
+    open.add(t.id);
+    if (usesPreset(t.live, id)) {
+      users.push({ id: t.id, kind: t.kind, name: t.name });
+    }
+  }
+  for (const source of sources) {
+    if (open.has(source.id) || !source.definition.includes(id)) continue;
+    const def =
+      source.kind === "playlist"
+        ? playlistDefinitionFromStored(source.definition)
+        : definitionFromStored(source.definition);
+    if (usesPreset(def, id)) {
+      users.push({ id: source.id, kind: source.kind, name: source.name });
+    }
+  }
+  return users;
+}
+
+/** The preset with `id`, as saved — a reference already in state. */
+export const selectPreset = (s: AppState, id: string): Preset | undefined =>
+  s.presets.find((p) => p.id === id);
 
 /** The introspection schema having loaded (compiles can proceed): a dev/test
  * override (`setSchemaJson`) counts too, independently of `schema.status`. */

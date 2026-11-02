@@ -7,6 +7,7 @@ import {
   folderList,
   folderRename,
   presetAdd,
+  presetDelete,
   presetList,
   presetUpdate,
   queryAdd,
@@ -77,6 +78,7 @@ import {
 import {
   isQueryDefinition,
   newPlaylistDefinition,
+  PLAYLIST_BASE,
   pageDefinitionToStored,
   pageDefsEqual,
   playlistDefinitionFromQuery,
@@ -87,6 +89,7 @@ import {
   type Sections,
 } from "../../query/playlist";
 import {
+  asSection,
   cloneDefinition,
   definitionForBase,
   definitionFromStored,
@@ -96,6 +99,7 @@ import {
   rebasedDefinition,
   shuffleContent,
   toFullQuery,
+  usesPreset,
   type QueryDefinition,
   type Section,
   type SectionContent,
@@ -164,13 +168,17 @@ import {
 } from "./selectors";
 import {
   EMPTY_SELECTION,
+  PRESETS_TAB_ID,
+  PRESETS_TAB_NAME,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
   emptyPage,
+  initialPresetManager,
   type AppState,
   type CurrentTrack,
   type ExportRows,
   type PageTab,
+  type PresetDraft,
   type PresetEdit,
   type PresetSave,
   type QueryTab,
@@ -635,12 +643,46 @@ export interface AppActions {
   beginPresetEdit: (id: string) => void;
   patchPresetEdit: (id: string, patch: Partial<PresetEdit>) => void;
   revertPresetEdit: (id: string) => void;
-  commitPresetEdit: (tabId: string, id: string) => void;
+  /** Saves preset `id`'s edit buffer to it, then re-runs every open page whose
+   * working definition uses the preset. */
+  commitPresetEdit: (id: string) => void;
 
   openPresetSave: (section: Section, definition: string) => void;
   cancelPresetSave: () => void;
   patchPresetSave: (patch: Partial<PresetSave>) => void;
   confirmPresetSave: (tabId: string) => void;
+
+  // The preset manager. Its editors are the builders' (`beginPresetEdit` …
+  // `commitPresetEdit`), sharing their edit buffers.
+  /** Open (or focus) the singleton preset manager tab — the Settings menu's
+   * and the `presets.manage` command's action. */
+  openPresetsTab: () => void;
+  setPresetSearch: (text: string) => void;
+  /** Open preset `id`'s inline editor in the manager, or close it if it's the
+   * one open. */
+  toggleManagedPreset: (id: string) => void;
+  /** Start editing preset `id`'s name in place, in its manager row. */
+  beginPresetRename: (id: string) => void;
+  /** Stop editing a preset's name in place, leaving it as it was. */
+  cancelPresetRename: () => void;
+  /** Renames preset `id` and ends the in-place rename. A blank name is
+   * ignored. Any other edit in progress on the preset is left as it is. */
+  renamePreset: (id: string, name: string) => void;
+  /** Open the "New preset" dialog: on `init`'s table and section when given
+   * (a section heading's "+"), or a `track` filter otherwise. */
+  openPresetDraft: (init?: { baseTable: string; section: Section }) => void;
+  /** Open the "Duplicate preset" dialog on a copy of preset `id`. */
+  duplicatePreset: (id: string) => void;
+  patchPresetDraft: (patch: Partial<PresetDraft>) => void;
+  cancelPresetDraft: () => void;
+  /** Creates the preset the dialog describes, and opens it in the manager. */
+  confirmPresetDraft: () => void;
+  requestPresetDelete: (id: string) => void;
+  cancelPresetDelete: () => void;
+  /** Deletes the preset pending confirmation. A definition that uses it is
+   * left referring to it — the confirmation names each one — and fails to
+   * compile until the reference is replaced. */
+  confirmPresetDelete: () => void;
   openViewSql: (tabId: string) => void;
   closeViewSql: () => void;
   /** Open the "Export results data" dialog on `tabId`'s results (the wrench
@@ -1293,6 +1335,19 @@ export function createAppActions(
     }
   };
 
+  /** Re-runs every open page whose working definition uses preset `id` — the
+   * pages whose rows a change to the preset changes. */
+  const rerunPresetUsers = (id: string) => {
+    for (const t of get().tabs) {
+      if (
+        (t.kind === "query" || t.kind === "playlist") &&
+        usesPreset(t.live, id)
+      ) {
+        runQuery(t.id);
+      }
+    }
+  };
+
   const beginPresetEdit = (id: string) => {
     const preset = get().presets.find((p) => p.id === id);
     if (!preset) return;
@@ -1314,6 +1369,8 @@ export function createAppActions(
       if (idx === -1) return;
       s.tabs.splice(idx, 1);
       delete s.pages[id];
+      // The manager's listing state is its tab's: reopened, it starts afresh.
+      if (id === PRESETS_TAB_ID) s.presetManager = initialPresetManager();
       if (s.activeTabId === id) {
         // Select the neighbor (prefer the one to the left), or clear.
         const next = s.tabs[idx] ?? s.tabs[idx - 1];
@@ -3162,7 +3219,7 @@ export function createAppActions(
       });
     },
     revertPresetEdit: (id) => beginPresetEdit(id),
-    commitPresetEdit: (tabId, id) => {
+    commitPresetEdit: (id) => {
       const edit = get().presetEdits[id];
       if (!edit) return;
       const name = edit.name.trim();
@@ -3192,7 +3249,7 @@ export function createAppActions(
       set((s) => {
         delete s.presetEdits[id];
       });
-      runQuery(tabId);
+      rerunPresetUsers(id);
     },
 
     openPresetSave: (section, definition) =>
@@ -3243,6 +3300,156 @@ export function createAppActions(
       set((s) => {
         s.presetSave = null;
       });
+    },
+    openPresetsTab: () => {
+      set((s) => {
+        // A singleton, like the shortcuts editor.
+        if (!s.tabs.some((t) => t.kind === "presets")) {
+          s.tabs.push({
+            kind: "presets",
+            id: PRESETS_TAB_ID,
+            name: PRESETS_TAB_NAME,
+          });
+        }
+        s.activeTabId = PRESETS_TAB_ID;
+      });
+    },
+    setPresetSearch: (text) =>
+      set((s) => {
+        s.presetManager.search = text;
+      }),
+    toggleManagedPreset: (id) =>
+      set((s) => {
+        const m = s.presetManager;
+        m.expanded = m.expanded === id ? null : id;
+      }),
+    beginPresetRename: (id) =>
+      set((s) => {
+        s.presetManager.renaming = id;
+      }),
+    cancelPresetRename: () =>
+      set((s) => {
+        s.presetManager.renaming = null;
+      }),
+    renamePreset: (id, name) => {
+      set((s) => {
+        s.presetManager.renaming = null;
+      });
+      const trimmed = name.trim();
+      const preset = get().presets.find((p) => p.id === id);
+      if (!preset || trimmed === "" || trimmed === preset.name) return;
+      const modifiedAt = nowEpoch();
+      set((s) => {
+        const p = s.presets.find((x) => x.id === id);
+        if (p) Object.assign(p, { name: trimmed, modifiedAt });
+        // An open editor shows the new name, not the one it was opened on.
+        const edit = s.presetEdits[id];
+        if (edit) edit.name = trimmed;
+      });
+      void presetUpdate({
+        id,
+        name: trimmed,
+        definition: preset.definition,
+        isDefault: preset.isDefault,
+        modifiedAt,
+      }).catch((err) => console.error("preset rename failed", err));
+    },
+    openPresetDraft: (init) => {
+      const tables = get().schema.tables;
+      const fallback = tables.some((t) => t.name === PLAYLIST_BASE)
+        ? PLAYLIST_BASE
+        : (tables[0]?.name ?? PLAYLIST_BASE);
+      set((s) => {
+        s.presetDraft = {
+          duplicateOf: null,
+          baseTable: init?.baseTable ?? fallback,
+          section: init?.section ?? "filter",
+          name: "",
+          definition: "",
+          isDefault: false,
+        };
+      });
+    },
+    duplicatePreset: (id) => {
+      // The copy is of the preset as the user is seeing it: with any edit
+      // they have in progress on it.
+      const preset = selectEffectivePresets(get()).find((p) => p.id === id);
+      if (!preset) return;
+      set((s) => {
+        s.presetDraft = {
+          duplicateOf: id,
+          baseTable: preset.baseTable,
+          section: asSection(preset.section),
+          name: `${preset.name} copy`,
+          definition: preset.definition,
+          // Two defaults would displace one another (sort, display) or
+          // double up (filter) — a copy starts out as an ordinary preset.
+          isDefault: false,
+        };
+      });
+    },
+    patchPresetDraft: (patch) =>
+      set((s) => {
+        if (s.presetDraft) Object.assign(s.presetDraft, patch);
+      }),
+    cancelPresetDraft: () =>
+      set((s) => {
+        s.presetDraft = null;
+      }),
+    confirmPresetDraft: () => {
+      const draft = get().presetDraft;
+      if (!draft) return;
+      const name = draft.name.trim();
+      const baseTable = draft.baseTable.trim();
+      if (name === "" || baseTable === "") return;
+      const now = nowEpoch();
+      const preset: Preset = {
+        id: newUuid(),
+        name,
+        baseTable,
+        section: draft.section,
+        definition: draft.definition,
+        isDefault: draft.isDefault,
+        createdAt: now,
+        modifiedAt: now,
+      };
+      set((s) => {
+        s.presets.push(preset);
+        if (preset.isDefault) displaceDefault(s, preset);
+        s.presetDraft = null;
+        // Show it: open, and not hidden by a search it might not match.
+        s.presetManager.search = "";
+        s.presetManager.expanded = preset.id;
+      });
+      void presetAdd(preset).catch((err) =>
+        console.error("preset add failed", err),
+      );
+    },
+    requestPresetDelete: (id) =>
+      set((s) => {
+        if (s.presets.some((p) => p.id === id)) s.pendingPresetDelete = id;
+      }),
+    cancelPresetDelete: () =>
+      set((s) => {
+        s.pendingPresetDelete = null;
+      }),
+    confirmPresetDelete: () => {
+      const id = get().pendingPresetDelete;
+      if (id === null) return;
+      set((s) => {
+        s.pendingPresetDelete = null;
+        s.presets = s.presets.filter((p) => p.id !== id);
+        delete s.presetEdits[id];
+        const m = s.presetManager;
+        if (m.expanded === id) m.expanded = null;
+        if (m.renaming === id) m.renaming = null;
+        for (const page of Object.values(s.pages)) {
+          if (page.expandedPreset === id) page.expandedPreset = null;
+        }
+      });
+      void presetDelete({ id }).catch((err) =>
+        console.error("preset delete failed", err),
+      );
     },
     openViewSql: (tabId) => {
       const t = selectPageTab(get(), tabId);
@@ -3405,7 +3612,7 @@ export function createAppActions(
   // page went away before they were written, or the write failed) has them
   // saved now, as if they had just been made.
   for (const t of get().tabs) {
-    if (t.kind === "shortcuts") continue;
+    if (t.kind !== "query" && t.kind !== "playlist") continue;
     if (!pageDefsEqual(t.saved, t.live)) deferSave(t.id);
   }
 

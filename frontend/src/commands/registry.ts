@@ -26,6 +26,7 @@ import { chordOf, type Chord } from "./chord";
 export type CommandId =
   | "palette.open"
   | "shortcuts.configure"
+  | "presets.manage"
   | "app.check_for_updates"
   | "explorer.toggle"
   | "playback.toggle_play"
@@ -111,6 +112,14 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     // rebind everything doesn't need to claim a chord itself.
     id: "shortcuts.configure",
     title: "Commands: Configure keyboard shortcuts",
+    when: "always",
+    defaultChord: null,
+  },
+  {
+    // Ships unbound, like the shortcuts editor beside it: a settings page,
+    // reached from the palette and the Settings menu.
+    id: "presets.manage",
+    title: "Presets: Manage query presets",
     when: "always",
     defaultChord: null,
   },

@@ -68,6 +68,7 @@ import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
+import Presets from "~icons/material-symbols/tune";
 import About from "~icons/material-symbols/info";
 import PaintRoller from "~icons/material-symbols/imagesearch-roller";
 // The record editor's field-label glyphs, one per value category.
@@ -152,6 +153,7 @@ export const Icons = {
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
   Keyboard, // shortcuts editor: "Record keys" search toggle
+  Presets, // the preset manager: its Settings-menu entry and tab handle
   About, // Settings footer: "About RadioCrate" (versions + update actions)
   PaintRoller, // record editor: take one distinct value for every record
   FieldText, // record editor: a text field's label

@@ -346,6 +346,9 @@ export function createCommandsStore(
       case "shortcuts.configure":
         app.actions.openShortcutsTab();
         break;
+      case "presets.manage":
+        app.actions.openPresetsTab();
+        break;
       // The About panel runs a check as it opens, so this is the check *and*
       // somewhere to see its answer.
       case "app.check_for_updates":

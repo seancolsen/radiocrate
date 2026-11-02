@@ -78,9 +78,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
           </div>
         )}
       </div>
-      {expandedInFilter && (
-        <PresetEditor tabId={props.tabId} presetId={expandedInFilter} />
-      )}
+      {expandedInFilter && <PresetEditor presetId={expandedInFilter} />}
       <FilterEntryActions tabId={props.tabId} />
     </div>
   );

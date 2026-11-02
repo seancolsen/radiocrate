@@ -67,7 +67,7 @@ export default function SingleBuilder(props: {
             />
           </div>
           {expandedPreset === content.preset && (
-            <PresetEditor tabId={props.tabId} presetId={content.preset} />
+            <PresetEditor presetId={content.preset} />
           )}
         </>
       )}

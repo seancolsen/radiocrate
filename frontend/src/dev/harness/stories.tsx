@@ -42,6 +42,9 @@ import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
+import PresetDeleteModal from "../../components/PresetDeleteModal";
+import PresetDraftModal from "../../components/PresetDraftModal";
+import PresetManager from "../../components/PresetManager";
 import {
   ExportDataDialog,
   type ExportColumnOption,
@@ -170,6 +173,35 @@ function RoadTripSortOptions(): JSX.Element | null {
       <SectionOptionsMenu tabId={PLAYLIST_SOURCE.id} section="sort" />
     </Menu>
   );
+}
+
+/** Adds three `track` presets to the fixture's two — a default filter, a sort
+ * and a default display — so the preset manager has a table with something
+ * in every section, and one with an empty section or two. */
+function seedManagedPresets(stores: Stores): void {
+  const preset = (
+    n: number,
+    name: string,
+    section: string,
+    definition: string,
+    isDefault: boolean,
+  ) => ({
+    id: `00000000-0000-0000-0000-0000000000b${n}`,
+    name,
+    baseTable: "track",
+    section,
+    definition,
+    isDefault,
+    createdAt: 1_700_000_000,
+    modifiedAt: 1_700_000_000,
+  });
+  stores.app.store.setState((s) => {
+    s.presets.push(
+      preset(1, "loved", "filter", "rating.value:>=5", true),
+      preset(2, "by artist", "sort", "\\\\artist.name \\\\year", false),
+      preset(3, "compact", "display", "$title $artist.name $year", true),
+    );
+  });
 }
 
 /** Opens "Lemonade" carrying `def` as its (saved) query. */
@@ -919,6 +951,73 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.toggleBuilderSection(id, "sort");
     },
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+
+  // ── The preset manager ───────────────────────────────────────────────────
+  // Two tables' presets, by section: `album` with only a (default) sort,
+  // `track` with something in every section.
+  "preset-manager/basic": {
+    width: 720,
+    height: 520,
+    frame: "flex flex-col",
+    setup: seedManagedPresets,
+    render: () => <PresetManager />,
+  },
+  // Phone width: a row's definition gives way to its name and badges.
+  "preset-manager/narrow": {
+    width: 360,
+    height: 520,
+    frame: "flex flex-col",
+    setup: seedManagedPresets,
+    render: () => <PresetManager />,
+  },
+  // "vetted" open in the builders' inline editor, with an edit to its
+  // definition not yet saved: the ✱ shows on the row as well as in the
+  // editor.
+  "preset-manager/expanded": {
+    width: 720,
+    height: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      stores.app.actions.toggleManagedPreset(VETTED_PRESET_ID);
+      stores.app.actions.patchPresetEdit(VETTED_PRESET_ID, {
+        definition: "rating.value:>=4",
+      });
+    },
+    render: () => <PresetManager />,
+  },
+  // "vetted" being renamed in place.
+  "preset-manager/rename": {
+    width: 720,
+    height: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      stores.app.actions.beginPresetRename(VETTED_PRESET_ID);
+    },
+    render: () => <PresetManager />,
+  },
+  // Duplicating "vetted": its copy's name, table, section and definition,
+  // not the default.
+  "preset-manager/duplicate": {
+    setup: (stores) => stores.app.actions.duplicatePreset(VETTED_PRESET_ID),
+    render: () => <PresetDraftModal />,
+  },
+  // Deleting "vetted", which a saved query and an open playlist both use.
+  "preset-manager/delete": {
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.sources.data[0].definition = JSON.stringify(FILTER_DEF);
+      });
+      stores.app.actions.openTab(PLAYLIST_SOURCE);
+      stores.app.actions.toggleFilterPreset(
+        PLAYLIST_SOURCE.id,
+        VETTED_PRESET_ID,
+      );
+      stores.app.actions.requestPresetDelete(VETTED_PRESET_ID);
+    },
+    render: () => <PresetDeleteModal />,
   },
 
   // ── The results grid ─────────────────────────────────────────────────────

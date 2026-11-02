@@ -71,6 +71,16 @@ export interface QueryDefinition {
 /** The three query sections with builder UIs and saveable presets. */
 export type Section = "filter" | "sort" | "display";
 
+/** The sections in the order the builder (and the preset manager) lists
+ * them. */
+export const SECTIONS: readonly Section[] = ["filter", "sort", "display"];
+
+/** A preset's `section`, which the backend hands back as a plain string, as a
+ * {@link Section}. One it doesn't recognise reads as a filter. */
+export function asSection(section: string): Section {
+  return section === "sort" || section === "display" ? section : "filter";
+}
+
 /** The short label used on a section's toolbar toggle button. */
 export function sectionLabel(section: Section): string {
   return section === "filter"
@@ -108,6 +118,20 @@ export function cloneDefinition(def: QueryDefinition): QueryDefinition {
  * `preset_single_default` index enforces this). */
 export function hasSingleDefault(section: string): boolean {
   return section === "sort" || section === "display";
+}
+
+/** Whether `def`'s sections refer to saved preset `id`. Takes a query's
+ * definition or a playlist's (the two share the three sections); a full-mode
+ * query refers to none, since its sections are ignored. */
+export function usesPreset(
+  def: Pick<QueryDefinition, "filter" | "sort" | "display" | "full">,
+  id: string,
+): boolean {
+  if (def.full != null) return false;
+  return (
+    def.filter.presets.includes(id) ||
+    [def.sort, def.display].some((c) => "preset" in c && c.preset === id)
+  );
 }
 
 /** A fresh definition for `base`, seeded with that table's default presets:
