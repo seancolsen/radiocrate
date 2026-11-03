@@ -98,6 +98,11 @@ export const selectIsPersisted = (s: AppState, tabId: string): boolean => {
   return t?.kind === "playlist" || (t?.persisted ?? false);
 };
 
+/** Whether `tabId` is a new query the user hasn't touched yet, whose rows
+ * wait for them to (see `QueryTab.pristine`). */
+export const selectIsPristine = (s: AppState, tabId: string): boolean =>
+  selectQueryTab(s, tabId)?.pristine === true;
+
 /** Whether "Revert changes" applies: a saved query whose working definition
  * couldn't be saved, and so differs from what the backend holds. (An unsaved
  * query has nothing to revert to.) */

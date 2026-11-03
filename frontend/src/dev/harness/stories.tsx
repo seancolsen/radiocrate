@@ -49,6 +49,7 @@ import {
   type ExportColumnOption,
 } from "../../components/ExportDataModal";
 import Explorer from "../../components/Explorer";
+import NewQueryPrompt from "../../components/NewQueryPrompt";
 import NowPlaying from "../../components/NowPlaying";
 import PageActionsMenu from "../../components/PageActionsMenu";
 import PlaybackActionsMenu from "../../components/PlaybackActionsMenu";
@@ -390,6 +391,11 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
 function ActiveQueryToolbar(): JSX.Element | null {
   const id = useApp((s) => s.activeTabId);
   return id === null ? null : <QueryToolbar tabId={id} />;
+}
+
+function ActiveNewQueryPrompt(): JSX.Element | null {
+  const id = useApp((s) => s.activeTabId);
+  return id === null ? null : <NewQueryPrompt tabId={id} />;
 }
 
 /** Filler for the stories about a component's own layout rather than about
@@ -821,15 +827,24 @@ export const STORIES: Record<string, Story> = {
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
   // A new query, never saved and not yet edited: of the conditional group,
-  // just Save.
+  // just Save; no result count, since it hasn't run; and its filter builder
+  // open, with the caret in the filter.
   "query-builder/new": {
     width: 1280,
-    setup: (stores) => {
-      stores.app.actions.newQueryTab();
-      const id = stores.app.store.getState().activeTabId!;
-      stores.app.actions.setResults(id, emptyCountResult(12));
-    },
+    setup: (stores) => stores.app.actions.newQueryTab(),
     render: () => <ActiveQueryToolbar />,
+  },
+  // What a new query shows where its rows would be until it's touched: its
+  // base table, beside its label, over the "Show all results" button.
+  "query-page/new": {
+    width: 640,
+    height: 160,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      stores.app.actions.newQueryTab();
+    },
+    render: () => <ActiveNewQueryPrompt />,
   },
   // Full-Querydown mode: the three section toggles collapse into one
   // "Querydown" toggle (no ⋮ — there are no sections to configure) over the

@@ -1,6 +1,11 @@
 import { useEffect, type JSX } from "react";
-import { selectPresetsReady, selectSchemaReady } from "../stores/app";
+import {
+  selectIsPristine,
+  selectPresetsReady,
+  selectSchemaReady,
+} from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
+import NewQueryPrompt from "./NewQueryPrompt";
 import QueryToolbar from "./QueryToolbar";
 import QueryResults from "./QueryResults";
 import RecordEditorPanel from "./RecordEditorPanel";
@@ -8,7 +13,9 @@ import RecordEditorPanel from "./RecordEditorPanel";
 /** The content of an open tab: a toolbar over the results pane, with the record
  * editor as a sidebar beside them when one is open. Runs the tab's saved query
  * once when it's first viewed (opening a query shows rows without a manual
- * refresh click); the refresh button re-runs it.
+ * refresh click); the refresh button re-runs it. A new query the user hasn't
+ * touched yet isn't run: it shows {@link NewQueryPrompt} in place of the
+ * results until they do.
  *
  * The record editor is scoped to the page in both senses: its state is per-tab
  * (each tab has its own page, and its own editor in it) and so is its layout —
@@ -23,6 +30,7 @@ import RecordEditorPanel from "./RecordEditorPanel";
 export default function QueryPage(props: { tabId: string }): JSX.Element {
   const schemaReady = useApp(selectSchemaReady);
   const presetsReady = useApp(selectPresetsReady);
+  const pristine = useApp((s) => selectIsPristine(s, props.tabId));
   const { ensureRun } = useAppActions();
 
   // Auto-run the tab once, but only once both the schema and presets have
@@ -30,7 +38,8 @@ export default function QueryPage(props: { tabId: string }): JSX.Element {
   // (Running before presets have loaded can throw "this query references a
   // preset that no longer exists" for a query that references one.)
   // `ensureRun` guards against duplicate runs (and against re-running each
-  // time a hidden page is shown again, which re-runs its effects).
+  // time a hidden page is shown again, which re-runs its effects), and holds
+  // back a pristine query.
   useEffect(() => {
     if (schemaReady && presetsReady) ensureRun(props.tabId);
   }, [props.tabId, schemaReady, presetsReady, ensureRun]);
@@ -39,7 +48,11 @@ export default function QueryPage(props: { tabId: string }): JSX.Element {
     <div className="bg-panel flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <QueryToolbar tabId={props.tabId} />
-        <QueryResults tabId={props.tabId} />
+        {pristine ? (
+          <NewQueryPrompt tabId={props.tabId} />
+        ) : (
+          <QueryResults tabId={props.tabId} />
+        )}
       </div>
       <RecordEditorPanel tabId={props.tabId} />
     </div>

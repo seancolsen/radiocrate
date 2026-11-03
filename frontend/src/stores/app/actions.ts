@@ -150,6 +150,7 @@ import {
   selectFilterApplied,
   selectIsUnsaved,
   selectIsPersisted,
+  selectIsPristine,
   selectIsWriting,
   selectLocateRow,
   selectQueueAround,
@@ -299,8 +300,8 @@ export interface AppActions {
   /** Create a folder at the top of the Sources tree (expanded, being empty)
    * and start renaming it. */
   newFolder: () => void;
-  /** Open a new, unsaved query in a tab, to be saved at the top of folder
-   * `parent` (null: the top level of the tree). */
+  /** {@link newQueryTab}, to be saved at the top of folder `parent` (null:
+   * the top level of the tree). */
   addQuery: (parent: string | null) => void;
   /** Create an empty playlist, named for the current moment, at the top of
    * folder `parent` (null: the top level of the tree), and open it in a new,
@@ -324,7 +325,9 @@ export interface AppActions {
   setSchemaJson: (json: string) => void;
   /** Compile + run the tab's *working* query, storing the structured result. */
   runQuery: (tabId: string) => void;
-  /** Run the tab once, the first time it's viewed (idempotent per tab). */
+  /** Run the tab once, the first time it's viewed (idempotent per tab) —
+   * unless it's a new query the user hasn't touched yet, which waits for them
+   * to (`QueryTab.pristine`). */
   ensureRun: (tabId: string) => void;
   /** Inject a canned structured result for a tab (dev/test seam — bypasses the
    * compile/fetch/decode path). `lineage` stands in for the lineage analysis,
@@ -464,7 +467,9 @@ export interface AppActions {
    * `selectCanConvertToPlaylist`. */
   convertToPlaylist: (tabId: string) => void;
   /** Open a new unsaved query tab based on "track", seeded with that base's
-   * default filter/sort/display presets. */
+   * default filter/sort/display presets, with its filter builder open and
+   * taking the caret. It's pristine: its rows aren't loaded until the user
+   * edits it or asks for them (`QueryTab.pristine`). */
   newQueryTab: () => void;
   /** Step `tabId`'s page back by one step of its undo history (see
    * `state/undoHistory.ts`): for the query page, back to the definition it ran
@@ -617,7 +622,8 @@ export interface AppActions {
   toggleExpandPreset: (tabId: string, presetId: string) => void;
 
   /** Move a tab's query onto another base table, keeping the hand-written filter
-   * and reseeding everything else from the new table's default presets. */
+   * and reseeding everything else from the new table's default presets. On a
+   * pristine query this doesn't count as touching it: the query isn't run. */
   setBase: (tabId: string, table: string) => void;
   /** Flatten a tab's sectioned query into one hand-written Querydown query and
    * open the editor on it. */
@@ -1113,6 +1119,8 @@ export function createAppActions(
     if (!t) return;
     // An immediate run supersedes any run this tab had pending on the debounce.
     cancelScheduledRun(tabId);
+    // Once its rows have been asked for, a new query is pristine no more.
+    touch(tabId);
     // Every run is an undo checkpoint: what the user can step back to is what
     // they've seen the rows of.
     checkpoint(tabId);
@@ -1190,7 +1198,9 @@ export function createAppActions(
   /** Changes a tab's working definition, then re-runs its query: `"now"`, or
    * `"debounced"` for the builder's free-text editors, whose state update still
    * lands immediately (so the controlled input stays in sync) while the run
-   * waits for a pause in the typing.
+   * waits for a pause in the typing. Either touches a pristine query. `"held"`
+   * changes the definition without running it or touching the query (picking
+   * a pristine query's base).
    *
    * The one way a page's definition changes — every edit, rebase, revert,
    * undo and redo comes through here — so a saved query's or a playlist's save
@@ -1198,13 +1208,24 @@ export function createAppActions(
   const changeLive = (
     tabId: string,
     change: (t: PageTab) => void,
-    run: "now" | "debounced",
+    run: "now" | "debounced" | "held",
   ) => {
     if (!selectPageTab(get(), tabId)) return;
     editPageTab(tabId, change);
     deferSave(tabId);
+    if (run === "held") return;
+    touch(tabId);
     if (run === "now") runQuery(tabId);
     else scheduleRun(tabId);
+  };
+
+  /** Ends `tabId`'s pristine state, if it's in it: the user has interacted
+   * with the new query, and its rows load from now on. */
+  const touch = (tabId: string) => {
+    if (!selectIsPristine(get(), tabId)) return;
+    editQueryTab(tabId, (t) => {
+      delete t.pristine;
+    });
   };
 
   /** Formulates the save of saved source `tabId`'s working definition as it
@@ -1358,6 +1379,7 @@ export function createAppActions(
     for (const t of get().tabs) {
       if (
         (t.kind === "query" || t.kind === "playlist") &&
+        !selectIsPristine(get(), t.id) &&
         usesPreset(t.live, id)
       ) {
         runQuery(t.id);
@@ -1458,7 +1480,11 @@ export function createAppActions(
    * one; saving it puts it in `folder`. */
   const openUnsavedTab = (
     def: QueryDefinition,
-    { index, folder = null }: { index?: number; folder?: string | null } = {},
+    {
+      index,
+      folder = null,
+      pristine = false,
+    }: { index?: number; folder?: string | null; pristine?: boolean } = {},
   ) => {
     const newId = newUuid();
     set((s) => {
@@ -1471,9 +1497,22 @@ export function createAppActions(
         persisted: false,
         saveFailed: false,
         folder,
+        ...(pristine && { pristine }),
       });
       s.activeTabId = newId;
     });
+    return newId;
+  };
+
+  /** Opens a new, blank query of every track, to be saved into `folder`: its
+   * filter builder open and asking for the caret, and its rows held back until
+   * the user touches it (`QueryTab.pristine`). */
+  const openNewQuery = (folder: string | null) => {
+    const id = openUnsavedTab(
+      definitionForBase("track", selectEffectivePresets(get())),
+      { folder, pristine: true },
+    );
+    actions.focusBuilderSection(id, "filter");
   };
 
   // ── Writing to a result row ─────────────────────────────────────────────────
@@ -2320,12 +2359,7 @@ export function createAppActions(
         void actions.loadSources();
       });
     },
-    addQuery: (parent) => {
-      openUnsavedTab(
-        definitionForBase("track", selectEffectivePresets(get())),
-        { folder: parent },
-      );
-    },
+    addQuery: (parent) => openNewQuery(parent),
     addPlaylist: (parent) =>
       void createPlaylist(
         {
@@ -2430,7 +2464,9 @@ export function createAppActions(
       }),
     runQuery,
     ensureRun: (tabId) => {
-      if (!autoRun.has(tabId)) runQuery(tabId);
+      if (!autoRun.has(tabId) && !selectIsPristine(get(), tabId)) {
+        runQuery(tabId);
+      }
     },
     setResults: (tabId, result, lineage, refresh) => {
       setTabResult(tabId, result, refresh ?? false);
@@ -2766,9 +2802,7 @@ export function createAppActions(
         tabId,
       );
     },
-    newQueryTab: () => {
-      openUnsavedTab(definitionForBase("track", selectEffectivePresets(get())));
-    },
+    newQueryTab: () => openNewQuery(null),
     openRecordsTab: (besideTabId, query) => {
       // Seeded from the table's defaults only for the display: the filter and
       // sort have to be exactly `query`'s, or the tab would show other records,
@@ -2974,7 +3008,11 @@ export function createAppActions(
         pageDraft(s, tabId).expandedPreset = null;
         pageDraft(s, tabId).fullEditorOpen = false;
       });
-      replaceLive(tabId, rebased);
+      changeLive(
+        tabId,
+        (x) => assignDefinition(x, "live", rebased),
+        t.pristine ? "held" : "now",
+      );
     },
     convertToFull: (tabId) => {
       const t = selectQueryTab(get(), tabId);
@@ -3569,8 +3607,14 @@ export function createAppActions(
       // Every setting so far feeds the compiler, and the rows on screen were
       // compiled under the old value — so they're now stale. Re-run each open
       // page rather than leave results that no longer answer what they claim.
+      // A pristine query has no rows to be stale.
       for (const t of get().tabs) {
-        if (t.kind === "query" || t.kind === "playlist") runQuery(t.id);
+        if (
+          (t.kind === "query" || t.kind === "playlist") &&
+          !selectIsPristine(get(), t.id)
+        ) {
+          runQuery(t.id);
+        }
       }
     },
     openSetting: (key) =>

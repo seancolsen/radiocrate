@@ -51,6 +51,26 @@ describe("open tabs", () => {
     after.dispose();
   });
 
+  it("keep a new query untouched across a reload, until it's touched", () => {
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    before.actions.newQueryTab();
+    const id = before.store.getState().activeTabId!;
+    before.dispose();
+
+    const after = createAppStore(env);
+    expect(after.store.getState().tabs[0]).toMatchObject({
+      id,
+      pristine: true,
+    });
+    after.actions.runQuery(id);
+    after.dispose();
+
+    const again = createAppStore(env);
+    expect(again.store.getState().tabs[0]).not.toHaveProperty("pristine");
+    again.dispose();
+  });
+
   it("bring a playlist tab back as one, edits included", () => {
     const env = fakeEnv();
     const before = createAppStore(env);

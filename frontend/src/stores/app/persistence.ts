@@ -157,6 +157,7 @@ export type StoredTab =
       live: QueryDefinition;
       persisted: boolean;
       folder: string | null;
+      pristine?: boolean;
     }
   | {
       kind: "playlist";
@@ -198,6 +199,8 @@ interface OpenTabsRecord {
         persisted: boolean;
         /** Absent from records written before unsaved queries kept one. */
         folder?: string | null;
+        /** Present (and `true`) only for a query the user hasn't touched. */
+        pristine?: boolean;
       }
     | {
         kind: "playlist";
@@ -262,6 +265,7 @@ export function storedTabs(env: AppEnv): StoredTabs {
         live: definitionFromStored(t.live),
         persisted,
         folder: typeof t.folder === "string" ? t.folder : null,
+        ...(t.pristine === true && { pristine: true }),
       });
     } else if (
       t.kind === "playlist" &&
@@ -312,6 +316,7 @@ export function persistTabs(
               live: definitionToStored(t.live),
               persisted: t.persisted,
               folder: t.folder,
+              ...(t.pristine && { pristine: true }),
             };
           case "playlist":
             return {

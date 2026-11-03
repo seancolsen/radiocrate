@@ -109,7 +109,7 @@ export const Icons = {
   ExplorerOpen, // sidebar toggle when closed
   ExplorerClose, // sidebar toggle when open
   Close, // tab close ×, opened-row ×
-  Add, // new-tab (+)
+  Add, // "+": add a new item
   Refresh, // Sources-section reload + toolbar run
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron

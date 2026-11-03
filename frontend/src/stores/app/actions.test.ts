@@ -122,6 +122,7 @@ import {
   selectCanUndo,
   selectCanWriteFromRows,
   selectFilterApplied,
+  selectIsPristine,
   selectIsUnsaved,
   selectPageTab,
   selectQueryTab,
@@ -1104,6 +1105,74 @@ describe("a debounced edit", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("a new query", () => {
+  let bundle: AppStoreBundle;
+  let id: string;
+  const running = () => bundle.store.getState().pages[id]?.running ?? false;
+  const pristine = () => selectIsPristine(bundle.store.getState(), id);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.newQueryTab();
+    id = bundle.store.getState().activeTabId!;
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("opens its filter builder and asks it for the caret", () => {
+    const s = bundle.store.getState();
+    expect(s.pages[id]?.builderSection).toBe("filter");
+    expect(s.builderFocus).toMatchObject({ tabId: id, section: "filter" });
+  });
+
+  it("isn't run when it's first viewed", () => {
+    expect(pristine()).toBe(true);
+    bundle.actions.ensureRun(id);
+    expect(running()).toBe(false);
+  });
+
+  it("isn't run, or touched, by picking its base", () => {
+    bundle.actions.setBase(id, "album");
+    expect(selectQueryTab(bundle.store.getState(), id)?.live.base).toBe(
+      "album",
+    );
+    expect(running()).toBe(false);
+    expect(pristine()).toBe(true);
+    bundle.actions.ensureRun(id);
+    expect(running()).toBe(false);
+  });
+
+  it("isn't re-run by a setting change", () => {
+    bundle.actions.saveSetting("querydown_prelude", "custom prelude");
+    expect(running()).toBe(false);
+    expect(pristine()).toBe(true);
+  });
+
+  it("is touched by an edit, and runs from then on", async () => {
+    bundle.actions.setSchemaJson("{}");
+    vi.mocked(compileSavedQuery).mockClear();
+    bundle.actions.setFilterCustom(id, "jazz");
+    expect(pristine()).toBe(false);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(compileSavedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('is touched by a run ("Show all results")', () => {
+    bundle.actions.runQuery(id);
+    expect(running()).toBe(true);
+    expect(pristine()).toBe(false);
+  });
+
+  it("rebases and runs like any other once touched", () => {
+    bundle.actions.runQuery(id);
+    bundle.actions.setBase(id, "album");
+    expect(running()).toBe(true);
   });
 });
 

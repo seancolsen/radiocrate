@@ -326,8 +326,7 @@ test("a new query has no name and a Save button until it's saved", async ({
   page,
 }) => {
   await openQueryPage(page, `clean=1&count=12&def=${def(FILTER_DEF)}`);
-  await page.getByRole("button", { name: "New tab" }).click();
-  await page.getByRole("menuitem", { name: "New query" }).click();
+  await page.getByRole("button", { name: "New query" }).click();
   const tabBar = page.locator("[data-tab-id]");
   await expect(tabBar.last()).toHaveText(/^new$/);
 
@@ -338,6 +337,43 @@ test("a new query has no name and a Save button until it's saved", async ({
   await save.click();
   await expect(save).toHaveCount(0);
   await expect(tabBar.last()).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+});
+
+test("a new query waits, filter focused, until it's touched or asked to show all", async ({
+  page,
+}) => {
+  // Query runs, not the schema introspection that goes the same way.
+  const runs: string[] = [];
+  page.on("request", (r) => {
+    const sql = r.postData() ?? "";
+    if (r.url().endsWith("/api/query") && !sql.includes("'tables'")) {
+      runs.push(sql);
+    }
+  });
+  await openQueryPage(
+    page,
+    `clean=1&count=12&recordFixture=1&def=${def(FILTER_DEF)}`,
+  );
+  // The query the page opened on runs as it's shown.
+  await expect.poll(() => runs.length).toBe(1);
+  await page.getByRole("button", { name: "New query" }).click();
+
+  await expect(page.getByPlaceholder("Filter")).toBeFocused();
+  const prompt = page.getByTestId("new-query-prompt");
+  await expect(prompt.getByLabel("Base")).toHaveValue("track");
+
+  // Picking the base isn't touching the query: still no run.
+  const base = prompt.getByLabel("Base");
+  await base.selectOption("album");
+  await expect(base).toHaveValue("album");
+  await base.selectOption("track");
+  await expect(base).toHaveValue("track");
+  await page.waitForTimeout(500);
+  expect(runs).toHaveLength(1);
+
+  await prompt.getByRole("button", { name: "Show all results" }).click();
+  await expect(prompt).toHaveCount(0);
+  await expect.poll(() => runs.length).toBe(2);
 });
 
 test("Export results data copies the selected rows, tab-separated", async ({

@@ -51,13 +51,28 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // A new query, never saved: Save alone, with nothing yet to undo.
+  // A new query, never saved: Save alone, with nothing yet to undo, and the
+  // filter builder open with the caret in it.
   test(`query-builder/new - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "query-builder/new", colorScheme);
     await expect(stage.getByRole("button", { name: "Save" })).toBeVisible();
     await expect(stage.getByRole("button", { name: "Undo" })).toHaveCount(0);
+    await expect(stage.getByPlaceholder("Filter")).toBeFocused();
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/new", colorScheme),
+    );
+  });
+
+  // A new query, untouched: its base beside its label, over "Show all
+  // results", where the rows would be.
+  test(`query-page/new - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "query-page/new", colorScheme);
+    await expect(stage.getByLabel("Base")).toHaveValue("track");
+    await expect(
+      stage.getByRole("button", { name: "Show all results" }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-page/new", colorScheme),
     );
   });
 

@@ -140,6 +140,14 @@ export interface QueryTab {
    * it was created in, or `null` for the top level. Not consulted once it's
    * saved — the explorer tree is where a saved query's place is kept. */
   folder: string | null;
+  /** Whether this is a new query the user hasn't touched yet. Its query isn't
+   * run until they do — a new query is of every track, which they almost never
+   * want to load — so the page offers its base table and a "Show all results"
+   * button where the rows would be. Picking the base leaves it untouched;
+   * any other edit of the definition, or any run (Refresh, "Show all
+   * results"), ends it for good. Absent reads as `false`. Restored after a
+   * reload, so a reload doesn't load the rows either. */
+  pristine?: boolean;
 }
 
 /** An open playlist tab. Tab id == source id; `playlistId` names the
