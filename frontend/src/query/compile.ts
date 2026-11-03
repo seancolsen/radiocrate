@@ -57,8 +57,9 @@ export function compileSavedQuery(
  * `schemaJson` and `prelude` as {@link compileSavedQuery}.
  *
  * The playlist query is one whole query, so it goes through `compile`, not
- * `compile_sections`: a syntax error in the filter text reports as the generic
- * "Invalid querydown code" rather than as one tied to the filter section.
+ * `compile_sections`: a syntax error in the filter text isn't tied to the
+ * filter section, and its line and column count from the start of the whole
+ * query, prelude included.
  * `options` narrows it as `playlistQuerydown` does: `withFilter: false`
  * compiles it without the filter, for committing a sort, and `entryId` lists
  * just that entry. */

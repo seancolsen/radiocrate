@@ -240,7 +240,7 @@ export type CompileSource =
  * that catalogue should reach for it. */
 export const DEFAULT_PRELUDE = `#track.firstplay = #play.timestamp%min
 #track.lastplay = #play.timestamp%max
-#track.artists = #credit.artist.name%list(\\\\order \\\\artist.name)
+#track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)
 #track.year = album.year
 #track.added = file.added
 #track.duration = file.duration
