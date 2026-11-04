@@ -1,32 +1,21 @@
-import { forwardRef, type ForwardedRef, type KeyboardEvent } from "react";
+import { forwardRef } from "react";
 import { Icons } from "../../icons";
+import type { QueryDiagnostic } from "../../query/diagnostics";
 import { Menu, MenuItem } from "../ui/Menu";
-import { cx } from "../ui/cx";
+import QuerydownEditor from "./QuerydownEditor";
 
-/** The look of a Querydown editor, shared by every place one appears: the
- * toolbar's builder sections and the record picker's search / sort / display
- * boxes. */
-const FIELD_CLASS =
-  "bg-panel text-ink placeholder:text-ink-weak block w-full rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none";
-
-/** Assigns a `forwardRef` ref, whichever shape it was given — needed because
- * this component forwards to one of two element types (a callback or object
- * ref typed for their union doesn't assign directly to either's own setter). */
-function assignRef<T>(ref: ForwardedRef<T>, el: T | null): void {
-  if (typeof ref === "function") ref(el);
-  else if (ref) ref.current = el;
-}
-
-/** An auto-growing monospace Querydown editor with an optional trailing ⋮ menu
- * (Clear / Save as preset), shown only while the input is non-empty. The
- * textarea grows to its line count (at least one line). "Save as preset" is
- * offered only to a caller that has somewhere to save to (`onSaveAsPreset`), and
- * is disabled until a base table is chosen (`canSave`). The ref forwards to the
- * underlying `<textarea>`/`<input>`, so a caller (a `query.focus_*` command's
- * builder) can focus it — see `useBuilderFocus`. `invalid` borders it in red:
- * the problem the error strip shows is in its text. */
+/** An auto-growing monospace Querydown editor — the toolbar's builder
+ * sections, and the record picker's search / sort / display boxes — with an
+ * optional trailing ⋮ menu (Clear / Save as preset), shown only while the
+ * input is non-empty. The editor grows to its text's height (at least one
+ * line). "Save as preset" is offered only to a caller that has somewhere to
+ * save to (`onSaveAsPreset`), and is disabled until a base table is chosen
+ * (`canSave`). The ref forwards to the element that takes the caret, so a
+ * caller (a `query.focus_*` command's builder) can focus it — see
+ * `useBuilderFocus`. `diagnostic` is the problem the error strip shows, when
+ * it's in this input's text: it's bordered in red and the spot underlined. */
 const CustomInput = forwardRef<
-  HTMLTextAreaElement | HTMLInputElement,
+  HTMLElement,
   {
     value: string;
     hint: string;
@@ -37,50 +26,27 @@ const CustomInput = forwardRef<
      * menu. */
     onSaveAsPreset?: () => void;
     canSave?: boolean;
-    invalid?: boolean;
-    /** Renders an `<input>` instead of a `<textarea>`, so the field cannot hold
-     * a newline at all — what the record picker's search box needs. */
+    diagnostic?: QueryDiagnostic | null;
+    /** Keeps the input to one line, as an `<input>` would: it can't hold a
+     * newline at all — what the record picker's search box needs. */
     singleLine?: boolean;
-    onKeyDown?: (
-      e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>,
-    ) => void;
+    onKeyDown?: (e: KeyboardEvent) => void;
   }
 >(function CustomInput(props, ref) {
   const hasText = props.value.trim() !== "";
-  const rows = Math.max(1, props.value.split("\n").length);
-  const field = cx(
-    FIELD_CLASS,
-    props.invalid ? "border-danger" : "border-edge focus:border-accent",
-    { "pr-9": hasText },
-  );
 
   return (
     <div className="relative w-full">
-      {props.singleLine ? (
-        <input
-          ref={(el) => assignRef(ref, el)}
-          type="text"
-          className={field}
-          aria-invalid={props.invalid}
-          spellCheck={false}
-          placeholder={props.hint}
-          value={props.value}
-          onChange={(e) => props.onInput(e.currentTarget.value)}
-          onKeyDown={(e) => props.onKeyDown?.(e)}
-        />
-      ) : (
-        <textarea
-          ref={(el) => assignRef(ref, el)}
-          className={cx(field, "resize-none")}
-          aria-invalid={props.invalid}
-          rows={rows}
-          spellCheck={false}
-          placeholder={props.hint}
-          value={props.value}
-          onChange={(e) => props.onInput(e.currentTarget.value)}
-          onKeyDown={(e) => props.onKeyDown?.(e)}
-        />
-      )}
+      <QuerydownEditor
+        ref={ref}
+        value={props.value}
+        onChange={props.onInput}
+        placeholder={props.hint}
+        singleLine={props.singleLine}
+        trailingSpace={hasText}
+        diagnostic={props.diagnostic}
+        onKeyDown={props.onKeyDown}
+      />
       {hasText && (
         <div className="absolute top-1 right-1">
           <Menu

@@ -201,17 +201,20 @@ export const selectDiagnosticSection = (
   return origin?.kind === "full" ? "full" : null;
 };
 
-/** Whether the problem `tabId` shows is in its own text for `editor`: a
+/** The problem `tabId` shows, if it's in its own text for `editor`: a
  * section's custom input, or (`"full"`) a full query's editor. */
-export const selectEditorHasDiagnostic = (
+export const selectEditorDiagnostic = (
   s: AppState,
   tabId: string,
   editor: Section | "full",
-): boolean => {
-  const origin = selectPageDiagnostic(s, tabId)?.origin;
-  return editor === "full"
-    ? origin?.kind === "full"
-    : origin?.kind === "custom" && origin.section === editor;
+): QueryDiagnostic | null => {
+  const diagnostic = selectPageDiagnostic(s, tabId);
+  const origin = diagnostic?.origin;
+  const inEditor =
+    editor === "full"
+      ? origin?.kind === "full"
+      : origin?.kind === "custom" && origin.section === editor;
+  return inEditor ? diagnostic : null;
 };
 
 /** Whether the problem `tabId` shows is in preset `presetId`. */

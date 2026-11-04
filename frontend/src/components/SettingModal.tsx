@@ -18,8 +18,8 @@ import {
   useCheckContext,
   useSettledDiagnostic,
 } from "./builder/useDiagnostics";
+import QuerydownEditor from "./builder/QuerydownEditor";
 import { Modal } from "./ui/Modal";
-import { cx } from "./ui/cx";
 
 /** The editor for one setting: its name, what it does, and its value in a
  * monospace text area — the values here are code (the Querydown prelude), not
@@ -54,33 +54,24 @@ export function SettingDialog(props: {
   const latest = useMemo(() => diagnose?.(draft) ?? null, [diagnose, draft]);
   const problem = useSettledDiagnostic(latest);
 
-  // Focus the field, but at the *top* of the value: a textarea autofocused with
-  // content lands the caret at the end and scrolls there, which for a prelude
-  // taller than the field means opening on its last line.
-  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  // Focus the field, with the caret where the editor starts it: at the top of
+  // the value, scrolled to its first line.
+  const fieldRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
-    const field = fieldRef.current;
-    field?.focus();
-    field?.setSelectionRange(0, 0);
-    if (field) field.scrollTop = 0;
+    fieldRef.current?.focus({ preventScroll: true });
   }, []);
 
   return (
     <Modal onClose={() => props.onClose()} width="640px">
       <h2 className="text-ink mb-1 text-base font-semibold">{props.name}</h2>
       <p className="text-ink-weak mb-3 text-sm">{props.description}</p>
-      <textarea
+      <QuerydownEditor
         ref={fieldRef}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-        aria-invalid={problem !== null}
-        className={cx(
-          "bg-sheet text-ink h-64 max-h-[60vh] w-full resize-y rounded-md border p-3 font-mono text-xs leading-5 outline-none",
-          problem ? "border-danger" : "border-edge focus:border-accent",
-        )}
+        look="sheet"
+        label={props.name}
         value={draft}
-        onChange={(e) => setEdited(e.currentTarget.value)}
+        onChange={setEdited}
+        diagnostic={problem}
       />
       {problem && (
         <div className="mt-2">

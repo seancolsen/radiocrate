@@ -108,8 +108,11 @@ test("Full Querydown flattens the query into one editable field", async ({
     page.getByRole("button", { name: "Filter", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Querydown" })).toBeVisible();
-  await expect(page.getByPlaceholder("Querydown")).toHaveValue(
+  // (The editor is a contenteditable: its lines are read off its rendered
+  // text, not a `value`.)
+  await expect(page.getByPlaceholder("Querydown")).toHaveText(
     "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate}",
+    { useInnerText: true },
   );
 
   // Editing it writes back to the working definition…

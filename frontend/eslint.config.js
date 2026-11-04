@@ -10,6 +10,7 @@ const FRAMEWORK_FREE = [
   "src/api/**",
   "src/audio/**",
   "src/commands/**",
+  "src/editor/**",
   "src/grid/**",
   "src/query/**",
   "src/record/**",

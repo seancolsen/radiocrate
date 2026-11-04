@@ -877,9 +877,10 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
-  // A syntax error in the open filter's own text: its input bordered in red,
-  // the Filter toggle marked, and the error strip under the builder with the
-  // line marked where the value is missing. No "Show": it's on screen.
+  // A syntax error in the open filter's own text: its input bordered in red
+  // and the missing value's spot marked in it, the Filter toggle marked, and
+  // the error strip under the builder with the line marked where the value is
+  // missing. No "Show": it's on screen.
   "query-builder/filter-problem": {
     width: 1280,
     setup: (stores) => {

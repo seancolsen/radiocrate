@@ -1678,9 +1678,9 @@ test("the picker's sort and display builders re-run the query", async ({
   // Both builders open pre-filled with what the generator chose for `album`.
   await picker(page).getByRole("button", { name: "Display" }).click();
   const display = picker(page).getByPlaceholder("Display");
-  await expect(display).toHaveValue("$id $title");
+  await expect(display).toHaveText("$id $title");
   await picker(page).getByRole("button", { name: "Sort" }).click();
-  await expect(picker(page).getByPlaceholder("Sort")).toHaveValue(
+  await expect(picker(page).getByPlaceholder("Sort")).toHaveText(
     "\\\\id \\\\title",
   );
   // Only one section is open at a time, as in the toolbar.

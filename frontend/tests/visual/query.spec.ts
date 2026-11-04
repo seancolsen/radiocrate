@@ -36,9 +36,9 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // A syntax error in the open filter's text: the input bordered in red, the
-  // Filter toggle marked, and the error strip with the line marked. Nothing to
-  // "Show": the problem is already on screen.
+  // A syntax error in the open filter's text: the input bordered in red with
+  // the spot marked, the Filter toggle marked, and the error strip with the
+  // line marked. Nothing to "Show": the problem is already on screen.
   test(`query-builder/filter-problem - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
@@ -52,6 +52,9 @@ for (const colorScheme of SCHEMES) {
       "aria-invalid",
       "true",
     );
+    // The end of the input, where the value's missing, is marked in the
+    // editor itself.
+    await expect(stage.locator(".cm-qd-problem-point")).toHaveCount(1);
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/filter-problem", colorScheme),
     );

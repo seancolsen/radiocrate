@@ -12,7 +12,7 @@ import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
 import { useElementWidth } from "../ui/useElementWidth";
-import { cx } from "../ui/cx";
+import QuerydownEditor from "./QuerydownEditor";
 import DiagnosticMessage, { diagnosticPlace } from "./DiagnosticMessage";
 import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
 
@@ -154,21 +154,11 @@ export function PresetEditorPanel(props: {
             {!wrapDefault && <div className="ml-auto">{applyByDefault}</div>}
           </div>
           {wrapDefault && applyByDefault}
-          <textarea
-            aria-label="Preset definition"
-            aria-invalid={problem !== null}
-            className={cx(
-              "bg-panel text-ink block w-full resize-none rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none",
-              problem?.origin?.kind === "preset"
-                ? "border-danger"
-                : "border-edge focus:border-accent",
-            )}
-            rows={Math.max(1, edit.definition.split("\n").length)}
-            spellCheck={false}
+          <QuerydownEditor
+            label="Preset definition"
             value={edit.definition}
-            onChange={(e) =>
-              props.onPatch({ definition: e.currentTarget.value })
-            }
+            onChange={(definition) => props.onPatch({ definition })}
+            diagnostic={problem?.origin?.kind === "preset" ? problem : null}
           />
           {problem && (
             <DiagnosticMessage

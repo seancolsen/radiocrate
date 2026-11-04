@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type JSX,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
 import { Modal } from "./ui/Modal";
 import IconButton from "./ui/IconButton";
 import LoadingRegion from "./ui/LoadingRegion";
@@ -156,9 +149,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
 
   /** The keys the search box gives up to the list below it, without giving up
    * the caret: Up/Down move the highlight, Enter takes it. */
-  const onKeyDown = (
-    e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>,
-  ) => {
+  const onKeyDown = (e: KeyboardEvent) => {
     const count = results.length;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
@@ -174,7 +165,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
     }
   };
 
-  const searchRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const searchRef = useRef<HTMLElement>(null);
   // The caret starts in the search box: the modal exists to be typed into. It's
   // focused on mount rather than through `autofocus`, which a portal's
   // after-the-fact insertion doesn't honor. A layout effect, so focus has moved

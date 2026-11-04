@@ -1,5 +1,5 @@
 import { useRef, type JSX } from "react";
-import { selectEditorHasDiagnostic, selectQueryTab } from "../../stores/app";
+import { selectEditorDiagnostic, selectQueryTab } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
 import { useBuilderFocus } from "./useBuilderFocus";
@@ -10,15 +10,15 @@ import { useBuilderFocus } from "./useBuilderFocus";
  * are fragments of a section. */
 export default function FullBuilder(props: { tabId: string }): JSX.Element {
   const text = useApp((s) => selectQueryTab(s, props.tabId)?.live.full ?? "");
-  const invalid = useApp((s) =>
-    selectEditorHasDiagnostic(s, props.tabId, "full"),
+  const diagnostic = useApp((s) =>
+    selectEditorDiagnostic(s, props.tabId, "full"),
   );
   const { setFullText } = useAppActions();
 
   // The `query.focus_*` commands have no section to aim at here, so any of
   // them lands the caret in this one editor (see the twin hook use in
   // `FilterBuilder` and `SingleBuilder`) — no `section` to check.
-  const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null);
+  const inputRef = useRef<HTMLElement>(null);
   useBuilderFocus(props.tabId, undefined, inputRef);
 
   return (
@@ -26,7 +26,7 @@ export default function FullBuilder(props: { tabId: string }): JSX.Element {
       ref={inputRef}
       value={text}
       hint="Querydown"
-      invalid={invalid}
+      diagnostic={diagnostic}
       onInput={(t) => setFullText(props.tabId, t)}
       onClear={() => setFullText(props.tabId, "")}
     />

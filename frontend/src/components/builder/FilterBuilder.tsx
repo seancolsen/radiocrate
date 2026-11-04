@@ -1,6 +1,6 @@
 import { useRef, type JSX } from "react";
 import {
-  selectEditorHasDiagnostic,
+  selectEditorDiagnostic,
   selectExpandedPreset,
   selectPageBase,
   selectPageSections,
@@ -46,8 +46,8 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const canSave = useApp((s) => selectPageBase(s, props.tabId) !== "");
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
-  const invalid = useApp((s) =>
-    selectEditorHasDiagnostic(s, props.tabId, "filter"),
+  const diagnostic = useApp((s) =>
+    selectEditorDiagnostic(s, props.tabId, "filter"),
   );
   const { setFilterCustom, clearFilterCustom, openPresetSave } =
     useAppActions();
@@ -60,7 +60,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   // request is consumed once: `useBuilderFocus` also fires on mount (when the
   // command is what opened the section), so a later manual open doesn't
   // re-steal focus.
-  const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null);
+  const inputRef = useRef<HTMLElement>(null);
   useBuilderFocus(props.tabId, "filter", inputRef);
 
   return (
@@ -71,7 +71,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
             ref={inputRef}
             value={live?.filter.custom ?? ""}
             hint="Filter"
-            invalid={invalid}
+            diagnostic={diagnostic}
             canSave={canSave}
             onInput={(t) => setFilterCustom(props.tabId, t)}
             onClear={() => clearFilterCustom(props.tabId)}

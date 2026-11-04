@@ -1,7 +1,7 @@
 import { useRef, type JSX } from "react";
 import { sectionLabel } from "../../query/definition";
 import {
-  selectEditorHasDiagnostic,
+  selectEditorDiagnostic,
   selectExpandedPreset,
   selectPageBase,
   selectPageSections,
@@ -28,8 +28,8 @@ export default function SingleBuilder(props: {
   );
   const base = useApp((s) => selectPageBase(s, props.tabId));
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
-  const invalid = useApp((s) =>
-    selectEditorHasDiagnostic(s, props.tabId, props.section),
+  const diagnostic = useApp((s) =>
+    selectEditorDiagnostic(s, props.tabId, props.section),
   );
   const presetId = content && "preset" in content ? content.preset : undefined;
   const presetName = useApp((s) =>
@@ -49,7 +49,7 @@ export default function SingleBuilder(props: {
   // the caret; see the twin hook use in `FilterBuilder`. A section holding a
   // preset (or Shuffle) has no text input, so the request is still consumed —
   // the section is open, which is all there is to focus.
-  const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null);
+  const inputRef = useRef<HTMLElement>(null);
   useBuilderFocus(props.tabId, props.section, inputRef);
 
   return (
@@ -59,7 +59,7 @@ export default function SingleBuilder(props: {
           ref={inputRef}
           value={content.custom}
           hint={sectionLabel(props.section)}
-          invalid={invalid}
+          diagnostic={diagnostic}
           canSave={base !== ""}
           onInput={(t) => setSectionCustomText(props.tabId, props.section, t)}
           onClear={() => setSectionCustomText(props.tabId, props.section, "")}

@@ -118,9 +118,11 @@ export default defineConfig({
   build: {
     outDir: "dist",
     target: "esnext",
-    // Two vendor chunks beside the app's own code, so no one chunk carries the
-    // whole bundle: React (with its scheduler) and Apache Arrow (with the
-    // flatbuffers and tslib it's built on). All three still load at startup —
+    // Three vendor chunks beside the app's own code, so no one chunk carries the
+    // whole bundle: React (with its scheduler), Apache Arrow (with the
+    // flatbuffers and tslib it's built on), and CodeMirror (the Querydown
+    // editors, with the Lezer and style-mod packages it's built on and the
+    // tiny utilities it pulls in). All of them still load at startup —
     // this is about chunk size and caching, not lazy loading: a release that
     // changes only the app leaves the vendor chunks' hashes, and so the service
     // worker's precached copies of them, as they were.
@@ -135,6 +137,10 @@ export default defineConfig({
             {
               name: "arrow",
               test: /[\\/]node_modules[\\/](apache-arrow|flatbuffers|tslib)[\\/]/,
+            },
+            {
+              name: "codemirror",
+              test: /[\\/]node_modules[\\/](@codemirror|@lezer|style-mod|w3c-keyname|crelt|@marijn)[\\/]/,
             },
           ],
         },
