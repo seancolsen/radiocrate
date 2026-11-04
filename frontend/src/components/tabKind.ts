@@ -13,5 +13,7 @@ export function tabIcon(kind: TabKind): IconComponent {
       return Icons.Keyboard;
     case "presets":
       return Icons.Presets;
+    case "prelude":
+      return Icons.Querydown;
   }
 }

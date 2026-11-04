@@ -38,9 +38,9 @@ const SELECT_CLASS =
   "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
 
 /** The "Export data" dialog: which rows and columns to export, and where to —
- * the clipboard, or a CSV file. Takes its values as props, like
- * {@link import("./SettingModal").SettingDialog}, so the visual harness can
- * render it without a store; {@link ExportDataModal} is the wired version.
+ * the clipboard, or a CSV file. Takes its values as props, so the visual
+ * harness can render it without a store; {@link ExportDataModal} is the wired
+ * version.
  *
  * The Rows field shows only while some rows are selected; with none, every row
  * is exported. The column list is folded away under a "Columns" summary that

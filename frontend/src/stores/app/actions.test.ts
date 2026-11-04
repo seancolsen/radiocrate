@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAppStore,
   presetUsers,
+  PRELUDE_TAB_ID,
   PRESETS_TAB_ID,
   type AppStoreBundle,
   type PreparedStep,
@@ -1039,6 +1040,45 @@ describe("saveSetting", () => {
     expect(
       bundle.store.getState().settingOverrides["querydown_prelude"],
     ).toBeUndefined();
+  });
+});
+
+describe("prelude editor", () => {
+  it("opens as one tab, whose edit is dropped when it closes", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.openPreludeTab();
+    bundle.actions.openPreludeTab();
+    let s = bundle.store.getState();
+    expect(s.tabs.map((t) => t.id)).toEqual([PRELUDE_TAB_ID]);
+    expect(s.activeTabId).toBe(PRELUDE_TAB_ID);
+
+    bundle.actions.editPrelude("custom prelude");
+    expect(bundle.store.getState().preludeDraft).toBe("custom prelude");
+    bundle.actions.closeTab(PRELUDE_TAB_ID);
+    s = bundle.store.getState();
+    expect(s.tabs).toEqual([]);
+    expect(s.preludeDraft).toBeNull();
+  });
+
+  it("holds no edit while the text is the prelude in force", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.editPrelude("custom prelude");
+    bundle.actions.editPrelude(SETTINGS.querydown_prelude.default);
+    expect(bundle.store.getState().preludeDraft).toBeNull();
+  });
+
+  it("saves its edit as the prelude, and then holds none", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.editPrelude("custom prelude");
+    bundle.actions.savePrelude();
+
+    expect(settingSet).toHaveBeenCalledWith({
+      key: "querydown_prelude",
+      value: "custom prelude",
+    });
+    const s = bundle.store.getState();
+    expect(s.settingOverrides["querydown_prelude"]).toBe("custom prelude");
+    expect(s.preludeDraft).toBeNull();
   });
 });
 

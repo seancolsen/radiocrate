@@ -69,19 +69,25 @@ test("a prelude that doesn't parse can't be saved", async ({ page }) => {
   await page.goto("/?sidebar=open&recordFixture=1");
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("menuitem", { name: "Querydown Prelude" }).click();
-  const dialog = page.getByRole("dialog");
-  const field = dialog.getByLabel("Querydown Prelude");
-  const save = dialog.getByRole("button", { name: "Save" });
+  const prelude = page.getByTestId("prelude-page");
+  const field = prelude.getByLabel("Querydown Prelude");
+  const save = prelude.getByRole("button", { name: "Save" });
+  await expect(save).toBeDisabled();
 
   await field.press("ControlOrMeta+End");
   await page.keyboard.type("\n#track.x = (");
   await expect(save).toBeDisabled();
-  await expect(dialog.getByRole("alert")).toContainText("Unclosed (");
+  await expect(prelude.getByTestId("prelude-unsaved")).toBeVisible();
+  await expect(prelude.getByRole("alert")).toContainText("Unclosed (");
   await expect(field.locator(".cm-qd-problem")).toHaveText("(");
 
   await page.keyboard.type("1)");
   await expect(save).toBeEnabled();
-  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(prelude.getByRole("alert")).toHaveCount(0);
+
+  await save.click();
+  await expect(save).toBeDisabled();
+  await expect(prelude.getByTestId("prelude-unsaved")).toHaveCount(0);
 });
 
 test("a new preset's definition is checked as it's written", async ({

@@ -32,6 +32,8 @@ const IconButton = forwardRef<
     active?: boolean;
     size?: "sm" | "md";
     tabIndex?: number;
+    /** The id of what describes the button further (a tooltip). */
+    describedBy?: string;
   }
 >(function IconButton(props, ref) {
   const Icon = props.icon;
@@ -40,6 +42,7 @@ const IconButton = forwardRef<
       ref={ref}
       type="button"
       aria-label={props.label}
+      aria-describedby={props.describedBy}
       disabled={props.disabled}
       tabIndex={props.tabIndex}
       className={cx(

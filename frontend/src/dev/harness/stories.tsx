@@ -39,12 +39,12 @@ import {
 } from "../../state/undoHistory";
 
 import { AboutDialog } from "../../components/AboutModal";
-import { SettingDialog } from "../../components/SettingModal";
 import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import PresetDeleteModal from "../../components/PresetDeleteModal";
 import PresetManager from "../../components/PresetManager";
+import PreludePage from "../../components/PreludePage";
 import {
   ExportDataDialog,
   type ExportColumnOption,
@@ -672,50 +672,51 @@ export const STORIES: Record<string, Story> = {
       </Menu>
     ),
   },
-  // The Querydown prelude setting in its editor, holding the default value —
-  // the state the dialog opens in for anyone who hasn't customized it, and the
-  // one that shows both the monospace field and the disabled "Reset to default".
+  // The Querydown prelude editor's page, holding the default value — the
+  // state it opens in for anyone who hasn't customized it: Reset to default
+  // and Save both disabled.
   "settings/prelude": {
-    render: () => (
-      <SettingDialog
-        name={SETTINGS.querydown_prelude.name}
-        description={SETTINGS.querydown_prelude.description}
-        value={SETTINGS.querydown_prelude.default}
-        defaultValue={SETTINGS.querydown_prelude.default}
-        onSave={() => {}}
-        onClose={() => {}}
-      />
-    ),
+    width: 720,
+    height: 420,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+    },
+    render: () => <PreludePage />,
   },
-  // The prelude editor holding a prelude with a syntax error: the field
-  // bordered in red, the problem under it — located, with the line marked —
-  // and Save disabled.
+  // The prelude edited and not yet saved: the ✱ on Save, and Reset to default
+  // enabled.
+  "settings/prelude-unsaved": {
+    width: 720,
+    height: 420,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      stores.app.actions.editPrelude(
+        `${SETTINGS.querydown_prelude.default}\n#track.loud = rating.value:>=4`,
+      );
+    },
+    render: () => <PreludePage />,
+  },
+  // The page with its "?" hovered: the help in a tooltip below it, kept
+  // inside the right edge. (The hover is the test's.)
+  "settings/prelude-help": {
+    width: 720,
+    height: 420,
+    frame: "flex flex-col",
+    render: () => <PreludePage />,
+  },
+  // The prelude holding a syntax error: the problem between the toolbar and
+  // the editor — located, with the line marked — and Save disabled.
   "settings/prelude-problem": {
-    render: () => (
-      <SettingDialog
-        name={SETTINGS.querydown_prelude.name}
-        description={SETTINGS.querydown_prelude.description}
-        value={BROKEN_PRELUDE}
-        defaultValue={SETTINGS.querydown_prelude.default}
-        diagnose={(value) => ({
-          kind: "syntax",
-          reason:
-            "Unclosed `(`. Expected a matching `)` before the end of input.",
-          hint: null,
-          origin: { kind: "prelude" },
-          source: value,
-          range: { start: value.length - 1, end: value.length },
-          notes: [
-            {
-              range: { start: value.length, end: value.length },
-              message: "expected `)` here or earlier",
-            },
-          ],
-        })}
-        onSave={() => {}}
-        onClose={() => {}}
-      />
-    ),
+    width: 720,
+    height: 420,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      stores.app.actions.editPrelude(BROKEN_PRELUDE);
+    },
+    render: () => <PreludePage />,
   },
   // The rebind dialog holding a chord another command already owns, so the
   // "currently bound to" warning shows too (⌘/Ctrl+S is "Tabs: Save active

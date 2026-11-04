@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyDefinition } from "../../query/definition";
 import { createAppStore } from "./index";
-import { PRESETS_TAB_ID, SHORTCUTS_TAB_ID } from "./state";
+import { PRELUDE_TAB_ID, PRESETS_TAB_ID, SHORTCUTS_TAB_ID } from "./state";
 import { fakeEnv } from "./testEnv";
 
 describe("open tabs", () => {
@@ -15,6 +15,7 @@ describe("open tabs", () => {
     before.actions.duplicateQuery("q1");
     before.actions.openShortcutsTab();
     before.actions.openPresetsTab();
+    before.actions.openPreludeTab();
     before.actions.selectTab("q1");
     before.dispose();
 
@@ -26,9 +27,10 @@ describe("open tabs", () => {
       "query",
       "shortcuts",
       "presets",
+      "prelude",
     ]);
     expect(s.activeTabId).toBe("q1");
-    const [restored, duplicate, shortcuts, presets] = s.tabs;
+    const [restored, duplicate, shortcuts, presets, prelude] = s.tabs;
     expect(restored).toMatchObject({
       id: "q1",
       name: "Lemonade",
@@ -47,6 +49,11 @@ describe("open tabs", () => {
       kind: "presets",
       id: PRESETS_TAB_ID,
       name: "Query presets",
+    });
+    expect(prelude).toEqual({
+      kind: "prelude",
+      id: PRELUDE_TAB_ID,
+      name: "Querydown Prelude",
     });
     after.dispose();
   });

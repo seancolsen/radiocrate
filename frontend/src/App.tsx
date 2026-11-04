@@ -8,6 +8,7 @@ import TabBar from "./components/TabBar";
 import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import PresetManager from "./components/PresetManager";
+import PreludePage from "./components/PreludePage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
 import RpcErrorBanner from "./components/RpcErrorBanner";
@@ -16,7 +17,6 @@ import AboutModal from "./components/AboutModal";
 import AddToPlaylistModal from "./components/AddToPlaylistModal";
 import DeleteConfirmModal from "./components/DeleteConfirmModal";
 import ExportDataModal from "./components/ExportDataModal";
-import SettingModal from "./components/SettingModal";
 
 /** One tab's page: the one its kind calls for. The one place tab kinds fan out
  * into pages — every other tab surface (the bar, the explorer's "Opened" list,
@@ -34,6 +34,7 @@ function TabPage(props: { tabId: string }): JSX.Element | null {
   }
   if (kind === "shortcuts") return <ShortcutsPage />;
   if (kind === "presets") return <PresetManager />;
+  if (kind === "prelude") return <PreludePage />;
   return null;
 }
 
@@ -111,7 +112,6 @@ export default function App(): JSX.Element {
       {/* App-wide overlays, above every panel and both layouts. */}
       <CommandPalette />
       <AboutModal />
-      <SettingModal />
       {/* Raised from a query page's actions menu or from the explorer, whose
           query need not be open. */}
       <DeleteConfirmModal />

@@ -7,8 +7,7 @@ import { Modal } from "./ui/Modal";
 
 /** The dialog's body, mounted fresh each time a save is pending — which is what
  * gives the name field a freshly-focused caret every time (see
- * `PresetSaveModal`'s conditional render below, and `SettingModal`'s identical
- * split). */
+ * `PresetSaveModal`'s conditional render below). */
 function PresetSaveModalBody(props: {
   tabId: string;
   save: PresetSave;

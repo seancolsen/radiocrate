@@ -15,7 +15,7 @@ import type { PageDefinition, PlaylistDefinition } from "../../query/playlist";
 import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
 import type { SchemaTable } from "../../query/schema";
-import type { SettingKey, SettingOverrides } from "../../state/settings";
+import { SETTINGS, type SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
 import type { AppEnv } from "../env";
 import {
@@ -111,6 +111,13 @@ export const PRESETS_TAB_ID = "settings:query-presets";
 /** The preset manager tab's handle text. */
 export const PRESETS_TAB_NAME = "Query presets";
 
+/** A fixed sentinel id for the singleton Querydown prelude editor tab,
+ * namespaced like {@link SHORTCUTS_TAB_ID}. */
+export const PRELUDE_TAB_ID = "settings:querydown-prelude";
+
+/** The prelude editor tab's handle text: the setting's own name. */
+export const PRELUDE_TAB_NAME = SETTINGS.querydown_prelude.name;
+
 /** An open query tab. Tab id == source id. Carries the working (`live`) query
  * definition the builder edits, and the `saved` one the backend is known to
  * hold.
@@ -189,12 +196,22 @@ export interface PresetsTab {
   name: string;
 }
 
+/** The Querydown prelude editor tab. There is at most one; the text being
+ * edited in it, until it's saved, is the app store's `preludeDraft`. */
+export interface PreludeTab {
+  kind: "prelude";
+  id: typeof PRELUDE_TAB_ID;
+  name: string;
+}
+
 /** An open tab: a query page, a playlist page, or one of the singleton
- * settings pages (the keyboard-shortcuts editor, the preset manager). More page kinds (artists, …) slot in here as
+ * settings pages (the keyboard-shortcuts editor, the preset manager, the
+ * prelude editor). More page kinds (artists, …) slot in here as
  * further variants — the tab bar, the explorer's "Opened" list and the tab
  * commands all work off the shared `kind` / `id` / `name` fields, and only
  * `selectQueryTab` / `selectPageTab` narrow to a page's own state. */
-export type Tab = QueryTab | PlaylistTab | ShortcutsTab | PresetsTab;
+export type Tab =
+  QueryTab | PlaylistTab | ShortcutsTab | PresetsTab | PreludeTab;
 
 /** A tab whose page is the results page — a query's or a playlist's: a working
  * definition built with the filter, sort and display builders, run, and shown
@@ -467,8 +484,10 @@ export interface AppState {
   rowDrag: RowDrag | null;
   /** Whether the About dialog (versions + the update actions) is open. */
   aboutOpen: boolean;
-  /** The setting whose editor dialog is open (null when none is). */
-  settingEditor: SettingKey | null;
+  /** The prelude editor's text while it differs from the prelude in force:
+   * edited, and not yet saved (null when there's no such edit). Dropped when
+   * its tab closes. */
+  preludeDraft: string | null;
   /** Whether a `collection.rescan` call is in flight. One at a time, and only
    * from the Settings menu's "Re-scan collection" — which stays open, with the
    * row disabled and spinning, for as long as this is true. */
@@ -539,7 +558,8 @@ export interface RowDrag {
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 
 /** The open tabs a previous visit left (see `storedTabs`), as tabs: the
- * shortcuts editor and the preset manager get their fixed ids and names back, and an active id that names
+ * settings pages (the shortcuts editor, the preset manager, the prelude editor)
+ * get their fixed ids and names back, and an active id that names
  * no restored tab falls back to the first one. A restored query or playlist tab
  * has no page yet; its query runs again when it's first viewed. */
 function restoredTabs(env: AppEnv): {
@@ -557,6 +577,8 @@ function restoredTabs(env: AppEnv): {
         };
       case "presets":
         return { kind: "presets", id: PRESETS_TAB_ID, name: PRESETS_TAB_NAME };
+      case "prelude":
+        return { kind: "prelude", id: PRELUDE_TAB_ID, name: PRELUDE_TAB_NAME };
       default:
         return { ...t, saveFailed: false };
     }
@@ -592,7 +614,7 @@ export function initialState(env: AppEnv): AppState {
     pendingAddToPlaylist: null,
     rowDrag: null,
     aboutOpen: false,
-    settingEditor: null,
+    preludeDraft: null,
     rescanning: false,
     rpcError: null,
     currentTrack: null,

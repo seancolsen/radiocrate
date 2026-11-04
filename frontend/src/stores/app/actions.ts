@@ -176,6 +176,8 @@ import {
 } from "./selectors";
 import {
   EMPTY_SELECTION,
+  PRELUDE_TAB_ID,
+  PRELUDE_TAB_NAME,
   PRESETS_TAB_ID,
   PRESETS_TAB_NAME,
   SHORTCUTS_TAB_ID,
@@ -739,9 +741,14 @@ export interface AppActions {
   /** Store a setting's value and re-run the open queries under it. A value
    * equal to the default is stored as a *deletion* — the reset path. */
   saveSetting: (key: SettingKey, value: string) => void;
-  /** Open a setting's editor dialog (the Settings menu's entries). */
-  openSetting: (key: SettingKey) => void;
-  closeSetting: () => void;
+  /** Open (or focus) the singleton Querydown prelude editor tab — the Settings
+   * menu's entry, and an error strip's "Edit prelude". */
+  openPreludeTab: () => void;
+  /** Record the prelude editor's text as the user edits it. Text equal to the
+   * prelude in force is no edit at all. */
+  editPrelude: (text: string) => void;
+  /** Save the prelude editor's text, if it has an edit, as the prelude. */
+  savePrelude: () => void;
   /** Re-scan the collection on the server ("Re-scan collection" in the Settings
    * menu). Resolves when the scan has finished — the menu waits on it to close
    * itself — whether it succeeded or failed; a failure is the error bar's to
@@ -1507,6 +1514,8 @@ export function createAppActions(
       delete s.pages[id];
       // The manager's listing state is its tab's: reopened, it starts afresh.
       if (id === PRESETS_TAB_ID) s.presetManager = initialPresetManager();
+      // So is the prelude editor's unsaved text.
+      if (id === PRELUDE_TAB_ID) s.preludeDraft = null;
       if (s.activeTabId === id) {
         // Select the neighbor (prefer the one to the left), or clear.
         const next = s.tabs[idx] ?? s.tabs[idx - 1];
@@ -3092,7 +3101,7 @@ export function createAppActions(
       const origin = get().pages[tabId]?.diagnostic?.origin;
       if (!origin) return;
       if (origin.kind === "prelude") {
-        actions.openSetting("querydown_prelude");
+        actions.openPreludeTab();
       } else if (origin.kind === "full") {
         // There's only the one editor; any section's focus request opens it.
         actions.focusBuilderSection(tabId, "filter");
@@ -3732,14 +3741,32 @@ export function createAppActions(
         }
       }
     },
-    openSetting: (key) =>
+    openPreludeTab: () =>
       set((s) => {
-        s.settingEditor = key;
+        // A singleton, like the shortcuts editor.
+        if (!s.tabs.some((t) => t.kind === "prelude")) {
+          s.tabs.push({
+            kind: "prelude",
+            id: PRELUDE_TAB_ID,
+            name: PRELUDE_TAB_NAME,
+          });
+        }
+        s.activeTabId = PRELUDE_TAB_ID;
       }),
-    closeSetting: () =>
+    editPrelude: (text) => {
+      const draft = text === selectPrelude(get()) ? null : text;
       set((s) => {
-        s.settingEditor = null;
-      }),
+        s.preludeDraft = draft;
+      });
+    },
+    savePrelude: () => {
+      const draft = get().preludeDraft;
+      if (draft === null) return;
+      set((s) => {
+        s.preludeDraft = null;
+      });
+      actions.saveSetting("querydown_prelude", draft);
+    },
     rescanCollection: async () => {
       if (get().rescanning) return;
       set((s) => {

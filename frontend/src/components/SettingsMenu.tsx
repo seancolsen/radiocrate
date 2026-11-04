@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { Icons, type IconComponent } from "../icons";
 import type { AudioQualityPref, ThemePref } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
-import { SETTINGS, SETTING_KEYS } from "../state/settings";
+import { SETTINGS } from "../state/settings";
 import {
   MenuHeading,
   MenuItem,
@@ -28,9 +28,8 @@ const AUDIO_QUALITY_OPTIONS: {
 ];
 
 /** The Settings menu body: a Light/Dark/System theme picker, a Higher
- * quality/Lower bandwidth audio streaming picker, one entry per configurable
- * setting (each opening its editor dialog), the Query presets, Keyboard
- * shortcuts and About entries, and the collection re-scan. */
+ * quality/Lower bandwidth audio streaming picker, the Querydown Prelude, Query
+ * presets, Keyboard shortcuts and About entries, and the collection re-scan. */
 export default function SettingsMenu(): JSX.Element {
   const theme = useApp((s) => s.theme);
   const audioQuality = useApp((s) => s.audioQuality);
@@ -63,16 +62,11 @@ export default function SettingsMenu(): JSX.Element {
         />
       ))}
       <MenuSeparator />
-      {/* Driven by the settings catalogue, so a new setting shows up here with
-          its name and needs no entry of its own. */}
-      {SETTING_KEYS.map((key) => (
-        <MenuItem
-          key={key}
-          icon={Icons.Querydown}
-          label={SETTINGS[key].name}
-          onClick={() => actions.openSetting(key)}
-        />
-      ))}
+      <MenuItem
+        icon={Icons.Querydown}
+        label={SETTINGS.querydown_prelude.name}
+        onClick={() => actions.openPreludeTab()}
+      />
       <MenuItem
         icon={Icons.Presets}
         label="Query presets"

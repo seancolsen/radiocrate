@@ -13,9 +13,9 @@ import { DEFAULT_PRELUDE } from "../query/definition";
 
 /** What the app knows about one setting, apart from its current value. */
 export interface SettingDefinition {
-  /** Short human-readable name — the Settings menu entry and the dialog title. */
+  /** Short human-readable name — the Settings menu entry and the tab name. */
   name: string;
-  /** A sentence explaining what the setting does, shown in its editor. */
+  /** A sentence explaining what the setting does, its editor's help. */
   description: string;
   /** The value in force when the user hasn't customized it (no stored row). */
   default: string;
@@ -33,9 +33,6 @@ export const SETTINGS = {
 
 /** A key of {@link SETTINGS} — the app's whole settings key space, statically. */
 export type SettingKey = keyof typeof SETTINGS;
-
-/** Every settings key, in the order the Settings menu lists them. */
-export const SETTING_KEYS = Object.keys(SETTINGS) as SettingKey[];
 
 /** The settings the user has customized. A missing key means "use the default",
  * which is the same thing the absence of a row in `settings.settings` means. */

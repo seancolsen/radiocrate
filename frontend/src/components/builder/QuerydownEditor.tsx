@@ -20,7 +20,8 @@ import { cx } from "../ui/cx";
 /** The editor for Querydown text, wherever it's edited: the builders, the
  * record picker, the preset editors and the prelude. A CodeMirror view in
  * place of a `<textarea>` (or, `singleLine`, an `<input>`), grown to its
- * text's height — or, `look: "sheet"`, filling a fixed, resizable box.
+ * text's height — or, `look: "sheet"`, filling a fixed, resizable box, or,
+ * `look: "page"`, the rest of the flex column it's in, frameless.
  *
  * It's controlled, as a field is: `value` is what it shows, and every edit is
  * reported through `onChange`. A `value` that changes under it (an undo, a
@@ -41,7 +42,7 @@ const QuerydownEditor = forwardRef<
     /** The accessible name, for an editor with no placeholder to go by. */
     label?: string;
     singleLine?: boolean;
-    look?: "field" | "sheet";
+    look?: "field" | "sheet" | "page";
     /** Room at the right for a control laid over the editor (the ⋮). */
     trailingSpace?: boolean;
     diagnostic?: QueryDiagnostic | null;
@@ -88,7 +89,7 @@ const QuerydownEditor = forwardRef<
       extensions: [
         querydownExtensions({
           singleLine: initial.singleLine ?? false,
-          sheet: initial.look === "sheet",
+          sheet: initial.look === "sheet" || initial.look === "page",
           onChange: (text) => latest.current.onChange(text),
           onKeyDown: (event) => latest.current.onKeyDown?.(event),
         }),
@@ -133,6 +134,15 @@ const QuerydownEditor = forwardRef<
         : null;
     view.dispatch({ effects: setDiagnostic.of(current) });
   }, [diagnostic]);
+
+  if (props.look === "page") {
+    return (
+      <div
+        ref={hostRef}
+        className="text-ink bg-sheet block min-h-0 w-full min-w-0 flex-1 overflow-hidden font-mono text-xs leading-5 [--qd-pad:12px]"
+      />
+    );
+  }
 
   return (
     <div

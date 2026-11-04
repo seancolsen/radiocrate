@@ -71,6 +71,7 @@ import Locate from "~icons/material-symbols/my-location";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
 import Presets from "~icons/material-symbols/tune";
 import About from "~icons/material-symbols/info";
+import Help from "~icons/material-symbols/help-outline";
 import PaintRoller from "~icons/material-symbols/imagesearch-roller";
 // The record editor's field-label glyphs, one per value category.
 import FieldText from "~icons/material-symbols/notes";
@@ -157,6 +158,7 @@ export const Icons = {
   Keyboard, // shortcuts editor: "Record keys" search toggle
   Presets, // the preset manager: its Settings-menu entry and tab handle
   About, // Settings footer: "About RadioCrate" (versions + update actions)
+  Help, // a page's "?" help, shown in a tooltip (the prelude editor)
   PaintRoller, // record editor: take one distinct value for every record
   FieldText, // record editor: a text field's label
   FieldNumber, // record editor: a numeric field's label
