@@ -81,6 +81,37 @@ describe("a query's problem", () => {
     });
   });
 
+  it("is put down to the filter part that's broken, not where the parser gave up", () => {
+    // `title:` takes the next line — the preset's `title` — as its value, and
+    // the parser trips on the preset's `:`.
+    const d = failure(
+      compileQuery(
+        query({ filter: { custom: "  title:", presets: ["liked"] } }),
+      ),
+    );
+    expect(d).toMatchObject({
+      origin: { kind: "custom", section: "filter" },
+      range: { start: 8, end: 8 },
+    });
+  });
+
+  it("is put down to the broken part in a playlist's filter too", () => {
+    const d = failure(() =>
+      compilePlaylist(
+        PLAYLIST,
+        {
+          filter: { custom: "title:", presets: ["liked"] },
+          sort: { custom: "" },
+          display: { custom: "" },
+        },
+        PRESETS,
+        FIXTURE_SCHEMA_JSON,
+        DEFAULT_PRELUDE,
+      ),
+    );
+    expect(d).toMatchObject({ origin: { kind: "custom", section: "filter" } });
+  });
+
   it("is traced to the filter preset it's in", () => {
     const d = failure(
       compileQuery(

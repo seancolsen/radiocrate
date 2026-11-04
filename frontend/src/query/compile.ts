@@ -16,7 +16,13 @@ import {
   type QuerydownSection,
 } from "querydown-js";
 import type { Preset } from "api-client";
-import { assemble, type QueryDefinition, type Section } from "./definition";
+import {
+  assemble,
+  resolveFilterParts,
+  type FilterParts,
+  type QueryDefinition,
+  type Section,
+} from "./definition";
 import {
   DiagnosticError,
   fromQuerydownError,
@@ -32,6 +38,7 @@ import {
 import {
   fromSource,
   joinMapped,
+  sameOrigin,
   unmapped,
   type Mapped,
   type SourceOrigin,
@@ -95,6 +102,45 @@ function compileWhole(
   );
 }
 
+/** Rethrows `err`, a failure to compile a query whose filter is `filter`,
+ * as the problem it's really about.
+ *
+ * A filter's parts — its custom conditions, then each preset — are joined
+ * into one text, and the parser reads straight on from one into the next: a
+ * condition left without its value (`year:`) takes the start of the next part
+ * as one, and the error turns up further on, in a part that's fine. So when a
+ * syntax error lands in a part after the first, each part before it is
+ * compiled alone (through `compileFilter`), and the first that has a syntax
+ * error of its own is the problem. If none has, `err` stands. */
+function retraceFilterError(
+  err: unknown,
+  filter: FilterParts,
+  presets: readonly Preset[],
+  compileFilter: (part: Mapped) => void,
+): never {
+  if (!(err instanceof DiagnosticError) || err.diagnostic.kind !== "syntax") {
+    throw err;
+  }
+  const parts = resolveFilterParts(filter, presets);
+  const origin = err.diagnostic.origin;
+  const at = parts.findIndex((part) =>
+    part.segments.some((seg) => sameOrigin(seg.origin, origin)),
+  );
+  for (const part of parts.slice(0, Math.max(at, 0))) {
+    try {
+      compileFilter(part);
+    } catch (alone) {
+      if (
+        alone instanceof DiagnosticError &&
+        alone.diagnostic.kind === "syntax"
+      ) {
+        throw alone;
+      }
+    }
+  }
+  throw err;
+}
+
 /** Compiles a saved query definition to DuckDB SQL plus the per-column
  * annotations. Requires the loaded preset list (to resolve preset references) and
  * the enriched schema JSON. Throws a `DiagnosticError` on a compile/parse
@@ -117,9 +163,18 @@ export function compileSavedQuery(
   prelude: string,
 ): CompileResult {
   const a = assemble(def, presets);
-  return a.kind === "full"
-    ? compileWhole(schemaJson, prelude, a.text)
-    : compileSections(schemaJson, a.base, prelude, a);
+  if (a.kind === "full") return compileWhole(schemaJson, prelude, a.text);
+  try {
+    return compileSections(schemaJson, a.base, prelude, a);
+  } catch (err) {
+    retraceFilterError(err, def.filter, presets, (part) =>
+      compileSections(schemaJson, a.base, prelude, {
+        filter: part,
+        sort: unmapped(""),
+        display: unmapped(""),
+      }),
+    );
+  }
 }
 
 /** Compiles playlist `playlistId`'s entry listing (see `playlistQuerydown`) to
@@ -145,7 +200,21 @@ export function compilePlaylist(
     assemblePlaylist(def, presets),
     options,
   );
-  return compileWhole(schemaJson, prelude, text);
+  try {
+    return compileWhole(schemaJson, prelude, text);
+  } catch (err) {
+    retraceFilterError(err, def.filter, presets, (part) =>
+      compileWhole(
+        schemaJson,
+        prelude,
+        playlistQuerydownMapped(
+          playlistId,
+          { filter: part, sort: "", display: "" },
+          options,
+        ),
+      ),
+    );
+  }
 }
 
 /** The table {@link checkPrelude} compiles its query on. Every RadioCrate

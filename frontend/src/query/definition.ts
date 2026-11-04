@@ -380,13 +380,23 @@ export function assemble(
 }
 
 /** Resolves the filter section to its Querydown fragment: the custom
- * conditions and each referenced preset's fragment, each trimmed, then
- * newline-joined (so they AND together). Throws on a dangling preset
- * reference. */
+ * conditions and each referenced preset's fragment (see
+ * {@link resolveFilterParts}), newline-joined (so they AND together). Throws
+ * on a dangling preset reference. */
 export function resolveFilter(
   filter: FilterParts,
   presets: readonly Preset[],
 ): Mapped {
+  return joinMapped(resolveFilterParts(filter, presets), "\n");
+}
+
+/** The filter section's parts, each trimmed, leaving out any that's empty:
+ * the custom conditions, then each referenced preset's fragment. Throws on a
+ * dangling preset reference. */
+export function resolveFilterParts(
+  filter: FilterParts,
+  presets: readonly Preset[],
+): Mapped[] {
   const parts: Mapped[] = [];
   const custom = trimMapped(
     fromSource(filter.custom, { kind: "custom", section: "filter" }),
@@ -396,7 +406,7 @@ export function resolveFilter(
     const fragment = presetFragment(presets, id, "filter");
     if (fragment.text !== "") parts.push(fragment);
   }
-  return joinMapped(parts, "\n");
+  return parts;
 }
 
 /** A definition flattened into one hand-written Querydown query — what the
