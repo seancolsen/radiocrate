@@ -19,7 +19,6 @@ function WiredTabHandle(props: {
   kind: TabKind;
   active: boolean;
   dragging: boolean;
-  translate: number;
   onPointerDown: (e: PointerEvent<HTMLElement>, id: string) => void;
 }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.id));
@@ -39,7 +38,6 @@ function WiredTabHandle(props: {
       unsaved={unsaved}
       renameable={renameable}
       dragging={props.dragging}
-      translate={props.translate}
       renaming={renaming}
       renameBuffer={renameBuffer}
       onSelect={() => actions.selectTab(props.id)}
@@ -54,7 +52,8 @@ function WiredTabHandle(props: {
 }
 
 /** The tab bar across the top: the explorer toggle, one handle per open tab
- * (drag-to-reorder), then a new-query button. Height is TAB_BAR_HEIGHT (34px);
+ * (drag-to-reorder: the dragged handle stays put, dimmed, and an accent line
+ * marks the gap it would drop into), then a new-query button. Height is TAB_BAR_HEIGHT (34px);
  * the bar background is a step darker than the content panel.
  *
  * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
@@ -66,13 +65,13 @@ export default function TabBar(): JSX.Element {
   const actions = useAppActions();
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const drag = useTabDragReorder(() => containerRef.current);
+  const dnd = useTabDragReorder(() => containerRef.current);
 
   return (
     <div
       ref={containerRef}
       data-testid="tab-bar"
-      className="bg-bar flex h-[34px] shrink-0 items-stretch"
+      className="bg-bar relative flex h-[34px] shrink-0 items-stretch"
     >
       {/* Explorer toggle: always present. */}
       <button
@@ -95,11 +94,18 @@ export default function TabBar(): JSX.Element {
           name={tab.name}
           kind={tab.kind}
           active={tab.id === activeTabId}
-          dragging={drag.draggingId === tab.id}
-          translate={drag.translate}
-          onPointerDown={drag.onPointerDown}
+          dragging={dnd.drag?.id === tab.id}
+          onPointerDown={dnd.onPointerDown}
         />
       ))}
+
+      {dnd.drag?.gap != null && (
+        <div
+          aria-hidden="true"
+          className="bg-accent pointer-events-none absolute top-1 bottom-1 z-10 w-0.5 -translate-x-1/2 rounded-full"
+          style={{ left: dnd.drag.lineLeft }}
+        />
+      )}
 
       {/* New query: a fresh, unsaved "track" query. (A new playlist comes
           from the explorer, which saves it as it's created.) */}

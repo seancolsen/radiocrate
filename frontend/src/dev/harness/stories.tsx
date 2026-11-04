@@ -643,6 +643,19 @@ export const STORIES: Record<string, Story> = {
     render: () => <TabBar />,
   },
 
+  // Three tabs to drag among: Lemonade, the Road Trip playlist, then a new
+  // query, active.
+  "tab-bar/reorder": {
+    width: 520,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      openLemonade(stores);
+      openRoadTrip(stores);
+      stores.app.actions.newQueryTab();
+    },
+    render: () => <TabBar />,
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
     width: 200,

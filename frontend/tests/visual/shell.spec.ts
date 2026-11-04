@@ -1,5 +1,24 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { SCHEMES, openStory, snapshot } from "./harness";
+
+function tabHandle(page: Page, name: string): Locator {
+  return page.locator("[data-tab-id]").filter({ hasText: name });
+}
+
+/** The tab bar's handles, left to right, by name. */
+async function tabOrder(page: Page): Promise<string[]> {
+  return page.locator("[data-tab-id]").allTextContents();
+}
+
+/** Presses on `from`'s handle and moves the mouse to `x` (a fraction of its
+ * width) across `to`'s, leaving the button down. */
+async function dragTab(page: Page, from: string, to: string, x: number) {
+  const a = (await tabHandle(page, from).boundingBox())!;
+  const b = (await tabHandle(page, to).boundingBox())!;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width * x, b.y + b.height / 2, { steps: 8 });
+}
 
 // The app's furniture, each piece on its own: the left sidebar in both of its
 // layouts, the explorer that fills it, the tab bar, the settings menu with the
@@ -62,6 +81,16 @@ for (const colorScheme of SCHEMES) {
     await expect(stage.getByText("Road Trip", { exact: true })).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("tab-bar/playlist", colorScheme),
+    );
+  });
+
+  // The new query dragged over Road Trip's left half: its handle stays where
+  // it is, dimmed, and the drop line stands between Lemonade and Road Trip.
+  test(`tab-bar/drop-line - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "tab-bar/reorder", colorScheme);
+    await dragTab(page, "new", "Road Trip", 0.25);
+    await expect(stage).toHaveScreenshot(
+      snapshot("tab-bar/drop-line", colorScheme),
     );
   });
 
@@ -232,3 +261,54 @@ for (const colorScheme of SCHEMES) {
     );
   });
 }
+
+test.describe("dragging a tab", () => {
+  const dropLine = (page: Page) =>
+    page.getByTestId("tab-bar").locator("[aria-hidden=true].bg-accent");
+
+  test.beforeEach(async ({ page }) => {
+    await openStory(page, "tab-bar/reorder", "light");
+  });
+
+  test("moves it only when it's let go, without selecting it", async ({
+    page,
+  }) => {
+    await dragTab(page, "new", "Lemonade", 0.25);
+    await expect(dropLine(page)).toBeVisible();
+    expect(await tabOrder(page)).toEqual(["Lemonade", "Road Trip", "new"]);
+    await page.mouse.up();
+    await expect(dropLine(page)).toHaveCount(0);
+    expect(await tabOrder(page)).toEqual(["new", "Lemonade", "Road Trip"]);
+
+    await dragTab(page, "new", "Road Trip", 0.75);
+    await page.mouse.up();
+    expect(await tabOrder(page)).toEqual(["Lemonade", "Road Trip", "new"]);
+
+    await dragTab(page, "Lemonade", "Road Trip", 0.6);
+    await page.mouse.up();
+    expect(await tabOrder(page)).toEqual(["Road Trip", "Lemonade", "new"]);
+    // The new query was active all along; no drag selected another tab.
+    await expect(tabHandle(page, "new").locator(".bg-accent")).toBeVisible();
+    await expect(
+      tabHandle(page, "Lemonade").locator(".bg-accent"),
+    ).toBeHidden();
+  });
+
+  test("beside the tab itself shows no line, and drops nothing", async ({
+    page,
+  }) => {
+    await dragTab(page, "Road Trip", "Road Trip", 0.9);
+    await expect(dropLine(page)).toHaveCount(0);
+    await page.mouse.up();
+    expect(await tabOrder(page)).toEqual(["Lemonade", "Road Trip", "new"]);
+  });
+
+  test("Escape cancels it", async ({ page }) => {
+    await dragTab(page, "Lemonade", "new", 0.75);
+    await expect(dropLine(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dropLine(page)).toHaveCount(0);
+    await page.mouse.up();
+    expect(await tabOrder(page)).toEqual(["Lemonade", "Road Trip", "new"]);
+  });
+});

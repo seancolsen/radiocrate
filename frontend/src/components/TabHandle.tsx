@@ -61,8 +61,8 @@ export default function TabHandle(props: {
   active: boolean;
   unsaved: boolean;
   renameable: boolean;
+  /** Whether it's the handle being dragged (which stays put, dimmed). */
   dragging: boolean;
-  translate: number;
   renaming: boolean;
   renameBuffer: string;
   onSelect: () => void;
@@ -82,15 +82,9 @@ export default function TabHandle(props: {
         {
           "bg-panel text-ink": props.active,
           "bg-bar text-ink-weak hover:bg-hover": !props.active,
-          "z-10 shadow-sm": props.dragging,
+          "opacity-50": props.dragging,
         },
       )}
-      style={{
-        transform: props.dragging
-          ? `translateX(${props.translate}px)`
-          : undefined,
-        transition: props.dragging ? "none" : undefined,
-      }}
       onPointerDown={(e) => props.onPointerDown(e)}
       onClick={() => props.onSelect()}
       onDoubleClick={() => props.renameable && props.onRenameStart()}
