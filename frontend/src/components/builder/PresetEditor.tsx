@@ -1,6 +1,9 @@
-import { useEffect, useRef, type JSX } from "react";
+import { useEffect, useMemo, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
+import { checkFragment } from "../../query/compile";
+import { asSection, type Section } from "../../query/definition";
 import {
+  selectPreset,
   selectPresetDirty,
   selectPresetEdit,
   type PresetEdit,
@@ -9,6 +12,9 @@ import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
 import { useElementWidth } from "../ui/useElementWidth";
+import { cx } from "../ui/cx";
+import DiagnosticMessage, { diagnosticPlace } from "./DiagnosticMessage";
+import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
 
 /** Inline detail editor for an expanded preset — in a query's builder, or in
  * the preset manager. A pink-tinted panel with an
@@ -21,6 +27,8 @@ import { useElementWidth } from "../ui/useElementWidth";
 export default function PresetEditor(props: { presetId: string }): JSX.Element {
   const edit = useApp((s) => selectPresetEdit(s, props.presetId));
   const dirty = useApp((s) => selectPresetDirty(s, props.presetId));
+  const baseTable = useApp((s) => selectPreset(s, props.presetId)?.baseTable);
+  const section = useApp((s) => selectPreset(s, props.presetId)?.section);
   const {
     beginPresetEdit,
     patchPresetEdit,
@@ -40,6 +48,9 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
 
   return (
     <PresetEditorPanel
+      presetId={props.presetId}
+      baseTable={baseTable ?? ""}
+      section={asSection(section ?? "filter")}
       edit={edit}
       dirty={dirty}
       onPatch={(patch) => patchPresetEdit(props.presetId, patch)}
@@ -52,8 +63,14 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
 /** The editor's panel, over any buffer: a saved preset's edits (above), or a
  * preset not yet created (the preset manager's drafts, which are always
  * "dirty" — their revert discards them and their save creates them, under
- * the labels given). `autoFocus` focuses the name field on mount. */
+ * the labels given). `autoFocus` focuses the name field on mount.
+ *
+ * The definition is checked as it's typed, compiled as `section` of a query
+ * on `baseTable`, and a problem with it shows under it. */
 export function PresetEditorPanel(props: {
+  presetId: string;
+  baseTable: string;
+  section: Section;
   edit: PresetEdit | undefined;
   dirty: boolean;
   onPatch: (patch: Partial<PresetEdit>) => void;
@@ -71,6 +88,24 @@ export function PresetEditorPanel(props: {
   const wrapDefault = useElementWidth(frameRef) < (dirty ? 428 : 342);
 
   const nameOk = (edit?.name.trim() ?? "") !== "";
+
+  const check = useCheckContext();
+  const schemaJson = check?.schemaJson;
+  const prelude = check?.prelude ?? "";
+  const definition = edit?.definition;
+  const { presetId, baseTable, section } = props;
+  const latest = useMemo(
+    () =>
+      schemaJson === undefined || definition === undefined || baseTable === ""
+        ? null
+        : checkFragment(schemaJson, prelude, baseTable, section, definition, {
+            kind: "preset",
+            id: presetId,
+            section,
+          }),
+    [schemaJson, prelude, baseTable, section, definition, presetId],
+  );
+  const problem = useSettledDiagnostic(latest);
 
   const applyByDefault = (
     <Checkbox
@@ -121,7 +156,13 @@ export function PresetEditorPanel(props: {
           {wrapDefault && applyByDefault}
           <textarea
             aria-label="Preset definition"
-            className="bg-panel border-edge text-ink focus:border-accent block w-full resize-none rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none"
+            aria-invalid={problem !== null}
+            className={cx(
+              "bg-panel text-ink block w-full resize-none rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none",
+              problem?.origin?.kind === "preset"
+                ? "border-danger"
+                : "border-edge focus:border-accent",
+            )}
             rows={Math.max(1, edit.definition.split("\n").length)}
             spellCheck={false}
             value={edit.definition}
@@ -129,6 +170,12 @@ export function PresetEditorPanel(props: {
               props.onPatch({ definition: e.currentTarget.value })
             }
           />
+          {problem && (
+            <DiagnosticMessage
+              diagnostic={problem}
+              place={diagnosticPlace(problem, edit.name.trim())}
+            />
+          )}
         </>
       )}
     </div>

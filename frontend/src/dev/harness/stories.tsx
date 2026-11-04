@@ -30,6 +30,7 @@ import {
   emptyDefinition,
   type QueryDefinition,
 } from "../../query/definition";
+import type { QueryDiagnostic } from "../../query/diagnostics";
 import {
   checkpoint,
   EMPTY_HISTORY,
@@ -256,6 +257,26 @@ function expandedVettedPreset(stores: Stores): string {
   stores.app.actions.toggleExpandPreset(id, VETTED_PRESET_ID);
   return id;
 }
+
+/** Puts `diagnostic` on tab `id`'s error strip, written straight into the
+ * store — turning it up through the actions would take the real compiler. */
+function showProblem(
+  stores: Stores,
+  id: string,
+  diagnostic: Omit<QueryDiagnostic, "hint" | "notes"> &
+    Partial<QueryDiagnostic>,
+): void {
+  stores.app.store.setState((s) => {
+    const page = s.pages[id];
+    if (page) {
+      page.diagnostic = castDraft({ hint: null, notes: [], ...diagnostic });
+    }
+  });
+}
+
+/** A prelude whose last definition is left open, as the prelude editor's
+ * error story holds it. */
+const BROKEN_PRELUDE = `${SETTINGS.querydown_prelude.default}\n#track.x = (`;
 
 /** Opens "Lemonade" and seeds a playing track — the now-playing bar's stories'
  * shared setup. `rowIndex: null` leaves the track deliberately unlocated in
@@ -666,6 +687,36 @@ export const STORIES: Record<string, Story> = {
       />
     ),
   },
+  // The prelude editor holding a prelude with a syntax error: the field
+  // bordered in red, the problem under it — located, with the line marked —
+  // and Save disabled.
+  "settings/prelude-problem": {
+    render: () => (
+      <SettingDialog
+        name={SETTINGS.querydown_prelude.name}
+        description={SETTINGS.querydown_prelude.description}
+        value={BROKEN_PRELUDE}
+        defaultValue={SETTINGS.querydown_prelude.default}
+        diagnose={(value) => ({
+          kind: "syntax",
+          reason:
+            "Unclosed `(`. Expected a matching `)` before the end of input.",
+          hint: null,
+          origin: { kind: "prelude" },
+          source: value,
+          range: { start: value.length - 1, end: value.length },
+          notes: [
+            {
+              range: { start: value.length, end: value.length },
+              message: "expected `)` here or earlier",
+            },
+          ],
+        })}
+        onSave={() => {}}
+        onClose={() => {}}
+      />
+    ),
+  },
   // The rebind dialog holding a chord another command already owns, so the
   // "currently bound to" warning shows too (⌘/Ctrl+S is "Tabs: Save active
   // tab").
@@ -823,6 +874,73 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.setResults(id, emptyCountResult(12));
       stores.app.actions.toggleBuilderSection(id, "filter");
       undoableFailedSave(stores, id, FILTER_DEF);
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // A syntax error in the open filter's own text: its input bordered in red,
+  // the Filter toggle marked, and the error strip under the builder with the
+  // line marked where the value is missing. No "Show": it's on screen.
+  "query-builder/filter-problem": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        filter: { ...FILTER_DEF.filter, custom: "jazz year:" },
+      });
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleBuilderSection(id, "filter");
+      showProblem(stores, id, {
+        kind: "syntax",
+        reason: "Unexpected end of input. Expected a value.",
+        origin: { kind: "custom", section: "filter" },
+        source: "jazz year:",
+        range: { start: 10, end: 10 },
+      });
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // A problem in a collapsed filter preset: its tab outlined in red, and the
+  // strip offering "Show" to expand it, with the place the bracket opened and
+  // the place it should have closed, and the compiler's hint.
+  "query-builder/preset-problem": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.actions.toggleBuilderSection(id, "filter");
+      const source = "rating.value:>=4 !++#tag{name:duplicate";
+      showProblem(stores, id, {
+        kind: "syntax",
+        reason:
+          "Unclosed `{`. Expected a matching `}` before the end of input.",
+        hint: "Add a `}` where the group should end.",
+        origin: { kind: "preset", id: VETTED_PRESET_ID, section: "filter" },
+        source,
+        range: { start: 24, end: 25 },
+        notes: [
+          {
+            range: { start: source.length, end: source.length },
+            message: "expected `}` here or earlier",
+          },
+        ],
+      });
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
+  // A problem the compiler can't locate yet, with every builder closed: just
+  // the strip, saying what's wrong — no section to mark, nothing to show.
+  "query-builder/compile-problem": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      showProblem(stores, id, {
+        kind: "compile",
+        reason: "Column `nope` not found within table `track`.",
+        origin: null,
+        source: "",
+        range: null,
+      });
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },

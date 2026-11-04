@@ -7,11 +7,13 @@ import { cx } from "../ui/cx";
  * to a one-line input's height; it gains a faint outline on hover and the pink
  * background when `expanded` (its bottom corners squared so it reads as joined to
  * the detail editor below). The built-in variant shows the preset name — beside
- * a Reshuffle button, given `onReshuffle` (Shuffle) — and never expands. */
+ * a Reshuffle button, given `onReshuffle` (Shuffle) — and never expands.
+ * `problem` outlines it in red: the error strip's problem is in this preset. */
 export default function PresetTab(props: {
   name: string;
   expanded?: boolean;
   builtin?: boolean;
+  problem?: boolean;
   onClick?: () => void;
   onReshuffle?: () => void;
 }): JSX.Element {
@@ -40,7 +42,9 @@ export default function PresetTab(props: {
       aria-expanded={props.expanded}
       className={cx("flex items-center gap-1.5 rounded px-[7px] py-1 text-sm", {
         "bg-preset rounded-b-none": props.expanded,
-        "hover:ring-preset ring-1 ring-transparent ring-inset": !props.expanded,
+        "hover:ring-preset ring-1 ring-transparent ring-inset":
+          !props.expanded && !props.problem,
+        "ring-danger ring-1 ring-inset": props.problem,
       })}
       onClick={() => props.onClick?.()}
     >

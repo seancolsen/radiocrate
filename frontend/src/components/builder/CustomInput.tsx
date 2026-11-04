@@ -7,7 +7,7 @@ import { cx } from "../ui/cx";
  * toolbar's builder sections and the record picker's search / sort / display
  * boxes. */
 const FIELD_CLASS =
-  "bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent block w-full rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none";
+  "bg-panel text-ink placeholder:text-ink-weak block w-full rounded-md border px-2.5 py-1.5 font-mono text-sm leading-5 outline-none";
 
 /** Assigns a `forwardRef` ref, whichever shape it was given — needed because
  * this component forwards to one of two element types (a callback or object
@@ -23,7 +23,8 @@ function assignRef<T>(ref: ForwardedRef<T>, el: T | null): void {
  * offered only to a caller that has somewhere to save to (`onSaveAsPreset`), and
  * is disabled until a base table is chosen (`canSave`). The ref forwards to the
  * underlying `<textarea>`/`<input>`, so a caller (a `query.focus_*` command's
- * builder) can focus it — see `useBuilderFocus`. */
+ * builder) can focus it — see `useBuilderFocus`. `invalid` borders it in red:
+ * the problem the error strip shows is in its text. */
 const CustomInput = forwardRef<
   HTMLTextAreaElement | HTMLInputElement,
   {
@@ -36,6 +37,7 @@ const CustomInput = forwardRef<
      * menu. */
     onSaveAsPreset?: () => void;
     canSave?: boolean;
+    invalid?: boolean;
     /** Renders an `<input>` instead of a `<textarea>`, so the field cannot hold
      * a newline at all — what the record picker's search box needs. */
     singleLine?: boolean;
@@ -46,6 +48,11 @@ const CustomInput = forwardRef<
 >(function CustomInput(props, ref) {
   const hasText = props.value.trim() !== "";
   const rows = Math.max(1, props.value.split("\n").length);
+  const field = cx(
+    FIELD_CLASS,
+    props.invalid ? "border-danger" : "border-edge focus:border-accent",
+    { "pr-9": hasText },
+  );
 
   return (
     <div className="relative w-full">
@@ -53,7 +60,8 @@ const CustomInput = forwardRef<
         <input
           ref={(el) => assignRef(ref, el)}
           type="text"
-          className={cx(FIELD_CLASS, { "pr-9": hasText })}
+          className={field}
+          aria-invalid={props.invalid}
           spellCheck={false}
           placeholder={props.hint}
           value={props.value}
@@ -63,7 +71,8 @@ const CustomInput = forwardRef<
       ) : (
         <textarea
           ref={(el) => assignRef(ref, el)}
-          className={cx(FIELD_CLASS, "resize-none", { "pr-9": hasText })}
+          className={cx(field, "resize-none")}
+          aria-invalid={props.invalid}
           rows={rows}
           spellCheck={false}
           placeholder={props.hint}

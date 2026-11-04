@@ -101,6 +101,18 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The prelude editor holding a prelude that doesn't parse: the problem
+  // under the field, and Save disabled.
+  test(`settings/prelude-problem - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "settings/prelude-problem", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("alert")).toContainText("Unclosed");
+    await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(dialog).toHaveScreenshot(
+      snapshot("settings/prelude-problem", colorScheme),
+    );
+  });
+
   // The rebind dialog, holding a chord another command already owns — so the
   // "currently bound to" warning shows too. Shot through the dialog: it renders
   // itself through a portal, outside the stage.

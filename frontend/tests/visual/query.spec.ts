@@ -36,6 +36,63 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A syntax error in the open filter's text: the input bordered in red, the
+  // Filter toggle marked, and the error strip with the line marked. Nothing to
+  // "Show": the problem is already on screen.
+  test(`query-builder/filter-problem - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "query-builder/filter-problem",
+      colorScheme,
+    );
+    const strip = stage.getByTestId("query-diagnostic");
+    await expect(strip).toContainText("line 1, column 11");
+    await expect(strip.getByRole("button", { name: "Show" })).toHaveCount(0);
+    await expect(stage.getByRole("textbox")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/filter-problem", colorScheme),
+    );
+  });
+
+  // A problem in a collapsed preset: its tab outlined in red, and "Show" on
+  // the strip, which expands it — at which the strip steps aside for the
+  // preset's own editor.
+  test(`query-builder/preset-problem - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "query-builder/preset-problem",
+      colorScheme,
+    );
+    const strip = stage.getByTestId("query-diagnostic");
+    await expect(strip).toContainText("Preset “vetted”");
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/preset-problem", colorScheme),
+    );
+    await strip.getByRole("button", { name: "Show" }).click();
+    await expect(
+      stage.getByRole("button", { name: "vetted", expanded: true }),
+    ).toBeVisible();
+    await expect(strip).toHaveCount(0);
+  });
+
+  // A problem with no location, every builder closed: the strip alone.
+  test(`query-builder/compile-problem - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "query-builder/compile-problem",
+      colorScheme,
+    );
+    await expect(stage.getByTestId("query-diagnostic")).toContainText(
+      "not found within table",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/compile-problem", colorScheme),
+    );
+  });
+
   // Compact (≤ 500px): the section buttons drop their labels.
   test(`query-builder/filter-open-narrow - ${colorScheme}`, async ({
     page,

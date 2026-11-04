@@ -11,6 +11,7 @@ import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
   selectMultiSelect,
+  selectPageDiagnostic,
   selectPageTab,
   selectRecordGroupsForRows,
   selectResultCount,
@@ -21,6 +22,7 @@ import {
   selectRowSelection,
   type RecordGroup,
 } from "../stores/app";
+import { cx } from "./ui/cx";
 import { recordIdentity, selectModifiedRecords } from "../stores/forms";
 import type { Stores } from "../stores/createStores";
 import { useApp, useAppActions, useStores } from "../stores/react";
@@ -161,6 +163,9 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     setResultsScroll,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
+  // While the error strip shows a problem, these rows are an earlier
+  // definition's: they stay usable, but fade back.
+  const stale = useApp((s) => selectPageDiagnostic(s, props.tabId) !== null);
   // A playlist's rows can be removed from it.
   const playlist = useApp(
     (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
@@ -444,7 +449,12 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
 
   return (
     <div className="bg-panel relative min-h-0 flex-1 overflow-hidden">
-      <canvas ref={canvasRef} className="block h-full w-full touch-none" />
+      <canvas
+        ref={canvasRef}
+        className={cx("block h-full w-full touch-none transition-opacity", {
+          "opacity-50": stale,
+        })}
+      />
       {multiSelect && (
         <MultiSelectToolbar ref={toolbarRef} tabId={props.tabId} />
       )}

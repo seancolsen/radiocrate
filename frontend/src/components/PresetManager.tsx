@@ -136,6 +136,9 @@ function PresetDraftRow(props: {
   return (
     <div className="bg-preset self-stretch rounded-md border border-transparent">
       <PresetEditorPanel
+        presetId={draft.id}
+        baseTable={table}
+        section={section}
         edit={draft}
         dirty
         autoFocus

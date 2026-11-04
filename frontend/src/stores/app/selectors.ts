@@ -16,6 +16,7 @@ import { resultToCsv } from "../../query/exportCsv";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
+import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QueryResult } from "../../query/result";
 import type { RowContext } from "../../query/rowDml";
 import {
@@ -179,6 +180,49 @@ export const selectCanExport = (s: AppState): boolean => {
  * Refresh icon. */
 export const selectRunning = (s: AppState, tabId: string): boolean =>
   s.pages[tabId]?.running ?? false;
+
+/** The problem with `tabId`'s query that its error strip shows, if any. */
+export const selectPageDiagnostic = (
+  s: AppState,
+  tabId: string,
+): QueryDiagnostic | null => s.pages[tabId]?.diagnostic ?? null;
+
+/** Which of `tabId`'s builder sections the problem it shows is in — the
+ * section toggle that's marked — or `"full"` for a full query's text. `null`
+ * when it shows none, or one that's in no section. */
+export const selectDiagnosticSection = (
+  s: AppState,
+  tabId: string,
+): Section | "full" | null => {
+  const origin = selectPageDiagnostic(s, tabId)?.origin;
+  if (origin?.kind === "custom" || origin?.kind === "preset") {
+    return origin.section;
+  }
+  return origin?.kind === "full" ? "full" : null;
+};
+
+/** Whether the problem `tabId` shows is in its own text for `editor`: a
+ * section's custom input, or (`"full"`) a full query's editor. */
+export const selectEditorHasDiagnostic = (
+  s: AppState,
+  tabId: string,
+  editor: Section | "full",
+): boolean => {
+  const origin = selectPageDiagnostic(s, tabId)?.origin;
+  return editor === "full"
+    ? origin?.kind === "full"
+    : origin?.kind === "custom" && origin.section === editor;
+};
+
+/** Whether the problem `tabId` shows is in preset `presetId`. */
+export const selectPresetHasDiagnostic = (
+  s: AppState,
+  tabId: string,
+  presetId: string,
+): boolean => {
+  const origin = selectPageDiagnostic(s, tabId)?.origin;
+  return origin?.kind === "preset" && origin.id === presetId;
+};
 
 /** Whether "Query: Convert to playlist" applies to `tabId`: a query tab
  * whose rows are tracks (they carry a track id column — what makes them

@@ -166,16 +166,19 @@ describe("stored playlist definitions", () => {
 
 describe("assemblePlaylist", () => {
   it("resolves every section, with playlist order resolving to nothing", () => {
-    expect(
-      assemblePlaylist(
-        {
-          filter: { custom: " year:>1990 ", presets: ["liked", "recent"] },
-          sort: playlistOrderContent(),
-          display: { preset: "track-display" },
-        },
-        PRESETS,
-      ),
-    ).toEqual({
+    const parts = assemblePlaylist(
+      {
+        filter: { custom: " year:>1990 ", presets: ["liked", "recent"] },
+        sort: playlistOrderContent(),
+        display: { preset: "track-display" },
+      },
+      PRESETS,
+    );
+    expect({
+      filter: parts.filter.text,
+      sort: parts.sort.text,
+      display: parts.display.text,
+    }).toEqual({
       filter: "year:>1990\nrating:>=4\nadded:>2026-01-01",
       sort: "",
       display: "$title\n$year",
@@ -185,11 +188,11 @@ describe("assemblePlaylist", () => {
   it("resolves shuffle and preset sorts", () => {
     const def = newPlaylistDefinition(PRESETS);
     def.sort = { builtin: { preset: "shuffle", seed: "SEED" } };
-    expect(assemblePlaylist(def, PRESETS).sort).toBe(
+    expect(assemblePlaylist(def, PRESETS).sort.text).toBe(
       "\\\\id|concat('SEED')|md5",
     );
     def.sort = { preset: "by-title" };
-    expect(assemblePlaylist(def, PRESETS).sort).toBe("\\\\title");
+    expect(assemblePlaylist(def, PRESETS).sort.text).toBe("\\\\title");
   });
 
   it("throws on a dangling preset", () => {

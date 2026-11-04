@@ -7,10 +7,20 @@ import init from "querydown-js";
 import wasmUrl from "querydown-js/querydown_js_bg.wasm?url";
 
 let ready: Promise<void> | undefined;
+let loaded = false;
 
 /** Initializes the Querydown wasm module once, returning a promise that resolves
  * when it is ready to compile. Idempotent — repeated calls share one init. */
 export function querydownReady(): Promise<void> {
-  ready ??= init({ module_or_path: wasmUrl }).then(() => undefined);
+  ready ??= init({ module_or_path: wasmUrl }).then(() => {
+    loaded = true;
+  });
   return ready;
+}
+
+/** Whether the module has finished initializing, so a compile can run
+ * synchronously right now — what checking text as it's typed needs, where
+ * waiting isn't an option. Starts nothing: see {@link querydownReady}. */
+export function querydownLoaded(): boolean {
+  return loaded;
 }

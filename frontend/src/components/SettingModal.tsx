@@ -1,8 +1,25 @@
-import { useLayoutEffect, useRef, useState, type JSX } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+} from "react";
+import { checkPrelude } from "../query/compile";
+import type { QueryDiagnostic } from "../query/diagnostics";
 import { selectSettingValue } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import { SETTINGS, type SettingKey } from "../state/settings";
+import DiagnosticMessage, {
+  diagnosticPlace,
+} from "./builder/DiagnosticMessage";
+import {
+  useCheckContext,
+  useSettledDiagnostic,
+} from "./builder/useDiagnostics";
 import { Modal } from "./ui/Modal";
+import { cx } from "./ui/cx";
 
 /** The editor for one setting: its name, what it does, and its value in a
  * monospace text area — the values here are code (the Querydown prelude), not
@@ -13,12 +30,16 @@ import { Modal } from "./ui/Modal";
  * Edits are held in a local draft until Save, so Cancel (and Escape) leave the
  * stored value alone. "Reset to default" only fills the draft with the default —
  * saving that is what actually clears the customization, since the store records
- * a value equal to the default as no override at all. */
+ * a value equal to the default as no override at all.
+ *
+ * `diagnose`, given, checks the draft as it's typed: a problem with it shows
+ * under the field, and keeps it from being saved. */
 export function SettingDialog(props: {
   name: string;
   description: string;
   value: string;
   defaultValue: string;
+  diagnose?: (value: string) => QueryDiagnostic | null;
   onSave: (value: string) => void;
   onClose: () => void;
 }): JSX.Element {
@@ -29,6 +50,9 @@ export function SettingDialog(props: {
   const draft = edited ?? props.value;
   const isDefault = draft === props.defaultValue;
   const changed = draft !== props.value;
+  const { diagnose } = props;
+  const latest = useMemo(() => diagnose?.(draft) ?? null, [diagnose, draft]);
+  const problem = useSettledDiagnostic(latest);
 
   // Focus the field, but at the *top* of the value: a textarea autofocused with
   // content lands the caret at the end and scrolls there, which for a prelude
@@ -50,10 +74,22 @@ export function SettingDialog(props: {
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        className="bg-sheet border-edge text-ink focus:border-accent h-64 max-h-[60vh] w-full resize-y rounded-md border p-3 font-mono text-xs leading-5 outline-none"
+        aria-invalid={problem !== null}
+        className={cx(
+          "bg-sheet text-ink h-64 max-h-[60vh] w-full resize-y rounded-md border p-3 font-mono text-xs leading-5 outline-none",
+          problem ? "border-danger" : "border-edge focus:border-accent",
+        )}
         value={draft}
         onChange={(e) => setEdited(e.currentTarget.value)}
       />
+      {problem && (
+        <div className="mt-2">
+          <DiagnosticMessage
+            diagnostic={problem}
+            place={diagnosticPlace(problem)}
+          />
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
@@ -72,7 +108,8 @@ export function SettingDialog(props: {
         </button>
         <button
           type="button"
-          disabled={!changed}
+          disabled={!changed || latest !== null}
+          title={latest ? "Fix the problem to save" : undefined}
           className="bg-accent text-panel rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
           onClick={() => props.onSave(draft)}
         >
@@ -90,6 +127,14 @@ function SettingModalBody(props: { settingKey: SettingKey }): JSX.Element {
   const value = useApp((s) => selectSettingValue(s, props.settingKey));
   const actions = useAppActions();
   const definition = SETTINGS[props.settingKey];
+  // The prelude is checked as it's typed; nothing else is Querydown.
+  const schemaJson = useCheckContext()?.schemaJson;
+  const isPrelude = props.settingKey === "querydown_prelude";
+  const diagnose = useCallback(
+    (value: string) =>
+      schemaJson === undefined ? null : checkPrelude(schemaJson, value),
+    [schemaJson],
+  );
 
   return (
     <SettingDialog
@@ -97,6 +142,7 @@ function SettingModalBody(props: { settingKey: SettingKey }): JSX.Element {
       description={definition.description}
       value={value}
       defaultValue={definition.default}
+      diagnose={isPrelude ? diagnose : undefined}
       onSave={(next) => {
         actions.saveSetting(props.settingKey, next);
         actions.closeSetting();

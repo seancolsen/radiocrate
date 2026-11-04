@@ -7,13 +7,16 @@ import { cx } from "./cx";
  * section via `onMainClick`. While `active` it takes the blue
  * fill and, unless `showMenu` is false, grows an embedded ⋮ trigger (set off by a
  * lighter tint) that opens the section's options `menu`. `showLabel` drops the
- * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮). */
+ * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮).
+ * `alert` marks it with a red dot: the error strip's problem is in its
+ * section. */
 export default function SplitButton(props: {
   icon: IconComponent;
   label: string;
   active: boolean;
   showLabel?: boolean;
   showMenu?: boolean;
+  alert?: boolean;
   onMainClick: () => void;
   menu?: ReactNode;
 }): JSX.Element {
@@ -40,8 +43,14 @@ export default function SplitButton(props: {
         })}
         onClick={() => props.onMainClick()}
       >
-        <span className="text-ink-weak flex size-4 items-center justify-center">
+        <span className="text-ink-weak relative flex size-4 items-center justify-center">
           <Icon className="size-4" />
+          {props.alert && (
+            <span
+              aria-hidden="true"
+              className="bg-danger ring-panel absolute -top-0.5 -right-0.5 size-[7px] rounded-full ring-[1.5px]"
+            />
+          )}
         </span>
         {showLabel && (
           <span className="text-ink text-[13px] whitespace-nowrap">

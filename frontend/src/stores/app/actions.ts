@@ -104,7 +104,14 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import { presetTables } from "../../query/presetGroups";
-import { querydownReady } from "../../query/querydown";
+import {
+  DIAGNOSTIC_SETTLE_MS,
+  nextShown,
+  shownProblem,
+  toDiagnostic,
+  type QueryDiagnostic,
+} from "../../query/diagnostics";
+import { querydownLoaded, querydownReady } from "../../query/querydown";
 import { fetchRatings } from "../../query/ratings";
 import {
   artistAlbumsFilter,
@@ -620,6 +627,10 @@ export interface AppActions {
   toggleFullEditor: (tabId: string) => void;
   /** Toggle a preset's inline editor open/closed. */
   toggleExpandPreset: (tabId: string, presetId: string) => void;
+  /** Take the user to the editor holding the problem page `tabId` shows —
+   * the error strip's "Show": its section opened with the caret in it, its
+   * preset expanded, or the prelude's setting raised. */
+  revealDiagnostic: (tabId: string) => void;
 
   /** Move a tab's query onto another base table, keeping the hand-written filter
    * and reseeding everything else from the new table's default presets. On a
@@ -862,6 +873,64 @@ export function createAppActions(
         runQuery(tabId);
       }, RUN_DEBOUNCE_MS),
     );
+  };
+
+  // Problems with what's being typed, keyed by tab id, each waiting for a
+  // pause in the typing before it's shown (see `nextShown`). Non-reactive:
+  // the page's `diagnostic` is what renders.
+  const settleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const cancelSettle = (tabId: string) => {
+    const pending = settleTimers.get(tabId);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      settleTimers.delete(tabId);
+    }
+  };
+
+  /** Shows `diagnostic` on page `tabId` now (`null` clears it), dropping any
+   * problem that was waiting to show. */
+  const showDiagnostic = (tabId: string, problem: QueryDiagnostic | null) => {
+    cancelSettle(tabId);
+    const diagnostic = shownProblem(problem);
+    if ((get().pages[tabId]?.diagnostic ?? null) === diagnostic) return;
+    set((s) => {
+      // Not `pageDraft`: a tab closed meanwhile took its page with it.
+      const page = s.pages[tabId];
+      if (page) page.diagnostic = castDraft(diagnostic);
+    });
+  };
+
+  /** Brings page `tabId`'s error strip up to date with `latest`, the problem
+   * (or none) with the definition just typed — slow to complain, quick to
+   * forgive (see `nextShown`). */
+  const settleDiagnostic = (tabId: string, latest: QueryDiagnostic | null) => {
+    const shown = get().pages[tabId]?.diagnostic ?? null;
+    const next = nextShown(shown, shownProblem(latest));
+    if (!next.settle) {
+      showDiagnostic(tabId, next.show);
+      return;
+    }
+    cancelSettle(tabId);
+    settleTimers.set(
+      tabId,
+      setTimeout(() => showDiagnostic(tabId, latest), DIAGNOSTIC_SETTLE_MS),
+    );
+  };
+
+  /** Compiles page `tabId`'s working definition there and then, for what
+   * it's worth knowing before running it: `null` if it compiles, the problem
+   * if it doesn't, or `undefined` if there's no telling yet (the compiler or
+   * the schema is still loading). */
+  const checkLive = (tabId: string): QueryDiagnostic | null | undefined => {
+    const t = selectPageTab(get(), tabId);
+    const schemaJson = get().schema.json;
+    if (!t || schemaJson === undefined || !querydownLoaded()) return undefined;
+    try {
+      compilePage(t, schemaJson);
+      return null;
+    } catch (err) {
+      return toDiagnostic(err);
+    }
   };
 
   // Saved queries' edits, waiting for the app to go quiet before they're
@@ -1130,6 +1199,11 @@ export function createAppActions(
     set((s) => {
       pageDraft(s, tabId).running = true;
     });
+    // The working definition this run compiled (once it has), and whether
+    // it's still the one in force — a run's verdict on any other is stale.
+    let compiled: PageDefinition | undefined;
+    const isLive = (def: PageDefinition | undefined) =>
+      def === undefined || selectPageTab(get(), tabId)?.live === def;
     void (async () => {
       try {
         await querydownReady();
@@ -1138,6 +1212,7 @@ export function createAppActions(
         const current = selectPageTab(get(), tabId);
         const schemaJson = get().schema.json;
         if (!current || schemaJson === undefined) return;
+        compiled = current.live;
         const { sql, columnAnnotations } = compilePage(current, schemaJson);
         const table = await runSql(sql);
         // Decode the result once, here — never per resize/frame (§6). Display
@@ -1164,6 +1239,7 @@ export function createAppActions(
         set((s) => {
           pageDraft(s, tabId).runFailed = false;
         });
+        if (isLive(compiled)) showDiagnostic(tabId, null);
         if (refresh && sameSql && page?.lineage !== undefined) {
           // Identical SQL maps its columns identically, so the mapping the tab
           // already holds is the mapping these rows want — and re-deriving it
@@ -1177,13 +1253,15 @@ export function createAppActions(
           void analyzeLineage(tabId, sql, result, token);
         }
       } catch (err) {
-        // No error UI this phase — console only (see plan non-goals).
         console.error("query run failed", err);
         rearranged.delete(tabId);
         set((s) => {
           const page = s.pages[tabId];
           if (page) page.runFailed = true;
         });
+        // Shown at once: nobody's typing it. Unless the definition has moved
+        // on since, when the problem is with text that's no longer there.
+        if (isLive(compiled)) showDiagnostic(tabId, toDiagnostic(err));
       } finally {
         set((s) => {
           // Not `pageDraft`: a tab closed mid-run took its page with it, and
@@ -1215,8 +1293,27 @@ export function createAppActions(
     deferSave(tabId);
     if (run === "held") return;
     touch(tabId);
-    if (run === "now") runQuery(tabId);
-    else scheduleRun(tabId);
+    if (run === "now") {
+      runQuery(tabId);
+      return;
+    }
+    // Typed text is checked as it's typed. Text that doesn't compile isn't
+    // run at all — there'd be nothing to show for it but the same error — and
+    // a run of what was there a keystroke ago, still waiting, is called off.
+    const problem = checkLive(tabId);
+    if (problem === undefined) {
+      scheduleRun(tabId);
+      return;
+    }
+    settleDiagnostic(tabId, problem);
+    if (problem === null) {
+      scheduleRun(tabId);
+      return;
+    }
+    cancelScheduledRun(tabId);
+    set((s) => {
+      pageDraft(s, tabId).runFailed = true;
+    });
   };
 
   /** Ends `tabId`'s pristine state, if it's in it: the user has interacted
@@ -1427,6 +1524,7 @@ export function createAppActions(
     saves.flush(id);
     autoRun.delete(id);
     cancelScheduledRun(id);
+    cancelSettle(id);
     rowClickAnchor.delete(id);
     rowSelectionLead.delete(id);
     runTokens.delete(id);
@@ -2989,6 +3087,23 @@ export function createAppActions(
         const cur = s.pages[tabId]?.expandedPreset ?? null;
         pageDraft(s, tabId).expandedPreset = cur === presetId ? null : presetId;
       });
+    },
+    revealDiagnostic: (tabId) => {
+      const origin = get().pages[tabId]?.diagnostic?.origin;
+      if (!origin) return;
+      if (origin.kind === "prelude") {
+        actions.openSetting("querydown_prelude");
+      } else if (origin.kind === "full") {
+        // There's only the one editor; any section's focus request opens it.
+        actions.focusBuilderSection(tabId, "filter");
+      } else {
+        actions.focusBuilderSection(tabId, origin.section);
+        if (origin.kind === "preset") {
+          set((s) => {
+            pageDraft(s, tabId).expandedPreset = origin.id;
+          });
+        }
+      }
     },
 
     setBase: (tabId, table) => {

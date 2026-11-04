@@ -1,5 +1,5 @@
 import { useRef, type JSX } from "react";
-import { selectQueryTab } from "../../stores/app";
+import { selectEditorHasDiagnostic, selectQueryTab } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
 import { useBuilderFocus } from "./useBuilderFocus";
@@ -10,6 +10,9 @@ import { useBuilderFocus } from "./useBuilderFocus";
  * are fragments of a section. */
 export default function FullBuilder(props: { tabId: string }): JSX.Element {
   const text = useApp((s) => selectQueryTab(s, props.tabId)?.live.full ?? "");
+  const invalid = useApp((s) =>
+    selectEditorHasDiagnostic(s, props.tabId, "full"),
+  );
   const { setFullText } = useAppActions();
 
   // The `query.focus_*` commands have no section to aim at here, so any of
@@ -23,6 +26,7 @@ export default function FullBuilder(props: { tabId: string }): JSX.Element {
       ref={inputRef}
       value={text}
       hint="Querydown"
+      invalid={invalid}
       onInput={(t) => setFullText(props.tabId, t)}
       onClear={() => setFullText(props.tabId, "")}
     />

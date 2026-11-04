@@ -1,8 +1,10 @@
 import { useRef, type JSX } from "react";
 import {
+  selectEditorHasDiagnostic,
   selectExpandedPreset,
   selectPageBase,
   selectPageSections,
+  selectPresetHasDiagnostic,
   selectPresetName,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
@@ -20,11 +22,15 @@ function FilterPresetTab(props: { tabId: string; id: string }): JSX.Element {
   const expanded = useApp(
     (s) => selectExpandedPreset(s, props.tabId) === props.id,
   );
+  const problem = useApp((s) =>
+    selectPresetHasDiagnostic(s, props.tabId, props.id),
+  );
   const { toggleExpandPreset } = useAppActions();
   return (
     <PresetTab
       name={name}
       expanded={expanded}
+      problem={problem}
       onClick={() => toggleExpandPreset(props.tabId, props.id)}
     />
   );
@@ -40,6 +46,9 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const canSave = useApp((s) => selectPageBase(s, props.tabId) !== "");
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
+  const invalid = useApp((s) =>
+    selectEditorHasDiagnostic(s, props.tabId, "filter"),
+  );
   const { setFilterCustom, clearFilterCustom, openPresetSave } =
     useAppActions();
 
@@ -62,6 +71,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
             ref={inputRef}
             value={live?.filter.custom ?? ""}
             hint="Filter"
+            invalid={invalid}
             canSave={canSave}
             onInput={(t) => setFilterCustom(props.tabId, t)}
             onClear={() => clearFilterCustom(props.tabId)}

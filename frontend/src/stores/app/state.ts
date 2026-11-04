@@ -10,6 +10,7 @@ import type { AudioQualityPref } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
+import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { PageDefinition, PlaylistDefinition } from "../../query/playlist";
 import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
@@ -365,6 +366,13 @@ export interface QueryPageState {
    * if any, are then an earlier run's, so nothing is built from them that has
    * to match the definition ("Query: Convert to playlist"). */
   runFailed: boolean;
+  /** The problem with the page's query that the error strip shows, if any:
+   * why it didn't compile, or why the database refused it. Shown at once when
+   * a run turns it up; a problem with what's being typed waits for a pause in
+   * the typing first, and is cleared the moment the text is fixed (see
+   * `nextShown`). While one shows, the rows on screen are an earlier
+   * definition's. */
+  diagnostic: QueryDiagnostic | null;
   /** The open builder section (null = builder closed). */
   builderSection: Section | null;
   /** Whether the whole-query Querydown editor is open. Kept apart from
@@ -393,6 +401,7 @@ export function emptyPage(): QueryPageState {
     recordEditor: null,
     running: false,
     runFailed: false,
+    diagnostic: null,
     builderSection: null,
     fullEditorOpen: false,
     expandedPreset: null,

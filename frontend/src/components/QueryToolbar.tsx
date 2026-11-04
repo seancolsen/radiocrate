@@ -5,6 +5,7 @@ import {
   selectBuilderSection,
   selectCanRedo,
   selectCanUndo,
+  selectDiagnosticSection,
   selectFullEditorOpen,
   selectIsFullQuery,
   selectIsUnsaved,
@@ -21,6 +22,7 @@ import PageActionsMenu from "./PageActionsMenu";
 import SectionOptionsMenu from "./builder/SectionOptionsMenu";
 import QueryBuilder from "./builder/QueryBuilder";
 import PresetSaveModal from "./PresetSaveModal";
+import QueryDiagnosticBar from "./QueryDiagnosticBar";
 import ViewSqlModal from "./ViewSqlModal";
 import { cx } from "./ui/cx";
 import { useElementWidth } from "./ui/useElementWidth";
@@ -67,6 +69,9 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
   );
   const builderOpen = fullMode ? fullEditorOpen : section !== null;
+  // The section whose toggle is marked: the one the error strip's problem is
+  // in.
+  const problemSection = useApp((s) => selectDiagnosticSection(s, props.tabId));
   const {
     saveQuery,
     runQuery,
@@ -111,6 +116,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
             active={fullEditorOpen}
             showLabel={!compact}
             showMenu={false}
+            alert={problemSection === "full"}
             onMainClick={() => toggleFullEditor(props.tabId)}
           />
         ) : (
@@ -121,6 +127,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
               label={sectionLabel(s.section)}
               active={section === s.section}
               showLabel={!compact}
+              alert={problemSection === s.section}
               onMainClick={() => toggleBuilderSection(props.tabId, s.section)}
               menu={
                 <SectionOptionsMenu tabId={props.tabId} section={s.section} />
@@ -173,6 +180,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
       </div>
 
       {builderOpen && <QueryBuilder tabId={props.tabId} />}
+      <QueryDiagnosticBar tabId={props.tabId} />
 
       <PresetSaveModal tabId={props.tabId} />
       <ViewSqlModal />

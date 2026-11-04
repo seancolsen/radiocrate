@@ -1,9 +1,11 @@
 import { useRef, type JSX } from "react";
 import { sectionLabel } from "../../query/definition";
 import {
+  selectEditorHasDiagnostic,
   selectExpandedPreset,
   selectPageBase,
   selectPageSections,
+  selectPresetHasDiagnostic,
   selectPresetName,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
@@ -26,9 +28,15 @@ export default function SingleBuilder(props: {
   );
   const base = useApp((s) => selectPageBase(s, props.tabId));
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
+  const invalid = useApp((s) =>
+    selectEditorHasDiagnostic(s, props.tabId, props.section),
+  );
   const presetId = content && "preset" in content ? content.preset : undefined;
   const presetName = useApp((s) =>
     presetId ? selectPresetName(s, presetId) : "",
+  );
+  const presetProblem = useApp((s) =>
+    presetId ? selectPresetHasDiagnostic(s, props.tabId, presetId) : false,
   );
   const {
     setSectionCustomText,
@@ -51,6 +59,7 @@ export default function SingleBuilder(props: {
           ref={inputRef}
           value={content.custom}
           hint={sectionLabel(props.section)}
+          invalid={invalid}
           canSave={base !== ""}
           onInput={(t) => setSectionCustomText(props.tabId, props.section, t)}
           onClear={() => setSectionCustomText(props.tabId, props.section, "")}
@@ -63,6 +72,7 @@ export default function SingleBuilder(props: {
             <PresetTab
               name={presetName}
               expanded={expandedPreset === content.preset}
+              problem={presetProblem}
               onClick={() => toggleExpandPreset(props.tabId, content.preset)}
             />
           </div>

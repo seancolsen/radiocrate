@@ -6,6 +6,15 @@
 // query (full mode). This is pure string manipulation: no compiler, no schema.
 
 import type { Preset } from "api-client";
+import { definitionError } from "./diagnostics";
+import {
+  fromSource,
+  joinMapped,
+  trimMapped,
+  unmapped,
+  type Mapped,
+  type SourceOrigin,
+} from "./sourceMap";
 
 /** A sort or display section: hand-written Querydown (`custom`), a reference to
  * a saved preset (`preset`), or a built-in parameterized preset (`builtin`).
@@ -222,15 +231,16 @@ export function definitionFromStored(raw: string): QueryDefinition {
 }
 
 /** What `assemble` resolves a definition into for compilation: independently
- * parsed sections (sectioned mode) or one whole-query string (full mode). */
+ * parsed sections (sectioned mode) or one whole-query string (full mode), each
+ * mapped back to the editors it came from. */
 export type CompileSource =
-  | { kind: "full"; text: string }
+  | { kind: "full"; text: Mapped }
   | {
       kind: "sections";
       base: string;
-      filter: string;
-      sort: string;
-      display: string;
+      filter: Mapped;
+      sort: Mapped;
+      display: Mapped;
     };
 
 /** Querydown definitions (RadioCrate's computed columns + custom comparisons)
@@ -289,24 +299,38 @@ function builtinQuerydown(b: BuiltinPreset): string {
   return `\\\\id|concat('${b.seed}')|md5`;
 }
 
-function presetDefinition(presets: readonly Preset[], id: string): string {
+/** Preset `id`'s definition, as used in `section`, trimmed. Throws on a
+ * dangling reference. */
+function presetFragment(
+  presets: readonly Preset[],
+  id: string,
+  section: Section,
+): Mapped {
+  const origin: SourceOrigin = { kind: "preset", id, section };
   const found = presets.find((p) => p.id === id);
   if (!found) {
-    throw new Error("This query references a preset that no longer exists.");
+    throw definitionError(
+      "definition",
+      "This query references a preset that no longer exists.",
+      origin,
+    );
   }
-  return found.definition;
+  return trimMapped(fromSource(found.definition, origin));
 }
 
-/** Resolves a sort/display `SectionContent` to its Querydown fragment. Throws
- * on a dangling preset reference. */
+/** Resolves a sort/display `SectionContent` to its Querydown fragment, trimmed.
+ * Throws on a dangling preset reference. */
 export function resolveSection(
   content: SectionContent,
   presets: readonly Preset[],
-): string {
-  if ("custom" in content) return content.custom.trim();
+  section: "sort" | "display",
+): Mapped {
+  if ("custom" in content) {
+    return trimMapped(fromSource(content.custom, { kind: "custom", section }));
+  }
   if ("preset" in content)
-    return presetDefinition(presets, content.preset).trim();
-  return builtinQuerydown(content.builtin);
+    return presetFragment(presets, content.preset, section);
+  return unmapped(builtinQuerydown(content.builtin));
 }
 
 /** The Querydown text a sort/display section resolves to, used to seed the
@@ -333,37 +357,46 @@ export function assemble(
   presets: Preset[],
 ): CompileSource {
   if (def.full != null) {
-    const text = def.full.trim();
-    if (text === "") throw new Error("The query is empty.");
+    const text = trimMapped(fromSource(def.full, { kind: "full" }));
+    if (text.text === "") {
+      throw definitionError("incomplete", "The query is empty.", {
+        kind: "full",
+      });
+    }
     return { kind: "full", text };
   }
   const base = def.base.trim();
-  if (base === "") throw new Error("No base table selected.");
+  if (base === "") {
+    throw definitionError("incomplete", "No base table selected.");
+  }
 
   return {
     kind: "sections",
     base,
     filter: resolveFilter(def.filter, presets),
-    sort: resolveSection(def.sort, presets),
-    display: resolveSection(def.display, presets),
+    sort: resolveSection(def.sort, presets, "sort"),
+    display: resolveSection(def.display, presets, "display"),
   };
 }
 
 /** Resolves the filter section to its Querydown fragment: the custom
- * conditions and each referenced preset's fragment, newline-joined (so they
- * AND together). Throws on a dangling preset reference. */
+ * conditions and each referenced preset's fragment, each trimmed, then
+ * newline-joined (so they AND together). Throws on a dangling preset
+ * reference. */
 export function resolveFilter(
   filter: FilterParts,
   presets: readonly Preset[],
-): string {
-  const parts: string[] = [];
-  const custom = filter.custom.trim();
-  if (custom !== "") parts.push(custom);
+): Mapped {
+  const parts: Mapped[] = [];
+  const custom = trimMapped(
+    fromSource(filter.custom, { kind: "custom", section: "filter" }),
+  );
+  if (custom.text !== "") parts.push(custom);
   for (const id of filter.presets) {
-    const fragment = presetDefinition(presets, id).trim();
-    if (fragment !== "") parts.push(fragment);
+    const fragment = presetFragment(presets, id, "filter");
+    if (fragment.text !== "") parts.push(fragment);
   }
-  return parts.join("\n");
+  return joinMapped(parts, "\n");
 }
 
 /** A definition flattened into one hand-written Querydown query — what the

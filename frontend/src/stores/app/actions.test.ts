@@ -58,6 +58,7 @@ vi.mock("../../query/ratings", async (importOriginal) => {
 // the rest of its module real via `importOriginal`.
 vi.mock("../../query/querydown", () => ({
   querydownReady: vi.fn(() => Promise.resolve()),
+  querydownLoaded: vi.fn(() => true),
 }));
 vi.mock("../../query/compile", () => ({
   compileSavedQuery: vi.fn(() => ({ sql: "select 1", columnAnnotations: [] })),
@@ -111,6 +112,12 @@ import { fetchMaxPosition, fetchPlaylistEntries } from "../../api/playlist";
 import { runSql } from "../../api/query";
 import { fetchRatings } from "../../query/ratings";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
+import {
+  DIAGNOSTIC_SETTLE_MS,
+  definitionError,
+  DiagnosticError,
+  type QueryDiagnostic,
+} from "../../query/diagnostics";
 import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
 import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
@@ -1093,7 +1100,7 @@ describe("a debounced edit", () => {
       const bundle = createAppStore(fakeEnv());
       openQueryTab(bundle, "a");
       bundle.actions.setSchemaJson("{}");
-      vi.mocked(compileSavedQuery).mockClear();
+      vi.mocked(runSql).mockClear();
 
       bundle.actions.setFilterCustom("a", "f");
       bundle.actions.setFilterCustom("a", "fo");
@@ -1101,10 +1108,136 @@ describe("a debounced edit", () => {
 
       await vi.advanceTimersByTimeAsync(300);
 
-      expect(compileSavedQuery).toHaveBeenCalledTimes(1);
+      expect(runSql).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("a problem with the query", () => {
+  let bundle: AppStoreBundle;
+  const diagnostic = () => bundle.store.getState().pages.a?.diagnostic ?? null;
+  const problem = (reason: string): QueryDiagnostic => ({
+    kind: "syntax",
+    reason,
+    hint: null,
+    origin: { kind: "custom", section: "filter" },
+    source: "title:",
+    range: { start: 6, end: 6 },
+    notes: [],
+  });
+  /** Makes the next compiles fail with `reason`, until `compiles()`. */
+  const failsWith = (reason: string) =>
+    vi.mocked(compileSavedQuery).mockImplementation(() => {
+      throw new DiagnosticError(problem(reason));
+    });
+  const compiles = () =>
+    vi
+      .mocked(compileSavedQuery)
+      .mockImplementation(() => ({ sql: "select 1", columnAnnotations: [] }));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setSchemaJson("{}");
+    vi.mocked(runSql).mockClear();
+  });
+  afterEach(() => {
+    compiles();
+    vi.mocked(runSql).mockReset();
+    vi.mocked(runSql).mockResolvedValue({} as never);
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("isn't run, and shows once the typing pauses", async () => {
+    failsWith("Expected a value.");
+    bundle.actions.setFilterCustom("a", "title:");
+    expect(diagnostic()).toBeNull();
+    expect(bundle.store.getState().pages.a?.runFailed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS);
+    expect(diagnostic()?.reason).toBe("Expected a value.");
+    expect(runSql).not.toHaveBeenCalled();
+  });
+
+  it("waits again for each keystroke that changes it", async () => {
+    failsWith("Expected a value.");
+    bundle.actions.setFilterCustom("a", "title:");
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS - 100);
+    failsWith("Unterminated string.");
+    bundle.actions.setFilterCustom("a", 'title:"');
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS - 100);
+    expect(diagnostic()).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(diagnostic()?.reason).toBe("Unterminated string.");
+  });
+
+  it("follows the same problem along without waiting", async () => {
+    failsWith("Unterminated string.");
+    bundle.actions.setFilterCustom("a", 'title:"');
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS);
+    const first = diagnostic();
+    bundle.actions.setFilterCustom("a", 'title:"x');
+    expect(diagnostic()).not.toBe(first);
+    expect(diagnostic()?.reason).toBe("Unterminated string.");
+  });
+
+  it("clears the moment the text is fixed, and runs it", async () => {
+    failsWith("Expected a value.");
+    bundle.actions.setFilterCustom("a", "title:");
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS);
+    compiles();
+    bundle.actions.setFilterCustom("a", "title:x");
+    expect(diagnostic()).toBeNull();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("never shows one fixed before the typing paused", async () => {
+    failsWith("Expected a value.");
+    bundle.actions.setFilterCustom("a", "title:");
+    compiles();
+    bundle.actions.setFilterCustom("a", "title:x");
+    await vi.advanceTimersByTimeAsync(DIAGNOSTIC_SETTLE_MS);
+    expect(diagnostic()).toBeNull();
+  });
+
+  it("shows at once when a run turns it up", async () => {
+    failsWith("Column `nope` not found within table `track`.");
+    bundle.actions.runQuery("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostic()?.reason).toMatch(/nope/);
+  });
+
+  it("isn't made of a query that's only incomplete", async () => {
+    vi.mocked(compileSavedQuery).mockImplementation(() => {
+      throw definitionError("incomplete", "No base table selected.");
+    });
+    bundle.actions.runQuery("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostic()).toBeNull();
+    expect(bundle.store.getState().pages.a?.runFailed).toBe(true);
+  });
+
+  it("shows the database's refusal until a run succeeds", async () => {
+    vi.mocked(runSql).mockRejectedValueOnce(
+      new Error("400 Binder Error: no such function"),
+    );
+    bundle.actions.runQuery("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostic()).toMatchObject({
+      kind: "run",
+      reason: "Binder Error: no such function",
+    });
+
+    // The text compiling again says nothing about what the database makes of it.
+    bundle.actions.setFilterCustom("a", "x");
+    expect(diagnostic()?.kind).toBe("run");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(diagnostic()).toBeNull();
   });
 });
 
@@ -1156,11 +1289,11 @@ describe("a new query", () => {
 
   it("is touched by an edit, and runs from then on", async () => {
     bundle.actions.setSchemaJson("{}");
-    vi.mocked(compileSavedQuery).mockClear();
+    vi.mocked(runSql).mockClear();
     bundle.actions.setFilterCustom(id, "jazz");
     expect(pristine()).toBe(false);
     await vi.advanceTimersByTimeAsync(300);
-    expect(compileSavedQuery).toHaveBeenCalledTimes(1);
+    expect(runSql).toHaveBeenCalledTimes(1);
   });
 
   it('is touched by a run ("Show all results")', () => {

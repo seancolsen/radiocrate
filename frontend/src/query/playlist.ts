@@ -21,6 +21,7 @@ import {
   type QueryDefinition,
   type SectionContent,
 } from "./definition";
+import { joinMapped, trimMapped, unmapped, type Mapped } from "./sourceMap";
 
 /** The table every playlist's sections are written against. */
 export const PLAYLIST_BASE = "track";
@@ -142,11 +143,13 @@ export function playlistDefsEqual(
   return playlistDefinitionToStored(a) === playlistDefinitionToStored(b);
 }
 
-/** A playlist definition's sections resolved to Querydown fragments. */
+/** A playlist definition's sections resolved to Querydown fragments, mapped
+ * back to the editors they came from — or, as a caller can write them out,
+ * plain text. */
 export interface PlaylistParts {
-  filter: string;
-  sort: string;
-  display: string;
+  filter: Mapped | string;
+  sort: Mapped | string;
+  display: Mapped | string;
 }
 
 /** Resolves a definition's sections, as `assemble` does for a sectioned query.
@@ -154,11 +157,11 @@ export interface PlaylistParts {
 export function assemblePlaylist(
   def: PlaylistDefinition,
   presets: readonly Preset[],
-): PlaylistParts {
+): { filter: Mapped; sort: Mapped; display: Mapped } {
   return {
     filter: resolveFilter(def.filter, presets),
-    sort: resolveSection(def.sort, presets),
-    display: resolveSection(def.display, presets),
+    sort: resolveSection(def.sort, presets, "sort"),
+    display: resolveSection(def.display, presets, "display"),
   };
 }
 
@@ -187,22 +190,40 @@ export function playlistQuerydown(
   parts: PlaylistParts,
   options: PlaylistQueryOptions = {},
 ): string {
+  return playlistQuerydownMapped(playlistId, parts, options).text;
+}
+
+/** {@link playlistQuerydown}, keeping track of which of its text came from
+ * which of the sections' editors. */
+export function playlistQuerydownMapped(
+  playlistId: string,
+  parts: PlaylistParts,
+  options: PlaylistQueryOptions = {},
+): Mapped {
+  const part = (p: Mapped | string) =>
+    trimMapped(typeof p === "string" ? unmapped(p) : p);
+  const filter = part(parts.filter);
   // The id is spliced into a string literal, so it had better be one.
   if (!UUID.test(playlistId)) {
     throw new Error(`Not a playlist id: ${JSON.stringify(playlistId)}`);
   }
-  const lines = ["#playlist_track", "", `playlist:="${playlistId}"`, ""];
+  const lines: (Mapped | string)[] = [
+    "#playlist_track",
+    "",
+    `playlist:="${playlistId}"`,
+    "",
+  ];
   if (options.entryId !== undefined) {
     if (!UUID.test(options.entryId)) {
       throw new Error(`Not an entry id: ${JSON.stringify(options.entryId)}`);
     }
     lines.splice(3, 0, `id:="${options.entryId}"`);
-  } else if (options.withFilter !== false && parts.filter.trim() !== "") {
-    lines.push("track{", parts.filter.trim(), "}", "");
+  } else if (options.withFilter !== false && filter.text !== "") {
+    lines.push("track{", filter, "}", "");
   }
   lines.push(
     "\\\\track.(",
-    parts.sort.trim(),
+    part(parts.sort),
     ")",
     "\\\\position",
     "\\\\track.id",
@@ -210,8 +231,8 @@ export function playlistQuerydown(
     "$id @{hide:yes}",
     "$position @{hide:yes}",
     "$track.(",
-    parts.display.trim(),
+    part(parts.display),
     ")",
   );
-  return lines.join("\n");
+  return joinMapped(lines, "\n");
 }
