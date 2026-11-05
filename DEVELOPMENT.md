@@ -84,6 +84,91 @@ the scripts, run the install yourself first. Screenshots
 are only reproducible in the same (container) environment CI uses — font/GPU
 drift on another machine produces spurious diffs.
 
+## Kitchen sink: tuning the colors (production frontend)
+
+The **kitchen sink** is a dev-only page that puts every piece of UI that carries
+color on one screen, with the light and dark themes side by side. Use it to tune
+the palette. The industry also calls this kind of page a *living style guide* or
+*UI inventory*. Plain grayscale chrome is deliberately left out.
+
+### Running it
+
+You only need Vite. The backend doesn't need to be running, and nothing calls
+the API. From `frontend/`:
+
+```sh
+bun run kitchen-sink   # vite, opening /kitchen-sink.html in your browser
+```
+
+If you're already running `bun run dev`, go to
+`http://localhost:5173/kitchen-sink.html` on that server instead (or whatever
+port Vite reports).
+
+| URL | Shows |
+| --- | --- |
+| `/kitchen-sink.html` | Light and dark side by side, scrolling together |
+| `/kitchen-sink.html?theme=light` | Light only, full width |
+| `/kitchen-sink.html?theme=dark` | Dark only, full width |
+
+### What's on it
+
+- **Tokens:** a swatch for each color token in
+  [`app.css`](frontend/src/app.css) other than the grays, with its current value.
+- **Field labels:** one record-editor label per field kind (text, number, uuid,
+  timestamp, boolean, other, link, records), each plain and focused, plus the
+  "modified" star.
+- **Buttons:** text buttons (primary, disabled, danger, bordered, plain), icon
+  buttons, and the builder's split buttons (on, off, with a problem).
+- **Inputs:** checkboxes, text inputs, a select, the record editor's editing
+  box, and Querydown editors with and without a problem.
+- **Menus:** plain, disabled and danger rows, and checkbox and radio rows.
+- **Presets, embedded records, and the drag chip.**
+- **Banners and messages:** the update and error bars, the record editor's
+  failed-save strip, a query diagnostic, and accent and danger text.
+- **In place:** a miniature app with a tab bar, the toolbar with an open filter
+  holding a problem, the results grid, the record editor and the now-playing
+  bar. It shows the colors that only appear in context: the grid's artist
+  pills, the selected row, the playing row's ring, and the active tab.
+
+### Hot reloading
+
+Edit a color in `app.css` and both themes update in place, without a reload,
+keeping whatever you've clicked or typed. The swatches' values and the
+canvas-painted grid refresh too. Edits to components hot-reload the same way.
+
+### How it works
+
+- [`frontend/kitchen-sink.html`](frontend/kitchen-sink.html) loads
+  [`src/dev/kitchenSink/main.tsx`](frontend/src/dev/kitchenSink/main.tsx).
+  `vite build` only bundles `index.html`, so neither this page nor the
+  component harness (`harness.html`) ever reaches production.
+- Side by side is two iframes of the same page, `?theme=light` and
+  `?theme=dark`. Each sets `data-theme` on its own document, the same attribute
+  the app's theme setting writes. So portals, menus and the canvas grid see
+  exactly one theme each, just as they would in the app. Each iframe reports
+  its height to the frame around it, so the page scrolls as one.
+- The "In place" section runs on the real stores, over the component harness's
+  in-browser stand-in for the API
+  ([`src/dev/harness/mockApi.ts`](frontend/src/dev/harness/mockApi.ts)) and its
+  fixtures. Its stores keep their preferences in memory, not in `localStorage`,
+  so the page can't disturb the dev app's open tabs and settings, which share
+  the same origin.
+
+### Keeping it current
+
+- **New UI with color:** add it to
+  [`KitchenSink.tsx`](frontend/src/dev/kitchenSink/KitchenSink.tsx), or to
+  [`AppInMiniature.tsx`](frontend/src/dev/kitchenSink/AppInMiniature.tsx) if it
+  needs store state to appear.
+- **New color token:** add its name to `TOKENS` in `KitchenSink.tsx` so it gets
+  a swatch.
+- **Copied class strings:** most entries are the real components. The text
+  buttons, text input and select are the exception, because the app only has
+  them as class strings repeated across its modals, and the kitchen sink keeps
+  its own copy. Their colors come from tokens, so tuning a token shows up
+  either way. A change to those class strings themselves has to be copied over
+  by hand.
+
 ## Optional: VS Code / Codespaces dev container
 
 If you use VS Code, [.devcontainer/devcontainer.json](../.devcontainer/devcontainer.json) lets you run your **whole editor** inside this same container instead of opening a shell with `docker compose run`. It's a supplement — it reuses the exact same `docker-compose.yml` (Dockerfile, cache volumes, UID matching, entrypoint), so nothing about the CLI workflow above changes.

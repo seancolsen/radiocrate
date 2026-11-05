@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "kitchen-sink": "vite --open /kitchen-sink.html",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",
