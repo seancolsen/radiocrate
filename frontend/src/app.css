@@ -87,11 +87,11 @@
          0.20) under white ink. Yellow can't be both dark and yellow, so it's a
          lighter gold (L 0.55); records sits darker (L 0.44) so the --accent
          focus border still shows against it. */
-    --field-text: light-dark(#70e093, #046d36);
-    --field-number: light-dark(#ff9f9f, #a91228);
-    --field-uuid: light-dark(#d1a9ff, #762bb2);
-    --field-link: light-dark(#fada49, #946903);
-    --field-records: light-dark(#92c5ff, #014da9);
+    --field-text: light-dark(#b6f1bc, #005b08);
+    --field-number: light-dark(#ffc3c3, #5a1f28);
+    --field-uuid: light-dark(#ffda84, #634700);
+    --field-link: light-dark(#e4b2fd, #51186d);
+    --field-records: light-dark(#abd2ff, #003c85);
     --field-other: light-dark(#c7c5d4, #585663);
   }
   :root[data-theme="light"] {
