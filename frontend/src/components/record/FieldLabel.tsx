@@ -4,8 +4,7 @@ import type { FormField } from "../../query/recordForm";
 import { cx } from "../ui/cx";
 
 /** The pill on the left of every form row: a glyph and the field's name over a
- * tint that says what kind of data it holds. The tints are bright in both
- * themes, so the pill keeps dark ink (`text-field-ink`) even in dark mode. Both are chosen from the field's
+ * tint that says what kind of data it holds. Both are chosen from the field's
  * kind first (a linked record and a list of records read as links, whatever
  * their column type), then its value category. */
 function appearance(field: FormField): {
@@ -70,7 +69,7 @@ export default function FieldLabel(props: {
       // same-specificity utilities settle by stylesheet order, not DOM order,
       // so a plain `border-accent` class can lose to it outright.
       className={cx(
-        `text-field-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 text-xs outline-none select-none ${look.tint}`,
+        `text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 text-xs outline-none select-none ${look.tint}`,
         {
           "border-accent": props.menuOpen,
           "border-transparent": !props.menuOpen,

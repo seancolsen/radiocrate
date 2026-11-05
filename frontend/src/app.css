@@ -16,7 +16,6 @@
   --color-danger: var(--danger);
   --color-now-playing: var(--now-playing);
   --color-timeline-rest: var(--timeline-rest);
-  --color-field-ink: var(--field-ink);
   --color-field-text: var(--field-text);
   --color-field-number: var(--field-number);
   --color-field-uuid: var(--field-uuid);
@@ -59,20 +58,17 @@
     --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #efddff;
     --row-sep: rgb(200 200 200 / 0.5);
-    /* Record editor field-label pills, one tint per value category: neon
-       fills taken from the logo's violet and cyan-blue, always under dark ink.
-       They're the same in both themes, so the theme blocks below leave them
-       alone. Picked in OKLCH at a shared chroma (~0.15) so no hue outshouts the
-       rest; lightness varies (0.70–0.88) because yellow only reads as yellow
-       (not mustard) near the top, and records' blue sits light and toward cyan
-       so the --accent focus border still shows against it. */
-    --field-ink: #1b1b1b;
-    --field-text: #4bde81;
-    --field-number: #f66b71;
-    --field-uuid: #c284f5;
-    --field-link: #fbd530;
-    --field-records: #47c6ff;
-    --field-other: #bdbbcd;
+    /* Record editor field-label pills, one tint per value category, under
+       --ink. Light fills pushed toward the gamut edge (OKLCH L ~0.81, chroma
+       0.10–0.16) so they read as bright candy colors rather than pastels; the
+       dark theme's set is the same hues, deep. Yellow sits lighter (L 0.89)
+       because it only reads as yellow, not mustard, near the top. */
+    --field-text: #70e093;
+    --field-number: #ff9f9f;
+    --field-uuid: #d1a9ff;
+    --field-link: #fada49;
+    --field-records: #92c5ff;
+    --field-other: #c7c5d4;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -100,6 +96,16 @@
       --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
       --pill-bg: #4a2c6d;
       --row-sep: rgb(60 60 60 / 0.5);
+      /* Field-label pills: deep, saturated fills (OKLCH L ~0.47, chroma up to
+         0.20) under white --ink. Yellow can't be both dark and yellow, so it's a
+         lighter gold (L 0.55); records sits darker (L 0.44) so the --accent focus
+         border still shows against it. */
+      --field-text: #046d36;
+      --field-number: #a91228;
+      --field-uuid: #762bb2;
+      --field-link: #946903;
+      --field-records: #014da9;
+      --field-other: #585663;
     }
   }
   /* An explicit stored choice (set pre-paint in index.html) wins over system. */
@@ -127,6 +133,12 @@
     --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
     --pill-bg: #efddff;
     --row-sep: rgb(200 200 200 / 0.5);
+    --field-text: #70e093;
+    --field-number: #ff9f9f;
+    --field-uuid: #d1a9ff;
+    --field-link: #fada49;
+    --field-records: #92c5ff;
+    --field-other: #c7c5d4;
     color-scheme: light;
   }
   :root[data-theme="dark"] {
@@ -153,6 +165,12 @@
     --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
     --pill-bg: #4a2c6d;
     --row-sep: rgb(60 60 60 / 0.5);
+    --field-text: #046d36;
+    --field-number: #a91228;
+    --field-uuid: #762bb2;
+    --field-link: #946903;
+    --field-records: #014da9;
+    --field-other: #585663;
     color-scheme: dark;
   }
 
