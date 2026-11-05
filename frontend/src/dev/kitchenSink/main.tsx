@@ -57,12 +57,21 @@ function SideBySide() {
   );
 }
 
-/** Reports this copy's height to the frame around it, whenever it changes.
- * Measured off `#root`, not the document: app.css pins `html` and `body` to
- * the viewport's height, which here is the iframe's own — so they'd only ever
- * report back the height they were given. */
-function reportHeight(theme: Theme, root: HTMLElement): void {
+/** Settles this copy into the frame around it, when it's in one.
+ *
+ * It reports its height whenever that changes, so the frame can size the
+ * iframe to fit. Measured off `#root`, not the document: app.css pins `html`
+ * and `body` to the viewport's height, which here is the iframe's own — so
+ * they'd only ever report back the height they were given.
+ *
+ * And it lets the wheel through to the frame. Sized to fit, the iframe has
+ * nothing to scroll itself, so a wheel over it has to chain up to the frame's
+ * page — which app.css's `overscroll-behavior: none` (the app's guard against
+ * rubber-banding) would stop dead. */
+function fitToFrame(theme: Theme, root: HTMLElement): void {
   if (window.parent === window) return;
+  document.documentElement.style.overscrollBehavior = "auto";
+  document.body.style.overscrollBehavior = "auto";
   const post = () => {
     const message: HeightMessage = {
       kitchenSink: theme,
@@ -110,7 +119,7 @@ if (theme === null) {
     document.documentElement.setAttribute("data-theme", theme),
   );
   installMockApi();
-  reportHeight(theme, rootElement);
+  fitToFrame(theme, rootElement);
   root.render(
     <StrictMode>
       <StoresProvider stores={createStores(sinkEnv())}>
