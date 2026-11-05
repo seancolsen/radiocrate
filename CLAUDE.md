@@ -65,6 +65,24 @@ Behavioral (non-screenshot) Playwright specs still drive the assembled app
 through the URL-param seam in `src/dev/seed.ts` (`?expose=1` puts a store
 facade on `window.__appStore`).
 
+### Keeping the kitchen sink current
+
+`/kitchen-sink.html` (`frontend/src/dev/kitchenSink/`) is a dev-only page
+showing every piece of UI that carries color, light and dark side by side. I
+use it to tune the palette. When you change the app's colors, keep it complete:
+
+- **New UI that carries color** (an accent, danger, preset, field or other
+  non-gray token, or a new color state of an existing component): add it to
+  `KitchenSink.tsx`, or to `AppInMiniature.tsx` if it only appears with store
+  state.
+- **New color token in `app.css`:** add its name to `TOKENS` in
+  `KitchenSink.tsx`.
+- **Changed class strings for the text buttons, text input or select:** the
+  kitchen sink keeps its own copies of these, so update them there too.
+
+Plain grayscale UI doesn't belong there. See `DEVELOPMENT.md` ("Kitchen sink")
+for how the page works.
+
 ## Writing React
 
 The `frontend/` app is **React 19** under `StrictMode`, with the React Compiler
