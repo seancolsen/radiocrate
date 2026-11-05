@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { Icons } from "../../icons";
 import type { QueryDiagnostic } from "../../query/diagnostics";
+import type { QuerydownContext } from "../../editor/querydownEditor";
 import { Menu, MenuItem } from "../ui/Menu";
 import QuerydownEditor from "./QuerydownEditor";
 
@@ -13,11 +14,13 @@ import QuerydownEditor from "./QuerydownEditor";
  * (`canSave`). The ref forwards to the element that takes the caret, so a
  * caller (a `query.focus_*` command's builder) can focus it — see
  * `useBuilderFocus`. `diagnostic` is the problem the error strip shows, when
- * it's in this input's text: it's bordered in red and the spot underlined. */
+ * it's in this input's text: it's bordered in red and the spot underlined.
+ * `context` is what the text is to the compiler (see `QuerydownEditor`). */
 const CustomInput = forwardRef<
   HTMLElement,
   {
     value: string;
+    context: QuerydownContext;
     hint: string;
     onInput: (text: string) => void;
     onClear: () => void;
@@ -41,6 +44,7 @@ const CustomInput = forwardRef<
         ref={ref}
         value={props.value}
         onChange={props.onInput}
+        context={props.context}
         placeholder={props.hint}
         singleLine={props.singleLine}
         trailingSpace={hasText}

@@ -6,8 +6,9 @@
 // resolved {@link ColumnMetadata} with every field concrete, so rendering never
 // has to think about defaults.
 
+import type { AnnotationSchema } from "querydown-codemirror";
 import type { AnnotationValue } from "querydown-js";
-import { parseFormatter, type Formatter } from "./format";
+import { parseFormatter, RELATIVE_UNITS, type Formatter } from "./format";
 
 /** Default column min width, in pixels, when none is specified. */
 const DEFAULT_MIN_WIDTH = 0;
@@ -155,3 +156,83 @@ export function columnMetadataFromAnnotation(
     formatter: parseFormatter(raw.formatter),
   };
 }
+
+/** A width, or `[min max]` fraction digits: one number, or a list of one or
+ * two. */
+const NUMBER_OR_RANGE: AnnotationSchema[] = [
+  { type: "number" },
+  { type: "array", items: { type: "number" } },
+];
+
+/** The annotations RadioCrate reads (above, and `parseFormatter`), as a JSON
+ * Schema — what the Querydown editors complete an `@{…}`'s keys and values
+ * from. Its descriptions show beside the options. Keep it in step with what's
+ * read: a key or value missing here is one the editor never offers. */
+export const ANNOTATION_SCHEMA: AnnotationSchema = {
+  type: "object",
+  properties: {
+    width: {
+      anyOf: NUMBER_OR_RANGE,
+      description: `The column's width in pixels: a number fixes it, \`[min]\` or \`[min max]\` bounds it. Unset, it's [${DEFAULT_MIN_WIDTH} ${DEFAULT_MAX_WIDTH}].`,
+    },
+    align: {
+      enum: ["left", "center", "right"],
+      description: "Where the column's text sits in its cells.",
+    },
+    color: {
+      enum: ["default", "light"],
+      description: "The text color: `light` de-emphasizes the column.",
+    },
+    size: {
+      enum: ["normal", "small"],
+      description: "The text size.",
+    },
+    prefix: {
+      type: "string",
+      description: "Text shown before each value.",
+    },
+    suffix: {
+      type: "string",
+      description: "Text shown after each value.",
+    },
+    formatter: {
+      type: "object",
+      description: "Reshapes each value's text. Chosen by its `type`.",
+      properties: {
+        type: {
+          description: "Which formatter.",
+          anyOf: [
+            { const: "number", description: "Rounds a number." },
+            { const: "duration", description: "A count of seconds, as M:SS." },
+            { const: "timestamp", description: "A date or time, by `format`." },
+            {
+              const: "relativeTime",
+              description: "How long ago a time was, e.g. 3 days.",
+            },
+          ],
+        },
+        decimalPlaces: {
+          anyOf: NUMBER_OR_RANGE,
+          description:
+            "For `number`: the digits after the point, exactly, or `[min max]` (trailing zeros past `min` dropped). Unset, none.",
+        },
+        format: {
+          type: "string",
+          description:
+            "For `timestamp`: the pattern, with %Y %y %m %d %H %M %S standing for the parts, and %% for a %.",
+        },
+        units: {
+          type: "array",
+          items: { enum: RELATIVE_UNITS },
+          description:
+            "For `relativeTime`: the units it may count in; the largest that reaches 1 is used. Unset, all of them.",
+        },
+      },
+    },
+    hide: {
+      enum: ["yes"],
+      description:
+        "`yes` hides the column, while its values stay in the result.",
+    },
+  },
+};

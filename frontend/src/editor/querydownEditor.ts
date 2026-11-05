@@ -2,14 +2,22 @@
 // built from, apart from React. `components/builder/QuerydownEditor.tsx`
 // creates the view from these and feeds it its props.
 //
-// What the editors add to a plain text field is the problem underline: a
-// diagnostic (`query/diagnostics.ts`) located in the editor's text is drawn as
-// a wavy underline over its range, with its notes' ranges dotted. An empty
-// range — "unexpected end of input" — has no characters to underline, so it's
-// drawn as a short bar at the position instead.
+// What the editors add to a plain text field:
+//
+// - Highlighting and completion, from `querydown-codemirror` over the
+//   compiler's own `tokenize` and `QuerydownCompleter` (see
+//   {@link querydownSupport}). Completion knows the schema's tables and
+//   columns, the definitions the text is compiled under, and the column
+//   annotations RadioCrate reads (`ANNOTATION_SCHEMA`).
+// - The problem underline: a diagnostic (`query/diagnostics.ts`) located in
+//   the editor's text is drawn as a wavy underline over its range, with its
+//   notes' ranges dotted. An empty range — "unexpected end of input" — has no
+//   characters to underline, so it's drawn as a short bar at the position
+//   instead.
 
 import {
   Annotation,
+  Compartment,
   EditorState,
   Prec,
   StateEffect,
@@ -20,11 +28,18 @@ import {
 import {
   Decoration,
   EditorView,
+  ViewPlugin,
   WidgetType,
   keymap,
+  tooltips,
   type DecorationSet,
 } from "@codemirror/view";
 import { history, historyKeymap, standardKeymap } from "@codemirror/commands";
+import { autocompletion, completionStatus } from "@codemirror/autocomplete";
+import { querydown, type Completer, type Grammar } from "querydown-codemirror";
+import { tokenize } from "querydown-js";
+import { ANNOTATION_SCHEMA } from "../query/columns";
+import type { Section } from "../query/definition";
 import type { QueryDiagnostic } from "../query/diagnostics";
 
 /** Draws `diagnostic`'s ranges over the editor's text (`null` clears them).
@@ -137,6 +152,50 @@ const theme = EditorView.theme({
   },
   ".cm-qd-problem-point::after": { background: "var(--color-danger)" },
   ".cm-qd-note-point::after": { background: "var(--color-ink-weak)" },
+  // The completion popup, and the description beside it, as the app's menus
+  // look. They're portaled to the body (see `querydownExtensions`), out from
+  // under the editor's font, so they set their own.
+  ".cm-tooltip.cm-tooltip-autocomplete, .cm-tooltip.cm-completionInfo": {
+    backgroundColor: "var(--color-panel)",
+    color: "var(--color-ink)",
+    border: "1px solid var(--color-edge)",
+    borderRadius: "6px",
+    boxShadow: "var(--shadow-lg)",
+    fontSize: "var(--text-xs)",
+    lineHeight: "20px",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+    fontFamily: "var(--font-mono)",
+    padding: "4px",
+    maxHeight: "16em",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+    padding: "0 8px 0 4px",
+    borderRadius: "4px",
+    lineHeight: "20px",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    background: "var(--color-hover)",
+    color: "var(--color-ink)",
+  },
+  ".cm-tooltip.cm-completionInfo": {
+    fontFamily: "var(--font-sans)",
+    padding: "6px 10px",
+    maxWidth: "320px",
+  },
+  ".cm-tooltip-autocomplete .cm-completionIcon": {
+    opacity: "1",
+    color: "var(--color-ink-weak)",
+  },
+  ".cm-tooltip-autocomplete .cm-completionDetail": {
+    marginLeft: "1em",
+    fontStyle: "normal",
+    color: "var(--color-ink-weak)",
+  },
+  ".cm-tooltip-autocomplete .cm-completionMatchedText": {
+    textDecoration: "none",
+    fontWeight: "700",
+  },
 });
 
 /** A sheet editor fills the box it's given, scrolling inside it. */
@@ -151,12 +210,152 @@ const oneLine = EditorState.transactionFilter.of((tr) =>
   tr.newDoc.lines > 1 ? [] : tr,
 );
 
+/** What an editor's text is to the compiler, for highlighting and
+ * completing it. */
+export interface QuerydownContext {
+  /** Which grammar the text is read with: a whole query, or one section of a
+   * sectioned one. */
+  grammar: Grammar;
+  /** For a section: the query's base table, whose columns are offered. */
+  baseTable?: string;
+  /** The definitions the text is compiled under — the prelude — whose
+   * computed columns, functions and constants are offered too. */
+  definitions?: string;
+}
+
+/** The grammar a builder section's text is read with. */
+export function sectionGrammar(section: Section): Grammar {
+  return section === "filter"
+    ? "conditions"
+    : section === "sort"
+      ? "sorting"
+      : "display";
+}
+
+/** A whole query is compiled with the definitions prepended (see
+ * `compileWhole`), so it's completed that way too, the completer's offsets
+ * shifted back into the editor's text. A section's definitions go to the
+ * completer separately, as they do to `compile_sections`. Exported for unit
+ * tests. */
+export function prepending(
+  completer: Completer,
+  definitions: () => string | undefined,
+): Completer {
+  return {
+    complete(source, cursor, options) {
+      const prelude = definitions();
+      const head = prelude ? `${prelude}\n` : "";
+      const found = completer.complete(
+        head + source,
+        cursor + head.length,
+        options,
+      );
+      return {
+        ...found,
+        from: Math.max(0, found.from - head.length),
+        to: Math.max(0, found.to - head.length),
+      };
+    },
+  };
+}
+
+/** Querydown's highlighting, and its completion when there's a `completer`
+ * (there's none until the schema has loaded). Only once the compiler has
+ * loaded: highlighting runs on its `tokenize`. `context` is read each time
+ * completion runs, so a base table or prelude that changes needs no
+ * reconfiguring. */
+export function querydownSupport(
+  grammar: Grammar,
+  completer: Completer | null,
+  context: () => QuerydownContext,
+): Extension {
+  const baseTable = () => context().baseTable;
+  const definitions = () => context().definitions;
+  return querydown({
+    tokenize,
+    grammar,
+    ...(completer && {
+      completion:
+        grammar === "query"
+          ? {
+              completer: prepending(completer, definitions),
+              annotations: ANNOTATION_SCHEMA,
+            }
+          : {
+              completer,
+              baseTable,
+              definitions,
+              annotations: ANNOTATION_SCHEMA,
+            },
+    }),
+  });
+}
+
+const DARK_SCHEME = "(prefers-color-scheme: dark)";
+
+/** Whether the document is painted dark: `data-theme` when the user picked a
+ * theme, the system's otherwise (see `stores/app/theme.ts`). */
+function documentIsDark(doc: Document): boolean {
+  const pinned = doc.documentElement.getAttribute("data-theme");
+  if (pinned === "light" || pinned === "dark") return pinned === "dark";
+  return doc.defaultView?.matchMedia(DARK_SCHEME).matches ?? false;
+}
+
+const scheme = new Compartment();
+
+/** Tells CodeMirror whether the editor is dark — what picks the highlighting's
+ * dark palette — and keeps telling it as the theme changes. The app's own
+ * colors switch through CSS (`light-dark()`), which CodeMirror can't see. */
+function followColorScheme(): Extension {
+  const watcher = ViewPlugin.define((view) => {
+    const doc = view.dom.ownerDocument;
+    const sync = () => {
+      const dark = documentIsDark(doc);
+      if (view.state.facet(EditorView.darkTheme) !== dark) {
+        view.dispatch({
+          effects: scheme.reconfigure(EditorView.darkTheme.of(dark)),
+        });
+      }
+    };
+    const system = doc.defaultView?.matchMedia(DARK_SCHEME);
+    system?.addEventListener("change", sync);
+    const pinned = new MutationObserver(sync);
+    pinned.observe(doc.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return {
+      destroy() {
+        system?.removeEventListener("change", sync);
+        pinned.disconnect();
+      },
+    };
+  });
+  return [
+    scheme.of(EditorView.darkTheme.of(documentIsDark(document))),
+    watcher,
+  ];
+}
+
+/** The keys the completion popup drives while it's open. */
+const COMPLETION_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+  "Enter",
+  "Escape",
+]);
+
 /** The extensions every Querydown editor is built from. `onKeyDown` sees each
  * key before the editor does, and preventing its default keeps the editor
- * from acting on it. */
+ * from acting on it — except, while the completion popup is open, the keys
+ * that drive it, which are the popup's. `language` holds
+ * {@link querydownSupport}, once there's one to give it. */
 export function querydownExtensions(options: {
   singleLine: boolean;
   sheet: boolean;
+  language: Extension;
   onChange: (text: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
 }): Extension {
@@ -165,12 +364,24 @@ export function querydownExtensions(options: {
     keymap.of([...standardKeymap, ...historyKeymap]),
     Prec.highest(
       EditorView.domEventHandlers({
-        keydown: (event) => {
+        keydown: (event, view) => {
+          if (
+            completionStatus(view.state) === "active" &&
+            COMPLETION_KEYS.has(event.key)
+          ) {
+            return false;
+          }
           options.onKeyDown(event);
           return event.defaultPrevented;
         },
       }),
     ),
+    options.language,
+    autocompletion(),
+    // In the body, as the app's other popups are, so no box the editor sits
+    // in clips it.
+    tooltips({ parent: document.body }),
+    followColorScheme(),
     EditorView.contentAttributes.of({
       spellcheck: "false",
       autocorrect: "off",

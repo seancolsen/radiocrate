@@ -334,6 +334,11 @@ const INPUT =
 const SELECT =
   "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
 
+/** A display section touching most of the highlighting's palette: columns,
+ * a path, a count, a function, an alias, and annotations. */
+const DISPLAY =
+  "$title|upper -> name $album.year $#play @{align:right color:light} $file.added @{width:[120 300] formatter:{type:relativeTime units:[days weeks]}}";
+
 /** A Querydown problem over the editor's own text, so it's underlined. */
 const PROBLEM: QueryDiagnostic = {
   kind: "syntax",
@@ -350,6 +355,7 @@ function Inputs(): JSX.Element {
   const [unchecked, setUnchecked] = useState(false);
   const [query, setQuery] = useState("jazz playcount:<100");
   const [broken, setBroken] = useState(PROBLEM.source);
+  const [display, setDisplay] = useState(DISPLAY);
   return (
     <Section title="Inputs">
       <div className="flex flex-col gap-3">
@@ -398,6 +404,7 @@ function Inputs(): JSX.Element {
               <QuerydownEditor
                 value={query}
                 onChange={setQuery}
+                context={{ grammar: "conditions", baseTable: "track" }}
                 label="Filter"
               />
             </Specimen>
@@ -407,8 +414,21 @@ function Inputs(): JSX.Element {
               <QuerydownEditor
                 value={broken}
                 onChange={setBroken}
+                context={{ grammar: "conditions", baseTable: "track" }}
                 label="Broken filter"
                 diagnostic={PROBLEM}
+              />
+            </Specimen>
+          </div>
+        </Row>
+        <Row>
+          <div className="w-[36rem]">
+            <Specimen caption="querydown, highlighted">
+              <QuerydownEditor
+                value={display}
+                onChange={setDisplay}
+                label="Display"
+                context={{ grammar: "display", baseTable: "track" }}
               />
             </Specimen>
           </div>

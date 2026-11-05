@@ -34,7 +34,7 @@ export type Formatter =
   | { type: "duration" }
   | { type: "relativeTime"; units: RelativeUnit[] };
 
-const RELATIVE_UNITS: RelativeUnit[] = [
+export const RELATIVE_UNITS: readonly RelativeUnit[] = [
   "minutes",
   "hours",
   "days",

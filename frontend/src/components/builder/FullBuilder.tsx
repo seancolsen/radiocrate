@@ -1,5 +1,9 @@
 import { useRef, type JSX } from "react";
-import { selectEditorDiagnostic, selectQueryTab } from "../../stores/app";
+import {
+  selectEditorDiagnostic,
+  selectPrelude,
+  selectQueryTab,
+} from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
 import { useBuilderFocus } from "./useBuilderFocus";
@@ -13,6 +17,7 @@ export default function FullBuilder(props: { tabId: string }): JSX.Element {
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "full"),
   );
+  const prelude = useApp(selectPrelude);
   const { setFullText } = useAppActions();
 
   // The `query.focus_*` commands have no section to aim at here, so any of
@@ -25,6 +30,7 @@ export default function FullBuilder(props: { tabId: string }): JSX.Element {
     <CustomInput
       ref={inputRef}
       value={text}
+      context={{ grammar: "query", definitions: prelude }}
       hint="Querydown"
       diagnostic={diagnostic}
       onInput={(t) => setFullText(props.tabId, t)}

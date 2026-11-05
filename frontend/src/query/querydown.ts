@@ -3,7 +3,7 @@
 // is imported as a same-origin asset URL (CSP/offline-safe — no external fetch)
 // and `init()` is called once; every compile awaits `querydownReady()` first.
 
-import init from "querydown-js";
+import init, { QuerydownCompleter } from "querydown-js";
 import wasmUrl from "querydown-js/querydown_js_bg.wasm?url";
 
 let ready: Promise<void> | undefined;
@@ -23,4 +23,38 @@ export function querydownReady(): Promise<void> {
  * waiting isn't an option. Starts nothing: see {@link querydownReady}. */
 export function querydownLoaded(): boolean {
   return loaded;
+}
+
+/** Subscribes to the module finishing its load (starting it, if nothing has
+ * yet), as `useSyncExternalStore` takes it, with {@link querydownLoaded} as
+ * the snapshot: it's loaded once, and never unloads. */
+export function subscribeQuerydownLoaded(onLoad: () => void): () => void {
+  let live = true;
+  void querydownReady().then(() => {
+    if (live) onLoad();
+  });
+  return () => {
+    live = false;
+  };
+}
+
+let completer:
+  { schemaJson: string; completer: QuerydownCompleter | null } | undefined;
+
+/** The editors' completer for the database `schemaJson` describes, or `null`
+ * when the compiler won't take the schema. One is made per schema (it parses
+ * the schema once) and shared by every editor; one an editor still holds when
+ * the schema changes is left to wasm-bindgen's finalizer. Call only once the
+ * module has loaded ({@link querydownLoaded}). */
+export function completerFor(schemaJson: string): QuerydownCompleter | null {
+  if (completer?.schemaJson !== schemaJson) {
+    let made: QuerydownCompleter | null = null;
+    try {
+      made = new QuerydownCompleter(schemaJson);
+    } catch (err) {
+      console.error("Querydown completion is off:", err);
+    }
+    completer = { schemaJson, completer: made };
+  }
+  return completer.completer;
 }

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
 import { checkFragment } from "../../query/compile";
 import { asSection, type Section } from "../../query/definition";
+import { sectionGrammar } from "../../editor/querydownEditor";
 import {
   selectPreset,
   selectPresetDirty,
   selectPresetEdit,
+  selectPrelude,
   type PresetEdit,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
@@ -91,7 +93,7 @@ export function PresetEditorPanel(props: {
 
   const check = useCheckContext();
   const schemaJson = check?.schemaJson;
-  const prelude = check?.prelude ?? "";
+  const prelude = useApp(selectPrelude);
   const definition = edit?.definition;
   const { presetId, baseTable, section } = props;
   const latest = useMemo(
@@ -157,6 +159,11 @@ export function PresetEditorPanel(props: {
           <QuerydownEditor
             label="Preset definition"
             value={edit.definition}
+            context={{
+              grammar: sectionGrammar(section),
+              baseTable,
+              definitions: prelude,
+            }}
             onChange={(definition) => props.onPatch({ definition })}
             diagnostic={problem?.origin?.kind === "preset" ? problem : null}
           />

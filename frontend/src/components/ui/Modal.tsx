@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import type { JSX, ReactNode } from "react";
 
 /** A centered modal dialog over a dimming scrim. Closes on scrim click and on
- * Escape. Rendered through a portal so it escapes the toolbar's stacking/overflow
+ * an Escape nothing inside it has already used (as a Querydown editor does,
+ * closing its completion popup). Rendered through a portal so it escapes the toolbar's stacking/overflow
  * context. */
 export function Modal(props: {
   onClose: () => void;
@@ -14,7 +15,7 @@ export function Modal(props: {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

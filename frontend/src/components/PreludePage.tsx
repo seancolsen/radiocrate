@@ -107,6 +107,7 @@ export default function PreludePage(): JSX.Element {
         look="page"
         label={PRELUDE.name}
         value={text}
+        context={{ grammar: "definitions" }}
         onChange={editPrelude}
         diagnostic={problem}
       />

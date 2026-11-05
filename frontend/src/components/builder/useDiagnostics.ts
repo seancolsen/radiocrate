@@ -5,28 +5,22 @@ import {
   sameDiagnostic,
   type QueryDiagnostic,
 } from "../../query/diagnostics";
-import { querydownLoaded, querydownReady } from "../../query/querydown";
+import {
+  querydownLoaded,
+  subscribeQuerydownLoaded,
+} from "../../query/querydown";
 import { selectPrelude } from "../../stores/app";
 import { useApp } from "../../stores/react";
-
-/** Subscribes to the compiler finishing its load (starting it, if nothing has
- * yet): it's loaded once, and never unloads. */
-function subscribeLoaded(onLoad: () => void): () => void {
-  let live = true;
-  void querydownReady().then(() => {
-    if (live) onLoad();
-  });
-  return () => {
-    live = false;
-  };
-}
 
 /** What checking Querydown as it's typed needs: the schema, and the prelude
  * in force — or `undefined` until both the schema and the compiler have
  * loaded, when there's no checking anything. */
 export function useCheckContext():
   { schemaJson: string; prelude: string } | undefined {
-  const loaded = useSyncExternalStore(subscribeLoaded, querydownLoaded);
+  const loaded = useSyncExternalStore(
+    subscribeQuerydownLoaded,
+    querydownLoaded,
+  );
   const schemaJson = useApp((s) => s.schema.json);
   const prelude = useApp(selectPrelude);
   return loaded && schemaJson !== undefined

@@ -1,5 +1,6 @@
 import { useRef, type JSX } from "react";
 import { sectionLabel } from "../../query/definition";
+import { sectionGrammar } from "../../editor/querydownEditor";
 import {
   selectEditorDiagnostic,
   selectExpandedPreset,
@@ -7,6 +8,7 @@ import {
   selectPageSections,
   selectPresetHasDiagnostic,
   selectPresetName,
+  selectPrelude,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -27,6 +29,7 @@ export default function SingleBuilder(props: {
     (s) => selectPageSections(s, props.tabId)?.[props.section],
   );
   const base = useApp((s) => selectPageBase(s, props.tabId));
+  const prelude = useApp(selectPrelude);
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, props.section),
@@ -58,6 +61,11 @@ export default function SingleBuilder(props: {
         <CustomInput
           ref={inputRef}
           value={content.custom}
+          context={{
+            grammar: sectionGrammar(props.section),
+            baseTable: base,
+            definitions: prelude,
+          }}
           hint={sectionLabel(props.section)}
           diagnostic={diagnostic}
           canSave={base !== ""}

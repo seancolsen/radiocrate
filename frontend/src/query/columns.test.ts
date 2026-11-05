@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { columnMetadataFromAnnotation, defaultColumnMetadata } from "./columns";
+import { annotationOptions } from "querydown-codemirror";
+import {
+  ANNOTATION_SCHEMA,
+  columnMetadataFromAnnotation,
+  defaultColumnMetadata,
+} from "./columns";
+import { parseFormatter, RELATIVE_UNITS } from "./format";
 import type { AnnotationValue } from "querydown-js";
 
 const DEFAULT_MAX_WIDTH = 500;
@@ -116,5 +122,64 @@ describe("columnMetadataFromAnnotation", () => {
     expect([m.min_width, m.max_width]).toEqual([40, 60]);
     expect(m.prefix).toBe("#");
     expect(m.formatter).toEqual({ type: "duration" });
+  });
+});
+
+describe("ANNOTATION_SCHEMA", () => {
+  /** What the editor offers at `path`, for a key or a value. */
+  const offered = (path: (string | number)[], slot: "key" | "value") =>
+    annotationOptions(ANNOTATION_SCHEMA, { path, slot, keys: [] }).map(
+      (option) => option.label,
+    );
+
+  it("offers every key the metadata reads", () => {
+    expect(offered([], "key").sort()).toEqual(
+      [
+        "align",
+        "color",
+        "formatter",
+        "hide",
+        "prefix",
+        "size",
+        "suffix",
+        "width",
+      ].sort(),
+    );
+    expect(offered(["formatter"], "key").sort()).toEqual(
+      ["decimalPlaces", "format", "type", "units"].sort(),
+    );
+  });
+
+  it("offers only values the metadata takes", () => {
+    const meta = (key: string, value: string) =>
+      columnMetadataFromAnnotation(obj({ [key]: value }));
+    expect(offered(["align"], "value")).toEqual(["left", "center", "right"]);
+    for (const v of offered(["align"], "value")) {
+      expect(meta("align", v).text_align).toBe(v);
+    }
+    expect(offered(["color"], "value")).toEqual(["default", "light"]);
+    for (const v of offered(["color"], "value")) {
+      expect(meta("color", v).font_color).toBe(v);
+    }
+    expect(offered(["size"], "value")).toEqual(["normal", "small"]);
+    for (const v of offered(["size"], "value")) {
+      expect(meta("size", v).font_size).toBe(v);
+    }
+    expect(offered(["hide"], "value")).toEqual(["yes"]);
+    expect(meta("hide", "yes").hide).toBe(true);
+  });
+
+  it("offers every formatter type, each of which parses", () => {
+    const types = offered(["formatter", "type"], "value");
+    expect(types).toEqual(["number", "duration", "timestamp", "relativeTime"]);
+    for (const type of types) {
+      expect(parseFormatter(obj({ type, format: "%Y" }))?.type).toBe(type);
+    }
+  });
+
+  it("offers the relative-time units", () => {
+    expect(offered(["formatter", "units", 0], "value")).toEqual([
+      ...RELATIVE_UNITS,
+    ]);
   });
 });

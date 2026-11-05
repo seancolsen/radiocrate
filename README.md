@@ -71,8 +71,9 @@ cargo xtask build-release
 
 This runs:
 
-1. `bun install --frozen-lockfile` then `bun run build` in [frontend/](frontend) — installs exactly what `bun.lock` records (if it no longer matches `package.json`, the build stops: run `bun install` in `frontend/` and commit `bun.lock`), then builds the React app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
-2. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
+1. `cargo xtask vendor-querydown` (below) — builds Querydown's JS packages, which the frontend depends on, into `frontend/vendor/`.
+2. `bun install --frozen-lockfile` then `bun run build` in [frontend/](frontend) — installs exactly what `bun.lock` records (if it no longer matches `package.json`, the build stops: run `bun install` in `frontend/` and commit `bun.lock`), then builds the React app with Vite and emits `frontend/dist/` (including a Workbox-generated `sw.js`; precache revisioning is handled by `vite-plugin-pwa`, so there is no separate stamping step).
+3. `cargo build --release -p radiocrate` — builds the production binary, embedding `frontend/dist/` via `rust-embed`.
 
 The resulting binary is at `target/release/radiocrate`.
 
@@ -84,6 +85,21 @@ The resulting binary is at `target/release/radiocrate`.
 
 Subcommands and options match the dev API server (`serve` / `scan`, `--port`,
 `--no-scan`, `--db-path`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
+
+### Build Querydown's JS packages
+
+```sh
+cargo xtask vendor-querydown
+```
+
+The frontend compiles Querydown in the browser, and its editors highlight and
+complete it, through two packages built from the Querydown revision pinned in
+[`xtask/src/main.rs`](xtask/src/main.rs) (`QUERYDOWN_REV`): `querydown-js`, the
+compiler as WASM (built with `wasm-pack`), and `querydown-codemirror`, the
+editors' CodeMirror support (built with Bun). This builds both into
+`frontend/vendor/` (gitignored), where `frontend/package.json` points. Run it
+after changing the pin, then `bun install` in `frontend/`. `build-release` runs
+it too.
 
 ### Clean the frontend build
 

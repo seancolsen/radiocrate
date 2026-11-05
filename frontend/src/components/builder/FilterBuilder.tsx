@@ -6,6 +6,7 @@ import {
   selectPageSections,
   selectPresetHasDiagnostic,
   selectPresetName,
+  selectPrelude,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -44,7 +45,9 @@ function FilterPresetTab(props: { tabId: string; id: string }): JSX.Element {
  * puts "Remove these tracks" and "Keep only these tracks" at the foot. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
-  const canSave = useApp((s) => selectPageBase(s, props.tabId) !== "");
+  const base = useApp((s) => selectPageBase(s, props.tabId));
+  const canSave = base !== "";
+  const prelude = useApp(selectPrelude);
   const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "filter"),
@@ -70,6 +73,11 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
           <CustomInput
             ref={inputRef}
             value={live?.filter.custom ?? ""}
+            context={{
+              grammar: "conditions",
+              baseTable: base,
+              definitions: prelude,
+            }}
             hint="Filter"
             diagnostic={diagnostic}
             canSave={canSave}

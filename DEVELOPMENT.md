@@ -120,7 +120,8 @@ port Vite reports).
 - **Buttons:** text buttons (primary, disabled, danger, bordered, plain), icon
   buttons, and the builder's split buttons (on, off, with a problem).
 - **Inputs:** checkboxes, text inputs, a select, the record editor's editing
-  box, and Querydown editors with and without a problem.
+  box, and Querydown editors with and without a problem, plus a highlighted
+  display section.
 - **Menus:** plain, disabled and danger rows, and checkbox and radio rows.
 - **Presets, embedded records, and the drag chip.**
 - **Banners and messages:** the update and error bars, the record editor's

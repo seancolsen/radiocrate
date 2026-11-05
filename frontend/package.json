@@ -17,12 +17,17 @@
     "test:visual:update": "playwright install chromium && playwright test --update-snapshots"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
+    "@lezer/common": "^1.5.5",
+    "@lezer/highlight": "^1.2.5",
     "apache-arrow": "^18.0.0",
     "immer": "^11.1.18",
     "papaparse": "^5.7.0",
+    "querydown-codemirror": "file:./vendor/querydown-codemirror",
     "querydown-js": "file:./vendor/querydown-js",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

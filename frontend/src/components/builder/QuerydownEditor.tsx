@@ -5,16 +5,25 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type JSX,
 } from "react";
 import { Compartment } from "@codemirror/state";
 import { EditorView, placeholder as placeholderText } from "@codemirror/view";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import {
+  completerFor,
+  querydownLoaded,
+  subscribeQuerydownLoaded,
+} from "../../query/querydown";
+import {
   querydownExtensions,
+  querydownSupport,
   setDiagnostic,
   syncText,
+  type QuerydownContext,
 } from "../../editor/querydownEditor";
+import { useApp } from "../../stores/react";
 import { cx } from "../ui/cx";
 
 /** The editor for Querydown text, wherever it's edited: the builders, the
@@ -27,6 +36,10 @@ import { cx } from "../ui/cx";
  * reported through `onChange`. A `value` that changes under it (an undo, a
  * Clear) replaces its text without being reported back.
  *
+ * `context` is what the text is to the compiler: which grammar it's read
+ * with, and what it's completed against. The text is highlighted once the
+ * compiler has loaded, and completed once the schema has too.
+ *
  * `diagnostic` is a problem in its text — the caller passes it only when it
  * is. It borders the editor in red, and while the diagnostic is about the
  * text the editor holds (its `source` is the text), its range is underlined.
@@ -38,6 +51,7 @@ const QuerydownEditor = forwardRef<
   {
     value: string;
     onChange: (text: string) => void;
+    context: QuerydownContext;
     placeholder?: string;
     /** The accessible name, for an editor with no placeholder to go by. */
     label?: string;
@@ -58,6 +72,7 @@ const QuerydownEditor = forwardRef<
     latest.current = props;
   });
   const [attributes] = useState(() => new Compartment());
+  const [language] = useState(() => new Compartment());
 
   const describe = (p: typeof props) => {
     const attrs: Record<string, string> = {
@@ -90,6 +105,7 @@ const QuerydownEditor = forwardRef<
         querydownExtensions({
           singleLine: initial.singleLine ?? false,
           sheet: initial.look === "sheet" || initial.look === "page",
+          language: language.of([]),
           onChange: (text) => latest.current.onChange(text),
           onKeyDown: (event) => latest.current.onKeyDown?.(event),
         }),
@@ -105,6 +121,28 @@ const QuerydownEditor = forwardRef<
   }, []);
 
   useImperativeHandle(ref, () => viewRef.current!.contentDOM, []);
+
+  // The language arrives with the compiler, and completion with the schema.
+  // The grammar is read once, as the look is: no caller changes it.
+  const loaded = useSyncExternalStore(
+    subscribeQuerydownLoaded,
+    querydownLoaded,
+  );
+  const schemaJson = useApp((s) => s.schema.json);
+  useLayoutEffect(() => {
+    if (!loaded) return;
+    const completer =
+      schemaJson === undefined ? null : completerFor(schemaJson);
+    viewRef.current?.dispatch({
+      effects: language.reconfigure(
+        querydownSupport(
+          latest.current.context.grammar,
+          completer,
+          () => latest.current.context,
+        ),
+      ),
+    });
+  }, [language, loaded, schemaJson]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;

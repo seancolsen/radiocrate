@@ -1,7 +1,7 @@
 mod gen_api;
 mod icons;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 fn usage() {
@@ -10,6 +10,7 @@ fn usage() {
          Commands:\n  \
            build-release      Build the frontend with Bun/Vite and the production binary\n  \
            build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (armv7)\n  \
+           vendor-querydown   Build the pinned Querydown's JS packages into frontend/vendor/\n  \
            clean-web          Remove the frontend/dist directory\n  \
            icons              Regenerate the PWA icon set from branding/logo.svg\n  \
            gen-api            Regenerate the TypeScript API client under api-client/"
@@ -33,20 +34,25 @@ fn run(cmd: &mut Command) -> Result<(), String> {
     Ok(())
 }
 
-/// The Querydown revision `RadioCrate` builds its JS compiler binding from. Pinned
+/// The Querydown revision `RadioCrate` builds its JS packages from. Pinned
 /// deliberately so the compiled SQL behavior stays consistent with the
 /// schema/PRELUDE the frontend expects. See
 /// `plans/2026-07-migrate-ui-to-dom/phase-03.md` §2.
 const QUERYDOWN_REPO: &str = "https://github.com/seancolsen/querydown";
-const QUERYDOWN_REV: &str = "b14cff7";
+const QUERYDOWN_REV: &str = "f677f39";
 
-/// Builds the Querydown JS binding (`querydown-js`) from a pinned Querydown
-/// checkout with `wasm-pack` and vendors the generated `pkg/` into
-/// `frontend/vendor/querydown-js/`, where `frontend/package.json`'s local `file:`
-/// dependency points. This runs *before* `bun install` so the dependency
-/// resolves. The vendored dir is a build artifact (gitignored); this is the one
-/// step that (re)generates it. Not a `duckdb-sys` build — safe and fast.
-fn build_querydown_js() -> Result<(), String> {
+/// Builds Querydown's two JS packages from a pinned Querydown checkout and
+/// vendors them into `frontend/vendor/`, where `frontend/package.json`'s local
+/// `file:` dependencies point:
+///
+/// - `querydown-js`, the compiler binding, built with `wasm-pack`;
+/// - `querydown-codemirror`, the editor's highlighting and completion, built
+///   with Bun (its `tsc` emits `dist/`).
+///
+/// This runs *before* `bun install` so the dependencies resolve. The vendored
+/// dirs are build artifacts (gitignored); this is the one step that
+/// (re)generates them. Not a `duckdb-sys` build — safe and fast.
+fn build_querydown() -> Result<(), String> {
     let root = workspace_root();
 
     for (tool, hint) in [
@@ -62,10 +68,11 @@ fn build_querydown_js() -> Result<(), String> {
             .is_ok_and(|o| o.status.success());
         if !ok {
             return Err(format!(
-                "`{tool}` is required to build querydown-js ({hint})."
+                "`{tool}` is required to build Querydown's JS packages ({hint})."
             ));
         }
     }
+    check_bun()?;
 
     // Clone (once) into a build cache under target/, then check out the pinned rev.
     let src = root.join("target/querydown-src");
@@ -89,27 +96,70 @@ fn build_querydown_js() -> Result<(), String> {
     run(Command::new("wasm-pack")
         .args(["build", "bindings/js", "--target", "web"])
         .current_dir(&src))?;
+    vendor(
+        &src.join("bindings/js/pkg"),
+        &root.join("frontend/vendor/querydown-js"),
+        &[
+            "querydown_js.js",
+            "querydown_js.d.ts",
+            "querydown_js_bg.wasm",
+            "querydown_js_bg.wasm.d.ts",
+            "package.json",
+            "README.md",
+            "LICENSE",
+        ],
+    )?;
 
-    // Vendor the generated package into frontend/vendor/querydown-js/.
-    let pkg = src.join("bindings/js/pkg");
-    let dest = root.join("frontend/vendor/querydown-js");
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
+    // The CodeMirror package takes the binding's `tokenize` and completer as
+    // arguments rather than importing them, so it builds without the WASM.
+    let codemirror = src.join("bindings/codemirror");
+    println!("==> bun install && bun run build (bindings/codemirror)");
+    run(Command::new("bun")
+        .args(["install", "--frozen-lockfile"])
+        .current_dir(&codemirror))?;
+    // Bun installs from upstream's `package-lock.json` by migrating it to a
+    // `bun.lock`, which it writes even with `--no-save`. Drop it, so the
+    // checkout stays clean for the next `git checkout`.
+    let migrated = codemirror.join("bun.lock");
+    if migrated.exists() {
+        std::fs::remove_file(&migrated).map_err(|e| e.to_string())?;
     }
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    for name in [
-        "querydown_js.js",
-        "querydown_js.d.ts",
-        "querydown_js_bg.wasm",
-        "querydown_js_bg.wasm.d.ts",
-        "package.json",
-        "README.md",
-        "LICENSE",
-    ] {
-        std::fs::copy(pkg.join(name), dest.join(name))
+    run(Command::new("bun")
+        .args(["run", "build"])
+        .current_dir(&codemirror))?;
+    vendor(
+        &codemirror,
+        &root.join("frontend/vendor/querydown-codemirror"),
+        &["dist", "package.json", "README.md", "LICENSE"],
+    )?;
+    Ok(())
+}
+
+/// Replaces `dest` with copies of `names` (files, or directories copied whole)
+/// from `from`.
+fn vendor(from: &Path, dest: &Path, names: &[&str]) -> Result<(), String> {
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for name in names {
+        copy_recursive(&from.join(name), &dest.join(name))
             .map_err(|e| format!("copying {name}: {e}"))?;
     }
-    println!("Vendored querydown-js to {}", dest.display());
+    println!("Vendored {}", dest.display());
+    Ok(())
+}
+
+fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(from, to)?;
+    }
     Ok(())
 }
 
@@ -164,9 +214,9 @@ fn build_frontend() -> Result<(), String> {
 
     check_bun()?;
 
-    // Build + vendor the Querydown JS binding first, so the frontend's local
-    // `file:` dependency on it resolves during `bun install` below.
-    build_querydown_js()?;
+    // Build + vendor Querydown's JS packages first, so the frontend's local
+    // `file:` dependencies on them resolve during `bun install` below.
+    build_querydown()?;
 
     // `--frozen-lockfile`: install exactly what `bun.lock` records, and fail
     // rather than update it when it no longer matches `package.json`. A
@@ -286,6 +336,7 @@ fn main() -> ExitCode {
         "build-release" => build_release(),
         "build-release-pi" => build_release_pi(),
         "clean-web" => clean_web(),
+        "vendor-querydown" => build_querydown(),
         "icons" => icons::generate(&workspace_root()),
         "gen-api" => gen_api::generate(&workspace_root()),
         "--help" | "-h" | "help" => {

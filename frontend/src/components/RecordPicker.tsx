@@ -257,6 +257,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
             singleLine
             ref={searchRef}
             value={filter}
+            context={{ grammar: "conditions", baseTable: props.table }}
             hint={`Filter ${props.table}`}
             onInput={setFilter}
             onClear={() => setFilter("")}
@@ -283,6 +284,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
         <div className="mt-2">
           <CustomInput
             value={sort}
+            context={{ grammar: "sorting", baseTable: props.table }}
             hint="Sort"
             onInput={setSort}
             onClear={() => setSort("")}
@@ -293,6 +295,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
         <div className="mt-2">
           <CustomInput
             value={display}
+            context={{ grammar: "display", baseTable: props.table }}
             hint="Display"
             onInput={setDisplay}
             onClear={() => setDisplay("")}
