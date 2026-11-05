@@ -65,16 +65,38 @@ function subscribeToHotUpdates(onChange: () => void): () => void {
   return () => hot.off("vite:afterUpdate", onChange);
 }
 
-function useTokenValue(name: string): string {
+/** A token's value as app.css writes it for `theme`: its side of a
+ * `light-dark(light, dark)`, or the whole of a value both themes share. */
+function valueFor(raw: string, theme: Theme): string {
+  const inner = /^light-dark\((.*)\)$/s.exec(raw)?.[1];
+  if (inner === undefined) return raw;
+  // The two colors part at the one comma outside any parentheses.
+  let depth = 0;
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === "(") depth++;
+    else if (inner[i] === ")") depth--;
+    else if (inner[i] === "," && depth === 0) {
+      return (
+        theme === "light" ? inner.slice(0, i) : inner.slice(i + 1)
+      ).trim();
+    }
+  }
+  return raw;
+}
+
+function useTokenValue(name: string, theme: Theme): string {
   return useSyncExternalStore(subscribeToHotUpdates, () =>
-    getComputedStyle(document.documentElement)
-      .getPropertyValue(`--${name}`)
-      .trim(),
+    valueFor(
+      getComputedStyle(document.documentElement)
+        .getPropertyValue(`--${name}`)
+        .trim(),
+      theme,
+    ),
   );
 }
 
-function Swatch(props: { name: string }): JSX.Element {
-  const value = useTokenValue(props.name);
+function Swatch(props: { name: string; theme: Theme }): JSX.Element {
+  const value = useTokenValue(props.name, props.theme);
   return (
     <div className="flex items-center gap-2">
       <span
@@ -546,7 +568,7 @@ export default function KitchenSink(props: { theme: Theme }): JSX.Element {
       <Section title="Tokens">
         <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2">
           {TOKENS.map((name) => (
-            <Swatch key={name} name={name} />
+            <Swatch key={name} name={name} theme={props.theme} />
           ))}
         </div>
       </Section>

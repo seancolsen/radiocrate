@@ -25,23 +25,39 @@
 }
 
 @layer base {
+  /* Every color token, each with its light and dark value side by side:
+     `light-dark(light, dark)` picks by the `color-scheme` in force, which
+     follows the system unless an explicit choice (set pre-paint in index.html
+     as `data-theme`) pins it — the two rules below. A token that's the same in
+     both themes is a plain color.
+
+     CSS resolves these wherever they're used. Script that reads a token itself
+     (`getPropertyValue`) gets the unresolved `light-dark(…)` text instead, so
+     it must resolve it through an element — see `CanvasGrid.readTheme`. */
   :root {
-    --panel: #f8f8f8;
-    --sheet: #f0f0f0;
-    --ink: #1b1b1b;
+    color-scheme: light dark;
+    --panel: light-dark(#f8f8f8, #1b1b1b);
+    --sheet: light-dark(#f0f0f0, #232323);
+    --ink: light-dark(#1b1b1b, #f8f8f8);
     /* Chrome tokens (measured from whole_app.png; cross-checked theme.rs). */
-    --bar: #eeeeee; /* tab-bar bg: shade(panel, 10) */
+    --bar: light-dark(#eeeeee, #252525); /* tab-bar bg: shade(panel, 10) */
     /* The active/hover blue — the same ACCENT_BLUE the now-playing bar's play
        button wears (--now-playing), and the same in both themes. */
     --accent: rgb(46 124 246);
-    --ink-weak: #5a5a5a; /* secondary/dim text + icon gray */
-    --hover: #eeeeee; /* row/header/handle hover: shade(panel, 10) */
-    --edge: #c8c8c8; /* hairline dividers / input borders */
+    /* secondary/dim text + icon gray */
+    --ink-weak: light-dark(#5a5a5a, #aeaeae);
+    /* row/header/handle hover: shade(panel, 10) */
+    --hover: light-dark(#eeeeee, #252525);
+    /* hairline dividers / input borders */
+    --edge: light-dark(#c8c8c8, #3c3c3c);
     /* Builder controls (button.rs / builder.rs Duos). */
-    --split-active: #bbd9fb; /* active section-toggle fill */
-    --split-trigger: #d7eafd; /* the ⋮ trigger's lighter tint */
-    --preset: #f3e3fb; /* expanded preset tab + detail panel */
-    --danger: #c0392b; /* delete / unsaved-marker red */
+    /* active section-toggle fill */
+    --split-active: light-dark(#bbd9fb, #2a4766);
+    /* the ⋮ trigger's lighter tint */
+    --split-trigger: light-dark(#d7eafd, #38597d);
+    /* expanded preset tab + detail panel */
+    --preset: light-dark(#f3e3fb, #483755);
+    --danger: light-dark(#c0392b, #e06b5c); /* delete / unsaved-marker red */
     /* ACCENT_BLUE (lib.rs): the now-playing bar's play button, played timeline
        and knob, and the rectangle drawn around the playing row. Its translucent
        companions are the timeline's remaining part and the wash over that row. */
@@ -50,127 +66,38 @@
     --row-current: rgb(46 124 246 / 0.063);
     /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
        artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */
-    --row-bg-top: #ffffff;
-    --row-bg-bottom: #f2f2f2;
-    --row-bg-top-hover: #f5f5f5; /* shade(--row-bg-top, 10) */
-    --row-bg-bottom-hover: #e8e8e8; /* shade(--row-bg-bottom, 10) */
-    --row-selected: #c8e4ff; /* SELECTED_ROW_BG */
-    --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
-    --pill-bg: #efddff;
-    --row-sep: rgb(200 200 200 / 0.5);
+    --row-bg-top: light-dark(#ffffff, #303030);
+    --row-bg-bottom: light-dark(#f2f2f2, #262626);
+    /* shade(--row-bg-top, 10) */
+    --row-bg-top-hover: light-dark(#f5f5f5, #3a3a3a);
+    /* shade(--row-bg-bottom, 10) */
+    --row-bg-bottom-hover: light-dark(#e8e8e8, #303030);
+    --row-selected: light-dark(#c8e4ff, #284563); /* SELECTED_ROW_BG */
+    /* shade(--row-selected, 20) */
+    --row-selected-hover: light-dark(#b4d0eb, #3c5977);
+    --pill-bg: light-dark(#efddff, #4a2c6d);
+    --row-sep: light-dark(rgb(200 200 200 / 0.5), rgb(60 60 60 / 0.5));
     /* Record editor field-label pills, one tint per value category, under
-       --ink. Light fills pushed toward the gamut edge (OKLCH L ~0.81, chroma
-       0.10–0.16) so they read as bright candy colors rather than pastels; the
-       dark theme's set is the same hues, deep. Yellow sits lighter (L 0.89)
-       because it only reads as yellow, not mustard, near the top. */
-    --field-text: #70e093;
-    --field-number: #ff9f9f;
-    --field-uuid: #d1a9ff;
-    --field-link: #fada49;
-    --field-records: #92c5ff;
-    --field-other: #c7c5d4;
-    color-scheme: light dark;
+       --ink.
+       - Light: fills pushed toward the gamut edge (OKLCH L ~0.81, chroma
+         0.10–0.16) so they read as bright candy colors rather than pastels.
+         Yellow sits lighter (L 0.89) because it only reads as yellow, not
+         mustard, near the top.
+       - Dark: the same hues, deep and saturated (OKLCH L ~0.47, chroma up to
+         0.20) under white ink. Yellow can't be both dark and yellow, so it's a
+         lighter gold (L 0.55); records sits darker (L 0.44) so the --accent
+         focus border still shows against it. */
+    --field-text: light-dark(#70e093, #046d36);
+    --field-number: light-dark(#ff9f9f, #a91228);
+    --field-uuid: light-dark(#d1a9ff, #762bb2);
+    --field-link: light-dark(#fada49, #946903);
+    --field-records: light-dark(#92c5ff, #014da9);
+    --field-other: light-dark(#c7c5d4, #585663);
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --panel: #1b1b1b;
-      --sheet: #232323;
-      --ink: #f8f8f8;
-      --bar: #252525;
-      --accent: rgb(46 124 246);
-      --ink-weak: #aeaeae;
-      --hover: #252525;
-      --edge: #3c3c3c;
-      --split-active: #2a4766;
-      --split-trigger: #38597d;
-      --preset: #483755;
-      --danger: #e06b5c;
-      --now-playing: rgb(46 124 246);
-      --timeline-rest: rgb(46 124 246 / 0.275);
-      --row-current: rgb(46 124 246 / 0.063);
-      --row-bg-top: #303030;
-      --row-bg-bottom: #262626;
-      --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */
-      --row-bg-bottom-hover: #303030; /* shade(--row-bg-bottom, 10) */
-      --row-selected: #284563; /* SELECTED_ROW_BG */
-      --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
-      --pill-bg: #4a2c6d;
-      --row-sep: rgb(60 60 60 / 0.5);
-      /* Field-label pills: deep, saturated fills (OKLCH L ~0.47, chroma up to
-         0.20) under white --ink. Yellow can't be both dark and yellow, so it's a
-         lighter gold (L 0.55); records sits darker (L 0.44) so the --accent focus
-         border still shows against it. */
-      --field-text: #046d36;
-      --field-number: #a91228;
-      --field-uuid: #762bb2;
-      --field-link: #946903;
-      --field-records: #014da9;
-      --field-other: #585663;
-    }
-  }
-  /* An explicit stored choice (set pre-paint in index.html) wins over system. */
   :root[data-theme="light"] {
-    --panel: #f8f8f8;
-    --sheet: #f0f0f0;
-    --ink: #1b1b1b;
-    --bar: #eeeeee;
-    --accent: rgb(46 124 246);
-    --ink-weak: #5a5a5a;
-    --hover: #eeeeee;
-    --edge: #c8c8c8;
-    --split-active: #bbd9fb;
-    --split-trigger: #d7eafd;
-    --preset: #f3e3fb;
-    --danger: #c0392b;
-    --now-playing: rgb(46 124 246);
-    --timeline-rest: rgb(46 124 246 / 0.275);
-    --row-current: rgb(46 124 246 / 0.063);
-    --row-bg-top: #ffffff;
-    --row-bg-bottom: #f2f2f2;
-    --row-bg-top-hover: #f5f5f5; /* shade(--row-bg-top, 10) */
-    --row-bg-bottom-hover: #e8e8e8; /* shade(--row-bg-bottom, 10) */
-    --row-selected: #c8e4ff; /* SELECTED_ROW_BG */
-    --row-selected-hover: #b4d0eb; /* shade(--row-selected, 20) */
-    --pill-bg: #efddff;
-    --row-sep: rgb(200 200 200 / 0.5);
-    --field-text: #70e093;
-    --field-number: #ff9f9f;
-    --field-uuid: #d1a9ff;
-    --field-link: #fada49;
-    --field-records: #92c5ff;
-    --field-other: #c7c5d4;
     color-scheme: light;
   }
   :root[data-theme="dark"] {
-    --panel: #1b1b1b;
-    --sheet: #232323;
-    --ink: #f8f8f8;
-    --bar: #252525;
-    --accent: rgb(46 124 246);
-    --ink-weak: #aeaeae;
-    --hover: #252525;
-    --edge: #3c3c3c;
-    --split-active: #2a4766;
-    --split-trigger: #38597d;
-    --preset: #483755;
-    --danger: #e06b5c;
-    --now-playing: rgb(46 124 246);
-    --timeline-rest: rgb(46 124 246 / 0.275);
-    --row-current: rgb(46 124 246 / 0.063);
-    --row-bg-top: #303030;
-    --row-bg-bottom: #262626;
-    --row-bg-top-hover: #3a3a3a; /* shade(--row-bg-top, 10) */
-    --row-bg-bottom-hover: #303030; /* shade(--row-bg-bottom, 10) */
-    --row-selected: #284563; /* SELECTED_ROW_BG */
-    --row-selected-hover: #3c5977; /* shade(--row-selected, 20) */
-    --pill-bg: #4a2c6d;
-    --row-sep: rgb(60 60 60 / 0.5);
-    --field-text: #046d36;
-    --field-number: #a91228;
-    --field-uuid: #762bb2;
-    --field-link: #946903;
-    --field-records: #014da9;
-    --field-other: #585663;
     color-scheme: dark;
   }
 

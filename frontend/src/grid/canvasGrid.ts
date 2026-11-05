@@ -1382,15 +1382,25 @@ export class CanvasGrid {
     return lo === 0 ? ell : text.slice(0, lo) + ell;
   }
 
+  /** The grid's colors, from app.css's tokens. A token's own text can be
+   * `light-dark(…)`, which only resolves where it's used — and canvas can't
+   * parse it — so each one is set as the color of a hidden probe beside the
+   * canvas (inheriting the canvas's `color-scheme`) and read back from its
+   * computed `color`, which is always a plain `rgb(…)`. */
   private readTheme(): Theme {
     const cs = getComputedStyle(this.canvas);
+    const probe = document.createElement("span");
+    probe.hidden = true;
+    (this.canvas.parentElement ?? document.body).append(probe);
+    const resolved = getComputedStyle(probe);
     const v = (name: string, fallback: string): string => {
-      const raw = cs.getPropertyValue(name).trim();
-      return raw || fallback;
+      if (cs.getPropertyValue(name).trim() === "") return fallback;
+      probe.style.color = `var(${name})`;
+      return resolved.color;
     };
     const family = cs.fontFamily.trim();
     if (family) this.fontFamily = family;
-    return {
+    const theme: Theme = {
       panel: v("--panel", "#f8f8f8"),
       rowTop: v("--row-bg-top", "#ffffff"),
       rowBottom: v("--row-bg-bottom", "#f2f2f2"),
@@ -1409,5 +1419,7 @@ export class CanvasGrid {
       // No CSS token for the thumb; a mid-gray reads on both themes.
       scrollThumb: "rgba(130, 130, 130, 0.55)",
     };
+    probe.remove();
+    return theme;
   }
 }
