@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, type JSX } from "react";
-import { castDraft } from "immer";
 import type { Stores } from "../../stores/createStores";
 import { useApp, useStores } from "../../stores/react";
 import { FILTER_DEF, PLAYLIST_SOURCE, SOURCES_FIXTURE } from "../fixtures";
@@ -12,7 +11,7 @@ import RecordEditorPanel from "../../components/RecordEditorPanel";
 import NowPlaying from "../../components/NowPlaying";
 
 // The colors that only show in place: the tab bar's active edge, the toolbar's
-// open section and its problem, the canvas-painted results
+// open section, the canvas-painted results
 // (artist pills, the selected row, the playing row's ring), the record editor
 // on the selected track, and the now-playing bar — over the dev harness's
 // stand-in backend, seeded the way its stories seed it.
@@ -25,31 +24,14 @@ function seed(stores: Stores): void {
   actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
   installRecordFixture(0);
 
-  // A playlist tab behind the active one, whose filter, open, holds a
-  // problem.
+  // A playlist tab behind the active one, and the active one's filter open
+  // (the toggle's on state, its preset tab). Deliberately without a problem:
+  // that dims the results, and the specimens above show its colors already.
   actions.openTab(PLAYLIST_SOURCE);
   actions.openTab({ id: LEMONADE.id, name: LEMONADE.name, definition: "" });
   const id = LEMONADE.id;
-  const live = {
-    ...FILTER_DEF,
-    filter: { ...FILTER_DEF.filter, custom: "jazz year:" },
-  };
-  actions.setTabDefinitions(id, FILTER_DEF, live);
+  actions.setTabDefinitions(id, FILTER_DEF, FILTER_DEF);
   actions.toggleBuilderSection(id, "filter");
-  stores.app.store.setState((s) => {
-    const page = s.pages[id];
-    if (page) {
-      page.diagnostic = castDraft({
-        kind: "syntax",
-        reason: "Unexpected end of input. Expected a value.",
-        hint: null,
-        origin: { kind: "custom", section: "filter" },
-        source: "jazz year:",
-        range: { start: 10, end: 10 },
-        notes: [],
-      });
-    }
-  });
 
   const { result, lineage } = lemonadeGridResult({
     recordKeys: { track: TRACKS },
