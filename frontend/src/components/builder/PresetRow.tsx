@@ -63,7 +63,7 @@ export function PresetRowView(props: {
             {named ? props.name : "Unnamed preset"}
           </span>
           {props.isDefault && (
-            <span className="border-edge text-ink-weak shrink-0 rounded border px-1.5 text-xs leading-4">
+            <span className="text-ink-weak shrink-0 text-xs leading-4">
               Default
             </span>
           )}
