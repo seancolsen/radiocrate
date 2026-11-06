@@ -45,6 +45,7 @@ import {
 } from "../../stores/recordForm";
 import { useFormState } from "../../stores/react";
 import { Icons } from "../../icons";
+import { nounFor } from "../../query/entityNames";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
@@ -411,7 +412,7 @@ function FieldRow(props: {
         {field.kind === "multiRecord" && field.keyColumns.length > 0 && (
           <IconButton
             icon={Icons.Add}
-            label={`Add ${field.label}`}
+            label={`Add ${nounFor(field.table, 1) ?? field.label}`}
             size="sm"
             tabIndex={-1}
             onClick={() => model.addChild(recordId, field)}

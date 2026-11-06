@@ -36,7 +36,7 @@ import type { Stores } from "../stores/createStores";
 //                      hasn't acknowledged — unless `clean=1` makes saved ==
 //                      working
 //   ?clean=1         ← save the given `def` as the baseline too
-//   ?count=12        ← seed an empty result of N rows ("12 results")
+//   ?count=12        ← seed an empty result of N rows ("12 tracks")
 //   ?section=filter  ← open a builder section (filter|sort|display)
 //   ?tracks=id1,id2  ← per-row track ids for the seeded grid, so double-click
 //                      plays without the lineage analysis having run

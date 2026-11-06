@@ -107,7 +107,7 @@ describe("buildFormFields", () => {
     expect(fields.find((f) => f.key === "#credit")).toEqual({
       kind: "multiRecord",
       key: "#credit",
-      label: "credit",
+      label: "credits",
       table: "credit",
       column: "track",
       keyColumns: ["track", "artist"],

@@ -344,8 +344,8 @@ test("the form shows its field labels — and the id — before any data lands",
   // Every field of `track` is there: its own columns, then the tables that
   // reference it, alphabetically.
   await expect(editor.getByText("title", { exact: true })).toBeVisible();
-  await expect(editor.getByText("credit", { exact: true })).toBeVisible();
-  await expect(editor.getByText("play", { exact: true })).toBeVisible();
+  await expect(editor.getByText("credits", { exact: true })).toBeVisible();
+  await expect(editor.getByText("plays", { exact: true })).toBeVisible();
   // The key came with the row, so it renders; nothing else has arrived.
   await expect(editor.getByText("track-1")).toBeVisible();
   await expect(editor.getByText("Pray You Catch Me")).toBeHidden();
@@ -354,7 +354,7 @@ test("the form shows its field labels — and the id — before any data lands",
   // Nor anything to expand: the counts that say whether there's anything in
   // there haven't arrived.
   await expect(
-    editor.getByRole("button", { name: "Expand credit" }),
+    editor.getByRole("button", { name: "Expand credits" }),
   ).toBeHidden();
 });
 
@@ -375,7 +375,7 @@ test("the form loads the record's values and its related-record counts", async (
   await expect(editor.getByText("file-1")).toBeHidden();
   // `credit` and `play` show how many records reference this track.
   await expect(
-    editor.getByRole("button", { name: "Expand credit" }),
+    editor.getByRole("button", { name: "Expand credits" }),
   ).toBeVisible();
 });
 
@@ -409,7 +409,7 @@ test("switching tabs and back leaves the form exactly as it was", async ({
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
   await editor
-    .getByRole("button", { name: "Expand credit" })
+    .getByRole("button", { name: "Expand credits" })
     .click({ timeout: delay * 3 });
   await editor
     .getByRole("button", { name: /^Expand Jack White/ })
@@ -461,7 +461,7 @@ test("widening the selection puts the editor on every record it covers", async (
   ).toBeVisible();
 
   await extendSelectionTo(page, 1); // track-1 and track-2
-  await expect(editor.getByRole("heading")).toHaveText("Edit 2 track records");
+  await expect(editor.getByRole("heading")).toHaveText("Edit 2 tracks");
 
   // The titles differ, so there is no title to show — how many they hold
   // between them stands in for it, and double-clicking the label opens those
@@ -479,10 +479,10 @@ test("widening the selection puts the editor on every record it covers", async (
     editor.getByRole("button", { name: "Add credit" }),
   ).toBeVisible();
   await expect(
-    editor.getByRole("button", { name: "Open credit in new tab" }),
+    editor.getByRole("button", { name: "Open credits in new tab" }),
   ).toBeVisible();
   await expect(
-    editor.getByRole("button", { name: "Expand credit" }),
+    editor.getByRole("button", { name: "Expand credits" }),
   ).toBeVisible();
 
   // Narrowing the selection back to one row is the single-record form again.
@@ -731,9 +731,9 @@ test("a multi-record field groups the records that say the same thing", async ({
   await openEditor(page, "track", 2); // track-3
   const editor = editorPanel(page);
   await extendSelectionTo(page, 4); // tracks 3, 4 and 5
-  await expect(editor.getByRole("heading")).toHaveText("Edit 3 track records");
+  await expect(editor.getByRole("heading")).toHaveText("Edit 3 tracks");
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   // Tracks 3 and 5 are both credited to Beyoncé at order 1, and track 4 has no
   // credits at all: four records, three rows.
   const credits = selectableRecords(editor);
@@ -754,7 +754,7 @@ test("editing inside a grouped row writes every record it stands for", async ({
   const editor = editorPanel(page);
   await extendSelectionTo(page, 4);
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: /^Expand Beyoncé/ }).click();
   // The `order` both of its credits hold, edited once in the row that stands
   // for them. Enter on a focused label is the field's "do the thing" key.
@@ -793,7 +793,7 @@ test("deleting a grouped row deletes every record it stands for", async ({
   const editor = editorPanel(page);
   await extendSelectionTo(page, 4);
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await expect(selectableRecords(editor)).toHaveCount(3);
   await editor.getByRole("button", { name: "Delete Beyoncé" }).click();
   await expect(selectableRecords(editor)).toHaveCount(2);
@@ -921,7 +921,7 @@ test("expanding a multi-record field lists its records, each expandable in turn"
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   // Each credit is previewed by the columns that identify it at a glance, both
   // a hop away through a link: its artist's name, and — since migration 0003
   // made `role` a link to a table of unique names — its role. They're ordered by
@@ -969,7 +969,7 @@ test("a multi-record field skeletons its records while they load", async ({
 
   // The count arrived with the top-level load, so the list has its shape — two
   // empty embedded records — before any of the records themselves are here.
-  await editor.getByRole("button", { name: "Expand play" }).click();
+  await editor.getByRole("button", { name: "Expand plays" }).click();
   await expect(editor.getByTestId("record-placeholder")).toHaveCount(2);
   await expect(editor.getByTestId("record-placeholder")).toHaveCount(0);
 });
@@ -999,7 +999,7 @@ test("embedded records select like result rows, with Shift and Ctrl", async ({
   await openGrid(page);
   await openEditor(page, "track", 4); // track-5: two credits
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   const credits = selectableRecords(editor);
   await expect(credits).toHaveCount(2);
   const selected = () =>
@@ -1103,7 +1103,7 @@ test("the X on an embedded record within a multi-record field deletes it", async
   await openGrid(page);
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   const credits = selectableRecords(editor);
   await expect(credits).toHaveCount(2);
 
@@ -1130,7 +1130,7 @@ test("Delete clears the focused field, and drops a selected record", async ({
 
   // A selected record within a multi-record field goes away, and the field's
   // count follows it down.
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await selectableRecords(editor).first().click();
   await page.keyboard.press("Delete");
   await expect(selectableRecords(editor)).toHaveCount(1);
@@ -1143,12 +1143,12 @@ test("Ctrl+Click on a toggle opens every field beside it", async ({ page }) => {
   const editor = editorPanel(page);
 
   await editor
-    .getByRole("button", { name: "Expand credit" })
+    .getByRole("button", { name: "Expand credits" })
     .click({ modifiers: ["ControlOrMeta"] });
   // `credit` and its siblings `file`, `play` and `track_tag` all opened at
   // once.
   await expect(
-    editor.getByRole("button", { name: "Collapse play" }),
+    editor.getByRole("button", { name: "Collapse plays" }),
   ).toBeVisible();
   await expect(
     editor.getByRole("button", { name: "Collapse file" }),
@@ -1213,7 +1213,7 @@ test("a change deep in the tree stars the collapsed field above it", async ({
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
   // The primitive edited deep in the tree is the credit's `order`: migration
   // 0003 made `role` a link, whose label offers the record picker rather than a
@@ -1225,16 +1225,16 @@ test("a change deep in the tree stars the collapsed field above it", async ({
 
   // The edited record wears a star, and so does the field holding it.
   await expect(star(editor, "order")).toBeVisible();
-  await expect(star(editor, "credit")).toBeVisible();
+  await expect(star(editor, "credits")).toBeVisible();
 
   // Collapsing hides the field it was made in, not the fact that it was made —
   // and the change itself survives being closed and opened again.
-  await editor.getByRole("button", { name: "Collapse credit" }).click();
-  await expect(star(editor, "credit")).toBeVisible();
+  await editor.getByRole("button", { name: "Collapse credits" }).click();
+  await expect(star(editor, "credits")).toBeVisible();
   await expect(editor.getByText("42", { exact: true })).toBeHidden();
   // Reopening finds everything as it was left — the record still expanded, the
   // edit still in it.
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await expect(editor.getByText("42", { exact: true })).toBeVisible();
 });
 
@@ -1302,7 +1302,7 @@ test("the + button scaffolds a new record, open and ready to type into", async (
   // Its own form is open below it, and the field it was added to is starred and
   // counts it.
   await expect(editor.getByText("role", { exact: true })).toBeVisible();
-  await expect(star(editor, "credit")).toBeVisible();
+  await expect(star(editor, "credits")).toBeVisible();
   await expect(editor.getByText("3", { exact: true }).first()).toBeVisible();
 });
 
@@ -1316,7 +1316,7 @@ test("a multi-record field opens its records in a new query tab beside this one"
     () => (window as unknown as AppWindow).__appStore.state.activeTabId,
   );
 
-  await editor.getByRole("button", { name: "Open credit in new tab" }).click();
+  await editor.getByRole("button", { name: "Open credits in new tab" }).click();
 
   const opened = await page.evaluate(() => {
     const store = (window as unknown as AppWindow).__appStore;
@@ -1481,10 +1481,10 @@ test("a multi-record field's menu adds and deletes records", async ({
   await rightClick(formItem(editor, "r:#credit"));
   await page.getByRole("menuitem", { name: "Delete all records" }).click();
   await expect(selectableRecords(editor)).toHaveCount(0);
-  await expect(star(editor, "credit")).toBeVisible();
+  await expect(star(editor, "credits")).toBeVisible();
   // With nothing left in it, the field can't be expanded any more.
   await expect(
-    editor.getByRole("button", { name: "Expand credit" }),
+    editor.getByRole("button", { name: "Expand credits" }),
   ).toBeHidden();
 });
 
@@ -1518,7 +1518,7 @@ test("an embedded record's menu deletes it — or the whole selection", async ({
   await openGrid(page);
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   const credits = selectableRecords(editor);
   await expect(credits).toHaveCount(2);
 
@@ -1597,7 +1597,7 @@ test("the picker searches as the user types, and picking links the record", asyn
   await openGrid(page);
   await openEditor(page, "track", 2); // track-3: credits by Beyoncé and Jack White
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: "Expand Jack White" }).click();
 
   // The `artist` field of the second credit.
@@ -1625,7 +1625,7 @@ test("Up/Down and Enter drive the results without leaving the search box", async
   await openGrid(page);
   await openEditor(page, "track", 2);
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: "Expand Beyoncé" }).click();
   await formItem(editor, "r##credit[0]:artist").dblclick();
 
@@ -1837,7 +1837,7 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
   await openEditor(page, "track", 2); // track-3: two credits
   const editor = editorPanel(page);
 
-  await editor.getByRole("button", { name: "Expand credit" }).click();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
   await selectableRecords(editor).first().click(); // Beyoncé
   await page.keyboard.press("Delete");
   await editor.getByRole("button", { name: "Add credit" }).click();

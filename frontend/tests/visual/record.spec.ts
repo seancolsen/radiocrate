@@ -39,7 +39,7 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await stage.getByRole("button", { name: "Expand title" }).click();
-    await stage.getByRole("button", { name: "Expand credit" }).click();
+    await stage.getByRole("button", { name: "Expand credits" }).click();
     await stage.getByRole("button", { name: /^Expand Jack White/ }).click();
     // "Featured" is on screen twice by now — in the credit's own preview and in
     // the form it just opened — so this waits on the form's copy.
@@ -89,14 +89,14 @@ for (const colorScheme of SCHEMES) {
   // Beside each multi-record field, how many records it has for each of them.
   test(`record-editor/bulk - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "record-editor/bulk", colorScheme);
-    await expect(stage.getByRole("heading")).toHaveText("Edit 2 track records");
+    await expect(stage.getByRole("heading")).toHaveText("Edit 2 tracks");
     // Both records' data has landed once the multi-record fields can be
     // opened, which takes the counts of every one of them.
     await expect(
-      stage.getByRole("button", { name: "Expand credit" }),
+      stage.getByRole("button", { name: "Expand credits" }),
     ).toBeVisible();
     await expect(
-      stage.getByRole("button", { name: "Expand play" }),
+      stage.getByRole("button", { name: "Expand plays" }),
     ).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/bulk", colorScheme),
@@ -113,7 +113,7 @@ for (const colorScheme of SCHEMES) {
       "record-editor/bulk-expanded",
       colorScheme,
     );
-    await stage.getByRole("button", { name: "Expand credit" }).click();
+    await stage.getByRole("button", { name: "Expand credits" }).click();
     await expect(stage.locator("[data-selectable]")).toHaveCount(3);
     await stage.getByRole("button", { name: /^Expand Beyoncé/ }).click();
     // The artist both credits point at, previewed inside the row's own form —
@@ -135,7 +135,7 @@ for (const colorScheme of SCHEMES) {
       "record-editor/varied-expanded",
       colorScheme,
     );
-    await expect(stage.getByRole("heading")).toHaveText("Edit 3 track records");
+    await expect(stage.getByRole("heading")).toHaveText("Edit 3 tracks");
     await stage.getByRole("button", { name: "Expand title" }).click();
     await stage.getByRole("button", { name: "Expand rating" }).click();
     // Each distinct rating is a record of its own, previewed — a second
@@ -157,7 +157,7 @@ for (const colorScheme of SCHEMES) {
       "record-editor/varied-editing",
       colorScheme,
     );
-    await expect(stage.getByRole("heading")).toHaveText("Edit 3 track records");
+    await expect(stage.getByRole("heading")).toHaveText("Edit 3 tracks");
     await stage.getByRole("button", { name: "Expand title" }).click();
     await stage
       .getByRole("button", { name: /^Expand Don't Hurt Yourself/ })

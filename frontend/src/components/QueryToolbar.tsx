@@ -2,6 +2,7 @@ import { useRef, type JSX } from "react";
 import type { CommandId } from "../commands/registry";
 import { Icons, type IconComponent } from "../icons";
 import { sectionLabel, type Section } from "../query/definition";
+import { nounFor } from "../query/entityNames";
 import {
   selectBuilderSection,
   selectCanRedo,
@@ -11,6 +12,7 @@ import {
   selectIsFullQuery,
   selectIsUnsaved,
   selectIsWriting,
+  selectPageBase,
   selectResultCount,
   selectRunning,
   selectTab,
@@ -43,9 +45,12 @@ const SECTIONS: {
   { section: "display", icon: Icons.Display, command: "query.focus_display" },
 ];
 
-/** A human label for the result count, thousands grouped ("1,362 results"). */
-function resultCountLabel(n: number): string {
-  return `${n.toLocaleString("en-US")} ${n === 1 ? "result" : "results"}`;
+/** A human label for the result count, thousands grouped ("1,362 tracks").
+ * Names the base table's entity; "results" when there is no known base table
+ * (a full Querydown query, or a table the entity mapping doesn't know). */
+function resultCountLabel(n: number, base: string | null): string {
+  const noun = nounFor(base, n) ?? (n === 1 ? "result" : "results");
+  return `${n.toLocaleString("en-US")} ${noun}`;
 }
 
 function Separator(): JSX.Element {
@@ -69,6 +74,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   // Full mode swaps the three section toggles for one Querydown toggle, so what
   // "the builder is open" means swaps with it.
   const fullMode = useApp((s) => selectIsFullQuery(s, props.tabId));
+  const base = useApp((s) => selectPageBase(s, props.tabId));
   const fullEditorOpen = useApp((s) => selectFullEditorOpen(s, props.tabId));
   const section = useApp((s) => selectBuilderSection(s, props.tabId));
   const running = useApp((s) => selectRunning(s, props.tabId));
@@ -173,7 +179,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
         <div className="flex-1" />
         {count !== undefined && (
           <span className="text-ink-weak px-1 text-xs whitespace-nowrap">
-            {resultCountLabel(count)}
+            {resultCountLabel(count, fullMode ? null : base)}
           </span>
         )}
         {/* The glyph turns while the run it starts is in flight. Its circular

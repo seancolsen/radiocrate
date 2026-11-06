@@ -4,6 +4,7 @@ import {
   type RecordEditorTarget,
   type RecordRef,
 } from "../stores/app";
+import { entityNames } from "../query/entityNames";
 import { recordIdentity } from "../stores/forms";
 import { createRecordForm, selectFormModified } from "../stores/recordForm";
 import {
@@ -132,10 +133,11 @@ function OpenPanel(props: {
     : MIN_RESULTS_WIDTH_NARROW;
 
   const records = props.target.records;
+  const names = entityNames(props.target.table);
   const heading =
     records.length > 1
-      ? `Edit ${records.length} ${props.target.table} records`
-      : `Edit ${props.target.table}`;
+      ? `Edit ${records.length} ${names?.[1] ?? `${props.target.table} records`}`
+      : `Edit ${names?.[0] ?? props.target.table}`;
   const onClose = () => closeRecordEditor(props.tabId);
 
   /** The records the form is for, compared by identity-in-the-database rather
@@ -152,7 +154,7 @@ function OpenPanel(props: {
         width: `${width}px`,
         maxWidth: `calc(100% - ${minResultsWidth}px)`,
       }}
-      aria-label={`Edit ${props.target.table}`}
+      aria-label={`Edit ${names?.[0] ?? props.target.table}`}
     >
       <SidebarResizeHandle
         edge="left"

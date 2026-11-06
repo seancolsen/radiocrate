@@ -194,6 +194,15 @@ Notes specific to the dev container:
 
 - Bump the Rust version by editing the `FROM rust:1.91-bookworm` line in the `Dockerfile` to match a new host toolchain.
 
+## Keeping table names in step with the schema
+
+The UI speaks of tables in English ("12 tracks", "Edit 2 credits") through the
+mapping in `frontend/src/query/entityNames.ts`: table name → `[singular,
+plural]`, with multi-word tables written out (`playlist_track` → "playlist
+track"). **Whenever a migration adds, renames or drops a table, update
+`ENTITY_NAMES` in the same change.** Tables missing from it (user-created ones
+found by introspection) are expected, and every use falls back gracefully.
+
 ## Logging
 
 Both server binaries (`radiocrate-server` and `radiocrate`) log to **stderr**,

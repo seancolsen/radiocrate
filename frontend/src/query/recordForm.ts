@@ -7,6 +7,7 @@
 // structure": every column of the edited table becomes a field, and every table
 // that references it becomes a field too.
 
+import { pluralOrRaw } from "./entityNames";
 import {
   identifyingColumns,
   inferLinks,
@@ -182,7 +183,7 @@ export function buildFormFields(
     fields.push({
       kind: "multiRecord",
       key: `#${link.fromTable}`,
-      label: link.fromTable,
+      label: pluralOrRaw(link.fromTable),
       table: link.fromTable,
       column: link.fromColumn,
       keyColumns: identifyingColumns(child),

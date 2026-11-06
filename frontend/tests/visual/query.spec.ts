@@ -7,10 +7,10 @@ import { SCHEMES, openStory, snapshot } from "./harness";
 
 for (const colorScheme of SCHEMES) {
   // Saved query with nothing to undo, redo or save, no builder open: the
-  // section toggles inactive, "12 results" and Refresh at the far right.
+  // section toggles inactive, "12 tracks" and Refresh at the far right.
   test(`query-builder/collapsed - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "query-builder/collapsed", colorScheme);
-    await expect(stage.getByText("12 results")).toBeVisible();
+    await expect(stage.getByText("12 tracks")).toBeVisible();
     await expect(stage.getByRole("button", { name: "Undo" })).toHaveCount(0);
     await expect(stage.getByRole("button", { name: "Save" })).toHaveCount(0);
     await expect(stage).toHaveScreenshot(

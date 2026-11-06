@@ -83,6 +83,14 @@ use it to tune the palette. When you change the app's colors, keep it complete:
 Plain grayscale UI doesn't belong there. See `DEVELOPMENT.md` ("Kitchen sink")
 for how the page works.
 
+## Database table names in the UI
+
+User-facing singular/plural names for tables live in `ENTITY_NAMES`
+(`frontend/src/query/entityNames.ts`). When a migration adds, renames or drops a
+table, update that mapping in the same change. Use `entityNames` / `nounFor` /
+`pluralOrRaw` rather than building plurals by hand, and handle a table that
+isn't in the mapping (user-created tables are expected).
+
 ## Writing React
 
 The `frontend/` app is **React 19** under `StrictMode`, with the React Compiler
