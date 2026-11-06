@@ -188,11 +188,11 @@
     --edge: light-dark(#c8c8c8, #3c3c3c);
     /* Builder controls (button.rs / builder.rs Duos). */
     /* active section-toggle fill */
-    --split-active: light-dark(#bbd9fb, #2a4766);
+    --split-active: light-dark(#bbd9fb, #03448b);
     /* the ⋮ trigger's lighter tint */
-    --split-trigger: light-dark(#d7eafd, #38597d);
+    --split-trigger: light-dark(#d7eafd, #043569);
     /* expanded preset tab + detail panel */
-    --preset: light-dark(#f3e3fb, #483755);
+    --preset: light-dark(#f3e3fb, #420f5c);
     --danger: light-dark(#c0392b, #e06b5c); /* delete / unsaved-marker red */
     /* ACCENT_BLUE (lib.rs): the now-playing bar's play button, played timeline
        and knob, and the rectangle drawn around the playing row. Its translucent
