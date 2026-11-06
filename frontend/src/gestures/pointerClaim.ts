@@ -1,8 +1,8 @@
 // Which gesture owns a pointer, when two are listening to it. The explorer's
-// drag-to-rearrange starts from inside the mobile drawer, whose swipe-to-close
-// tracks every pointer that goes down in it: once a drag claims its pointer,
-// the swipe stands down, so moving sideways to pick a nesting depth doesn't
-// also slide the drawer shut.
+// drag-to-rearrange and the panel's resize handle both start from inside the
+// mobile drawer, whose swipe-to-close tracks every touch that goes down in it:
+// once one of them claims its pointer, the swipe stands down, so moving sideways
+// to pick a nesting depth or a width doesn't also slide the drawer shut.
 
 const claimed = new Set<number>();
 

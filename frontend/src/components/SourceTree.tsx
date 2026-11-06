@@ -18,6 +18,7 @@ import FolderRow from "./FolderRow";
 import SourceRow from "./SourceRow";
 import { ContextMenu } from "./ui/ContextMenu";
 import { MenuItem } from "./ui/Menu";
+import { usePersistentSidebar } from "./ui/usePersistentSidebar";
 
 /** A folder's context menu. */
 function FolderMenu(props: { id: string }): JSX.Element {
@@ -103,6 +104,7 @@ export default function SourceTree(props: {
   // The playlist result rows being dragged would be dropped on, if any.
   const rowDropTarget = useApp((s) => s.rowDrag?.over ?? null);
   const actions = useAppActions();
+  const persistent = usePersistentSidebar();
 
   const tree = useMemo(() => buildTree(sources, folders), [sources, folders]);
   const rows = useMemo(
@@ -167,6 +169,8 @@ export default function SourceTree(props: {
               onOpen={() => {
                 if (dnd.ignoreClick()) return;
                 actions.openTab(node.source);
+                // A drawer would cover the page just opened.
+                if (!persistent) actions.setSidebarOpen(false);
               }}
             />
           );

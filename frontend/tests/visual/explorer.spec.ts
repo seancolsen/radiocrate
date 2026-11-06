@@ -98,8 +98,12 @@ for (const colorScheme of SCHEMES) {
 }
 
 test.describe("the query tree", () => {
+  // Narrow enough for the "Opened" list, which is how these see what they open.
   test.beforeEach(async ({ page }) => {
-    await openStory(page, "explorer/tree", "light");
+    await openStory(page, "explorer/tree", "light", {
+      width: 480,
+      height: 900,
+    });
   });
 
   test("a folder's chevron opens and closes it; a click on the folder doesn't", async ({

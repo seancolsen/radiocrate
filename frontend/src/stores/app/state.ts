@@ -21,6 +21,7 @@ import type { AppEnv } from "../env";
 import {
   storedAudioQuality,
   storedExpandedFolders,
+  storedExplorerWidth,
   storedRecordSidebarWidth,
   storedSidebarOpen,
   storedTabs,
@@ -429,6 +430,7 @@ export function emptyPage(): QueryPageState {
 
 export interface AppState {
   sidebarOpen: boolean; // explorer open/closed (persisted, like theme)
+  explorerWidth: number; // explorer width in CSS px (persisted, likewise)
   theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
   tabs: Tab[]; // open tabs, in tab-bar order
   activeTabId: string | null;
@@ -593,6 +595,7 @@ export function initialState(env: AppEnv): AppState {
   const { tabs, activeTabId } = restoredTabs(env);
   return {
     sidebarOpen: storedSidebarOpen(env),
+    explorerWidth: storedExplorerWidth(env),
     theme: storedTheme(env),
     tabs,
     activeTabId,

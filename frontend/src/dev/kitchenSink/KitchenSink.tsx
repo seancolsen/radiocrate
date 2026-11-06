@@ -258,6 +258,9 @@ function Buttons(): JSX.Element {
     <Section title="Buttons">
       <div className="flex flex-col gap-3">
         <Row>
+          <Specimen caption="sidebar resize handle">
+            <span className="bg-accent/40 block h-[26px] w-[7px]" />
+          </Specimen>
           <Specimen caption="primary">
             <button type="button" className={PRIMARY}>
               Save

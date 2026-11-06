@@ -58,7 +58,10 @@ for (const colorScheme of SCHEMES) {
   // The explorer's own contents: the "Opened" list (first tab active), the
   // saved-query list under its filter, and the Settings footer.
   test(`explorer/basic - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(page, "explorer/basic", colorScheme);
+    const stage = await openStory(page, "explorer/basic", colorScheme, {
+      width: 390,
+      height: 844,
+    });
     await expect(stage.getByText("Workout Mix")).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("explorer/basic", colorScheme),

@@ -69,6 +69,7 @@ import { UpdateBar } from "../../components/UpdateBanner";
 import { ContextMenu } from "../../components/ui/ContextMenu";
 import { Menu, MenuItem, MenuSubmenu } from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
+import ScrollArea from "../../components/ui/ScrollArea";
 import SidebarLeft from "../../components/ui/SidebarLeft";
 
 // The visual-test harness's catalogue: one entry per snapshot, each putting a
@@ -403,7 +404,13 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
         ns.map(trackRecord),
       );
     },
-    render: () => <RecordEditorPanel tabId={LEMONADE.id} />,
+    // The panel leaves room beside it for the results, so its parent has to
+    // have some to leave; the stage shows the panel alone.
+    render: () => (
+      <div className="flex h-full w-[500px] shrink-0">
+        <RecordEditorPanel tabId={LEMONADE.id} />
+      </div>
+    ),
   };
 }
 
@@ -520,6 +527,9 @@ export const STORIES: Record<string, Story> = {
       <SidebarLeft
         open
         onClose={() => {}}
+        width={200}
+        onResize={() => {}}
+        onResizeEnd={() => {}}
         main={<Lorem heading="Main content" lines={3} />}
       >
         <Lorem heading="Sidebar" lines={2} />
@@ -532,6 +542,9 @@ export const STORIES: Record<string, Story> = {
       <SidebarLeft
         open
         onClose={() => {}}
+        width={200}
+        onResize={() => {}}
+        onResizeEnd={() => {}}
         main={<Lorem heading="Main content" lines={3} />}
       >
         <Lorem heading="Sidebar" lines={2} />
@@ -539,7 +552,21 @@ export const STORIES: Record<string, Story> = {
     ),
   },
 
+  // ── A sidebar's scrolling region, overflowing ─────────────────────────────
+  "scroll-area/overflowing": {
+    width: 240,
+    height: 300,
+    frame: "flex flex-col",
+    render: () => (
+      <ScrollArea>
+        <Lorem heading="Scrolling" lines={12} />
+      </ScrollArea>
+    ),
+  },
+
   // ── The explorer, without the panel it fills ─────────────────────────────
+  // The "Opened" list only shows where the explorer is a drawer, so its test
+  // takes a phone's viewport.
   "explorer/basic": {
     width: 200,
     height: 600,

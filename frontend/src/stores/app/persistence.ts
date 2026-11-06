@@ -81,11 +81,62 @@ export function persistAudioQuality(env: AppEnv, pref: AudioQualityPref): void {
   }
 }
 
+/** A sidebar width read from storage, clamped; anything unreadable is `fallback`. */
+function storedWidth(
+  env: AppEnv,
+  key: string,
+  clamp: (px: number) => number,
+  fallback: number,
+): number {
+  try {
+    const v = Number(env.storage.getItem(key));
+    if (Number.isFinite(v) && v > 0) return clamp(v);
+  } catch {
+    // Private-mode localStorage denial — fall back to the default.
+  }
+  return fallback;
+}
+
+function persistWidth(env: AppEnv, key: string, px: number): void {
+  try {
+    env.storage.setItem(key, String(px));
+  } catch {
+    // ignore
+  }
+}
+
+/** Width bounds for the explorer sidebar, in CSS px. Like the record editor's
+ * below, the maximum is also capped against the live viewport. */
+const EXPLORER_MIN_WIDTH = 160;
+const EXPLORER_MAX_WIDTH = 600;
+const EXPLORER_DEFAULT_WIDTH = 200;
+const EXPLORER_WIDTH_KEY = "explorerWidth";
+
+export function clampExplorerWidth(px: number): number {
+  return Math.max(
+    EXPLORER_MIN_WIDTH,
+    Math.min(EXPLORER_MAX_WIDTH, Math.round(px)),
+  );
+}
+
+export function storedExplorerWidth(env: AppEnv): number {
+  return storedWidth(
+    env,
+    EXPLORER_WIDTH_KEY,
+    clampExplorerWidth,
+    EXPLORER_DEFAULT_WIDTH,
+  );
+}
+
+export function persistExplorerWidth(env: AppEnv, px: number): void {
+  persistWidth(env, EXPLORER_WIDTH_KEY, px);
+}
+
 /** Width bounds for the record-editor sidebar, in CSS px. The maximum is also
  * capped against the live viewport while dragging (see `RecordEditorPanel`), so
  * these are just the absolute limits a persisted value is trusted within. */
-export const RECORD_SIDEBAR_MIN_WIDTH = 240;
-export const RECORD_SIDEBAR_MAX_WIDTH = 800;
+const RECORD_SIDEBAR_MIN_WIDTH = 240;
+const RECORD_SIDEBAR_MAX_WIDTH = 800;
 const RECORD_SIDEBAR_DEFAULT_WIDTH = 340;
 const RECORD_SIDEBAR_KEY = "recordSidebarWidth";
 
@@ -97,21 +148,16 @@ export function clampRecordSidebarWidth(px: number): number {
 }
 
 export function storedRecordSidebarWidth(env: AppEnv): number {
-  try {
-    const v = Number(env.storage.getItem(RECORD_SIDEBAR_KEY));
-    if (Number.isFinite(v) && v > 0) return clampRecordSidebarWidth(v);
-  } catch {
-    // Private-mode localStorage denial — fall back to the default.
-  }
-  return RECORD_SIDEBAR_DEFAULT_WIDTH;
+  return storedWidth(
+    env,
+    RECORD_SIDEBAR_KEY,
+    clampRecordSidebarWidth,
+    RECORD_SIDEBAR_DEFAULT_WIDTH,
+  );
 }
 
 export function persistRecordSidebarWidth(env: AppEnv, px: number): void {
-  try {
-    env.storage.setItem(RECORD_SIDEBAR_KEY, String(px));
-  } catch {
-    // ignore
-  }
+  persistWidth(env, RECORD_SIDEBAR_KEY, px);
 }
 
 const EXPANDED_FOLDERS_KEY = "expandedFolders";

@@ -140,9 +140,11 @@ import {
 import type { AppEnv } from "../env";
 import { applyThemeToDocument, watchSystemTheme } from "./theme";
 import {
+  clampExplorerWidth,
   clampRecordSidebarWidth,
   persistAudioQuality,
   persistExpandedFolders,
+  persistExplorerWidth,
   persistRecordSidebarWidth,
   persistSidebar,
   persistTabs,
@@ -282,6 +284,11 @@ export interface AppActions {
 
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  /** Set the explorer's width while dragging its resize handle; clamped, not
+   * persisted. */
+  setExplorerWidth: (px: number) => void;
+  /** Persist the current width — called once when a drag ends. */
+  commitExplorerWidth: () => void;
   /** Sets the theme override ("system" clears it) — the Settings menu's action. */
   setTheme: (pref: ThemePref) => void;
   /** Sets the audio-streaming quality preference — the Settings menu's action. */
@@ -2384,6 +2391,11 @@ export function createAppActions(
       });
       persistSidebar(env, open);
     },
+    setExplorerWidth: (px) =>
+      set((s) => {
+        s.explorerWidth = clampExplorerWidth(px);
+      }),
+    commitExplorerWidth: () => persistExplorerWidth(env, get().explorerWidth),
     setTheme: (pref) => {
       set((s) => {
         s.theme = pref;

@@ -1,123 +1,185 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { isPointerClaimed } from "./pointerClaim";
+import {
+  releaseVelocity,
+  shouldClose,
+  swipeAxis,
+  type SwipeSample,
+} from "./swipe";
 
-/** Static-friction scale (ORGANIZER_DRAG_FRICTION): small finger movements barely
- * move the drawer, so a vertical scroll inside it isn't read as a close-swipe. */
-const FRICTION = 16;
-/** Leftward flick velocity (px/s, ORGANIZER_SWIPE_VELOCITY) that closes even on a
- * small drag distance. */
-const FLICK_VELOCITY = 400;
-
-/** `dx - friction * tanh(dx / friction)` — near-zero for small |dx|, then tracks
- * 1:1 (offset by a constant). */
-function staticFriction(dx: number): number {
-  return dx - FRICTION * Math.tanh(dx / FRICTION);
+/** What a drawer's two parts look like at `reveal` (1: open, 0: closed): the
+ * one description of them, for a drawer at rest and for one under a finger. */
+export function revealStyles(reveal: number): {
+  panel: { transform: string };
+  scrim: { opacity: number };
+} {
+  return {
+    panel: { transform: `translateX(${(reveal - 1) * 100}%)` },
+    scrim: { opacity: reveal * 0.4 },
+  };
 }
 
-/** Hand-rolled Pointer Events swipe-to-close for the mobile drawer (no gesture
- * library). Tracks a leftward drag with static friction; release closes on a
- * fast leftward flick or when dragged past halfway, else snaps back open. */
-export function useSwipeToClose(onClose: () => void, getWidth: () => number) {
-  const [offset, setOffset] = useState(0);
-  const [dragging, setDragging] = useState(false);
+/** One touch being watched. Starts undecided; `drag` is set once it has
+ * proved to be a horizontal swipe. */
+interface Session {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  drag: {
+    /** The panel's width, for the length of the swipe. */
+    width: number;
+    /** The finger x that puts the panel at `base` px from open. */
+    originX: number;
+    base: number;
+    /** Where the panel is now: px from open, ≤ 0. */
+    offset: number;
+    samples: SwipeSample[];
+  } | null;
+}
 
-  // Refs, not state — nothing needs to re-render off them: a drag's own
-  // mutable state, read and written only from the pointer handlers below.
-  const startX = useRef(0);
-  const lastX = useRef(0);
-  const lastT = useRef(0);
-  const velocity = useRef(0);
-  const active = useRef(false);
-  const pointerId = useRef(0);
-  const el = useRef<HTMLElement | null>(null);
-  // Mirrors `offset` state for the native pointer handlers below, which need
-  // its current value synchronously (`onUp`'s halfway check) and can't wait
-  // for a render. Written only from those handlers, alongside `setOffset`
-  // itself — never from the render body, which would be an unsafe ref write.
-  const offsetRef = useRef(0);
-  const setOffsetTracked = (o: number) => {
-    offsetRef.current = o;
-    setOffset(o);
-  };
+/** Swipe a drawer closed, from anywhere in `zoneRef` — the panel and its scrim.
+ *
+ * A touch starts undecided, and nothing moves until it's clearly one thing or
+ * the other. A vertical one is left to scroll. A horizontal one takes the panel
+ * with it, px for px from wherever the panel was (so it doesn't jump by the
+ * distance that decided it, and a touch that lands mid-spring-back catches it
+ * where it is), and a finger run past either end moves it again the moment it
+ * turns back. On release, the panel springs home or closes (see `shouldClose`);
+ * the transition itself is the caller's CSS, switched off while `data-swiping`
+ * is on the zone.
+ *
+ * What makes it work is `touch-action: pan-y` on everything a touch can land on
+ * in the zone (`touch-pan-y`, and `ScrollArea`'s scroller): the browser takes a
+ * vertical touch for itself and cancels the pointer, and leaves us every move of
+ * a horizontal one. Without it, the browser cancels those too.
+ *
+ * The moves write to the DOM directly, not through state: a finger on the panel
+ * re-renders nothing. They're native listeners because React's bubble through
+ * portals, and a touch on a context menu raised from inside the panel isn't a
+ * swipe. Nor is one on a dropdown, which renders in place. */
+export function useSwipeToClose(opts: {
+  zoneRef: RefObject<HTMLElement | null>;
+  panelRef: RefObject<HTMLElement | null>;
+  scrimRef: RefObject<HTMLElement | null>;
+  /** Whether the drawer is open, and so has anything to swipe. */
+  enabled: boolean;
+  onClose: () => void;
+}): void {
+  const { zoneRef, panelRef, scrimRef, enabled } = opts;
 
-  // `onClose`/`getWidth` read through refs, synced from effects (never the
-  // render body — an unsafe ref write) so the mount-once cleanup effect below
-  // always calls the latest ones without having to re-run.
-  const onCloseRef = useRef(onClose);
+  const onCloseRef = useRef(opts.onClose);
   useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-  const getWidthRef = useRef(getWidth);
-  useEffect(() => {
-    getWidthRef.current = getWidth;
-  }, [getWidth]);
+    onCloseRef.current = opts.onClose;
+  });
 
-  function onMove(e: globalThis.PointerEvent) {
-    if (!active.current) return;
-    // Another gesture (the explorer's drag-to-rearrange) took this pointer
-    // over: let go, and put the drawer back where it was.
-    if (isPointerClaimed(e.pointerId)) {
+  useEffect(() => {
+    const zone = zoneRef.current;
+    const panel = panelRef.current;
+    const scrim = scrimRef.current;
+    if (!enabled || !zone || !panel || !scrim) return;
+
+    let session: Session | null = null;
+
+    const paint = (reveal: number) => {
+      const styles = revealStyles(reveal);
+      panel.style.transform = styles.panel.transform;
+      scrim.style.opacity = String(styles.scrim.opacity);
+    };
+
+    const stopWatching = () => {
+      session = null;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      active.current = false;
-      setDragging(false);
-      setOffsetTracked(0);
-      return;
+      window.removeEventListener("pointercancel", onCancel);
+    };
+
+    /** Lets go of the drawer, which animates to `reveal`. */
+    const settle = (reveal: number) => {
+      delete zone.dataset.swiping;
+      paint(reveal);
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (session || e.pointerType !== "touch" || !e.isPrimary) return;
+      if ((e.target as Element).closest('[role="menu"]')) return;
+      session = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        drag: null,
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    };
+
+    function onMove(e: PointerEvent) {
+      const s = session;
+      if (!s || e.pointerId !== s.pointerId) return;
+      // Another gesture (the explorer's drag-to-rearrange, a resize) took this
+      // pointer over: let go, and put the drawer back where it was.
+      if (isPointerClaimed(e.pointerId)) {
+        if (s.drag) settle(1);
+        stopWatching();
+        return;
+      }
+      if (!s.drag) {
+        const axis = swipeAxis(e.clientX - s.startX, e.clientY - s.startY);
+        if (axis === null) return;
+        if (axis === "vertical") {
+          stopWatching();
+          return;
+        }
+        const box = panel!.getBoundingClientRect();
+        const base = box.left - zone!.getBoundingClientRect().left;
+        s.drag = {
+          width: box.width,
+          originX: e.clientX,
+          base,
+          offset: base,
+          samples: [],
+        };
+        zone!.dataset.swiping = "";
+      }
+      const drag = s.drag;
+      const wanted = drag.base + (e.clientX - drag.originX);
+      drag.offset = Math.max(-drag.width, Math.min(0, wanted));
+      drag.originX += wanted - drag.offset;
+      drag.samples.push({ x: e.clientX, t: e.timeStamp });
+      if (drag.samples.length > 32) drag.samples.shift();
+      paint(1 + drag.offset / drag.width);
     }
-    const width = getWidthRef.current();
-    const o = Math.max(
-      -width,
-      Math.min(0, staticFriction(e.clientX - startX.current)),
-    );
-    setOffsetTracked(o);
-    const now = performance.now();
-    const dt = now - lastT.current;
-    if (dt > 0) velocity.current = ((e.clientX - lastX.current) / dt) * 1000;
-    lastX.current = e.clientX;
-    lastT.current = now;
-    if (o !== 0) {
-      try {
-        el.current?.setPointerCapture(pointerId.current);
-      } catch {
-        // best-effort
+
+    function onUp(e: PointerEvent) {
+      const s = session;
+      if (!s || e.pointerId !== s.pointerId) return;
+      stopWatching();
+      if (!s.drag) return;
+      const { offset, width, samples } = s.drag;
+      if (shouldClose(offset, width, releaseVelocity(samples, e.timeStamp))) {
+        settle(0);
+        onCloseRef.current();
+      } else {
+        settle(1);
       }
     }
-  }
 
-  function onUp() {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    if (!active.current) return;
-    active.current = false;
-    setDragging(false);
-    const width = getWidthRef.current();
-    const shouldClose =
-      velocity.current < -FLICK_VELOCITY || offsetRef.current < -width / 2;
-    setOffsetTracked(0);
-    if (shouldClose) onCloseRef.current();
-  }
+    /** The browser took the touch for itself: a scroll, if it was undecided. */
+    function onCancel(e: PointerEvent) {
+      const s = session;
+      if (!s || e.pointerId !== s.pointerId) return;
+      stopWatching();
+      if (s.drag) settle(1);
+    }
 
-  function onPointerDown(e: PointerEvent<HTMLElement>) {
-    if (e.button !== 0) return;
-    el.current = e.currentTarget;
-    pointerId.current = e.pointerId;
-    startX.current = e.clientX;
-    lastX.current = e.clientX;
-    lastT.current = performance.now();
-    velocity.current = 0;
-    active.current = true;
-    setDragging(true);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
-
-  useEffect(() => {
+    zone.addEventListener("pointerdown", onDown);
     return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      zone.removeEventListener("pointerdown", onDown);
+      const swiping = session?.drag;
+      stopWatching();
+      // Closed some other way mid-swipe: its own write says where the drawer
+      // goes, and this mustn't leave the transition switched off.
+      if (swiping) delete zone.dataset.swiping;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return { onPointerDown, offset, dragging };
+  }, [enabled, zoneRef, panelRef, scrimRef]);
 }

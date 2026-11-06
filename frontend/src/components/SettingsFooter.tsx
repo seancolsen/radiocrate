@@ -4,9 +4,8 @@ import { Menu } from "./ui/Menu";
 import { cx } from "./ui/cx";
 import SettingsMenu from "./SettingsMenu";
 
-/** The Settings dropdown pinned to the explorer's bottom: gear icon + muted
- * "Settings" label, opening {@link SettingsMenu} upward (it sits on the bottom
- * edge). */
+/** The Settings dropdown in the explorer's footer: gear icon + muted "Settings"
+ * label, opening {@link SettingsMenu} upward (it sits on the bottom edge). */
 export default function SettingsFooter(): JSX.Element {
   return (
     <Menu
@@ -20,8 +19,8 @@ export default function SettingsFooter(): JSX.Element {
           aria-label="Settings"
           aria-expanded={api.open}
           className={cx(
-            "text-ink-weak hover:bg-hover hover:text-ink flex h-[30px] w-full shrink-0 items-center gap-2 pl-3",
-            { "bg-hover text-ink": api.open },
+            "text-ink-weak hover:bg-edge/40 hover:text-ink flex h-[30px] w-full shrink-0 items-center gap-2 pl-3",
+            { "bg-edge/40 text-ink": api.open },
           )}
           onClick={() => api.toggle()}
         >

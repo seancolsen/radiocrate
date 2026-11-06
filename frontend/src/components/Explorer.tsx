@@ -5,10 +5,12 @@ import { useApp, useAppActions } from "../stores/react";
 import SectionHeading from "./SectionHeading";
 import OpenedRow from "./OpenedRow";
 import SourceTree from "./SourceTree";
-import SettingsFooter from "./SettingsFooter";
+import ExplorerFooter from "./ExplorerFooter";
 import { tabIcon } from "./tabKind";
 import IconButton from "./ui/IconButton";
 import { Menu, MenuItem, MenuToggleItem } from "./ui/Menu";
+import ScrollArea from "./ui/ScrollArea";
+import { usePersistentSidebar } from "./ui/usePersistentSidebar";
 
 /** One "Opened" row, wired to the store. Split out from {@link Explorer} so its
  * unsaved-star subscription (`selectIsUnsaved`) is narrow to this one tab — an
@@ -63,27 +65,27 @@ function SourceFilterInput(): JSX.Element {
 }
 
 /** The explorer: an "Opened" section (every open tab, whatever page it holds —
- * left out altogether while none is open),
+ * left out altogether while none is open, and wherever the tab bar stays in
+ * view beside a persistent sidebar, saying the same thing),
  * a "Sources" section (the saved queries and playlists, in the folders the user
  * arranges them in, with an actions menu to add a query, playlist or folder,
  * filter or refresh), and
- * the Settings menu footer pinned to the bottom.
+ * the footer pinned to the bottom.
  *
  * This is only the contents. The panel it fills — its surface, width, and
- * persistent-column / modal-drawer behavior — belongs to `ui/SidebarLeft`, so
- * the explorer says nothing about being in a sidebar at all. */
+ * persistent-column / modal-drawer behavior — belongs to `ui/SidebarLeft`. */
 export default function Explorer(): JSX.Element {
   const filterOpen = useApp((s) => s.sourceFilterOpen);
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
   const actions = useAppActions();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const showOpened = !usePersistentSidebar() && tabs.length > 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        {/* Opened — only while something is. */}
-        {tabs.length > 0 && (
+      <ScrollArea ref={scrollRef}>
+        {showOpened && (
           <>
             <SectionHeading title="Opened" spaced={false} />
             {tabs.map((tab) => (
@@ -99,7 +101,7 @@ export default function Explorer(): JSX.Element {
         )}
 
         {/* Sources */}
-        <SectionHeading title="Sources" spaced={tabs.length > 0}>
+        <SectionHeading title="Sources" spaced={showOpened}>
           <Menu
             align="end"
             width="170px"
@@ -143,9 +145,9 @@ export default function Explorer(): JSX.Element {
         </SectionHeading>
         {filterOpen && <SourceFilterInput />}
         <SourceTree scrollRef={scrollRef} />
-      </div>
+      </ScrollArea>
 
-      <SettingsFooter />
+      <ExplorerFooter />
     </div>
   );
 }

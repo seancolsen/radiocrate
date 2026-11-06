@@ -1,16 +1,9 @@
-import {
-  useState,
-  type JSX,
-  type KeyboardEvent,
-  type PointerEvent,
-  type ReactNode,
-} from "react";
+import { useState, type JSX, type ReactNode } from "react";
 import {
   selectRecordEditor,
   type RecordEditorTarget,
   type RecordRef,
 } from "../stores/app";
-import { RECORD_SIDEBAR_MIN_WIDTH } from "../stores/app/persistence";
 import { recordIdentity } from "../stores/forms";
 import { createRecordForm, selectFormModified } from "../stores/recordForm";
 import {
@@ -22,7 +15,10 @@ import {
 import { Icons, type IconComponent } from "../icons";
 import RecordForm from "./record/RecordForm";
 import IconButton from "./ui/IconButton";
+import ScrollArea from "./ui/ScrollArea";
+import SidebarResizeHandle from "./ui/SidebarResizeHandle";
 import { cx } from "./ui/cx";
+import { usePersistentSidebar } from "./ui/usePersistentSidebar";
 
 // The record editor: a sidebar within the query page, opened from a result row's
 // "Edit {table}" context-menu entry or the "Results: Edit selected rows"
@@ -37,11 +33,11 @@ import { cx } from "./ui/cx";
 // selection covers, and what differs about editing several at once is settled
 // field by field, well below this (see `record/formValues.ts`).
 
-/** Least width left to the results while dragging the divider, so the pane the
- * editor was opened *from* can't be squeezed away entirely. */
+/** Least width left to the results, so the pane the editor was opened *from*
+ * can't be squeezed away entirely. A phone can't spare much of its width, and
+ * the editor is the one that needs it there. */
 const MIN_RESULTS_WIDTH = 160;
-/** Keyboard resize step (Arrow keys on the divider). */
-const RESIZE_STEP = 16;
+const MIN_RESULTS_WIDTH_NARROW = 48;
 
 /** The records' identities as strings — table plus key each — for comparing two
  * selections without caring which objects carry them. The same strings key the
@@ -127,63 +123,13 @@ function OpenPanel(props: {
   tabId: string;
   target: RecordEditorTarget;
 }): JSX.Element {
-  const stores = useStores();
   const { setRecordSidebarWidth, commitRecordSidebarWidth, closeRecordEditor } =
     useAppActions();
   const width = useApp((s) => s.recordSidebarWidth);
   const schemaJson = useApp((s) => s.schema.json);
-
-  /** Applies a dragged/typed width, keeping the results pane visible. The store
-   * clamps to the absolute bounds; this is the viewport-relative cap on top. */
-  const applyWidth = (px: number) => {
-    const max = Math.max(
-      RECORD_SIDEBAR_MIN_WIDTH,
-      window.innerWidth - MIN_RESULTS_WIDTH,
-    );
-    setRecordSidebarWidth(Math.min(px, max));
-  };
-
-  // Drag the divider: pointer capture keeps the gesture alive over the canvas
-  // (which swallows pointer events of its own), and the width is persisted once
-  // on release rather than on every move.
-  const onDividerPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const divider = e.currentTarget;
-    const pointerId = e.pointerId;
-    const startX = e.clientX;
-    const startWidth = stores.app.store.getState().recordSidebarWidth;
-    divider.setPointerCapture(pointerId);
-
-    const onMove = (ev: globalThis.PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      // The sidebar is on the right, so dragging left widens it.
-      applyWidth(startWidth - (ev.clientX - startX));
-    };
-    const onUp = (ev: globalThis.PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      divider.removeEventListener("pointermove", onMove);
-      divider.removeEventListener("pointerup", onUp);
-      divider.removeEventListener("pointercancel", onUp);
-      commitRecordSidebarWidth();
-    };
-    divider.addEventListener("pointermove", onMove);
-    divider.addEventListener("pointerup", onUp);
-    divider.addEventListener("pointercancel", onUp);
-  };
-
-  const onDividerKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const step =
-      e.key === "ArrowLeft"
-        ? RESIZE_STEP
-        : e.key === "ArrowRight"
-          ? -RESIZE_STEP
-          : 0;
-    if (step === 0) return;
-    e.preventDefault();
-    applyWidth(stores.app.store.getState().recordSidebarWidth + step);
-    commitRecordSidebarWidth();
-  };
+  const minResultsWidth = usePersistentSidebar()
+    ? MIN_RESULTS_WIDTH
+    : MIN_RESULTS_WIDTH_NARROW;
 
   const records = props.target.records;
   const heading =
@@ -202,19 +148,18 @@ function OpenPanel(props: {
   return (
     <aside
       className="bg-panel border-edge relative flex shrink-0 flex-col border-l shadow-[-8px_0_16px_-4px_rgba(0,0,0,0.25)]"
-      style={{ width: `${width}px` }}
+      style={{
+        width: `${width}px`,
+        maxWidth: `calc(100% - ${minResultsWidth}px)`,
+      }}
       aria-label={`Edit ${props.target.table}`}
     >
-      {/* The resize divider straddles the border so it's grabbable from either
-          side without widening the visible seam. */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize record editor"
-        tabIndex={0}
-        className="hover:bg-accent/40 focus-visible:bg-accent/40 absolute inset-y-0 -left-[3px] z-10 w-[7px] cursor-col-resize outline-none"
-        onPointerDown={onDividerPointerDown}
-        onKeyDown={onDividerKeyDown}
+      <SidebarResizeHandle
+        edge="left"
+        label="Resize record editor"
+        maxWidth={(panel) => panel.parentElement!.clientWidth - minResultsWidth}
+        onResize={setRecordSidebarWidth}
+        onCommit={commitRecordSidebarWidth}
       />
 
       {/* The form needs the schema — its whole structure comes from
@@ -224,7 +169,7 @@ function OpenPanel(props: {
       {schemaJson === undefined ? (
         <>
           <PanelHeader heading={heading} onClose={onClose} />
-          <div className="min-h-0 flex-1 overflow-y-auto p-2" />
+          <div className="min-h-0 flex-1" />
         </>
       ) : (
         <PanelForm
@@ -328,14 +273,14 @@ function PanelForm(props: {
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <ScrollArea className="p-2">
         <RecordForm
           tabId={props.tabId}
           identities={form.identities}
           model={model}
           schemaJson={props.schemaJson}
         />
-      </div>
+      </ScrollArea>
     </>
   );
 }

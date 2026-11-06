@@ -89,7 +89,9 @@ function Main(): JSX.Element {
 
 export default function App(): JSX.Element {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
-  const { setSidebarOpen } = useAppActions();
+  const explorerWidth = useApp((s) => s.explorerWidth);
+  const { setSidebarOpen, setExplorerWidth, commitExplorerWidth } =
+    useAppActions();
 
   return (
     <div
@@ -104,6 +106,10 @@ export default function App(): JSX.Element {
       <SidebarLeft
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        width={explorerWidth}
+        onResize={setExplorerWidth}
+        onResizeEnd={commitExplorerWidth}
+        label="Explorer"
         main={<Main />}
       >
         <Explorer />

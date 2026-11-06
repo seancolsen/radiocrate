@@ -245,11 +245,11 @@ test("the Settings menu opens the shortcuts editor as a singleton tab", async ({
   await page.getByRole("menuitem", { name: "Keyboard shortcuts" }).click();
   await expect(editor).toBeVisible();
   // A tab of its own: the query page is no longer showing, and the editor has a
-  // handle in the bar and a row in the explorer's "Opened" list.
+  // handle in the bar.
   await expect(queryPage).toBeHidden();
   await expect(
     page.getByRole("button", { name: "Close Keyboard Shortcuts" }),
-  ).toHaveCount(2);
+  ).toHaveCount(1);
 
   const tabs = async () =>
     await page.evaluate(() => {
