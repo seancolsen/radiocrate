@@ -12,8 +12,8 @@ import PresetRow, { PresetRowView } from "./PresetRow";
 
 /** A preset in a query's builder: what the preset manager shows, opening
  * independently of the page's other presets, with what a query can do about
- * one of its presets beside the name — fold it into the custom Querydown and,
- * while it's closed, remove it. A reference to a preset that's been deleted
+ * one of its presets — remove it beside the name while it's closed, and fold it
+ * into the custom Querydown from within its open editor. A reference to a preset that's been deleted
  * still gets a row, since removing it is how the query gets over it. */
 export default function QueryPresetRow(props: {
   tabId: string;
@@ -54,17 +54,16 @@ export default function QueryPresetRow(props: {
       expanded={expanded}
       problem={problem}
       onToggle={() => toggleExpandPreset(tabId, id)}
-      actions={
-        <>
-          <IconButton
-            icon={Icons.Merge}
-            size="sm"
-            nested
-            label="Inline into custom"
-            onClick={() => inlinePreset(tabId, section, id)}
-          />
-          {!expanded && remove}
-        </>
+      actions={!expanded && remove}
+      editorActions={
+        <button
+          type="button"
+          className="control text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md border text-xs"
+          onClick={() => inlinePreset(tabId, section, id)}
+        >
+          <Icons.Merge className="text-ink-weak size-4" />
+          Inline into custom
+        </button>
       }
     />
   );

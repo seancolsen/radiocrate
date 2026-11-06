@@ -1133,10 +1133,9 @@ export const STORIES: Record<string, Story> = {
     setup: expandedVettedPreset,
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
-  // Narrow: the "Apply by default" checkbox wraps onto its own line below the
-  // name row.
+  // Narrow: the checkbox and Inline button wrap together under the name.
   "filter-builder/preset-expanded-narrow": {
-    width: 560,
+    width: 380,
     setup: expandedVettedPreset,
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
@@ -1160,8 +1159,8 @@ export const STORIES: Record<string, Story> = {
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
   // Three presets, each on its own line under the custom input: two closed
-  // ones, as wide as their headings, with Inline and Remove beside the name,
-  // and one open, with Inline alone, directly beside its name and its "Default".
+  // ones, as wide as their headings, with Remove beside the name, and one open,
+  // with Inline in its editor.
   "filter-builder/presets": {
     width: 1280,
     setup: (stores) => {

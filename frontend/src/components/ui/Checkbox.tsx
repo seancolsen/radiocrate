@@ -41,10 +41,17 @@ export function CheckboxBox(props: {
 export function Checkbox(props: {
   checked: boolean;
   label: string;
+  /** A smaller label, for a checkbox set among other small controls. */
+  small?: boolean;
   onChange: (checked: boolean) => void;
 }): JSX.Element {
   return (
-    <label className="group text-ink flex cursor-pointer items-center gap-2 text-sm select-none">
+    <label
+      className={cx(
+        "group text-ink flex cursor-pointer items-center gap-2 select-none",
+        props.small ? "text-xs" : "text-sm",
+      )}
+    >
       <CheckboxBox
         checked={props.checked}
         className="group-has-focus-visible:ring-accent group-has-focus-visible:ring-2"

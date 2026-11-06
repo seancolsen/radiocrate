@@ -192,13 +192,16 @@ test("a query's preset is inlined into the custom filter, or removed", async ({
     0,
   );
 
-  // Open: Inline stays, and Remove goes.
+  // Closed: Remove only. Open: Inline appears in the editor, and Remove goes.
+  await expect(inline).toHaveCount(0);
   await heading.click();
   await expect(inline).toBeVisible();
   await expect(remove).toHaveCount(0);
   await heading.click();
   await expect(remove).toBeVisible();
+  await expect(inline).toHaveCount(0);
 
+  await heading.click();
   await inline.click();
   await expect(heading).toHaveCount(0);
   await expect

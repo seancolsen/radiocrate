@@ -244,8 +244,7 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // Narrow: the "Apply by default" checkbox wraps onto its own line below the
-  // name row.
+  // Narrow: the checkbox and Inline button wrap together under the name.
   test(`filter-builder/preset-expanded-narrow - ${colorScheme}`, async ({
     page,
   }) => {
@@ -278,15 +277,15 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // Presets each on a line under the custom input: closed ones with Inline and
-  // Remove beside the name, an open one with Inline alone, and its usage at the
+  // Presets each on a line under the custom input: closed ones with Remove
+  // beside the name, an open one with Inline in its editor, and its usage at the
   // far right.
   test(`filter-builder/presets - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "filter-builder/presets", colorScheme);
     await expect(stage.getByText("in 1 query")).toBeVisible();
     await expect(
       stage.getByRole("button", { name: "Inline into custom" }),
-    ).toHaveCount(3);
+    ).toHaveCount(1);
     await expect(
       stage.getByRole("button", { name: "Remove preset" }),
     ).toHaveCount(2);

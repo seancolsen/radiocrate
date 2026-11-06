@@ -128,6 +128,8 @@ export default function PresetRow(props: {
   problem?: boolean;
   onToggle: () => void;
   actions?: ReactNode;
+  /** Shown in the open editor, beside "Apply by default". */
+  editorActions?: ReactNode;
 }): JSX.Element | null {
   const preset = useApp((s) => selectPreset(s, props.id));
   const unsaved = useApp((s) => selectPresetUnsaved(s, props.id));
@@ -143,7 +145,9 @@ export default function PresetRow(props: {
       actions={props.actions}
       usage={<PresetUsage id={props.id} />}
     >
-      {props.expanded && <PresetEditor presetId={props.id} />}
+      {props.expanded && (
+        <PresetEditor presetId={props.id} actions={props.editorActions} />
+      )}
     </PresetRowView>
   );
 }
