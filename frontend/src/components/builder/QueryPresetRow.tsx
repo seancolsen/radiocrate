@@ -30,6 +30,7 @@ export default function QueryPresetRow(props: {
     <IconButton
       icon={Icons.Close}
       size="sm"
+      nested
       label="Remove preset"
       onClick={() => removePreset(tabId, section, id)}
     />
@@ -58,6 +59,7 @@ export default function QueryPresetRow(props: {
           <IconButton
             icon={Icons.Merge}
             size="sm"
+            nested
             label="Inline into custom"
             onClick={() => inlinePreset(tabId, section, id)}
           />

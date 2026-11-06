@@ -47,6 +47,7 @@ function ManagedPresetRow(props: { id: string; name: string }): JSX.Element {
             <IconButton
               icon={Icons.More}
               size="sm"
+              nested
               label={`Actions for ${props.name.trim() === "" ? "unnamed preset" : props.name}`}
               active={api.open}
               onClick={() => api.toggle()}

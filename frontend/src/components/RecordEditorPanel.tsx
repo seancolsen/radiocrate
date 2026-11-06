@@ -61,13 +61,10 @@ function ToolbarButton(props: {
     <button
       type="button"
       disabled={props.disabled}
-      className={cx(
-        "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm",
-        {
-          "text-ink hover:bg-hover": !props.disabled,
-          "text-ink-weak/40": props.disabled,
-        },
-      )}
+      className={cx("control flex shrink-0 items-center gap-1 rounded px-1.5", {
+        "text-ink hover:bg-hover": !props.disabled,
+        "text-ink-weak/40": props.disabled,
+      })}
       onClick={() => props.onClick()}
     >
       <Icon className="size-4" />

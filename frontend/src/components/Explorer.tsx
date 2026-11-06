@@ -51,7 +51,7 @@ function SourceFilterInput(): JSX.Element {
         type="text"
         placeholder="Search sources"
         aria-label="Search sources"
-        className="border-edge bg-panel text-ink placeholder:text-ink-weak focus:border-accent w-full rounded border px-1 py-0.5 text-sm/5 outline-none"
+        className="control border-edge bg-panel text-ink placeholder:text-ink-weak focus:border-accent w-full rounded px-1 outline-none"
         value={sourceFilter}
         onChange={(e) => actions.setSourceFilter(e.currentTarget.value)}
         onKeyDown={(e) => {

@@ -2,7 +2,7 @@ import { forwardRef, type MouseEvent } from "react";
 import type { CommandId } from "../../commands/registry";
 import type { IconComponent } from "../../icons";
 import { useTooltip } from "./Tooltip";
-import { cx } from "./cx";
+import { NESTED_BUTTON_CLASS, cx } from "./cx";
 
 /** A frameless icon button — 26px square by default, or a 20px `size="sm"` for
  * controls set inline within a tighter row (the record editor's field-row
@@ -10,7 +10,9 @@ import { cx } from "./cx";
  * square (`ring-inset`) so hovering never shifts layout. This is the app's one
  * button style — every icon-only control uses it, so hovering reads the same
  * everywhere. Content is the icon gray by default; `danger` tints it red and a
- * disabled button dims and stops responding.
+ * disabled button dims and stops responding. `nested` is for a button set
+ * inside a standard-height control (a preset's actions), which takes color in
+ * place of the ring (see `NESTED_BUTTON_CLASS`).
  *
  * `tabIndex={-1}` marks a control *on* another focusable item (like the
  * expansion toggle beside it) rather than an item of its own: it takes clicks
@@ -46,6 +48,7 @@ const IconButton = forwardRef<
     disabled?: boolean;
     danger?: boolean;
     active?: boolean;
+    nested?: boolean;
     size?: "sm" | "md";
     tabIndex?: number;
   }
@@ -66,14 +69,19 @@ const IconButton = forwardRef<
         disabled={props.disabled}
         tabIndex={props.tabIndex}
         className={cx(
-          "flex shrink-0 items-center justify-center rounded ring-1 ring-transparent ring-inset",
+          "flex shrink-0 items-center justify-center rounded",
+          props.nested
+            ? NESTED_BUTTON_CLASS
+            : "ring-1 ring-transparent ring-inset",
           {
             "size-5": props.size === "sm",
             "size-[26px]": props.size !== "sm",
-            "text-ink-weak hover:ring-accent": !props.disabled && !props.danger,
-            "text-danger hover:ring-accent": !props.disabled && props.danger,
+            "text-ink-weak": !props.disabled && !props.danger,
+            "text-danger": !props.disabled && props.danger,
+            "hover:ring-accent": !props.disabled && !props.nested,
             "text-ink-weak/40": props.disabled,
-            "bg-hover": props.active,
+            "bg-hover": props.active && !props.nested,
+            "bg-ink/10": props.active && props.nested,
           },
         )}
         onMouseDown={(e) => props.tabIndex === -1 && e.preventDefault()}

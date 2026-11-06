@@ -43,7 +43,8 @@ function appearance(field: FormField): {
  * on. The browser's own focus outline is suppressed (`outline-none`): without
  * it, a keyboard-driven focus (which also matches `:focus-visible`) stacked a
  * second ring on top of this one, reading as a thicker border than a
- * mouse-driven focus got. */
+ * mouse-driven focus got. Its 2px border trades against its padding to come to
+ * the standard control height (see `control` in `app.css`). */
 export default function FieldLabel(props: {
   field: FormField;
   itemId: string;
@@ -69,7 +70,7 @@ export default function FieldLabel(props: {
       // same-specificity utilities settle by stylesheet order, not DOM order,
       // so a plain `border-accent` class can lose to it outright.
       className={cx(
-        `text-ink focus:border-accent flex h-[22px] shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 text-xs outline-none select-none ${look.tint}`,
+        `text-ink focus:border-accent flex shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 py-px text-xs/5 outline-none select-none ${look.tint}`,
         {
           "border-accent": props.menuOpen,
           "border-transparent": !props.menuOpen,

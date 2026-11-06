@@ -333,7 +333,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
         {props.onCreate && (
           <button
             type="button"
-            className="text-ink hover:bg-hover border-edge rounded-md border px-3 py-1.5 text-sm"
+            className="control text-ink hover:bg-hover border-edge rounded-md px-3"
             onClick={enterNewRecord}
           >
             New record

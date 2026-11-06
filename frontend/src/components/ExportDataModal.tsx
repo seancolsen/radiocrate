@@ -28,14 +28,14 @@ export interface ExportColumnOption {
 }
 
 const BUTTON_CLASS =
-  "text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40";
+  "control text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md px-3 disabled:opacity-40";
 
 /** A button that shows its border only on hover or focus. */
 const QUIET_BUTTON_CLASS =
-  "text-ink enabled:hover:border-edge focus-visible:border-accent flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-sm outline-none disabled:opacity-40";
+  "control text-ink enabled:hover:border-edge focus-visible:border-accent flex items-center gap-1 rounded-md px-1.5 outline-none disabled:opacity-40";
 
 const SELECT_CLASS =
-  "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md px-2 py-0 outline-none";
 
 /** The "Export data" dialog: which rows and columns to export, and where to —
  * the clipboard, or a CSV file. Takes its values as props, so the visual
@@ -174,7 +174,7 @@ export function ExportDataDialog(props: {
         <button
           type="button"
           disabled={!props.canExport}
-          className="bg-accent text-panel flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
+          className="control bg-accent text-panel flex items-center gap-1.5 rounded-md px-3 disabled:opacity-40"
           onClick={() => props.onDownload()}
         >
           <Icons.Download className="size-4" />

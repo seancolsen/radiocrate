@@ -378,7 +378,7 @@ function FieldRow(props: {
 
   return (
     <>
-      <div className="flex min-h-[26px] items-center gap-1 py-0.5">
+      <div className="flex min-h-[30px] items-center gap-1 py-0.5">
         <ExpansionToggle
           expandable={expandable}
           expanded={expanded}
@@ -716,7 +716,7 @@ function DistinctValueRow(props: {
 
   return (
     <>
-      <div className="flex min-h-[26px] items-center gap-1 py-0.5">
+      <div className="flex min-h-[30px] items-center gap-1 py-0.5">
         <ExpansionToggle
           expandable={expandable}
           expanded={expanded}
@@ -856,7 +856,7 @@ function ChildList(props: {
         ? Array.from({ length: expected }, (_, i) => (
             <div
               key={i}
-              className="flex min-h-[26px] items-center gap-1 py-0.5"
+              className="flex min-h-[30px] items-center gap-1 py-0.5"
               data-testid="record-placeholder"
             >
               <span className="size-4 shrink-0" aria-hidden="true" />
@@ -976,7 +976,7 @@ function ChildRow(props: {
 
   return (
     <>
-      <div className="flex min-h-[26px] items-center gap-1 py-0.5">
+      <div className="flex min-h-[30px] items-center gap-1 py-0.5">
         <ExpansionToggle
           expandable={true}
           expanded={expanded}

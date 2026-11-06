@@ -64,11 +64,15 @@ function RecordBox(props: {
   return (
     <div
       className={cx(
-        "bg-panel border-accent text-ink flex h-[34px] items-center rounded-md border px-2.5 text-[13px]",
+        "control bg-panel border-accent text-ink flex items-center rounded-md px-2.5 text-[13px]",
         props.className,
       )}
     >
-      {props.chord ? <Kbd chord={props.chord} /> : props.prompt}
+      {props.chord ? (
+        <Kbd chord={props.chord} className="min-h-5" />
+      ) : (
+        props.prompt
+      )}
     </div>
   );
 }
@@ -113,21 +117,21 @@ export function CaptureDialog(props: {
       <div className="mt-4 flex flex-wrap justify-end gap-2">
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={() => props.onCancel()}
         >
           Cancel
         </button>
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={() => props.onReset()}
         >
           Reset to default
         </button>
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={() => props.onUnbind()}
         >
           Unbind
@@ -135,7 +139,7 @@ export function CaptureDialog(props: {
         <button
           type="button"
           disabled={props.pending === null}
-          className="bg-accent text-panel rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
+          className="control bg-accent text-panel rounded-md px-3 disabled:opacity-40"
           onClick={() => props.onAssign()}
         >
           Assign
@@ -300,7 +304,7 @@ export default function ShortcutsPage(): JSX.Element {
             <input
               type="text"
               placeholder="Search by command name"
-              className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent h-[34px] max-w-[420px] min-w-0 flex-1 rounded-md border px-2.5 text-sm outline-none"
+              className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent max-w-[420px] min-w-0 flex-1 rounded-md px-2.5 outline-none"
               value={shortcutsSearch}
               onChange={(e) =>
                 actions.setShortcutsSearch(e.currentTarget.value)
@@ -311,7 +315,7 @@ export default function ShortcutsPage(): JSX.Element {
             type="button"
             aria-pressed={recordMode}
             className={cx(
-              "border-edge text-ink hover:bg-hover flex h-[34px] shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm",
+              "control border-edge text-ink hover:bg-hover flex shrink-0 items-center gap-1.5 rounded-md px-2.5",
               { "bg-split-active": recordMode },
             )}
             onClick={() => actions.setRecordMode(!recordMode)}

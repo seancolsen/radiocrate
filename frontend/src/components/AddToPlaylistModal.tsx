@@ -122,7 +122,7 @@ function AddToPlaylistBody(props: {
       <div className="mt-4 flex justify-end">
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={() => cancelAddToPlaylist()}
         >
           Cancel

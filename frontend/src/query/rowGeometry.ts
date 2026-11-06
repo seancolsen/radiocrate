@@ -1,10 +1,10 @@
 // The geometry of a row of query results — the numbers that, together with
 // `fieldLayout.ts`, decide where a row's cells sit and how tall the row is.
 //
-// Two things draw rows and must agree on these: the results grid, painted to a
-// canvas (`grid/canvasGrid.ts`), and the record editor's embedded record
-// widget, built from DOM nodes (`components/record/EmbeddedRecord.tsx`). Logical
-// px == CSS px in both.
+// The results grid, painted to a canvas (`grid/canvasGrid.ts`), draws rows from
+// these. The record editor's embedded record widget
+// (`components/record/EmbeddedRecord.tsx`) shares its column gap and layout, but
+// sets its own heights. Logical px == CSS px in both.
 
 /** Vertical padding above and below a row's content. */
 export const ROW_PAD_Y = 6;

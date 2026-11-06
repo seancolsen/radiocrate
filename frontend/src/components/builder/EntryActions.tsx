@@ -29,7 +29,7 @@ function ActionButton(props: {
     <button
       type="button"
       disabled={props.disabled}
-      className="border-edge text-ink enabled:hover:bg-hover flex items-center gap-1.5 rounded border px-2 py-0.5 text-sm disabled:opacity-40"
+      className="control border-edge text-ink enabled:hover:bg-hover flex items-center gap-1.5 rounded px-2 disabled:opacity-40"
       onClick={props.onClick}
     >
       <Icon className="text-ink-weak size-4" />

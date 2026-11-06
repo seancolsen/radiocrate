@@ -219,7 +219,7 @@ function PaletteDialog(): JSX.Element {
           aria-expanded="true"
           aria-controls="command-palette-list"
           placeholder="Type a command name…"
-          className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-full rounded-md border px-2.5 py-1.5 text-sm outline-none"
+          className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-full rounded-md px-2.5 outline-none"
           value={paletteQuery}
           onChange={(e) => actions.setPaletteQuery(e.currentTarget.value)}
         />

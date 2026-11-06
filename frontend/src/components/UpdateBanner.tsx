@@ -40,7 +40,7 @@ export function UpdateBar(props: {
       </div>
       <button
         type="button"
-        className="bg-accent text-panel shrink-0 rounded-md px-3 py-1.5 text-sm"
+        className="control bg-accent text-panel shrink-0 rounded-md px-3"
         onClick={() => props.onReload()}
       >
         {props.notice === "stale" ? "Reload fresh copy" : "Reload"}

@@ -3,7 +3,7 @@ import type { CommandId } from "../../commands/registry";
 import { Icons, type IconComponent } from "../../icons";
 import { Menu } from "./Menu";
 import { useTooltip } from "./Tooltip";
-import { cx } from "./cx";
+import { NESTED_BUTTON_CLASS, cx } from "./cx";
 
 /** A labelled toggle button. Its main (icon + label) area toggles a builder
  * section via `onMainClick`. While `active` it takes the blue
@@ -12,7 +12,8 @@ import { cx } from "./cx";
  * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮)
  * — and an icon alone wears the label as its tooltip instead, with `command`'s
  * shortcut beside it. `alert` marks it with a red dot: the error strip's
- * problem is in its section. */
+ * problem is in its section. Its two parts are each a standard-height control,
+ * so the height comes from them and their fills reach the outer edge. */
 export default function SplitButton(props: {
   icon: IconComponent;
   label: string;
@@ -36,29 +37,27 @@ export default function SplitButton(props: {
 
   return (
     <div
-      className={cx(
-        "relative inline-flex h-[26px] shrink-0 items-stretch rounded",
-        {
-          "bg-split-active": props.active,
-          "hover:ring-accent ring-1 ring-transparent ring-inset": !props.active,
-        },
-      )}
+      className={cx("relative inline-flex shrink-0 items-stretch rounded", {
+        "bg-split-active": props.active,
+      })}
     >
       <button
         type="button"
         aria-pressed={props.active}
         {...mainTip.triggerProps}
-        className={cx("flex items-center gap-[5px] rounded-l px-1.5", {
-          "rounded-r": !withMenu,
-        })}
+        className={cx(
+          "control flex items-center gap-[5px] rounded-l px-1.5",
+          NESTED_BUTTON_CLASS,
+          { "rounded-r": !withMenu },
+        )}
         onClick={() => props.onMainClick()}
       >
-        <span className="text-ink-weak relative flex size-4 items-center justify-center">
+        <span className="text-ink-weak relative flex h-5 w-4 items-center justify-center">
           <Icon className="size-4" />
           {props.alert && (
             <span
               aria-hidden="true"
-              className="bg-danger ring-panel absolute -top-0.5 -right-0.5 size-[7px] rounded-full ring-[1.5px]"
+              className="bg-danger ring-panel absolute top-0 -right-0.5 size-[7px] rounded-full ring-[1.5px]"
             />
           )}
         </span>
@@ -76,7 +75,10 @@ export default function SplitButton(props: {
             <button
               type="button"
               {...menuTip.triggerProps}
-              className="bg-split-trigger text-ink-weak hover:text-ink flex h-full w-[22px] items-center justify-center rounded-r"
+              className={cx(
+                "control bg-split-trigger text-ink-weak hover:text-ink flex w-[22px] items-center justify-center rounded-r",
+                NESTED_BUTTON_CLASS,
+              )}
               onClick={() => api.toggle()}
             >
               <Icons.More className="size-4" />

@@ -1,17 +1,17 @@
 import { useMemo, useRef, type JSX, type MouseEvent } from "react";
 import { computeFieldLayout } from "../../query/fieldLayout";
 import { defaultColumnMetadata } from "../../query/columns";
-import { COL_GAP, ROW_PAD_Y, SMALL_LINE_H } from "../../query/rowGeometry";
+import { COL_GAP } from "../../query/rowGeometry";
 import { useElementWidth } from "../ui/useElementWidth";
 import ModifiedStar from "./ModifiedStar";
 
 // The embedded record: a preview of one row, inside the form.
 //
-// It's the query result row's DOM cousin — same field-layout algorithm, same row
-// metrics, same surface treatment (gradient, hover, selected fill) — with the
-// deviations the spec calls for: every cell is small and light whatever the
-// column says, and the widget is bordered and rounded to a semicircle at each
-// end. Its cells are positioned rather than flowed, exactly as the canvas
+// It's the query result row's DOM cousin — same field-layout algorithm, same
+// surface treatment (gradient, hover, selected fill) — with the deviations the
+// spec calls for: every cell is small and light whatever the column says, the
+// widget is bordered and rounded to a semicircle at each end, and a single line
+// comes to the standard control height (see `control` in `app.css`). Its cells are positioned rather than flowed, exactly as the canvas
 // positions them, so a preview reads like the row it previews.
 //
 // Which columns it shows is decided in `query/embeddedRecord.ts`; this component
@@ -20,12 +20,16 @@ import ModifiedStar from "./ModifiedStar";
 /** Horizontal padding inside the widget. Wider than a result row's, so text
  * clears the rounded ends rather than running into them. */
 const PAD_X = 12;
-/** Border width, in the radius calculation below. */
+/** Height of one line of cells. */
+const LINE_H = 16;
+/** Vertical padding inside the widget. */
+const PAD_Y = 4;
+/** Border width, in the height calculations below. */
 const BORDER = 1;
 /** The radius that makes a single-line widget a perfect semicircle at each end:
  * half its border-box height. It stays fixed as content wraps, so a taller
  * widget keeps flat sides between the same two rounded ends. */
-const RADIUS = (SMALL_LINE_H + ROW_PAD_Y * 2 + BORDER * 2) / 2;
+const RADIUS = (LINE_H + PAD_Y * 2 + BORDER * 2) / 2;
 
 /** The width bounds every preview column gets: the same defaults a result column
  * has when its query annotates it with nothing. */
@@ -73,7 +77,8 @@ export default function EmbeddedRecord(props: {
       ),
     [cells, width],
   );
-  const height = Math.max(1, layout.lineCount) * SMALL_LINE_H + ROW_PAD_Y * 2;
+  const height =
+    Math.max(1, layout.lineCount) * LINE_H + PAD_Y * 2 + BORDER * 2;
 
   return (
     <div
@@ -96,7 +101,7 @@ export default function EmbeddedRecord(props: {
       {props.isNew && (
         <span
           className="absolute inset-0 flex items-center justify-center italic"
-          style={{ lineHeight: `${SMALL_LINE_H}px` }}
+          style={{ lineHeight: `${LINE_H}px` }}
         >
           New
         </span>
@@ -109,9 +114,9 @@ export default function EmbeddedRecord(props: {
             className="absolute truncate"
             style={{
               left: `${PAD_X + placement.x}px`,
-              top: `${ROW_PAD_Y + placement.line * SMALL_LINE_H}px`,
+              top: `${PAD_Y + placement.line * LINE_H}px`,
               width: `${placement.width}px`,
-              lineHeight: `${SMALL_LINE_H}px`,
+              lineHeight: `${LINE_H}px`,
             }}
           >
             {cell}

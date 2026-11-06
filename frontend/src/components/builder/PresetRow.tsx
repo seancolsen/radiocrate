@@ -47,7 +47,7 @@ export function PresetRowView(props: {
           aria-expanded={expanded}
           className={cx(
             TOGGLE,
-            "flex min-w-0 items-center gap-1.5 self-stretch py-0.5 pr-1 pl-1.5 text-left text-sm",
+            "focus-visible:outline-accent flex min-w-0 items-center gap-1.5 self-stretch rounded-md py-0.5 pr-1 pl-1.5 text-left text-sm focus-visible:outline-2 focus-visible:-outline-offset-2",
           )}
           onClick={props.onToggle}
         >
@@ -155,7 +155,7 @@ export function BuiltinPresetRow(props: {
   children?: ReactNode;
 }): JSX.Element {
   return (
-    <div className="bg-preset flex max-w-full items-center gap-2 rounded-md border border-transparent px-2 py-0.5 text-sm">
+    <div className="control bg-preset flex max-w-full items-center gap-2 rounded-md px-2">
       <span className="text-ink">{props.name}</span>
       {props.children}
     </div>

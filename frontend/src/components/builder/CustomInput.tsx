@@ -4,6 +4,7 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QuerydownContext } from "../../editor/querydownEditor";
 import { Menu, MenuItem } from "../ui/Menu";
 import { useTooltip } from "../ui/Tooltip";
+import { NESTED_BUTTON_CLASS, cx } from "../ui/cx";
 import QuerydownEditor from "./QuerydownEditor";
 
 /** An auto-growing monospace Querydown editor — the toolbar's builder
@@ -54,7 +55,7 @@ const CustomInput = forwardRef<
         onKeyDown={props.onKeyDown}
       />
       {hasText && (
-        <div className="absolute top-1 right-1">
+        <div className="absolute top-0.5 right-0.5">
           <Menu
             align="end"
             width="190px"
@@ -62,7 +63,10 @@ const CustomInput = forwardRef<
               <button
                 type="button"
                 {...menuTip.triggerProps}
-                className="text-ink-weak hover:text-ink flex size-6 items-center justify-center rounded"
+                className={cx(
+                  "text-ink-weak hover:text-ink flex size-[22px] items-center justify-center rounded",
+                  NESTED_BUTTON_CLASS,
+                )}
                 onClick={() => api.toggle()}
               >
                 <Icons.More className="size-4" />

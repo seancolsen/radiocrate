@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { Icons, type IconComponent } from "../../icons";
+import { CheckboxBox } from "./Checkbox";
 import { placeDropdown, placeSubmenu } from "./menuGeometry";
 import {
   MenuContext,
@@ -161,7 +162,7 @@ export function MenuItem(props: {
       role="menuitem"
       disabled={props.disabled}
       className={cx(
-        "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none",
+        "control flex w-full items-center gap-2 rounded px-2 text-left outline-none",
         {
           "text-ink focus:bg-hover": !props.disabled && !props.danger,
           "text-danger focus:bg-hover": !props.disabled && props.danger,
@@ -203,7 +204,7 @@ export function MenuToggleItem(props: {
       aria-checked={props.checked}
       disabled={props.disabled}
       className={cx(
-        "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none",
+        "control flex w-full items-center gap-2 rounded px-2 text-left outline-none",
         {
           "text-ink focus:bg-hover": !props.disabled,
           "text-ink-weak/40": props.disabled,
@@ -211,25 +212,13 @@ export function MenuToggleItem(props: {
       )}
       onClick={() => props.onClick?.()}
     >
-      <span
-        className={cx(
-          "border-ink-weak flex size-4 shrink-0 items-center justify-center border",
-          {
-            "rounded-sm": props.kind === "checkbox",
-            "rounded-full": props.kind === "radio",
-            "bg-accent border-accent": props.checked,
-          },
-        )}
-      >
-        {props.checked && (
-          <span
-            className={cx("bg-panel", {
-              "size-2 rounded-full": props.kind === "radio",
-              "size-1.5 rounded-[1px]": props.kind === "checkbox",
-            })}
-          />
-        )}
-      </span>
+      {props.kind === "checkbox" ? (
+        <CheckboxBox checked={props.checked} />
+      ) : (
+        <span className="border-ink-weak flex size-4 shrink-0 items-center justify-center rounded-full border">
+          {props.checked && <span className="bg-accent size-2 rounded-full" />}
+        </span>
+      )}
       {Icon && (
         <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
           <Icon className="size-4" />
@@ -295,7 +284,7 @@ export function MenuSubmenu(props: {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        className="text-ink focus:bg-hover aria-expanded:bg-hover flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none"
+        className="control text-ink focus:bg-hover aria-expanded:bg-hover flex w-full items-center gap-2 rounded px-2 text-left outline-none"
         onPointerDown={(e) => {
           pointerTypeRef.current = e.pointerType;
         }}
@@ -400,7 +389,7 @@ export function MenuHeading(props: { text: string }): JSX.Element {
  * rows that aren't there yet (an empty list, a schema still loading). Carries no
  * `menuitem` role, so the keyboard walks straight past it. */
 export function MenuNote(props: { text: string }): JSX.Element {
-  return <div className="text-ink-weak px-2 py-1 text-sm">{props.text}</div>;
+  return <div className="control text-ink-weak px-2">{props.text}</div>;
 }
 
 /** A submenu's rows that arrive after it opens: a spinning note until
@@ -424,7 +413,7 @@ export function MenuLoader(props: {
   }, [loading, menu, depth]);
   if (!loading) return <>{props.children}</>;
   return (
-    <div className="text-ink-weak flex items-center gap-2 px-2 py-1 text-sm">
+    <div className="control text-ink-weak flex items-center gap-2 px-2">
       <Icons.Spinner className="size-4 shrink-0" />
       Loading…
     </div>

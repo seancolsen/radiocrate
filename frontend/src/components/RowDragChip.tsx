@@ -13,7 +13,7 @@ const RowDragChip = forwardRef<HTMLDivElement, { count: number }>(
       <div
         ref={ref}
         aria-hidden="true"
-        className="bg-accent text-panel pointer-events-none fixed top-0 left-0 z-50 flex items-center gap-1 rounded-md px-2 py-1 text-sm whitespace-nowrap shadow-md"
+        className="control bg-accent text-panel pointer-events-none fixed top-0 left-0 z-50 flex items-center gap-1 rounded-md px-2 whitespace-nowrap shadow-md"
       >
         <Icons.Playlist className="size-[14px] shrink-0" />
         {props.count === 1 ? "1 track" : `${props.count} tracks`}

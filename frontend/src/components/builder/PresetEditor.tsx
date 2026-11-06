@@ -84,7 +84,7 @@ export default function PresetEditor(props: { presetId: string }): JSX.Element {
           autoFocus={isNew}
           aria-label="Preset name"
           placeholder="Preset name"
-          className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-[180px] rounded-md border px-2.5 py-1 text-sm outline-none"
+          className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-[180px] rounded-md px-2.5 outline-none"
           value={name}
           onChange={(e) =>
             patchPreset(presetId, { name: e.currentTarget.value })

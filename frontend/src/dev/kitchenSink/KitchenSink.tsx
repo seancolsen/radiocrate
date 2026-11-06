@@ -243,11 +243,10 @@ function FieldLabels(): JSX.Element {
 // The text buttons' classes, as the modals spell them (see the note at the
 // top of this file).
 const PRIMARY =
-  "bg-accent text-panel rounded-md px-3 py-1.5 text-sm disabled:opacity-40";
-const DANGER = "bg-danger rounded-md px-3 py-1.5 text-sm text-white";
-const BORDERED =
-  "text-ink border-edge hover:bg-hover rounded-md border px-3 py-1.5 text-sm";
-const PLAIN = "text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm";
+  "control bg-accent text-panel rounded-md px-3 disabled:opacity-40";
+const DANGER = "control bg-danger rounded-md px-3 text-white";
+const BORDERED = "control text-ink border-edge hover:bg-hover rounded-md px-3";
+const PLAIN = "control text-ink hover:bg-hover rounded-md px-3";
 
 function Buttons(): JSX.Element {
   const [filterOn, setFilterOn] = useState(true);
@@ -341,9 +340,9 @@ function Buttons(): JSX.Element {
 }
 
 const INPUT =
-  "bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent rounded-md border px-2.5 py-1.5 text-sm outline-none";
+  "control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent rounded-md px-2.5 outline-none";
 const SELECT =
-  "bg-panel border-edge text-ink focus:border-accent rounded-md border px-2 py-1.5 text-sm outline-none";
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md px-2 py-0 outline-none";
 
 /** A display section touching most of the highlighting's palette: columns,
  * a path, a count, a function, an alias, and annotations. */
@@ -405,7 +404,7 @@ function Inputs(): JSX.Element {
             <textarea
               rows={1}
               defaultValue="Lemonade"
-              className="border-accent bg-panel text-ink w-48 resize-none rounded border px-1 py-0.5 text-sm/5 outline-none"
+              className="control border-accent bg-panel text-ink w-48 resize-none rounded px-1 outline-none"
             />
           </Specimen>
         </Row>
@@ -528,7 +527,7 @@ function Surfaces(): JSX.Element {
             <PresetRowView name="" unsaved expanded={false} onToggle={noop} />
           </Specimen>
           <Specimen caption="drag chip">
-            <div className="bg-accent text-panel flex items-center gap-1 rounded-md px-2 py-1 text-sm whitespace-nowrap shadow-md">
+            <div className="control bg-accent text-panel flex items-center gap-1 rounded-md px-2 whitespace-nowrap shadow-md">
               <Icons.Playlist className="size-[14px] shrink-0" />3 tracks
             </div>
           </Specimen>

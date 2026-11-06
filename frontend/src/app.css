@@ -130,6 +130,30 @@
   --color-field-other: var(--field-other);
 }
 
+/* The app's standard control height, 26px: a 20px line of text-sm, 2px of
+   padding above and below it, and a 1px border. Buttons, inputs, selects, menu
+   rows, presets and chips all share it, so they line up wherever they meet, and
+   none of them hard-codes a height: a control that wraps just grows.
+
+   The border is always there, transparent by default (a fill runs under it), so
+   coloring it on hover or focus never moves anything. Tailwind sorts this ahead
+   of its own border-color, padding and text utilities, so `border-edge`,
+   `focus:border-accent` or `text-[13px]` beside it win.
+
+   A few controls can't wear the class alone, and reach the same 26px by their
+   own sums: the Querydown editor (--qd-pad, QuerydownEditor.tsx), a preset's
+   heading (PresetRow.tsx), a field label (FieldLabel.tsx), an embedded record
+   (EmbeddedRecord.tsx). A native <select> has inner metrics of its own that
+   vary by platform, so it's the one that sets a height outright. Change them
+   together. */
+@utility control {
+  border-width: 1px;
+  border-color: transparent;
+  padding-block: 2px;
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
 @layer base {
   /* Every color token, each with its light and dark value side by side:
      `light-dark(light, dark)` picks by the `color-scheme` in force, which

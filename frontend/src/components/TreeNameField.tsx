@@ -33,7 +33,7 @@ export default function TreeNameField(props: {
       ref={inputRef}
       type="text"
       aria-label={props.label}
-      className="border-accent bg-panel text-ink ml-1 h-5 min-w-0 flex-1 rounded border px-1 py-0 text-sm outline-none"
+      className="control border-accent bg-panel text-ink -my-[3px] ml-1 min-w-0 flex-1 rounded px-1 outline-none"
       value={buffer}
       onChange={(e) => setBuffer(e.currentTarget.value)}
       onKeyDown={(e) => {

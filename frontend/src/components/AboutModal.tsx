@@ -86,14 +86,14 @@ function PlaybackLogSection(props: {
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={copy}
         >
           Copy log
         </button>
         <button
           type="button"
-          className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+          className="control text-ink hover:bg-hover rounded-md px-3"
           onClick={() => {
             props.onClear();
             setStatus("Cleared.");
@@ -168,14 +168,14 @@ export function AboutDialog(props: {
           <div className="mt-3 flex flex-wrap justify-end gap-2">
             <button
               type="button"
-              className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+              className="control text-ink hover:bg-hover rounded-md px-3"
               onClick={() => setConfirming(false)}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="bg-accent text-panel rounded-md px-3 py-1.5 text-sm"
+              className="control bg-accent text-panel rounded-md px-3"
               onClick={() => props.onReloadFresh()}
             >
               Reload fresh copy
@@ -186,7 +186,7 @@ export function AboutDialog(props: {
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm"
+            className="control text-ink hover:bg-hover rounded-md px-3"
             onClick={() => setConfirming(true)}
           >
             Reload fresh copy
@@ -194,14 +194,14 @@ export function AboutDialog(props: {
           <button
             type="button"
             disabled={props.checking ?? false}
-            className="text-ink hover:bg-hover rounded-md px-3 py-1.5 text-sm disabled:opacity-40"
+            className="control text-ink hover:bg-hover rounded-md px-3 disabled:opacity-40"
             onClick={() => props.onCheck()}
           >
             Check for updates
           </button>
           <button
             type="button"
-            className="bg-accent text-panel rounded-md px-3 py-1.5 text-sm"
+            className="control bg-accent text-panel rounded-md px-3"
             onClick={() => props.onClose()}
           >
             Close
