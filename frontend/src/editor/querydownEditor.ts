@@ -198,9 +198,11 @@ const theme = EditorView.theme({
   },
 });
 
-/** A sheet editor fills the box it's given, scrolling inside it. */
+/** A sheet editor fills the box it's given, scrolling inside it. `&` alone
+ * would also match the tooltip host in the body, which wears the theme's
+ * classes: a full-height box over the whole app, eating every click. */
 const sheetTheme = EditorView.theme({
-  "&": { height: "100%" },
+  "&.cm-editor": { height: "100%" },
   ".cm-scroller": { overflow: "auto" },
 });
 
