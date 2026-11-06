@@ -783,8 +783,8 @@ export const STORIES: Record<string, Story> = {
     render: () => <PreludePage />,
   },
   // The rebind dialog holding a chord another command already owns, so the
-  // "currently bound to" warning shows too (⌘/Ctrl+S is "Tabs: Save active
-  // tab").
+  // "currently bound to" warning shows too (⌘/Ctrl+S is "Record editor: Save
+  // changes").
   "settings/keyboard-shortcuts/modal-assign": {
     render: () => (
       <CaptureDialog

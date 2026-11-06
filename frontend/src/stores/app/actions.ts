@@ -403,6 +403,8 @@ export interface AppActions {
    * otherwise select just the new row. Clamps at the ends and scrolls the row
    * into view. Backs the `results.select_*` / `results.extend_*` commands. */
   moveRowSelection: (tabId: string, forward: boolean, extend: boolean) => void;
+  /** Select every result row of `tabId`. Backs `results.select_all`. */
+  selectAllRows: (tabId: string) => void;
 
   /** Replace `tabId`'s sidebar contents with these `records` of `table`, each
    * taken once; an empty list closes it. Used both to open on an arbitrary
@@ -455,6 +457,11 @@ export interface AppActions {
   togglePlayPause: () => void;
   /** Skip to the next queued track (the bar's "Next"). */
   skipNext: () => void;
+  /** Skip back to the previous track; a no-op with none before it. */
+  skipPrevious: () => void;
+  /** Move the playhead `offset` seconds from where it is (negative seeks
+   * back), clamped to the track. */
+  seekBy: (offset: number) => void;
   /** Move the playing track's playhead to `seconds` (the bar's timeline). */
   seek: (seconds: number) => void;
   /** Dismiss the bar: stop playback and tear down the queue (the bar's "Close"). */
@@ -2703,6 +2710,19 @@ export function createAppActions(
       });
     },
 
+    selectAllRows: (tabId) => {
+      const len = get().pages[tabId]?.result?.rowCount ?? 0;
+      if (len === 0) return;
+      const next = new Set<number>();
+      for (let i = 0; i < len; i++) next.add(i);
+      // Arrow keys and Shift-extension count from the ends of the span.
+      rowClickAnchor.set(tabId, 0);
+      rowSelectionLead.set(tabId, len - 1);
+      set((s) => {
+        pageDraft(s, tabId).selection = next;
+      });
+    },
+
     setRecordEditorRecords,
     closeRecordEditor: (tabId) =>
       set((s) => {
@@ -2759,6 +2779,15 @@ export function createAppActions(
     },
     skipNext: () => {
       audio?.skipNext();
+      syncTransport();
+    },
+    skipPrevious: () => {
+      audio?.skipPrevious();
+      syncTransport();
+    },
+    seekBy: (offset) => {
+      if (!audio || !get().currentTrack) return;
+      audio.seek(audio.position + offset);
       syncTransport();
     },
     seek: (seconds) => {

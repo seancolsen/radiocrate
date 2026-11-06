@@ -17,7 +17,7 @@ import {
   selectPageTab,
   selectResultCount,
 } from "../stores/app";
-import { selectFocusedForm } from "../stores/forms";
+import { selectFocusedForm, selectModifiedForm } from "../stores/forms";
 import {
   useApp,
   useCommandActions,
@@ -108,6 +108,10 @@ function PaletteDialog(): JSX.Element {
   );
   const trackLoaded = useApp((s) => s.currentTrack !== null);
   const recordFormFocused = useForms((s) => selectFocusedForm(s) !== undefined);
+  const recordFormModified = useForms(
+    (s) =>
+      activeTabId !== null && selectModifiedForm(s, activeTabId) !== undefined,
+  );
   const context = useMemo<CommandContext>(
     () => ({
       activeTab: activeTabId !== null,
@@ -118,6 +122,7 @@ function PaletteDialog(): JSX.Element {
       resultsAvailable,
       trackLoaded,
       recordFormFocused,
+      recordFormModified,
     }),
     [
       activeTabId,
@@ -127,6 +132,7 @@ function PaletteDialog(): JSX.Element {
       resultsAvailable,
       trackLoaded,
       recordFormFocused,
+      recordFormModified,
     ],
   );
 

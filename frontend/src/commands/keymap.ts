@@ -32,13 +32,16 @@ export function isOverridden(overrides: Overrides, id: CommandId): boolean {
 /** The command that `chord` runs in context `ctx`: the first, in registry
  * order, that's bound to it and whose `when` holds. A chord can belong to
  * several commands whose contexts never overlap (see {@link conflictsFor}), so
- * which one it runs depends on the context. `null` when none applies. */
+ * which one it runs depends on the context. `inTextField` skips the commands
+ * that leave a focused text field's chords to it. `null` when none applies. */
 export function commandForChord(
   overrides: Overrides,
   chord: Chord,
   ctx: CommandContext,
+  inTextField = false,
 ): CommandId | null {
   for (const def of ALL_COMMANDS) {
+    if (inTextField && def.yieldsToTextFields) continue;
     const bound = bindingFor(overrides, def.id);
     if (!bound || !chordsEqual(bound, chord)) continue;
     if (whenSatisfied(def.when, ctx)) return def.id;

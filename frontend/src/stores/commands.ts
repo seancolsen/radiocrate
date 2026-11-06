@@ -31,7 +31,11 @@ import {
   selectRowSelection,
 } from "./app";
 import type { FormsState, FormsStoreBundle } from "./forms";
-import { selectFocusedForm, selectRecordPickerOpen } from "./forms";
+import {
+  selectFocusedForm,
+  selectModifiedForm,
+  selectRecordPickerOpen,
+} from "./forms";
 import type { MenusStoreBundle } from "./menus";
 import { selectAnyMenuOpen } from "./menus";
 
@@ -110,6 +114,28 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** How far the seek shortcuts move the playhead. */
+const SEEK_STEP_SECONDS = 10;
+
+/** Whether the focused control uses this plain key itself — Space presses a
+ * button, Left/Right step a slider, tab or tree row — so the global pass leaves
+ * it alone rather than turning it into a transport command. */
+function claimsKey(target: EventTarget | null, chord: Chord): boolean {
+  if (chord.mod || chord.alt || chord.shift || !(target instanceof HTMLElement))
+    return false;
+  if (chord.key === "Space")
+    return (
+      target.closest(
+        "button, a[href], summary, [role=button], [role=menuitem], [role=checkbox], [role=switch], [role=tab], [role=treeitem]",
+      ) !== null
+    );
+  if (chord.key === "Left" || chord.key === "Right")
+    return (
+      target.closest("[role=slider], [role=tab], [role=treeitem]") !== null
+    );
+  return false;
+}
+
 // ── Selectors — pure functions of state ─────────────────────────────────────
 
 export const selectBinding = (s: CommandsState, cmd: CommandId): Chord | null =>
@@ -150,6 +176,8 @@ export function selectCommandContext(
     resultsAvailable,
     trackLoaded: app.currentTrack !== null,
     recordFormFocused,
+    recordFormModified:
+      active !== null && selectModifiedForm(forms, active) !== undefined,
   };
 }
 
@@ -363,6 +391,15 @@ export function createCommandsStore(
       case "playback.next_track":
         app.actions.skipNext();
         break;
+      case "playback.previous_track":
+        app.actions.skipPrevious();
+        break;
+      case "playback.seek_backward":
+        app.actions.seekBy(-SEEK_STEP_SECONDS);
+        break;
+      case "playback.seek_forward":
+        app.actions.seekBy(SEEK_STEP_SECONDS);
+        break;
       case "query.new":
         app.actions.newQueryTab();
         break;
@@ -404,6 +441,13 @@ export function createCommandsStore(
         break;
       case "results.extend_selection_up":
         if (tabId) app.actions.moveRowSelection(tabId, false, true);
+        break;
+      case "results.select_all":
+        if (tabId) app.actions.selectAllRows(tabId);
+        break;
+      case "record.save":
+        if (tabId)
+          void selectModifiedForm(forms.store.getState(), tabId)?.save();
         break;
       case "results.edit_selected": {
         if (!tabId) break;
@@ -518,11 +562,14 @@ export function createCommandsStore(
     const pressed = chordFromEvent(e);
     if (!pressed) return;
     // A text field keeps its own plain / shift-only keys.
-    if (isTypingTarget(e.target) && !(pressed.mod || pressed.alt)) return;
+    const inTextField = isTypingTarget(e.target);
+    if (inTextField && !(pressed.mod || pressed.alt)) return;
+    if (claimsKey(e.target, pressed)) return;
     const command = commandForChord(
       store.getState().overrides,
       pressed,
       context(),
+      inTextField,
     );
     if (command === null) return;
     // Matched: the key belongs to the command, not to the page.

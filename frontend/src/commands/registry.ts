@@ -29,6 +29,9 @@ export type CommandId =
   | "explorer.toggle"
   | "playback.toggle_play"
   | "playback.next_track"
+  | "playback.previous_track"
+  | "playback.seek_backward"
+  | "playback.seek_forward"
   | "query.new"
   | "query.focus_filter"
   | "query.focus_sort"
@@ -40,6 +43,8 @@ export type CommandId =
   | "results.extend_selection_down"
   | "results.extend_selection_up"
   | "results.edit_selected"
+  | "results.select_all"
+  | "record.save"
   | "selection.expand_nested"
   | "selection.collapse_nested"
   | "selection.delete"
@@ -61,7 +66,10 @@ export type When =
   | "playlistResults"
   | "results"
   | "trackLoaded"
-  | "recordForm";
+  | "transport"
+  | "resultsFocused"
+  | "recordForm"
+  | "recordModified";
 
 /** A snapshot of the app state the {@link When} predicates read, computed per
  * input pass / palette render. */
@@ -87,6 +95,8 @@ export interface CommandContext {
    * focus, or it has a selection. The arrow keys belong to the form then, not to
    * the result rows or anything else on the page. */
   recordFormFocused: boolean;
+  /** The active tab's record editor holds unsaved changes. */
+  recordFormModified: boolean;
 }
 
 export interface CommandDef {
@@ -96,6 +106,9 @@ export interface CommandDef {
   when: When;
   /** The built-in default chord; `null` for a command that ships unbound. */
   defaultChord: Chord | null;
+  /** Stands down while a text field has focus, even for a ⌘/Ctrl chord — for a
+   * chord the field has its own meaning for (⌘/Ctrl+A selects its text). */
+  yieldsToTextFields?: boolean;
 }
 
 /** Every command, in the order the palette lists them (grouped by category). */
@@ -142,13 +155,33 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     id: "playback.toggle_play",
     title: "Playback: Toggle play/pause of active track",
     when: "trackLoaded",
-    defaultChord: chordOf("shift+Space"),
+    defaultChord: chordOf("Space"),
   },
   {
     id: "playback.next_track",
     title: "Playback: Skip to next track",
     when: "trackLoaded",
-    defaultChord: chordOf("shift+N"),
+    defaultChord: chordOf("PageDown"),
+  },
+  {
+    id: "playback.previous_track",
+    title: "Playback: Skip to previous track",
+    when: "trackLoaded",
+    defaultChord: chordOf("PageUp"),
+  },
+  // Left and Right are the record editor form's too (expanding and collapsing
+  // nested items), which wins while it has focus: `transport` stands down then.
+  {
+    id: "playback.seek_backward",
+    title: "Playback: Seek back 10 seconds",
+    when: "transport",
+    defaultChord: chordOf("Left"),
+  },
+  {
+    id: "playback.seek_forward",
+    title: "Playback: Seek forward 10 seconds",
+    when: "transport",
+    defaultChord: chordOf("Right"),
   },
   {
     id: "query.new",
@@ -226,6 +259,23 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     when: "results",
     defaultChord: chordOf("mod+E"),
   },
+  {
+    // Stands down in a text field (its own select-all) and in the record form
+    // (whose items are what the keyboard is aimed at then).
+    id: "results.select_all",
+    title: "Selection: Select all rows",
+    when: "resultsFocused",
+    defaultChord: chordOf("mod+A"),
+    yieldsToTextFields: true,
+  },
+  {
+    // The record editor's Save button. Not `tabs.save_active`, which saves the
+    // query itself and ships unbound.
+    id: "record.save",
+    title: "Record editor: Save changes",
+    when: "recordModified",
+    defaultChord: chordOf("mod+S"),
+  },
   // The three commands below act on the record editor form's selection — the
   // items it has selected, or the one it has focused. They're gated on the form
   // holding focus, which is what lets them claim bare arrow keys and Delete
@@ -252,7 +302,10 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     id: "tabs.save_active",
     title: "Tabs: Save active tab",
     when: "queryTab",
-    defaultChord: chordOf("mod+S"),
+    // Ships unbound: ⌘/Ctrl+S saves the record editor's changes (`record.save`),
+    // and a query saves itself as it's edited. Reachable from the palette and
+    // the toolbar's Save button.
+    defaultChord: null,
   },
   {
     id: "tabs.save_all",
@@ -327,8 +380,14 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.resultsAvailable;
     case "trackLoaded":
       return ctx.trackLoaded;
+    case "transport":
+      return ctx.trackLoaded && !ctx.recordFormFocused;
+    case "resultsFocused":
+      return ctx.resultsAvailable && !ctx.recordFormFocused;
     case "recordForm":
       return ctx.recordFormFocused;
+    case "recordModified":
+      return ctx.recordFormModified;
   }
 }
 
@@ -339,6 +398,9 @@ const DISJOINT_WHENS: readonly (readonly [When, When])[] = [
   ["playlistResults", "recordForm"],
   // One is a query's page, the other a playlist's.
   ["playlistResults", "queryTracks"],
+  // Both stand down while a record form has focus.
+  ["transport", "recordForm"],
+  ["resultsFocused", "recordForm"],
 ];
 
 /** Whether contexts `a` and `b` can hold at the same time. Two commands may
@@ -367,7 +429,13 @@ export function whenLabel(when: When): string {
       return "results";
     case "trackLoaded":
       return "track loaded";
+    case "transport":
+      return "track loaded";
+    case "resultsFocused":
+      return "results";
     case "recordForm":
       return "record editor focused";
+    case "recordModified":
+      return "record editor modified";
   }
 }

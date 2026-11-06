@@ -122,6 +122,74 @@ describe("commands store", () => {
     });
   });
 
+  describe("transport and selection shortcuts", () => {
+    beforeEach(() => vi.stubGlobal("HTMLElement", class {}));
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** Presses a plain key at the page, as the global keydown pass sees it. */
+    function press(code: string, init: Partial<KeyboardEvent> = {}) {
+      const event = {
+        code,
+        key: code,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        target: null,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        ...init,
+      };
+      commands.actions.handleKeyDown(event as unknown as KeyboardEvent);
+      return event;
+    }
+
+    it("seek, skip and toggle play while a track is loaded", () => {
+      const seekBy = vi.spyOn(app.actions, "seekBy");
+      const skipPrevious = vi.spyOn(app.actions, "skipPrevious");
+      const skipNext = vi.spyOn(app.actions, "skipNext");
+      const toggle = vi.spyOn(app.actions, "togglePlayPause");
+
+      press("ArrowLeft");
+      press("PageUp");
+      expect(seekBy).not.toHaveBeenCalled(); // nothing loaded yet
+      expect(skipPrevious).not.toHaveBeenCalled();
+
+      app.actions.seedNowPlaying(
+        {
+          id: "t1",
+          title: "T",
+          artists: [],
+          sourceTabId: null,
+          rowIndex: null,
+        },
+        { playing: true, position: 0, duration: 100, hasNext: true },
+      );
+      press("ArrowLeft");
+      press("ArrowRight");
+      press("PageUp");
+      press("PageDown");
+      press("Space");
+      expect(seekBy.mock.calls).toEqual([[-10], [10]]);
+      expect(skipPrevious).toHaveBeenCalledTimes(1);
+      expect(skipNext).toHaveBeenCalledTimes(1);
+      expect(toggle).toHaveBeenCalledTimes(1);
+    });
+
+    it("selects all rows with Ctrl+A, but not inside a text field", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      const selectAll = vi.spyOn(app.actions, "selectAllRows");
+      app.actions.setResults("t", buildResultFromStringRows([["1"], ["2"]]));
+
+      press("KeyA", { key: "a", ctrlKey: true });
+      expect(selectAll).toHaveBeenCalledWith("t");
+      expect(app.store.getState().pages["t"]?.selection).toEqual(
+        new Set([0, 1]),
+      );
+    });
+  });
+
   describe("Delete", () => {
     const PLAYLIST_TAB = "00000000-0000-0000-0000-0000000000c1";
 

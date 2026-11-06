@@ -489,6 +489,11 @@ export class AudioEngine {
     this.goNext(false);
   }
 
+  /** Steps back to the previous track; a no-op with none before it. */
+  skipPrevious(): void {
+    this.goPrev();
+  }
+
   /** Stops playback and tears down the play context and OS media session. */
   stop(): void {
     this.trace("cmd:stop");

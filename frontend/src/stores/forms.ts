@@ -153,6 +153,17 @@ export function selectFocusedForm(s: FormsState): RecordFormModel | undefined {
   )?.model;
 }
 
+/** The form of `tabId` that holds unsaved changes and is on screen, if any:
+ * what ⌘/Ctrl+S saves. */
+export function selectModifiedForm(
+  s: FormsState,
+  tabId: string,
+): RecordFormModel | undefined {
+  return s.entries.find(
+    (e) => e.tabId === tabId && e.mounted > 0 && e.summary.modified,
+  )?.model;
+}
+
 /** Whether any mounted form has its modal record picker open — a dialog that
  * owns the keyboard, so the global shortcut pass stands down for it as it
  * does for the app's other modals. */
