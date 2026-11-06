@@ -19,7 +19,11 @@ const RESIZE_STEP = 16;
  * to find it by) and leaves the rest of the edge to whatever else a finger does
  * there — swiping a drawer closed, above all. `touch-none` is what makes it work
  * under a finger at all: without it, the browser takes the touch for a pan after
- * a few px and cancels the pointer. */
+ * a few px and cancels the pointer.
+ *
+ * Hovering shows the highlight only after a 500ms pause (a transition delay set
+ * on the hover state alone, so it clears at once on leaving): sweeping the mouse
+ * across the edge shouldn't make it flash. */
 export default function SidebarResizeHandle(props: {
   /** Which of the panel's edges it's on: dragging away from the panel widens. */
   edge: "left" | "right";
@@ -93,7 +97,7 @@ export default function SidebarResizeHandle(props: {
       aria-label={props.label}
       tabIndex={0}
       className={cx(
-        "hover:bg-accent/40 focus-visible:bg-accent/40 absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none outline-none pointer-coarse:inset-y-auto pointer-coarse:top-1/2 pointer-coarse:h-20 pointer-coarse:w-7 pointer-coarse:-translate-y-1/2 pointer-coarse:rounded-full",
+        "hover:bg-accent/40 focus-visible:bg-accent/40 absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none transition-colors outline-none hover:delay-500 pointer-coarse:inset-y-auto pointer-coarse:top-1/2 pointer-coarse:h-20 pointer-coarse:w-7 pointer-coarse:-translate-y-1/2 pointer-coarse:rounded-full",
         {
           "-left-[3px] pointer-coarse:-left-3.5": props.edge === "left",
           "-right-[3px] pointer-coarse:-right-3.5": props.edge === "right",
