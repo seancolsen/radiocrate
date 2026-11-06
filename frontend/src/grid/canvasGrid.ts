@@ -314,8 +314,14 @@ export class CanvasGrid {
 
     // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
     // truncation and pill widths) are measured against the real font.
+    // Canvas text doesn't reliably start a font's download, so ask for the
+    // face outright rather than waiting for DOM text to pull it in.
     if (typeof document !== "undefined" && document.fonts?.ready) {
-      void document.fonts.ready.then(() => {
+      const family = getComputedStyle(canvas).fontFamily;
+      void Promise.all([
+        document.fonts.load(`14px ${family}`, "Aa"),
+        document.fonts.ready,
+      ]).then(() => {
         this.metrics.clear(); // real font may differ from the fallback metrics
         this.requestDraw();
       });
