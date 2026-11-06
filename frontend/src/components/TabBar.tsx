@@ -1,11 +1,7 @@
 import { useRef, type JSX, type PointerEvent } from "react";
 import { Icons } from "../icons";
 import { useApp, useAppActions } from "../stores/react";
-import {
-  selectIsPersisted,
-  selectIsUnsaved,
-  type TabKind,
-} from "../stores/app";
+import { selectIsUnsaved, selectPageTab, type TabKind } from "../stores/app";
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
 import TabHandle from "./TabHandle";
 import { useTooltip } from "./ui/Tooltip";
@@ -23,8 +19,8 @@ function WiredTabHandle(props: {
   onPointerDown: (e: PointerEvent<HTMLElement>, id: string) => void;
 }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.id));
-  // Only a saved query has a name to rename.
-  const renameable = useApp((s) => selectIsPersisted(s, props.id));
+  // Only a query or playlist has a name to rename.
+  const renameable = useApp((s) => selectPageTab(s, props.id) !== undefined);
   const renaming = useApp((s) => s.renaming?.id === props.id);
   const renameBuffer = useApp((s) =>
     s.renaming?.id === props.id ? s.renaming.buffer : "",

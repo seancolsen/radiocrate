@@ -1,4 +1,11 @@
-import { Activity, useEffect, type JSX } from "react";
+import {
+  Activity,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { useShallow } from "zustand/shallow";
 import { selectTab } from "./stores/app";
 import { useApp, useAppActions } from "./stores/react";
@@ -13,6 +20,7 @@ import PresetManager from "./components/PresetManager";
 import PreludePage from "./components/PreludePage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
+import TabSwitcher from "./components/TabSwitcher";
 import RpcErrorBanner from "./components/RpcErrorBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import AboutModal from "./components/AboutModal";
@@ -40,6 +48,131 @@ function TabPage(props: { tabId: string }): JSX.Element | null {
   return null;
 }
 
+/** What can hold focus on a page, in document order. */
+const FOCUSABLE =
+  'input, textarea, select, button, a[href], [contenteditable="true"], [tabindex]';
+
+/** Where focus was in a page: the element, its place among the page's
+ * focusable elements, and its caret or selection. */
+interface SavedFocus {
+  el: HTMLElement;
+  /** Its place among the page's focusable elements — how an element that has
+   * since been rebuilt (a CodeMirror view is, each time its page is shown) is
+   * found again. */
+  index: number;
+  /** A text field's selection range: start, end, direction. */
+  range?: [
+    number | null,
+    number | null,
+    "forward" | "backward" | "none" | null,
+  ];
+  /** The selection inside a contenteditable. */
+  domRange?: Range;
+}
+
+/** Notes where focus is on `el`, within `root`: which element, and its text
+ * selection. `previous` is what was known of it before, whose place stands
+ * when `el` has already left the page. */
+function saveFocus(
+  root: HTMLElement,
+  el: EventTarget | null,
+  previous: SavedFocus | null,
+): SavedFocus | null {
+  if (!(el instanceof HTMLElement) || el === document.body) return null;
+  const index = root.contains(el)
+    ? [...root.querySelectorAll(FOCUSABLE)].indexOf(el)
+    : (previous?.index ?? -1);
+  const saved: SavedFocus = { el, index };
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    saved.range = [el.selectionStart, el.selectionEnd, el.selectionDirection];
+  } else if (el.isContentEditable) {
+    const selection = window.getSelection();
+    if (selection?.rangeCount && el.contains(selection.anchorNode)) {
+      saved.domRange = selection.getRangeAt(0).cloneRange();
+    }
+  }
+  return saved;
+}
+
+/** Puts focus and the selection back as {@link saveFocus} found them, on the
+ * same element or — when it has been rebuilt since — the one in its place. */
+function restoreFocus(root: HTMLElement, saved: SavedFocus): void {
+  let { el } = saved;
+  if (!el.isConnected || !root.contains(el)) {
+    const candidate =
+      root.querySelectorAll<HTMLElement>(FOCUSABLE)[saved.index];
+    if (candidate?.tagName !== el.tagName) return;
+    el = candidate;
+  }
+  el.focus({ preventScroll: true });
+  const { range, domRange } = saved;
+  if (
+    range &&
+    (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+  ) {
+    try {
+      if (range[0] !== null && range[1] !== null) {
+        el.setSelectionRange(range[0], range[1], range[2] ?? undefined);
+      }
+    } catch {
+      // An input type with no text selection to restore.
+    }
+  } else if (domRange && el.contains(domRange.commonAncestorContainer)) {
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(domRange);
+  }
+}
+
+/** Gives a tab's page back the focus it had when the user left it. A hidden
+ * page keeps its DOM but loses focus (a `display: none` element can't hold it),
+ * so without this a half-typed query would come back with its caret gone.
+ *
+ * The page's focus and selection are noted as they change; the layout effect
+ * runs again each time `<Activity>` shows the page, and puts them back unless
+ * something else already holds focus. The wrapper has no box of its own
+ * (`contents`), so the page lays out as if it weren't there. */
+function KeepFocus(props: { children: ReactNode }): JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const saved = useRef<SavedFocus | null>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const last = saved.current;
+    if (
+      last &&
+      (document.activeElement === null ||
+        document.activeElement === document.body)
+    ) {
+      restoreFocus(root, last);
+    }
+    const onFocusIn = (e: FocusEvent) => {
+      saved.current = saveFocus(root, e.target, saved.current);
+    };
+    // The caret moves while focus sits still, so it's read as focus leaves.
+    const onFocusOut = (e: FocusEvent) => {
+      if (saved.current?.el === e.target) {
+        saved.current = saveFocus(root, e.target, saved.current);
+      }
+    };
+    root.addEventListener("focusin", onFocusIn);
+    root.addEventListener("focusout", onFocusOut);
+    return () => {
+      root.removeEventListener("focusin", onFocusIn);
+      root.removeEventListener("focusout", onFocusOut);
+      // Hidden with focus still inside it.
+      if (root.contains(document.activeElement)) {
+        saved.current = saveFocus(root, document.activeElement, saved.current);
+      }
+    };
+  }, []);
+  return (
+    <div ref={rootRef} className="contents">
+      {props.children}
+    </div>
+  );
+}
+
 /** The content area: every open tab's page, with all but the active one hidden.
  *
  * Each tab gets its own page instance for its whole life, and switching tabs
@@ -63,7 +196,9 @@ function TabContent(): JSX.Element {
     <>
       {tabIds.map((id) => (
         <Activity key={id} mode={id === activeTabId ? "visible" : "hidden"}>
-          <TabPage tabId={id} />
+          <KeepFocus>
+            <TabPage tabId={id} />
+          </KeepFocus>
         </Activity>
       ))}
       {!tabIds.includes(activeTabId ?? "") && <NoTabsPage />}
@@ -126,6 +261,7 @@ export default function App(): JSX.Element {
 
       {/* App-wide overlays, above every panel and both layouts. */}
       <CommandPalette />
+      <TabSwitcher />
       <AboutModal />
       {/* Raised from a query page's actions menu or from the explorer, whose
           query need not be open. */}

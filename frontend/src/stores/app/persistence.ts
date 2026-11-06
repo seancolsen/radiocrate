@@ -317,8 +317,7 @@ export function storedTabs(env: AppEnv): StoredTabs {
       tabs.push({
         kind: "query",
         id: t.id,
-        // An unsaved query has no name (an older record may have given it one).
-        name: persisted ? t.name : "",
+        name: t.name,
         saved: definitionFromStored(t.saved),
         live: definitionFromStored(t.live),
         persisted,

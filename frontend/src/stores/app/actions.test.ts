@@ -178,19 +178,156 @@ describe("closeTab", () => {
     expect(s.tabs.map((t) => t.id)).toEqual(["a", "c"]);
     expect(s.pages["b"]).toBeUndefined();
     expect(s.pages["a"]).toBeUndefined(); // never written, so never created
-    // Closing a middle tab moves the splice's gap to the tab that was to its
-    // right ("c" slides into "b"'s old index) — the same neighbor a plain
-    // array splice always produces, and what `closeTab`'s fallback chain
-    // (`s.tabs[idx] ?? s.tabs[idx - 1]`) picks up first.
+    // "c" was the tab active before "b" was selected.
     expect(s.activeTabId).toBe("c");
   });
 
-  it("falls back to the tab now last when the closed tab had no right neighbor", () => {
-    openQueryTab(bundle, "a");
-    openQueryTab(bundle, "b");
+  it("activates the next tab down the stack, not a neighbor in the tab bar", () => {
+    for (const id of ["a", "b", "c", "d"]) openQueryTab(bundle, id);
+    // Stack, top first: d c b a. Visit "a", then "c", then "b".
+    bundle.actions.selectTab("a");
+    bundle.actions.selectTab("c");
     bundle.actions.selectTab("b");
+    expect(bundle.store.getState().tabHistory).toEqual(["b", "c", "a", "d"]);
+
     bundle.actions.closeTab("b");
+    expect(bundle.store.getState().activeTabId).toBe("c");
+    bundle.actions.closeTab("c");
     expect(bundle.store.getState().activeTabId).toBe("a");
+    bundle.actions.closeTab("a");
+    expect(bundle.store.getState().activeTabId).toBe("d");
+    bundle.actions.closeTab("d");
+    expect(bundle.store.getState().activeTabId).toBeNull();
+    expect(bundle.store.getState().tabHistory).toEqual([]);
+  });
+
+  it("closing a tab that isn't active leaves the active one be", () => {
+    for (const id of ["a", "b", "c"]) openQueryTab(bundle, id);
+    bundle.actions.closeTab("a");
+    const s = bundle.store.getState();
+    expect(s.activeTabId).toBe("c");
+    expect(s.tabHistory).toEqual(["c", "b"]);
+  });
+});
+
+describe("tab switcher", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    bundle = createAppStore(fakeEnv());
+    for (const id of ["a", "b", "c"]) openQueryTab(bundle, id);
+    bundle.actions.selectTab("a");
+    bundle.actions.selectTab("c"); // stack, top first: c a b
+  });
+
+  it("opens on the previous tab, and steps through them most recent first", () => {
+    bundle.actions.stepTabSwitcher(1);
+    expect(bundle.store.getState().tabSwitcher).toEqual({
+      order: ["c", "a", "b"],
+      index: 1,
+    });
+    bundle.actions.stepTabSwitcher(1);
+    expect(bundle.store.getState().tabSwitcher?.index).toBe(2);
+    bundle.actions.stepTabSwitcher(1);
+    expect(bundle.store.getState().tabSwitcher?.index).toBe(0);
+    // Nothing changes until it's committed.
+    expect(bundle.store.getState().activeTabId).toBe("c");
+  });
+
+  it("opens backwards on the least recent tab", () => {
+    bundle.actions.stepTabSwitcher(-1);
+    expect(bundle.store.getState().tabSwitcher?.index).toBe(2);
+  });
+
+  it("activates the highlighted tab when committed", () => {
+    bundle.actions.stepTabSwitcher(1);
+    bundle.actions.stepTabSwitcher(1);
+    bundle.actions.commitTabSwitcher();
+    const s = bundle.store.getState();
+    expect(s.tabSwitcher).toBeNull();
+    expect(s.activeTabId).toBe("b");
+    expect(s.tabHistory).toEqual(["b", "c", "a"]);
+  });
+
+  it("activates the tab clicked", () => {
+    bundle.actions.stepTabSwitcher(1);
+    bundle.actions.commitTabSwitcher(2);
+    expect(bundle.store.getState().activeTabId).toBe("b");
+  });
+
+  it("leaves the active tab alone when cancelled", () => {
+    bundle.actions.stepTabSwitcher(1);
+    bundle.actions.cancelTabSwitcher();
+    const s = bundle.store.getState();
+    expect(s.tabSwitcher).toBeNull();
+    expect(s.activeTabId).toBe("c");
+  });
+
+  it("doesn't open for a single tab", () => {
+    const one = createAppStore(fakeEnv());
+    openQueryTab(one, "a");
+    one.actions.stepTabSwitcher(1);
+    expect(one.store.getState().tabSwitcher).toBeNull();
+  });
+});
+
+describe("naming an unsaved query tab", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    bundle = createAppStore(fakeEnv());
+    vi.mocked(queryAdd).mockClear();
+    vi.mocked(sourceRename).mockClear();
+    bundle.actions.newQueryTab();
+  });
+
+  it("renames it on the tab alone, without saving it", () => {
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.beginRename(id);
+    bundle.actions.setRenameBuffer("  Road trip ");
+    bundle.actions.commitRename();
+    expect(selectQueryTab(bundle.store.getState(), id)).toMatchObject({
+      name: "Road trip",
+      persisted: false,
+    });
+    expect(vi.mocked(sourceRename)).not.toHaveBeenCalled();
+    expect(vi.mocked(queryAdd)).not.toHaveBeenCalled();
+  });
+
+  it("lets the name be cleared again", () => {
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.beginRename(id);
+    bundle.actions.setRenameBuffer("x");
+    bundle.actions.commitRename();
+    bundle.actions.beginRename(id);
+    bundle.actions.setRenameBuffer(" ");
+    bundle.actions.commitRename();
+    expect(selectQueryTab(bundle.store.getState(), id)?.name).toBe("");
+  });
+
+  it("saves the query under that name", () => {
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.beginRename(id);
+    bundle.actions.setRenameBuffer("Road trip");
+    bundle.actions.commitRename();
+    bundle.actions.saveQuery(id);
+    expect(vi.mocked(queryAdd)).toHaveBeenCalledWith(
+      expect.objectContaining({ id, name: "Road trip" }),
+    );
+    expect(bundle.store.getState().sources.data[0].name).toBe("Road trip");
+  });
+
+  it("keeps the name when the backend turns the save down", async () => {
+    vi.mocked(queryAdd).mockRejectedValueOnce(new Error("500 nope"));
+    const id = bundle.store.getState().activeTabId!;
+    bundle.actions.beginRename(id);
+    bundle.actions.setRenameBuffer("Road trip");
+    bundle.actions.commitRename();
+    bundle.actions.saveQuery(id);
+    await vi.waitFor(() =>
+      expect(selectQueryTab(bundle.store.getState(), id)).toMatchObject({
+        name: "Road trip",
+        persisted: false,
+      }),
+    );
   });
 });
 
@@ -1312,6 +1449,18 @@ describe("showArtistRecords", () => {
       custom: `++#credit{artist.id:="x"}`,
       presets: [],
     });
+  });
+
+  it("names the tab for what it lists", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.showArtistRecords("a", [artist("x")], "track");
+    bundle.actions.showArtistRecords("a", [artist("x")], "album");
+    expect(bundle.store.getState().tabs.map((t) => t.name)).toEqual([
+      "a",
+      "albums",
+      "tracks",
+    ]);
   });
 
   it("opens the artists' albums with the table's default sort and display, but not its default filter", () => {

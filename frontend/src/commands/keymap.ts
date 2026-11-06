@@ -2,7 +2,12 @@
 // pure functions over an immutable overrides map, which the command store holds
 // and replaces wholesale on every change.
 
-import { chordsEqual, parseChord, type Chord } from "./chord";
+import {
+  chordMatchesPressed,
+  chordsEqual,
+  parseChord,
+  type Chord,
+} from "./chord";
 import {
   ALL_COMMANDS,
   commandDef,
@@ -43,7 +48,7 @@ export function commandForChord(
   for (const def of ALL_COMMANDS) {
     if (inTextField && def.yieldsToTextFields) continue;
     const bound = bindingFor(overrides, def.id);
-    if (!bound || !chordsEqual(bound, chord)) continue;
+    if (!bound || !chordMatchesPressed(bound, chord)) continue;
     if (whenSatisfied(def.when, ctx)) return def.id;
   }
   return null;
@@ -64,7 +69,7 @@ export function conflictsFor(
   return ALL_COMMANDS.filter((def) => {
     if (def.id === id || !whensOverlap(def.when, when)) return false;
     const bound = bindingFor(overrides, def.id);
-    return bound !== null && chordsEqual(bound, chord);
+    return bound !== null && chordMatchesPressed(bound, chord);
   }).map((def) => def.id);
 }
 

@@ -268,12 +268,16 @@ describe("opening child records", () => {
 
     model.openChildRecords(ROOT_ID, credits(model));
 
-    expect(openRecords).toHaveBeenCalledWith({
-      base: "credit",
-      filter: `track:="t1"`,
-      sort: "\\\\id \\\\role",
-      display: "$id $role",
-    });
+    // Named for the field's table and the one record the form is on.
+    expect(openRecords).toHaveBeenCalledWith(
+      {
+        base: "credit",
+        filter: `track:="t1"`,
+        sort: "\\\\id \\\\role",
+        display: "$id $role",
+      },
+      "credits: Formation",
+    );
   });
 
   it("opens the records of every record the form is on", async () => {
@@ -292,12 +296,16 @@ describe("opening child records", () => {
 
     // Both tracks' credits, filtered to either of them — and as the records
     // they are: a query tab shows rows, not the rows the form groups them into.
-    expect(openRecords).toHaveBeenCalledWith({
-      base: "credit",
-      filter: `[\n  track:="t1"\n  track:="t2"\n]`,
-      sort: "\\\\id \\\\role",
-      display: "$id $role",
-    });
+    // …and with no one record to describe, named for the table alone.
+    expect(openRecords).toHaveBeenCalledWith(
+      {
+        base: "credit",
+        filter: `[\n  track:="t1"\n  track:="t2"\n]`,
+        sort: "\\\\id \\\\role",
+        display: "$id $role",
+      },
+      "credits",
+    );
   });
 });
 

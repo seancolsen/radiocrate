@@ -53,6 +53,8 @@ export type CommandId =
   | "tabs.close_active"
   | "tabs.next"
   | "tabs.previous"
+  | "tabs.switch_next"
+  | "tabs.switch_previous"
   | "tabs.move_left"
   | "tabs.move_right";
 
@@ -321,15 +323,29 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   },
   {
     id: "tabs.next",
-    title: "Tabs: Go to next tab",
+    title: "Tabs: Go to next tab (tab bar order)",
     when: "activeTab",
     defaultChord: chordOf("mod+alt+Right"),
   },
   {
     id: "tabs.previous",
-    title: "Tabs: Go to previous tab",
+    title: "Tabs: Go to previous tab (tab bar order)",
     when: "activeTab",
     defaultChord: chordOf("mod+alt+Left"),
+  },
+  {
+    // Opens the tab switcher, which stays up while the modifier is held, and
+    // steps through the tabs most recently used first.
+    id: "tabs.switch_next",
+    title: "Tabs: Switch to next tab (most recently used)",
+    when: "activeTab",
+    defaultChord: chordOf("ctrl+Tab"),
+  },
+  {
+    id: "tabs.switch_previous",
+    title: "Tabs: Switch to previous tab (most recently used)",
+    when: "activeTab",
+    defaultChord: chordOf("ctrl+shift+Tab"),
   },
   {
     id: "tabs.move_left",

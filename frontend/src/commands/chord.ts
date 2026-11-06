@@ -261,6 +261,20 @@ export function chordFromEvent(
   };
 }
 
+/** Whether the chord `pressed`, read from an event (`chordFromEvent`), is the
+ * chord `bound`. Off-mac a bound chord's `ctrl` is the same physical key as its
+ * `mod`, which is how a Control press reads, so it matches that. */
+export function chordMatchesPressed(
+  bound: Chord,
+  pressed: Chord,
+  mac: boolean = isMac(),
+): boolean {
+  if (!mac && bound.ctrl && !bound.mod) {
+    return chordsEqual({ ...bound, mod: true, ctrl: false }, pressed);
+  }
+  return chordsEqual(bound, pressed);
+}
+
 /** Whether an event is exactly this chord — every modifier compared, so a
  * plain `Down` binding does not also swallow `Shift+Down` (they're distinct
  * commands: select vs. extend).
@@ -273,9 +287,5 @@ export function chordMatchesEvent(
   mac: boolean = isMac(),
 ): boolean {
   const pressed = chordFromEvent(e, mac);
-  if (!pressed) return false;
-  if (!mac && chord.ctrl && !chord.mod) {
-    return chordsEqual({ ...chord, mod: true, ctrl: false }, pressed);
-  }
-  return chordsEqual(chord, pressed);
+  return pressed !== null && chordMatchesPressed(chord, pressed, mac);
 }

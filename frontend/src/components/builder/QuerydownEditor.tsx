@@ -71,6 +71,10 @@ const QuerydownEditor = forwardRef<
   useEffect(() => {
     latest.current = props;
   });
+  // Where the caret was when the view was last torn down: the view is rebuilt
+  // each time its page is shown again (see `App.tsx`'s `<Activity>`), and the
+  // caret goes back where it was.
+  const caret = useRef<{ anchor: number; head: number } | null>(null);
   const [attributes] = useState(() => new Compartment());
   const [language] = useState(() => new Compartment());
 
@@ -101,6 +105,12 @@ const QuerydownEditor = forwardRef<
     const view = new EditorView({
       parent: host,
       doc: initial.value,
+      selection: caret.current
+        ? {
+            anchor: Math.min(caret.current.anchor, initial.value.length),
+            head: Math.min(caret.current.head, initial.value.length),
+          }
+        : undefined,
       extensions: [
         querydownExtensions({
           singleLine: initial.singleLine ?? false,
@@ -114,6 +124,8 @@ const QuerydownEditor = forwardRef<
     });
     viewRef.current = view;
     return () => {
+      const { anchor, head } = view.state.selection.main;
+      caret.current = { anchor, head };
       view.destroy();
       viewRef.current = null;
     };

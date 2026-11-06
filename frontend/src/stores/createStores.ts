@@ -138,6 +138,11 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   // focused widget acts on it.
   const onKeyDown = (e: KeyboardEvent) => commands.actions.handleKeyDown(e);
   document.addEventListener("keydown", onKeyDown, true);
+  const onKeyUp = (e: KeyboardEvent) => commands.actions.handleKeyUp(e);
+  document.addEventListener("keyup", onKeyUp, true);
+  // Leaving the window mid-switch (Alt+Tab away) never sees the key come up.
+  const onWindowBlur = () => app.actions.cancelTabSwitcher();
+  window.addEventListener("blur", onWindowBlur);
 
   function dispose() {
     unsubscribeRetain();
@@ -146,6 +151,8 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     unsubscribeRequests();
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("keyup", onKeyUp, true);
+    window.removeEventListener("blur", onWindowBlur);
     app.dispose();
   }
 

@@ -68,6 +68,7 @@ import {
   type EmbedSpec,
 } from "../../query/embeddedRecord";
 import { runRecordQuery } from "../../query/recordData";
+import { childRecordsTabName, recordDescriptor } from "../../query/tabNames";
 import { groupChildRows } from "../../record/childGroups";
 import {
   focusAdjacentItem,
@@ -128,7 +129,7 @@ export interface RecordFormOptions {
   /** Shows the records `query` finds somewhere other than the form — the query
    * page opens them in a new query tab. Without it, a multi-record field has
    * nowhere to open its records. */
-  openRecords?: (query: RecordQuery) => void;
+  openRecords?: (query: RecordQuery, name: string) => void;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -243,7 +244,9 @@ export interface RecordFormActions {
    * the records of every base record the form is on, as the rows they are
    * rather than the rows the form collapses them into. The records as the
    * database holds them, not as the form has them: a query can't see unsaved
-   * changes. A no-op for records with no id of their own yet. */
+   * changes. A no-op for records with no id of their own yet. The tab is named
+   * for the field's table and, on a single record, a text that describes it
+   * (`childRecordsTabName`). */
   openChildRecords: (recordId: string, field: MultiRecordField) => void;
   /** Scaffold a new record for a scalar linked record field to point at, in
    * place of whatever it pointed at before. `seed` fills in its first text
@@ -1547,12 +1550,30 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       // them.
       const parents = parentValues(recordId);
       if (parents.length === 0) return;
+      // The tab is named for the record when the form is on just the one.
+      const node = get().records[recordId];
+      const descriptor =
+        node?.keys.length === 1
+          ? recordDescriptor(
+              node.fields.flatMap((f) =>
+                f.kind === "primitive" && f.valueType === "text"
+                  ? [
+                      {
+                        column: f.column,
+                        value: node.values[f.column]?.[0] ?? null,
+                      },
+                    ]
+                  : [],
+              ),
+            )
+          : undefined;
       opts.openRecords?.(
         childRecordsTabQuery(
           field,
           parents,
           specFor(field.table, field.column),
         ),
+        childRecordsTabName(field.table, descriptor),
       );
     },
 

@@ -132,7 +132,7 @@ export const PRELUDE_TAB_NAME = SETTINGS.querydown_prelude.name;
  *
  * A query is *unsaved* (`persisted: false`) from when it's created — a new
  * query, a Duplicate — until the user saves it: until then it exists only in
- * this tab, it has no name (`name` is empty), and its edits stay here.
+ * this tab, it has no name unless it's been given one, and its edits stay here.
  *
  * A saved query saves itself. Every change to its working definition is
  * written to the backend lazily, once the app has gone quiet (see
@@ -142,7 +142,9 @@ export const PRELUDE_TAB_NAME = SETTINGS.querydown_prelude.name;
 export interface QueryTab {
   kind: "query";
   id: string;
-  /** The query's name; empty while it's unsaved. */
+  /** The query's name. Empty while it's unsaved, unless the user (or the
+   * feature that opened it) named it: the tab keeps that name, and the query
+   * is saved under it. */
   name: string;
   saved: QueryDefinition;
   live: QueryDefinition;
@@ -442,6 +444,15 @@ export interface AppState {
   theme: ThemePref; // light/dark/system (persisted), drives the `data-theme` attribute
   tabs: Tab[]; // open tabs, in tab-bar order
   activeTabId: string | null;
+  /** The open tabs' ids, most recently active first — the stack that closing a
+   * tab pops (the next one down becomes active) and that the tab switcher
+   * cycles through. Kept in step with `tabs` and `activeTabId` by a
+   * subscription (`reconcileTabHistory`); not persisted. */
+  tabHistory: string[];
+  /** The tab switcher overlay, while it's open: the tabs in the order it lists
+   * them (a snapshot of `tabHistory`, or of the tab bar's order) and the one
+   * highlighted, which becomes active when the switcher is committed. */
+  tabSwitcher: { order: string[]; index: number } | null;
   sourceFilter: string; // "Filter" input text in the Sources section
   /** Whether the Sources section's filter input is shown. Hiding it clears
    * `sourceFilter`, so a filter is never in force out of sight. */
@@ -568,6 +579,33 @@ export interface RowDrag {
   gap: number | null;
 }
 
+/** `history` brought in step with the open tabs: the active tab first, then the
+ * rest of `history` that is still open, in its order, then any open tab it
+ * hadn't heard of (as restored tabs are, on a first load) in tab-bar order.
+ * Returns `history` itself when nothing changes. */
+export function reconcileTabHistory(
+  history: readonly string[],
+  tabs: readonly Tab[],
+  activeTabId: string | null,
+): string[] {
+  const open = new Set(tabs.map((t) => t.id));
+  const next: string[] = [];
+  const seen = new Set<string>();
+  const add = (id: string | null) => {
+    if (id !== null && open.has(id) && !seen.has(id)) {
+      seen.add(id);
+      next.push(id);
+    }
+  };
+  add(activeTabId);
+  history.forEach(add);
+  tabs.forEach((t) => add(t.id));
+  return next.length === history.length &&
+    next.every((id, i) => id === history[i])
+    ? (history as string[])
+    : next;
+}
+
 /** A shared frozen empty set for tabs with no selection, so a selector returns a
  * stable reference (no per-call allocation, no spurious re-renders). */
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
@@ -613,6 +651,8 @@ export function initialState(env: AppEnv): AppState {
     theme: storedTheme(env),
     tabs,
     activeTabId,
+    tabHistory: reconcileTabHistory([], tabs, activeTabId),
+    tabSwitcher: null,
     sourceFilter: "",
     sourceFilterOpen: false,
     expandedFolders: storedExpandedFolders(env),

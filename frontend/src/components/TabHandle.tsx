@@ -26,6 +26,7 @@ function RenameInput(props: {
       value={props.value}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onChange={(e) => props.onInput(e.currentTarget.value)}
       onBlur={() => props.onCommit()}
@@ -43,8 +44,9 @@ function RenameInput(props: {
 }
 
 /** One tab handle: the page kind's icon, the name (ellipsis when crowded; an
- * unsaved query, which has none, reads "new" in gray italics), an
- * unsaved-changes ✱ marker, and a close ×. Only the top corners are rounded so it
+ * unsaved query that hasn't been named reads "new" in gray italics), an
+ * unsaved-changes ✱ marker, and a close × (a middle-click on the handle closes
+ * it too). Only the top corners are rounded so it
  * sits flush with the content below.
  *  - Active: filled with the content-panel color + a 4px accent-blue top edge,
  *    name at full-strength text.
@@ -52,9 +54,8 @@ function RenameInput(props: {
  *
  * `renameable` is what a non-query page turns off: a settings tab's handle text
  * is fixed, so double-clicking it does nothing (the query-only affordances
- * stand down for a non-query `TabKind`), and an unsaved query turns it off
- * too, being named as it's saved. A saved query tab double-click starts an
- * inline rename, replacing the name with a text field. */
+ * stand down for a non-query `TabKind`). On a query tab, saved or not, a
+ * double-click starts an inline rename, replacing the name with a text field. */
 export default function TabHandle(props: {
   id: string;
   name: string;
@@ -91,6 +92,15 @@ export default function TabHandle(props: {
         },
       )}
       onPointerDown={(e) => props.onPointerDown(e)}
+      // A middle-click would otherwise start the browser's autoscroll.
+      onMouseDown={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      onAuxClick={(e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        props.onClose();
+      }}
       onClick={() => props.onSelect()}
       onDoubleClick={() => props.renameable && props.onRenameStart()}
     >

@@ -45,6 +45,13 @@ import {
   parseSchemaTables,
 } from "../../query/schema";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
+import { runRecordQuery } from "../../query/recordData";
+import {
+  descriptorQuery,
+  recordDescriptor,
+  relatedRecordsTabName,
+  textColumns,
+} from "../../query/tabNames";
 import { overridesFromEntries, withSetting } from "../../state/settings";
 import type { SettingKey } from "../../state/settings";
 import {
@@ -191,6 +198,7 @@ import {
   SHORTCUTS_TAB_NAME,
   emptyPage,
   initialPresetManager,
+  reconcileTabHistory,
   type AppState,
   type CurrentTrack,
   type ExportRows,
@@ -311,6 +319,19 @@ export interface AppActions {
   openShortcutsTab: () => void;
   closeTab: (id: string) => void;
   selectTab: (id: string) => void;
+  /** The tab switcher's two commands: opens the overlay listing the tabs most
+   * recently active first, highlighting the one `delta` steps from the active
+   * tab (+1: the one before it, -1: the least recent), or — when it's open
+   * already — moves the highlight by `delta`, wrapping. Does nothing for fewer
+   * than two tabs. */
+  stepTabSwitcher: (delta: 1 | -1) => void;
+  /** Highlights the tab at `index` in the open tab switcher. */
+  setTabSwitcherIndex: (index: number) => void;
+  /** Closes the tab switcher, activating the highlighted tab — or the tab at
+   * `index` in the list, for a click. */
+  commitTabSwitcher: (index?: number) => void;
+  /** Closes the tab switcher, leaving the active tab as it was. */
+  cancelTabSwitcher: () => void;
   reorderTab: (id: string, toIndex: number) => void;
   setSourceFilter: (text: string) => void;
   /** Show or hide the Sources filter input. Hiding it clears the filter. */
@@ -593,8 +614,13 @@ export interface AppActions {
    * record editor's "open in a new tab" on a multi-record field. Its filter and
    * sort are `query`'s own; its display is the base table's default display
    * preset when there is one, and `query`'s otherwise. The tab goes in to the
-   * right of `besideTabId` and becomes the active one. */
-  openRecordsTab: (besideTabId: string, query: RecordQuery) => void;
+   * right of `besideTabId` and becomes the active one. It's named `name`, when
+   * given. */
+  openRecordsTab: (
+    besideTabId: string,
+    query: RecordQuery,
+    name?: string,
+  ) => void;
   /** Open `childTable`'s records for `parents` (records of `parentTable`, as
    * result rows identify them) in a new query tab beside `tabId` — what the
    * record editor's "open in a new tab" does on the `childTable` field, without
@@ -820,6 +846,22 @@ export function createAppActions(
     (s) => [s.tabs, s.activeTabId, s.unsavedPresets] as const,
     ([tabs, activeTabId, unsavedPresets]) =>
       persistTabs(env, tabs, activeTabId, unsavedPresets),
+    { equalityFn: shallow },
+  );
+
+  // The tab stack: whichever way a tab becomes active (opened, selected,
+  // restored), it goes to the top, and a closed one drops out.
+  const stopTrackingTabHistory = store.subscribe(
+    (s) => [s.tabs, s.activeTabId] as const,
+    ([tabs, activeTabId]) => {
+      const history = get().tabHistory;
+      const next = reconcileTabHistory(history, tabs, activeTabId);
+      if (next !== history) {
+        set((s) => {
+          s.tabHistory = next;
+        });
+      }
+    },
     { equalityFn: shallow },
   );
 
@@ -1720,7 +1762,8 @@ export function createAppActions(
       m.listedNames[preset.id] = "";
     });
 
-  /** Closes the tab `id`, dropping its cached state and selecting a neighbor.
+  /** Closes the tab `id`, dropping its cached state and selecting the tab
+   * below it in the stack (`AppState.tabHistory`).
    * Standalone (not just an object method) so backend actions like delete can
    * reuse it. Kind-agnostic: a settings tab simply has no page to drop. */
   const closeTab = (id: string) => {
@@ -1733,10 +1776,11 @@ export function createAppActions(
       if (id === PRESETS_TAB_ID) s.presetManager = initialPresetManager();
       // So is the prelude editor's unsaved text.
       if (id === PRELUDE_TAB_ID) s.preludeDraft = null;
+      s.tabHistory = s.tabHistory.filter((h) => h !== id);
       if (s.activeTabId === id) {
-        // Select the neighbor (prefer the one to the left), or clear.
-        const next = s.tabs[idx] ?? s.tabs[idx - 1];
-        s.activeTabId = next ? next.id : null;
+        // Select the next tab down the stack — the one the user was on before
+        // this — or clear.
+        s.activeTabId = s.tabHistory.find((h) => h !== id) ?? null;
       }
       // Playback outlives its source tab (the engine owns the queue), but
       // there's no longer anywhere for "Locate" to go.
@@ -1800,23 +1844,30 @@ export function createAppActions(
     });
   };
 
-  /** Opens `def` in a new unsaved (and so nameless) query tab, and makes it
-   * the active tab. It goes in at `index` in the tab bar, or at the end without
-   * one; saving it puts it in `folder`. */
+  /** Opens `def` in a new unsaved query tab, and makes it the active tab. It
+   * goes in at `index` in the tab bar, or at the end without one; saving it
+   * puts it in `folder`. It's nameless unless given a `name`, which it keeps
+   * when it's saved. */
   const openUnsavedTab = (
     def: QueryDefinition,
     {
       index,
       folder = null,
       pristine = false,
-    }: { index?: number; folder?: string | null; pristine?: boolean } = {},
+      name = "",
+    }: {
+      index?: number;
+      folder?: string | null;
+      pristine?: boolean;
+      name?: string;
+    } = {},
   ) => {
     const newId = newUuid();
     set((s) => {
       s.tabs.splice(index ?? s.tabs.length, 0, {
         kind: "query",
         id: newId,
-        name: "",
+        name,
         saved: cloneDefinition(def),
         live: def,
         persisted: false,
@@ -1827,6 +1878,63 @@ export function createAppActions(
       s.activeTabId = newId;
     });
     return newId;
+  };
+
+  /** Opens the records `query` finds in a new unsaved query tab to the right of
+   * `besideTabId`, named `name`, and returns its id. */
+  const openRecords = (
+    besideTabId: string,
+    query: RecordQuery,
+    name: string | undefined,
+  ): string => {
+    // Seeded from the table's defaults only for the display: the filter and
+    // sort have to be exactly `query`'s, or the tab would show other records,
+    // or show them in another order, than the ones it was opened on.
+    const def = definitionForBase(query.base, get().presets);
+    def.filter = { custom: query.filter, presets: [] };
+    def.sort = { custom: query.sort };
+    if (!("preset" in def.display)) def.display = { custom: query.display };
+    const beside = get().tabs.findIndex((t) => t.id === besideTabId);
+    return openUnsavedTab(def, {
+      index: beside === -1 ? undefined : beside + 1,
+      name,
+    });
+  };
+
+  /** Names the new tab `tabId`, which lists the `listed` records related to
+   * `records` (of `table`), for the one record they are — "Pink Floyd: albums"
+   * — once that record's description has been read. Does nothing for several
+   * records, or one with nothing to describe it. The tab has been named
+   * "albums" meanwhile, and keeps whatever the user has renamed it to. */
+  const nameTabForRecord = (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+    listed: string,
+  ) => {
+    const { schema } = get();
+    const columns = textColumns(schema.tables.find((t) => t.name === table));
+    if (records.length !== 1 || columns.length === 0) return;
+    if (schema.json === undefined) return;
+    const initial = relatedRecordsTabName(listed, undefined);
+    void runRecordQuery(
+      descriptorQuery(table, columns, records[0].key),
+      schema.json,
+    )
+      .then((rows) => {
+        const descriptor = recordDescriptor(
+          columns.map((column, i) => ({
+            column,
+            value: rows[0]?.[i] ?? null,
+          })),
+        );
+        const t = selectQueryTab(get(), tabId);
+        if (!descriptor || !t || t.persisted || t.name !== initial) return;
+        editQueryTab(tabId, (x) => {
+          x.name = relatedRecordsTabName(listed, descriptor);
+        });
+      })
+      .catch((err) => console.error("record description failed", err));
   };
 
   /** Opens a new, blank query of every track, to be saved into `folder`: its
@@ -2647,6 +2755,37 @@ export function createAppActions(
       set((s) => {
         s.activeTabId = id;
       }),
+    stepTabSwitcher: (delta) =>
+      set((s) => {
+        const sw = s.tabSwitcher;
+        if (sw) {
+          sw.index = (sw.index + delta + sw.order.length) % sw.order.length;
+        } else if (s.tabHistory.length >= 2) {
+          const n = s.tabHistory.length;
+          s.tabSwitcher = {
+            order: [...s.tabHistory],
+            index: (delta + n) % n,
+          };
+        }
+      }),
+    setTabSwitcherIndex: (index) =>
+      set((s) => {
+        if (s.tabSwitcher) s.tabSwitcher.index = index;
+      }),
+    commitTabSwitcher: (index) =>
+      set((s) => {
+        const sw = s.tabSwitcher;
+        if (!sw) return;
+        s.tabSwitcher = null;
+        const id = sw.order[index ?? sw.index];
+        if (id !== undefined && s.tabs.some((t) => t.id === id)) {
+          s.activeTabId = id;
+        }
+      }),
+    cancelTabSwitcher: () =>
+      set((s) => {
+        s.tabSwitcher = null;
+      }),
     reorderTab: (id, toIndex) => {
       set((s) => {
         const from = s.tabs.findIndex((t) => t.id === id);
@@ -3060,7 +3199,7 @@ export function createAppActions(
       const query: Source = {
         id: tabId,
         kind: "query",
-        name: nowName(),
+        name: t.name || nowName(),
         createdAt: now,
         modifiedAt: now,
         lastPlay: now,
@@ -3087,7 +3226,7 @@ export function createAppActions(
             s.sources.data = s.sources.data.filter((q) => q.id !== tabId);
           });
           editQueryTab(tabId, (x) => {
-            x.name = "";
+            x.name = t.name;
             x.persisted = false;
           });
         }),
@@ -3164,16 +3303,8 @@ export function createAppActions(
       );
     },
     newQueryTab: () => openNewQuery(null),
-    openRecordsTab: (besideTabId, query) => {
-      // Seeded from the table's defaults only for the display: the filter and
-      // sort have to be exactly `query`'s, or the tab would show other records,
-      // or show them in another order, than the ones it was opened on.
-      const def = definitionForBase(query.base, get().presets);
-      def.filter = { custom: query.filter, presets: [] };
-      def.sort = { custom: query.sort };
-      if (!("preset" in def.display)) def.display = { custom: query.display };
-      const beside = get().tabs.findIndex((t) => t.id === besideTabId);
-      openUnsavedTab(def, { index: beside === -1 ? undefined : beside + 1 });
+    openRecordsTab: (besideTabId, query, name) => {
+      openRecords(besideTabId, query, name);
     },
     showChildRecords: (tabId, parentTable, parents, childTable) => {
       const { tables } = get().schema;
@@ -3188,14 +3319,16 @@ export function createAppActions(
         if (id) ids.add(id);
       }
       if (ids.size === 0) return;
-      actions.openRecordsTab(
+      const newId = openRecords(
         tabId,
         childRecordsTabQuery(
           field,
           [...ids],
           embedSpec(tables, field.table, field.column),
         ),
+        relatedRecordsTabName(childTable, undefined),
       );
+      nameTabForRecord(newId, parentTable, parents, childTable);
     },
 
     showArtistRecords: (tabId, artists, table) => {
@@ -3213,15 +3346,20 @@ export function createAppActions(
         presets: [],
       };
       const beside = get().tabs.findIndex((t) => t.id === tabId);
-      openUnsavedTab(def, { index: beside === -1 ? undefined : beside + 1 });
+      const newId = openUnsavedTab(def, {
+        index: beside === -1 ? undefined : beside + 1,
+        name: relatedRecordsTabName(table, undefined),
+      });
+      nameTabForRecord(newId, "artist", artists, table);
     },
 
-    // Only a saved source has a name of its own to rename; a settings tab's
-    // handle text is fixed, and an unsaved query is named as it's saved, so
-    // the rename affordances stand down for both.
+    // A settings tab's handle text is fixed, so the rename affordances stand
+    // down for it. A query or playlist tab can be renamed, saved or not: an
+    // unsaved query keeps the name on its tab alone, and takes it along when
+    // it's saved.
     beginRename: (id) => {
       const t = selectPageTab(get(), id);
-      if (t && selectIsPersisted(get(), id)) {
+      if (t) {
         set((s) => {
           s.renaming = { id, buffer: t.name };
         });
@@ -3239,10 +3377,14 @@ export function createAppActions(
       set((s) => {
         s.renaming = null;
       });
-      if (name === "" || !t || t.name === name) return;
+      if (!t || t.name === name) return;
+      const persisted = selectIsPersisted(get(), r.id);
+      // A saved source can't go nameless; an unsaved query can (back to "new").
+      if (name === "" && persisted) return;
       editPageTab(r.id, (x) => {
         x.name = name;
       });
+      if (!persisted) return;
       void sourceRename({ id: r.id, name })
         .then(() => actions.loadSources())
         .catch((err) => console.error("source rename failed", err));
@@ -4076,6 +4218,7 @@ export function createAppActions(
   const dispose = () => {
     stopWatchingSystemTheme();
     stopPersistingTabs();
+    stopTrackingTabHistory();
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();
     saves.dispose();

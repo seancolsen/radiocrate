@@ -122,6 +122,78 @@ describe("commands store", () => {
     });
   });
 
+  describe("tab switcher shortcuts", () => {
+    beforeEach(() => {
+      vi.stubGlobal("HTMLElement", class {});
+      for (const id of ["a", "b", "c"])
+        app.actions.openTab({ id, name: id, definition: "{}" });
+      app.actions.selectTab("a"); // stack, top first: a c b
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    function press(code: string, init: Partial<KeyboardEvent> = {}) {
+      const event = {
+        code,
+        key: code,
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        target: null,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        ...init,
+      };
+      commands.actions.handleKeyDown(event as unknown as KeyboardEvent);
+      return event;
+    }
+    const release = (key: string) =>
+      commands.actions.handleKeyUp({ key } as KeyboardEvent);
+
+    it("Ctrl+Tab cycles most recently used first, and releasing Ctrl picks", () => {
+      press("Tab");
+      expect(app.store.getState().tabSwitcher?.index).toBe(1);
+      press("Tab");
+      expect(app.store.getState().tabSwitcher?.index).toBe(2);
+      press("Tab", { shiftKey: true });
+      expect(app.store.getState().tabSwitcher?.index).toBe(1);
+      release("Shift"); // not the held modifier
+      expect(app.store.getState().tabSwitcher).not.toBeNull();
+      release("Control");
+      const s = app.store.getState();
+      expect(s.tabSwitcher).toBeNull();
+      expect(s.activeTabId).toBe("c");
+    });
+
+    it("Ctrl+Shift+Tab opens on the least recent tab", () => {
+      press("Tab", { shiftKey: true });
+      expect(app.store.getState().tabSwitcher?.index).toBe(2);
+    });
+
+    it("Escape closes it without switching", () => {
+      press("Tab");
+      const event = press("Escape", { ctrlKey: true });
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(app.store.getState().tabSwitcher).toBeNull();
+      expect(app.store.getState().activeTabId).toBe("a");
+    });
+
+    it("keeps other keys from reaching the page behind it", () => {
+      press("Tab");
+      const event = press("KeyA");
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(app.store.getState().tabSwitcher).not.toBeNull();
+    });
+
+    it("Ctrl+PageDown-style tab order commands cycle in the tab bar's order", () => {
+      commands.actions.run("tabs.next");
+      expect(app.store.getState().activeTabId).toBe("b");
+      commands.actions.run("tabs.previous");
+      commands.actions.run("tabs.previous");
+      expect(app.store.getState().activeTabId).toBe("c");
+    });
+  });
+
   describe("transport and selection shortcuts", () => {
     beforeEach(() => vi.stubGlobal("HTMLElement", class {}));
     afterEach(() => vi.unstubAllGlobals());

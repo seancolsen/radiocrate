@@ -142,7 +142,7 @@ test("the toolbar's actions menu acts on the whole selection", async ({
   const editor = page.getByRole("complementary", { name: /^Edit / });
   await expect(editor).toBeVisible();
   // Both selected rows' records, edited as one (the bulk case).
-  await expect(editor.getByRole("heading")).toHaveText("Edit 2 track records");
+  await expect(editor.getByRole("heading")).toHaveText("Edit 2 tracks");
 });
 
 test("the floating toolbar can be scrolled out of the rows' way", async ({

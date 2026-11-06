@@ -253,6 +253,9 @@ export interface CommandsActions {
    * event (`preventDefault`/`stopPropagation`) when a chord matches a
    * satisfied command; otherwise leaves it alone. */
   handleKeyDown: (e: KeyboardEvent) => void;
+  /** The global capture-phase keyup pass, installed beside it: closes the tab
+   * switcher on the release of the modifier that opened it. */
+  handleKeyUp: (e: KeyboardEvent) => void;
 }
 
 /** Builds the command store, wired to the app, forms and menus bundles it
@@ -504,6 +507,12 @@ export function createCommandsStore(
       case "tabs.previous":
         cycleTab(false);
         break;
+      case "tabs.switch_next":
+        app.actions.stepTabSwitcher(1);
+        break;
+      case "tabs.switch_previous":
+        app.actions.stepTabSwitcher(-1);
+        break;
       case "tabs.move_left":
         moveActiveTab(false);
         break;
@@ -557,13 +566,60 @@ export function createCommandsStore(
     );
   };
 
+  /** The keys of the open tab switcher, which owns the keyboard: its own
+   * chords step it, Enter and Escape close it, and the arrows move the
+   * highlight. Everything else is swallowed, so a key can't act on the page
+   * behind the overlay. */
+  const handleSwitcherKey = (e: KeyboardEvent, pressed: Chord | null) => {
+    // A modifier on its own (the one being held, or Shift joining it).
+    if (!pressed) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const command = commandForChord(
+      store.getState().overrides,
+      pressed,
+      context(),
+    );
+    if (command === "tabs.switch_next") return app.actions.stepTabSwitcher(1);
+    if (command === "tabs.switch_previous")
+      return app.actions.stepTabSwitcher(-1);
+    // The modifier is still held, so it doesn't count against the key.
+    switch (pressed.key) {
+      case "Escape":
+        return app.actions.cancelTabSwitcher();
+      case "Enter":
+        return app.actions.commitTabSwitcher();
+      case "Down":
+      case "Right":
+        return app.actions.stepTabSwitcher(1);
+      case "Up":
+      case "Left":
+        return app.actions.stepTabSwitcher(-1);
+      case "Tab":
+        return app.actions.stepTabSwitcher(pressed.shift ? -1 : 1);
+    }
+  };
+
+  /** Letting go of the modifier the switcher was opened with picks the
+   * highlighted tab. */
+  const handleKeyUp = (e: KeyboardEvent) => {
+    if (!app.store.getState().tabSwitcher) return;
+    if (e.key === "Control" || e.key === "Meta" || e.key === "Alt") {
+      app.actions.commitTabSwitcher();
+    }
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (suppressed()) return;
     const pressed = chordFromEvent(e);
+    if (app.store.getState().tabSwitcher) {
+      handleSwitcherKey(e, pressed);
+      return;
+    }
+    if (suppressed()) return;
     if (!pressed) return;
     // A text field keeps its own plain / shift-only keys.
     const inTextField = isTypingTarget(e.target);
-    if (inTextField && !(pressed.mod || pressed.alt)) return;
+    if (inTextField && !(pressed.mod || pressed.ctrl || pressed.alt)) return;
     if (claimsKey(e.target, pressed)) return;
     const command = commandForChord(
       store.getState().overrides,
@@ -620,6 +676,7 @@ export function createCommandsStore(
     setRecorded: (chord) => store.setState({ recorded: chord }),
 
     handleKeyDown,
+    handleKeyUp,
   };
 
   return { store, actions };
