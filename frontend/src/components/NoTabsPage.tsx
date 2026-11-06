@@ -40,7 +40,7 @@ export default function NoTabsPage(): JSX.Element {
       {/* Centered by its margins, so a short viewport scrolls to the top of it
           rather than cutting it off. */}
       <div className="m-auto flex w-full max-w-72 flex-col items-center gap-6">
-        <RadioCrateLogo className="text-ink-weak h-auto w-full max-w-32" />
+        <RadioCrateLogo className="text-edge h-auto w-full max-w-32" />
         <div className="flex w-full flex-col gap-2">
           <StartButton
             label="New Query"
