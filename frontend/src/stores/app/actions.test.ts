@@ -1544,7 +1544,7 @@ describe("the query tree", () => {
   it("adds a new folder at the top, expanded, and starts renaming it", () => {
     bundle.actions.toggleSourceFilter();
     bundle.actions.setSourceFilter("zzz");
-    bundle.actions.newFolder();
+    bundle.actions.newFolder(null);
     const s = bundle.store.getState();
     const [folder] = s.folders.data;
     expect(folder.position).toBe(-1);
@@ -1577,7 +1577,7 @@ describe("the query tree", () => {
   });
 
   it("moves an item, locally and in the backend", () => {
-    bundle.actions.newFolder();
+    bundle.actions.newFolder(null);
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
       { kind: "source", id: "b" },
@@ -1591,7 +1591,7 @@ describe("the query tree", () => {
   });
 
   it("deletes a folder, moving its contents into its place", async () => {
-    bundle.actions.newFolder();
+    bundle.actions.newFolder(null);
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
       { kind: "source", id: "b" },
@@ -1610,7 +1610,7 @@ describe("the query tree", () => {
   });
 
   it("expands an empty folder that something is dropped into", () => {
-    bundle.actions.newFolder();
+    bundle.actions.newFolder(null);
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.toggleFolderExpanded(folder); // collapse it
     expect(
@@ -1632,7 +1632,7 @@ describe("the query tree", () => {
 
   it("opens a new query unsaved, and saves it at the top of its folder", () => {
     vi.mocked(queryAdd).mockClear();
-    bundle.actions.newFolder();
+    bundle.actions.newFolder(null);
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
       { kind: "source", id: "a" },

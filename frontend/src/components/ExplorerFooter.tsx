@@ -15,34 +15,35 @@ function PaletteButton(): JSX.Element {
   const tip = useTooltip({
     label: "Command palette",
     command: "palette.open",
-    align: "start",
+    align: "end",
   });
   return (
     <>
       <button
         type="button"
         {...tip.triggerProps}
-        className="text-ink-weak hover:bg-edge/40 hover:text-ink flex h-[30px] w-full items-center gap-2 pl-3"
+        className="text-ink-weak hover:bg-edge/40 hover:text-ink flex h-[30px] w-10 shrink-0 items-center justify-center"
         onClick={() => {
           togglePalette();
           if (!persistent) setSidebarOpen(false);
         }}
       >
         <Icons.Commands className="size-4 shrink-0" />
-        <span className="truncate text-[13px]">Command palette</span>
       </button>
       {tip.tooltip}
     </>
   );
 }
 
-/** The explorer's footer, set apart from the list above it by its surface: the
- * ways into the commands and the settings. */
+/** The explorer's footer, set apart from the list above it by its surface: on
+ * one line, the settings at the left and the command palette at the right. */
 export default function ExplorerFooter(): JSX.Element {
   return (
     <footer className="bg-bar shrink-0">
-      <PaletteButton />
-      <SettingsFooter />
+      <div className="flex">
+        <SettingsFooter />
+        <PaletteButton />
+      </div>
     </footer>
   );
 }

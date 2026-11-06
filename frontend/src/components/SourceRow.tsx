@@ -24,6 +24,10 @@ export default function SourceRow(props: {
   name: string;
   depth: number;
   renaming: boolean;
+  /** Whether the source is open as a tab (an ink edge), and whether that tab
+   * is the active one (a blue edge). */
+  open: boolean;
+  active: boolean;
   /** Whether it's the row being dragged (which stays put, dimmed). */
   dragging: boolean;
   /** Whether result rows being dragged would be dropped on it. */
@@ -46,7 +50,7 @@ export default function SourceRow(props: {
       aria-level={props.depth + 1}
       tabIndex={0}
       className={cx(
-        "hover:bg-hover flex w-full cursor-default items-center py-1 pr-2 text-left outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-1 focus-visible:ring-inset",
+        "hover:bg-hover relative flex w-full cursor-default items-center py-1 pr-2 text-left outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-1 focus-visible:ring-inset",
         {
           "opacity-50": props.dragging,
           "ring-accent ring-2 ring-inset": props.dropTarget,
@@ -67,6 +71,15 @@ export default function SourceRow(props: {
         e.preventDefault();
       }}
     >
+      {props.open && (
+        <span
+          aria-hidden="true"
+          className={cx("absolute top-0 left-0 h-full w-1", {
+            "bg-accent": props.active,
+            "bg-ink": !props.active,
+          })}
+        />
+      )}
       <span className="size-4 shrink-0" aria-hidden="true" />
       <Icon className="text-ink-weak size-[14px] shrink-0" />
       {props.renaming ? (

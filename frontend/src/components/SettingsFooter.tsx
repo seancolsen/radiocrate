@@ -12,7 +12,7 @@ export default function SettingsFooter(): JSX.Element {
       side="above"
       align="start"
       width="180px"
-      className="w-full shrink-0"
+      className="min-w-0 flex-1"
       trigger={(api) => (
         <button
           type="button"

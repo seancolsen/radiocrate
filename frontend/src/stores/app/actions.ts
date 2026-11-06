@@ -313,9 +313,9 @@ export interface AppActions {
   toggleSourceFilter: () => void;
   /** Show or hide explorer folder `id`'s contents. */
   toggleFolderExpanded: (id: string) => void;
-  /** Create a folder at the top of the Sources tree (expanded, being empty)
-   * and start renaming it. */
-  newFolder: () => void;
+  /** Create a folder at the top of folder `parent` (null: the top level of
+   * the Sources tree), expanded being empty, and start renaming it. */
+  newFolder: (parent: string | null) => void;
   /** {@link newQueryTab}, to be saved at the top of folder `parent` (null:
    * the top level of the tree). */
   addQuery: (parent: string | null) => void;
@@ -2463,13 +2463,13 @@ export function createAppActions(
       });
       persistExpandedFolders(env, next);
     },
-    newFolder: () => {
+    newFolder: (parent) => {
       const s0 = get();
       const folder = {
         id: newUuid(),
         name: "New folder",
-        parent: null,
-        position: topPosition(s0.sources.data, s0.folders.data, null),
+        parent,
+        position: topPosition(s0.sources.data, s0.folders.data, parent),
       };
       // Inserted optimistically, and put where it can be seen: a filter would
       // hide the name about to be edited.
@@ -2479,6 +2479,7 @@ export function createAppActions(
         s.sourceFilter = "";
         s.renamingTreeItem = { kind: "folder", id: folder.id };
       });
+      if (parent !== null) expandFolder(parent);
       expandFolder(folder.id);
       void folderAdd(folder).catch((err) => {
         console.error("folder add failed", err);

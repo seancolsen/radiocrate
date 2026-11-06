@@ -95,6 +95,8 @@ function AddToPlaylistBody(props: {
               key={`source:${node.id}`}
               id={node.id}
               kind={node.source.kind}
+              open={false}
+              active={false}
               name={node.name}
               depth={row.depth}
               {...STILL_ROW}

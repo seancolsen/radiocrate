@@ -37,6 +37,11 @@ function FolderMenu(props: { id: string }): JSX.Element {
         onClick={() => actions.addPlaylist(props.id)}
       />
       <MenuItem
+        icon={Icons.NewFolder}
+        label="Add folder"
+        onClick={() => actions.newFolder(props.id)}
+      />
+      <MenuItem
         icon={Icons.Rename}
         label="Rename folder"
         onClick={() => actions.beginTreeRename(item)}
@@ -100,6 +105,9 @@ export default function SourceTree(props: {
   const folders = useApp((s) => s.folders.data);
   const expanded = useApp((s) => s.expandedFolders);
   const filter = useApp((s) => s.sourceFilter);
+  const tabs = useApp((s) => s.tabs);
+  const activeTabId = useApp((s) => s.activeTabId);
+  const openIds = useMemo(() => new Set(tabs.map((t) => t.id)), [tabs]);
   const renaming = useApp((s) => s.renamingTreeItem);
   // The playlist result rows being dragged would be dropped on, if any.
   const rowDropTarget = useApp((s) => s.rowDrag?.over ?? null);
@@ -161,6 +169,8 @@ export default function SourceTree(props: {
               kind={node.source.kind}
               name={node.name}
               depth={row.depth}
+              open={openIds.has(node.id)}
+              active={node.id === activeTabId}
               dragging={dragging}
               dropTarget={rowDropTarget === node.id}
               {...rename}

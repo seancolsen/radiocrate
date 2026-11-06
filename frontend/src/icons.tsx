@@ -28,6 +28,7 @@ import ExpandClosed from "~icons/material-symbols/chevron-right";
 import Settings from "~icons/material-symbols/settings";
 import Save from "~icons/material-symbols/save";
 import Build from "~icons/material-symbols/build";
+import Search from "~icons/material-symbols/search";
 import Filter from "~icons/material-symbols/filter-alt";
 import Sort from "~icons/material-symbols/swap-vert";
 import Display from "~icons/material-symbols/key-visualizer";
@@ -121,6 +122,7 @@ export const Icons = {
   Undo, // toolbar undo (step the query back)
   Redo, // toolbar redo (step it forward again)
   Build, // wrench: query-actions menu trigger
+  Search, // Sources search toggle
   Filter, // Filter section toggle
   Sort, // Sort section toggle
   Display, // Display section toggle

@@ -219,14 +219,13 @@ test.describe("the query tree", () => {
     expect(await treeRows(page)).not.toContain("0:Deep Cuts");
   });
 
-  test("the Filter action shows the filter, and hiding it clears it", async ({
+  test("the search button shows the search field, and hiding it clears it", async ({
     page,
   }) => {
     const toggle = async () => {
-      await page.getByRole("button", { name: "Source list actions" }).click();
-      await page.getByRole("menuitemcheckbox", { name: "Filter" }).click();
+      await page.getByRole("button", { name: "Search sources" }).click();
     };
-    const input = page.getByRole("textbox", { name: "Filter sources" });
+    const input = page.getByRole("textbox", { name: "Search sources" });
     await expect(input).toHaveCount(0);
     await toggle();
     await expect(input).toBeFocused();

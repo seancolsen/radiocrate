@@ -200,7 +200,7 @@ test("a vertical swipe scrolls the drawer, and stays a scroll", async ({
   page,
 }) => {
   // Short enough for the list to overflow.
-  await openApp(page, { width: 390, height: 200 });
+  await openApp(page, { width: 390, height: 160 });
   const scroller = explorer(page).locator(".overflow-y-auto");
   await expect(explorer(page)).toBeVisible();
   const range = await scroller.evaluate(

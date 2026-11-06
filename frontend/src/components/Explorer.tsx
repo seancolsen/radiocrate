@@ -8,7 +8,7 @@ import SourceTree from "./SourceTree";
 import ExplorerFooter from "./ExplorerFooter";
 import { tabIcon } from "./tabKind";
 import IconButton from "./ui/IconButton";
-import { Menu, MenuItem, MenuToggleItem } from "./ui/Menu";
+import { Menu, MenuItem } from "./ui/Menu";
 import ScrollArea from "./ui/ScrollArea";
 import { usePersistentSidebar } from "./ui/usePersistentSidebar";
 
@@ -35,7 +35,7 @@ function OpenedTabRow(props: {
   );
 }
 
-/** The Sources filter field. Its own component so it takes the caret each time
+/** The Sources search field. Its own component so it takes the caret each time
  * it's shown. Escape hides it again (which clears it). */
 function SourceFilterInput(): JSX.Element {
   const sourceFilter = useApp((s) => s.sourceFilter);
@@ -49,9 +49,9 @@ function SourceFilterInput(): JSX.Element {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Filter sources"
-        aria-label="Filter sources"
-        className="border-edge bg-panel text-ink placeholder:text-ink-weak focus:border-accent w-full rounded border px-2 py-1 outline-none"
+        placeholder="Search sources"
+        aria-label="Search sources"
+        className="border-edge bg-panel text-ink placeholder:text-ink-weak focus:border-accent w-full rounded border px-1 py-0.5 text-sm/5 outline-none"
         value={sourceFilter}
         onChange={(e) => actions.setSourceFilter(e.currentTarget.value)}
         onKeyDown={(e) => {
@@ -69,7 +69,7 @@ function SourceFilterInput(): JSX.Element {
  * view beside a persistent sidebar, saying the same thing),
  * a "Sources" section (the saved queries and playlists, in the folders the user
  * arranges them in, with an actions menu to add a query, playlist or folder,
- * filter or refresh), and
+ * search or refresh), and
  * the footer pinned to the bottom.
  *
  * This is only the contents. The panel it fills — its surface, width, and
@@ -102,6 +102,12 @@ export default function Explorer(): JSX.Element {
 
         {/* Sources */}
         <SectionHeading title="Sources" spaced={showOpened}>
+          <IconButton
+            icon={Icons.Search}
+            label="Search sources"
+            active={filterOpen}
+            onClick={actions.toggleSourceFilter}
+          />
           <Menu
             align="end"
             width="170px"
@@ -127,14 +133,7 @@ export default function Explorer(): JSX.Element {
             <MenuItem
               icon={Icons.NewFolder}
               label="Add folder"
-              onClick={actions.newFolder}
-            />
-            <MenuToggleItem
-              kind="checkbox"
-              icon={Icons.Filter}
-              label="Filter"
-              checked={filterOpen}
-              onClick={actions.toggleSourceFilter}
+              onClick={() => actions.newFolder(null)}
             />
             <MenuItem
               icon={Icons.Refresh}
