@@ -6,8 +6,8 @@ import TreeNameField from "./TreeNameField";
 import { cx } from "./ui/cx";
 
 /** A folder row in the "Sources" tree: a chevron that shows or hides its
- * contents, a folder icon and its name. A single click does nothing — the
- * chevron is what opens it — and a double-click renames it in place. */
+ * contents, a folder icon and its name. A single click anywhere on the
+ * row toggles it, and a double-click renames it in place. */
 export default function FolderRow(props: {
   name: string;
   depth: number;
@@ -43,6 +43,9 @@ export default function FolderRow(props: {
       )}
       style={{ paddingLeft: TREE_PAD + props.depth * TREE_INDENT }}
       onPointerDown={props.onPointerDown}
+      onClick={() => {
+        if (!props.renaming) props.onToggle();
+      }}
       onDoubleClick={() => {
         if (!props.renaming) props.onBeginRename();
       }}
@@ -55,8 +58,13 @@ export default function FolderRow(props: {
         e.preventDefault();
       }}
     >
-      {/* A quick pair of clicks on the chevron is two toggles, not a rename. */}
-      <span className="contents" onDoubleClick={(e) => e.stopPropagation()}>
+      {/* A quick pair of clicks on the chevron is two toggles, not a rename;
+          and its click is its own, not the row's as well. */}
+      <span
+        className="contents"
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         <ExpansionToggle
           expandable
           expanded={props.expanded}

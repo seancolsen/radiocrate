@@ -24,7 +24,7 @@ export default function SourceRow(props: {
   name: string;
   depth: number;
   renaming: boolean;
-  /** Whether the source is open as a tab (an ink edge), and whether that tab
+  /** Whether the source is open as a tab (a gray edge), and whether that tab
    * is the active one (a blue edge). */
   open: boolean;
   active: boolean;
@@ -76,7 +76,7 @@ export default function SourceRow(props: {
           aria-hidden="true"
           className={cx("absolute top-0 left-0 h-full w-1", {
             "bg-accent": props.active,
-            "bg-ink": !props.active,
+            "bg-ink-weak/40": !props.active,
           })}
         />
       )}

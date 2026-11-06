@@ -106,10 +106,12 @@ test.describe("the query tree", () => {
     });
   });
 
-  test("a folder's chevron opens and closes it; a click on the folder doesn't", async ({
+  test("clicking a folder, or its chevron, opens and closes it", async ({
     page,
   }) => {
     await treeRow(page, "Road trip").click();
+    expect(await treeRows(page)).toContain("2:Workout Mix");
+    await page.getByRole("button", { name: "Collapse Road trip" }).click();
     expect(await treeRows(page)).not.toContain("2:Workout Mix");
     await page.getByRole("button", { name: "Expand Road trip" }).click();
     expect(await treeRows(page)).toContain("2:Workout Mix");

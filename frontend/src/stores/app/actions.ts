@@ -26,6 +26,7 @@ import {
   type Placement,
   type Preset,
   type Source,
+  type SourceFolder,
   type SourceKind,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
@@ -141,7 +142,7 @@ import { runRowDml } from "../../query/rowDml";
 import {
   applyPlacements,
   buildTree,
-  dissolvePlacements,
+  subtreeIds,
   movePlacements,
   storedPositions,
   topPosition,
@@ -1808,6 +1809,43 @@ export function createAppActions(
    * for a playlist — and makes it the active tab. A source already open is
    * only made active. A new tab goes in at `index` in the tab bar, or at the
    * end without one. */
+  const deleteSource = (id: string, kind: Source["kind"]) => {
+    const persisted =
+      selectQueryTab(get(), id)?.persisted ??
+      get().sources.data.some((q) => q.id === id);
+    const playlistId = kind === "playlist" ? playlistIdOf(id) : undefined;
+    set((s) => {
+      s.sources.data = s.sources.data.filter((q) => q.id !== id);
+    });
+    // Its pending edits would only be written to a source that's gone.
+    saves.cancel(id);
+    // Already gone from the list (above); only a failure needs the
+    // backend's copy back.
+    const restore = (err: unknown) => {
+      console.error(`${kind} delete failed`, err);
+      void actions.loadSources();
+    };
+    if (playlistId !== undefined) {
+      // Its entries first, as `dml`'s reference checks require — all of
+      // them, read once every write already queued to them has landed.
+      void entryWrites
+        .run(id, async () => {
+          const entries = await fetchPlaylistEntries(playlistId);
+          await sendPlaylistWrites(
+            deletePlaylistWrites(
+              { sourceId: id, playlistId },
+              entries.map((e) => e.id),
+            ),
+          );
+        })
+        .catch(restore);
+    } else if (persisted) {
+      // An unsaved query has no backend record to delete — just its tab.
+      void queryDelete({ id }).catch(restore);
+    }
+    closeTab(id);
+  };
+
   const openSource = (
     source: Parameters<AppActions["openTab"]>[0],
     index?: number,
@@ -2892,21 +2930,26 @@ export function createAppActions(
       }),
     deleteFolder: (id) => {
       const { sources, folders } = get();
-      const placements = dissolvePlacements(
-        buildTree(sources.data, folders.data),
-        storedPositions(sources.data, folders.data),
-        id,
-      );
-      applyPlacementsLocally(placements);
+      const tree = buildTree(sources.data, folders.data);
+      const doomed = subtreeIds(tree, { kind: "folder", id });
+      const doomedSources = sources.data.filter((q) => doomed.has(q.id));
+      // Deepest folders first, so none is deleted while it still has children.
+      const depth = (f: SourceFolder): number => {
+        const parent = folders.data.find((x) => x.id === f.parent);
+        return parent && doomed.has(parent.id) ? 1 + depth(parent) : 0;
+      };
+      const doomedFolders = folders.data
+        .filter((f) => doomed.has(f.id))
+        .sort((a, b) => depth(b) - depth(a));
+      for (const q of doomedSources) deleteSource(q.id, q.kind);
       set((s) => {
-        s.folders.data = s.folders.data.filter((f) => f.id !== id);
+        s.folders.data = s.folders.data.filter((f) => !doomed.has(f.id));
       });
-      if (get().expandedFolders.has(id)) actions.toggleFolderExpanded(id);
-      // Contents out first, so a failed delete leaves an empty folder rather
-      // than orphans.
+      for (const f of doomedFolders) {
+        if (get().expandedFolders.has(f.id)) actions.toggleFolderExpanded(f.id);
+      }
       void (async () => {
-        if (placements.length > 0) await sourceArrange({ placements });
-        await folderDelete({ id });
+        for (const f of doomedFolders) await folderDelete({ id: f.id });
       })().catch((err) => {
         console.error("folder delete failed", err);
         void actions.loadSources();
@@ -3409,43 +3452,10 @@ export function createAppActions(
     confirmDelete: () => {
       const pending = get().pendingDelete;
       if (!pending) return;
-      const { id } = pending;
-      const persisted =
-        selectQueryTab(get(), id)?.persisted ??
-        get().sources.data.some((q) => q.id === id);
-      const playlistId =
-        pending.kind === "playlist" ? playlistIdOf(id) : undefined;
       set((s) => {
         s.pendingDelete = null;
-        s.sources.data = s.sources.data.filter((q) => q.id !== id);
       });
-      // Its pending edits would only be written to a source that's gone.
-      saves.cancel(id);
-      // Already gone from the list (above); only a failure needs the
-      // backend's copy back.
-      const restore = (err: unknown) => {
-        console.error(`${pending.kind} delete failed`, err);
-        void actions.loadSources();
-      };
-      if (playlistId !== undefined) {
-        // Its entries first, as `dml`'s reference checks require — all of
-        // them, read once every write already queued to them has landed.
-        void entryWrites
-          .run(id, async () => {
-            const entries = await fetchPlaylistEntries(playlistId);
-            await sendPlaylistWrites(
-              deletePlaylistWrites(
-                { sourceId: id, playlistId },
-                entries.map((e) => e.id),
-              ),
-            );
-          })
-          .catch(restore);
-      } else if (persisted) {
-        // An unsaved query has no backend record to delete — just its tab.
-        void queryDelete({ id }).catch(restore);
-      }
-      closeTab(id);
+      deleteSource(pending.id, pending.kind);
     },
     cancelDelete: () =>
       set((s) => {

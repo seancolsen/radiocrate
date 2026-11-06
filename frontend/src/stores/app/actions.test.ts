@@ -2180,7 +2180,7 @@ describe("the query tree", () => {
     });
   });
 
-  it("deletes a folder, moving its contents into its place", async () => {
+  it("deletes a folder along with its contents", async () => {
     bundle.actions.newFolder(null);
     const folder = bundle.store.getState().folders.data[0].id;
     bundle.actions.moveTreeItem(
@@ -2190,10 +2190,7 @@ describe("the query tree", () => {
     bundle.actions.deleteFolder(folder);
     const s = bundle.store.getState();
     expect(s.folders.data).toEqual([]);
-    expect(s.sources.data.map((q) => [q.id, q.parent, q.position])).toEqual([
-      ["a", null, 1],
-      ["b", null, 0],
-    ]);
+    expect(s.sources.data.map((q) => q.id)).toEqual(["a"]);
     await vi.waitFor(() =>
       expect(vi.mocked(folderDelete)).toHaveBeenCalledWith({ id: folder }),
     );
