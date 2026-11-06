@@ -126,10 +126,13 @@ port Vite reports).
 - **Presets, embedded records, and the drag chip.**
 - **Banners and messages:** the update and error bars, the record editor's
   failed-save strip, a query diagnostic, and accent and danger text.
-- **In place:** a miniature app with a tab bar, the toolbar with an open filter
-  holding a problem, the results grid, the record editor and the now-playing
-  bar. It shows the colors that only appear in context: the grid's artist
-  pills, the selected row, the playing row's ring, and the active tab.
+
+The colors that only appear in context live on the separate [mockup](#mockup-the-app-in-miniature)
+page.
+
+The whole page is covered by a visual snapshot per theme
+(`tests/visual/kitchenSink.spec.ts`), so a palette change anywhere on it shows
+up as a screenshot diff.
 
 ### Hot reloading
 
@@ -140,27 +143,26 @@ canvas-painted grid refresh too. Edits to components hot-reload the same way.
 ### How it works
 
 - [`frontend/kitchen-sink.html`](frontend/kitchen-sink.html) loads
-  [`src/dev/kitchenSink/main.tsx`](frontend/src/dev/kitchenSink/main.tsx).
-  `vite build` only bundles `index.html`, so neither this page nor the
-  component harness (`harness.html`) ever reaches production.
+  [`src/dev/kitchenSink/main.tsx`](frontend/src/dev/kitchenSink/main.tsx), which
+  hands the page to the shared shell in
+  [`src/dev/themedPage.tsx`](frontend/src/dev/themedPage.tsx) (the mockup uses
+  it too). `vite build` only bundles `index.html`, so neither this page, the
+  mockup nor the component harness (`harness.html`) ever reaches production.
 - Side by side is two iframes of the same page, `?theme=light` and
   `?theme=dark`. Each sets `data-theme` on its own document, the same attribute
   the app's theme setting writes. So portals, menus and the canvas grid see
   exactly one theme each, just as they would in the app. Each iframe reports
   its height to the frame around it, so the page scrolls as one.
-- The "In place" section runs on the real stores, over the component harness's
-  in-browser stand-in for the API
-  ([`src/dev/harness/mockApi.ts`](frontend/src/dev/harness/mockApi.ts)) and its
-  fixtures. Its stores keep their preferences in memory, not in `localStorage`,
-  so the page can't disturb the dev app's open tabs and settings, which share
-  the same origin.
+- The shell gives each page its own stores, which keep their preferences in
+  memory, not in `localStorage`, so the pages can't disturb the dev app's open
+  tabs and settings, which share the same origin.
 
 ### Keeping it current
 
 - **New UI with color:** add it to
   [`KitchenSink.tsx`](frontend/src/dev/kitchenSink/KitchenSink.tsx), or to
-  [`AppInMiniature.tsx`](frontend/src/dev/kitchenSink/AppInMiniature.tsx) if it
-  needs store state to appear.
+  [`Mockup.tsx`](frontend/src/dev/mockup/Mockup.tsx) if it needs store state to
+  appear.
 - **New color token:** add its name to `TOKENS` in `KitchenSink.tsx` so it gets
   a swatch.
 - **Copied class strings:** most entries are the real components. The text
@@ -169,6 +171,36 @@ canvas-painted grid refresh too. Edits to components hot-reload the same way.
   its own copy. Their colors come from tokens, so tuning a token shows up
   either way. A change to those class strings themselves has to be copied over
   by hand.
+
+## Mockup: the app in miniature
+
+The **mockup** is a sibling of the kitchen sink: a miniature of the whole app
+(tab bar, the toolbar with an open filter holding a problem, the results grid,
+the record editor and the now-playing bar), light and dark side by side. It
+shows the colors that only appear in context: the grid's artist pills, the
+selected row, the playing row's ring, and the active tab. Plain grayscale chrome
+isn't the point, but you see it all in place.
+
+```sh
+bun run mockup   # vite, opening /mockup.html in your browser
+```
+
+| URL | Shows |
+| --- | --- |
+| `/mockup.html` | Light and dark side by side |
+| `/mockup.html?theme=light` / `?theme=dark` | One theme, full width |
+
+It's [`mockup.html`](frontend/mockup.html) →
+[`src/dev/mockup/main.tsx`](frontend/src/dev/mockup/main.tsx) →
+[`Mockup.tsx`](frontend/src/dev/mockup/Mockup.tsx), on the same shell as the
+kitchen sink. It runs the real components and stores over the component
+harness's in-browser stand-in for the API
+([`src/dev/harness/mockApi.ts`](frontend/src/dev/harness/mockApi.ts)), seeded
+from the harness fixtures. Hot reloading works as on the kitchen sink.
+
+It deliberately has **no visual snapshot**: it's for looking at, and a
+full-app screenshot would churn with every layout change. The kitchen sink and
+the component stories are what the snapshots cover.
 
 ## Optional: VS Code / Codespaces dev container
 

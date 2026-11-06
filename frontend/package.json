@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "kitchen-sink": "vite --open /kitchen-sink.html",
+    "mockup": "vite --open /mockup.html",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",

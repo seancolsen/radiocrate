@@ -73,8 +73,11 @@ use it to tune the palette. When you change the app's colors, keep it complete:
 
 - **New UI that carries color** (an accent, danger, preset, field or other
   non-gray token, or a new color state of an existing component): add it to
-  `KitchenSink.tsx`, or to `AppInMiniature.tsx` if it only appears with store
-  state.
+  `KitchenSink.tsx`, or to the mockup page (`src/dev/mockup/Mockup.tsx`, a
+  miniature of the whole app at `/mockup.html`) if it only appears with store
+  state. The kitchen sink has a visual snapshot (`tests/visual/kitchenSink.spec.ts`),
+  so run `bun run test:visual` after changing it and update the baselines; the
+  mockup deliberately has none.
 - **New color token in `app.css`:** add its name to `TOKENS` in
   `KitchenSink.tsx`.
 - **Changed class strings for the text buttons, text input or select:** the

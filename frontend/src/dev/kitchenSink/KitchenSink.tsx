@@ -22,7 +22,7 @@ import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { cx } from "../../components/ui/cx";
 import { chordOf } from "../../commands/chord";
-import AppInMiniature from "./AppInMiniature";
+import type { Theme } from "../themedPage";
 
 // The kitchen sink's page: every piece of UI that carries color, grouped by
 // kind. Plain grayscale chrome is left out on purpose — this page is for
@@ -33,8 +33,6 @@ import AppInMiniature from "./AppInMiniature";
 // the text input, the select), and those are copied here: their colors are
 // app.css tokens, so tuning the tokens shows up here all the same, but a
 // change to the class strings themselves has to be mirrored by hand.
-
-export type Theme = "light" | "dark";
 
 /** The color tokens app.css defines beyond the grays, in the order the
  * swatches show them. */
@@ -612,6 +610,13 @@ export default function KitchenSink(props: { theme: Theme }): JSX.Element {
         <a className="text-ink-weak text-xs underline" href="?" target="_top">
           side by side
         </a>
+        <a
+          className="text-ink-weak text-xs underline"
+          href="/mockup.html"
+          target="_top"
+        >
+          mockup
+        </a>
       </header>
       <Section title="Tokens">
         <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2">
@@ -626,9 +631,6 @@ export default function KitchenSink(props: { theme: Theme }): JSX.Element {
       <Menus />
       <Surfaces />
       <Messages />
-      <Section title="In place">
-        <AppInMiniature />
-      </Section>
     </div>
   );
 }

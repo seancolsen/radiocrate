@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type JSX } from "react";
+import type { Theme } from "../themedPage";
 import type { Stores } from "../../stores/createStores";
 import { useApp, useStores } from "../../stores/react";
 import { FILTER_DEF, PLAYLIST_SOURCE, SOURCES_FIXTURE } from "../fixtures";
@@ -10,11 +11,13 @@ import QueryResults from "../../components/QueryResults";
 import RecordEditorPanel from "../../components/RecordEditorPanel";
 import NowPlaying from "../../components/NowPlaying";
 
-// The colors that only show in place: the tab bar's active edge, the toolbar's
-// open section, the canvas-painted results
-// (artist pills, the selected row, the playing row's ring), the record editor
-// on the selected track, and the now-playing bar — over the dev harness's
-// stand-in backend, seeded the way its stories seed it.
+// The mockup: a miniature of the whole app, for seeing the colors that only
+// show in place — the tab bar's active edge, the toolbar's open section, the
+// canvas-painted results (artist pills, the selected row, the playing row's
+// ring), the record editor on the selected track, and the now-playing bar —
+// over the dev harness's stand-in backend, seeded the way its stories seed it.
+// Deliberately not snapshot-tested: it's for looking at, and a full-app shot
+// would churn with every layout change.
 
 const [LEMONADE] = SOURCES_FIXTURE;
 const TRACKS = ["track-1", "track-2", "track-3", "track-4", "track-5"];
@@ -53,7 +56,7 @@ function seed(stores: Stores): void {
   );
 }
 
-export default function AppInMiniature(): JSX.Element | null {
+function AppInMiniature(): JSX.Element | null {
   const stores = useStores();
   // As in the harness: the seed builds on the canned query and preset lists,
   // so it waits for both, then runs once, before paint.
@@ -78,6 +81,44 @@ export default function AppInMiniature(): JSX.Element | null {
         <RecordEditorPanel tabId={LEMONADE.id} />
       </div>
       <NowPlaying />
+    </div>
+  );
+}
+
+export default function Mockup(props: { theme: Theme }): JSX.Element {
+  const other: Theme = props.theme === "light" ? "dark" : "light";
+  return (
+    <div className="bg-panel text-ink">
+      <header className="flex items-baseline gap-3 px-4 pt-3 pb-2">
+        <h1 className="text-base font-semibold capitalize">{props.theme}</h1>
+        <a
+          className="text-ink-weak text-xs underline"
+          href={`?theme=${props.theme}`}
+          target="_top"
+        >
+          alone
+        </a>
+        <a
+          className="text-ink-weak text-xs underline"
+          href={`?theme=${other}`}
+          target="_top"
+        >
+          {other} alone
+        </a>
+        <a className="text-ink-weak text-xs underline" href="?" target="_top">
+          side by side
+        </a>
+        <a
+          className="text-ink-weak text-xs underline"
+          href="/kitchen-sink.html"
+          target="_top"
+        >
+          kitchen sink
+        </a>
+      </header>
+      <div className="px-4 pb-4">
+        <AppInMiniature />
+      </div>
     </div>
   );
 }
