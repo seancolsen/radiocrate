@@ -34,11 +34,14 @@ export function presetTables(
 }
 
 /** `presets` grouped by table, then section, then name — one group for each of
- * {@link presetTables}, so a table with no presets is listed too. */
+ * {@link presetTables}, so a table with no presets is listed too. A preset in
+ * `listedNames` sorts by that name rather than its own. */
 export function groupPresets(
   presets: readonly Preset[],
   tables: readonly string[],
+  listedNames: Readonly<Record<string, string>> = {},
 ): PresetTableGroup[] {
+  const listedName = (p: Preset) => listedNames[p.id] ?? p.name;
   const byTable = new Map<string, Preset[]>();
   for (const preset of presets) {
     const list = byTable.get(preset.baseTable);
@@ -54,7 +57,7 @@ export function groupPresets(
         section,
         presets: list
           .filter((p) => asSection(p.section) === section)
-          .sort((a, b) => byName(a.name, b.name)),
+          .sort((a, b) => byName(listedName(a), listedName(b))),
       })),
     };
   });

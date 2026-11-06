@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
 import { checkFragment } from "../../query/compile";
-import { asSection, type Section } from "../../query/definition";
+import { asSection } from "../../query/definition";
 import { sectionGrammar } from "../../editor/querydownEditor";
 import {
   selectPreset,
-  selectPresetDirty,
-  selectPresetEdit,
+  selectPresetIsNew,
+  selectPresetUnsaved,
   selectPrelude,
-  type PresetEdit,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
@@ -18,84 +17,44 @@ import QuerydownEditor from "./QuerydownEditor";
 import DiagnosticMessage, { diagnosticPlace } from "./DiagnosticMessage";
 import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
 
-/** Inline detail editor for an expanded preset — in a query's builder, or in
- * the preset manager. A pink-tinted panel with an
- * editable name and definition and the "Apply by default" checkbox; while the
- * preset has unsaved edits it also shows the red ✱ marker plus revert and save
- * controls (save enabled once the name is non-empty). The checkbox wraps onto
- * its own line when the panel is too narrow to hold the name, controls, and
- * checkbox side by side. Saving commits the preset and re-runs every open
- * page that uses it. */
-export default function PresetEditor(props: { presetId: string }): JSX.Element {
-  const edit = useApp((s) => selectPresetEdit(s, props.presetId));
-  const dirty = useApp((s) => selectPresetDirty(s, props.presetId));
-  const baseTable = useApp((s) => selectPreset(s, props.presetId)?.baseTable);
-  const section = useApp((s) => selectPreset(s, props.presetId)?.section);
-  const {
-    beginPresetEdit,
-    patchPresetEdit,
-    revertPresetEdit,
-    commitPresetEdit,
-  } = useAppActions();
-
-  // Seed the edit buffer the first time this preset is expanded; a persisted
-  // buffer is reused so unsaved changes are never wiped. This component isn't
-  // recreated when a caller switches which preset is expanded (the parent
-  // toggles `presetId` in place), so this only ever fires for the preset that
-  // was expanded when it first mounted.
-  useEffect(() => {
-    if (!edit) beginPresetEdit(props.presetId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once seed, see comment above
-  }, []);
-
-  return (
-    <PresetEditorPanel
-      presetId={props.presetId}
-      baseTable={baseTable ?? ""}
-      section={asSection(section ?? "filter")}
-      edit={edit}
-      dirty={dirty}
-      onPatch={(patch) => patchPresetEdit(props.presetId, patch)}
-      onRevert={() => revertPresetEdit(props.presetId)}
-      onSave={() => commitPresetEdit(props.presetId)}
-    />
-  );
-}
-
-/** The editor's panel, over any buffer: a saved preset's edits (above), or a
- * preset not yet created (the preset manager's drafts, which are always
- * "dirty" — their revert discards them and their save creates them, under
- * the labels given). `autoFocus` focuses the name field on mount.
+/** Inline detail editor for an open preset — in a query's builder, or in the
+ * preset manager: its editable name and definition, and the "Apply by default"
+ * checkbox, which wraps onto its own line when the panel is too narrow to hold
+ * it beside the name.
  *
- * The definition is checked as it's typed, compiled as `section` of a query
- * on `baseTable`, and a problem with it shows under it. */
-export function PresetEditorPanel(props: {
-  presetId: string;
-  baseTable: string;
-  section: Section;
-  edit: PresetEdit | undefined;
-  dirty: boolean;
-  onPatch: (patch: Partial<PresetEdit>) => void;
-  onRevert: () => void;
-  onSave: () => void;
-  revertLabel?: string;
-  saveLabel?: string;
-  autoFocus?: boolean;
-}): JSX.Element {
-  const { edit, dirty } = props;
+ * Every change is in force at once and saved by itself (see `patchPreset`),
+ * and leaving the editor sends what's waiting without waiting for the app to go
+ * quiet. A hidden tab's effects are cleaned up too, so that counts as leaving.
+ * Save and Revert only show when that isn't working out: for a preset that's
+ * never been saved (revert discards it), or after a failed write or with a
+ * blank name.
+ *
+ * The definition is checked as it's typed, compiled as the preset's section of a
+ * query on its table, and a problem with it shows under it. A new preset
+ * focuses its name on mount. */
+export default function PresetEditor(props: { presetId: string }): JSX.Element {
+  const { presetId } = props;
+  const preset = useApp((s) => selectPreset(s, presetId));
+  const isNew = useApp((s) => selectPresetIsNew(s, presetId));
+  const unsaved = useApp((s) => selectPresetUnsaved(s, presetId));
+  const { patchPreset, savePreset, revertPreset, flushPresetSave } =
+    useAppActions();
+
+  useEffect(() => () => flushPresetSave(presetId), [presetId, flushPresetSave]);
 
   // Wrap the checkbox onto its own line when the row can't hold the name field,
-  // the dirty controls, and the checkbox side by side.
+  // the save controls, and the checkbox side by side.
   const frameRef = useRef<HTMLDivElement>(null);
-  const wrapDefault = useElementWidth(frameRef) < (dirty ? 428 : 342);
+  const wrapDefault = useElementWidth(frameRef) < (unsaved ? 400 : 342);
 
-  const nameOk = (edit?.name.trim() ?? "") !== "";
+  const baseTable = preset?.baseTable ?? "";
+  const section = asSection(preset?.section ?? "filter");
+  const definition = preset?.definition;
+  const name = preset?.name ?? "";
 
   const check = useCheckContext();
   const schemaJson = check?.schemaJson;
   const prelude = useApp(selectPrelude);
-  const definition = edit?.definition;
-  const { presetId, baseTable, section } = props;
   const latest = useMemo(
     () =>
       schemaJson === undefined || definition === undefined || baseTable === ""
@@ -112,68 +71,59 @@ export function PresetEditorPanel(props: {
   const applyByDefault = (
     <Checkbox
       label="Apply by default"
-      checked={edit?.isDefault ?? false}
-      onChange={(checked) => props.onPatch({ isDefault: checked })}
+      checked={preset?.isDefault ?? false}
+      onChange={(checked) => patchPreset(presetId, { isDefault: checked })}
     />
   );
 
   return (
-    <div
-      ref={frameRef}
-      className="bg-preset flex flex-col gap-2 rounded-md p-2"
-    >
-      {edit && (
-        <>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              autoFocus={props.autoFocus}
-              aria-label="Preset name"
-              placeholder="Preset name"
-              className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-[180px] rounded-md border px-2.5 py-1.5 text-sm outline-none"
-              value={edit.name}
-              onChange={(e) => props.onPatch({ name: e.currentTarget.value })}
+    <div ref={frameRef} className="flex flex-col gap-1.5 px-1.5 pt-0.5 pb-1.5">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          autoFocus={isNew}
+          aria-label="Preset name"
+          placeholder="Preset name"
+          className="bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent w-[180px] rounded-md border px-2.5 py-1 text-sm outline-none"
+          value={name}
+          onChange={(e) =>
+            patchPreset(presetId, { name: e.currentTarget.value })
+          }
+        />
+        {unsaved && (
+          <>
+            <IconButton
+              icon={Icons.Revert}
+              label={isNew ? "Discard new preset" : "Revert preset changes"}
+              onClick={() => revertPreset(presetId)}
             />
-            {dirty && (
-              <>
-                <Icons.Unsaved
-                  className="text-danger size-4"
-                  aria-label="Unsaved changes"
-                />
-                <IconButton
-                  icon={Icons.Revert}
-                  label={props.revertLabel ?? "Revert preset changes"}
-                  onClick={props.onRevert}
-                />
-                <IconButton
-                  icon={Icons.Save}
-                  label={props.saveLabel ?? "Save preset"}
-                  disabled={!nameOk}
-                  onClick={props.onSave}
-                />
-              </>
-            )}
-            {!wrapDefault && <div className="ml-auto">{applyByDefault}</div>}
-          </div>
-          {wrapDefault && applyByDefault}
-          <QuerydownEditor
-            label="Preset definition"
-            value={edit.definition}
-            context={{
-              grammar: sectionGrammar(section),
-              baseTable,
-              definitions: prelude,
-            }}
-            onChange={(definition) => props.onPatch({ definition })}
-            diagnostic={problem?.origin?.kind === "preset" ? problem : null}
-          />
-          {problem && (
-            <DiagnosticMessage
-              diagnostic={problem}
-              place={diagnosticPlace(problem, edit.name.trim())}
+            <IconButton
+              icon={Icons.Save}
+              label={isNew ? "Create preset" : "Save preset"}
+              disabled={name.trim() === ""}
+              onClick={() => savePreset(presetId)}
             />
-          )}
-        </>
+          </>
+        )}
+        {!wrapDefault && <div className="ml-auto">{applyByDefault}</div>}
+      </div>
+      {wrapDefault && applyByDefault}
+      <QuerydownEditor
+        label="Preset definition"
+        value={definition ?? ""}
+        context={{
+          grammar: sectionGrammar(section),
+          baseTable,
+          definitions: prelude,
+        }}
+        onChange={(text) => patchPreset(presetId, { definition: text })}
+        diagnostic={problem?.origin?.kind === "preset" ? problem : null}
+      />
+      {problem && (
+        <DiagnosticMessage
+          diagnostic={problem}
+          place={diagnosticPlace(problem, name.trim())}
+        />
       )}
     </div>
   );

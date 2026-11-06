@@ -60,7 +60,7 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // A problem in a collapsed preset: its tab outlined in red, and "Show" on
+  // A problem in a collapsed preset: its row outlined in red, and "Show" on
   // the strip, which expands it — at which the strip steps aside for the
   // preset's own editor.
   test(`query-builder/preset-problem - ${colorScheme}`, async ({ page }) => {
@@ -260,23 +260,93 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // Made dirty by toggling "Apply by default" on: red ✱ + revert + save appear,
-  // and the checkbox is checked.
-  test(`filter-builder/modified-preset - ${colorScheme}`, async ({ page }) => {
+  // A write of a change failed: red ✱ + revert + save appear, and the checkbox
+  // (the change) is checked.
+  test(`filter-builder/preset-save-failed - ${colorScheme}`, async ({
+    page,
+  }) => {
     const stage = await openStory(
       page,
-      "filter-builder/modified-preset",
+      "filter-builder/preset-save-failed",
       colorScheme,
     );
     await expect(
       stage.getByRole("button", { name: "Save preset" }),
     ).toBeVisible();
     await expect(stage).toHaveScreenshot(
-      snapshot("filter-builder/modified-preset", colorScheme),
+      snapshot("filter-builder/preset-save-failed", colorScheme),
     );
   });
 
-  // Sort built-in: the Shuffle preset tab beside its Reshuffle button.
+  // Presets each on a line under the custom input: closed ones with Inline and
+  // Remove beside the name, an open one with Inline alone, and its usage at the
+  // far right.
+  test(`filter-builder/presets - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "filter-builder/presets", colorScheme);
+    await expect(stage.getByText("in 1 query")).toBeVisible();
+    await expect(
+      stage.getByRole("button", { name: "Inline into custom" }),
+    ).toHaveCount(3);
+    await expect(
+      stage.getByRole("button", { name: "Remove preset" }),
+    ).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/presets", colorScheme),
+    );
+  });
+
+  // Two presets open at once.
+  test(`filter-builder/presets-expanded - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "filter-builder/presets-expanded",
+      colorScheme,
+    );
+    await expect(stage.getByPlaceholder("Preset name")).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/presets-expanded", colorScheme),
+    );
+  });
+
+  // "Add new": blank, unsaved and open, with the caret in its name.
+  test(`filter-builder/new-preset - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "filter-builder/new-preset",
+      colorScheme,
+    );
+    await expect(stage.getByPlaceholder("Preset name")).toBeFocused();
+    await expect(
+      stage.getByRole("button", { name: "Create preset" }),
+    ).toBeDisabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/new-preset", colorScheme),
+    );
+  });
+
+  // A sort section holding one preset, closed.
+  test(`sort-builder/preset - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "sort-builder/preset", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: /by artist/ }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("sort-builder/preset", colorScheme),
+    );
+  });
+
+  // The filter section's options menu, ending in "Add new" and "Manage presets".
+  test(`section-options/filter - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "section-options/filter", colorScheme);
+    await expect(
+      page.getByRole("menuitem", { name: "Manage presets" }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("section-options/filter", colorScheme),
+    );
+  });
+
+  // Sort built-in: the Shuffle preset beside its Reshuffle button.
   test(`sort-builder/shuffle - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "sort-builder/shuffle", colorScheme);
     await expect(
@@ -332,14 +402,12 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // "vetted" open in the inline editor with an unsaved edit: ✱ on the row and
-  // in the editor, beside Revert and Save.
+  // "vetted" and "loved" open at once, with an edit to the first on its way to
+  // the backend: nothing to do about it, so no ✱ and no save.
   test(`preset-manager/expanded - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "preset-manager/expanded", colorScheme);
-    await expect(
-      stage.getByRole("button", { name: "Save preset" }),
-    ).toBeVisible();
-    await expect(stage.getByLabel("Unsaved changes")).toHaveCount(2);
+    await expect(stage.getByPlaceholder("Preset name")).toHaveCount(2);
+    await expect(stage.getByLabel("Unsaved changes")).toHaveCount(0);
     await expect(stage).toHaveScreenshot(
       snapshot("preset-manager/expanded", colorScheme),
     );

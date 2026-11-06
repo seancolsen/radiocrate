@@ -185,11 +185,11 @@ export function MenuItem(props: {
 }
 
 /** A menu row carrying a checkbox (independent toggle) or radio (exclusive)
- * indicator, then the section icon and label — the shared shape of a section's
- * options-menu rows. */
+ * indicator, then an optional icon and the label — the shared shape of a
+ * section's options-menu rows. */
 export function MenuToggleItem(props: {
   kind: "checkbox" | "radio";
-  icon: IconComponent;
+  icon?: IconComponent;
   label: string;
   checked: boolean;
   disabled?: boolean;
@@ -230,9 +230,11 @@ export function MenuToggleItem(props: {
           />
         )}
       </span>
-      <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
-        <Icon className="size-4" />
-      </span>
+      {Icon && (
+        <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
+          <Icon className="size-4" />
+        </span>
+      )}
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
     </button>
   );

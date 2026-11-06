@@ -23,7 +23,6 @@ import {
   EMPTY_SELECTION,
   type AppState,
   type PageTab,
-  type PresetEdit,
   type QueryTab,
   type Rating,
   type RecordEditorTarget,
@@ -421,38 +420,49 @@ export const selectIsFullQuery = (s: AppState, tabId: string): boolean =>
 export const selectFullEditorOpen = (s: AppState, tabId: string): boolean =>
   s.pages[tabId]?.fullEditorOpen ?? false;
 
-export const selectExpandedPreset = (
+/** Whether preset `id`'s inline editor is open on page `tabId`. */
+export const selectPresetExpanded = (
   s: AppState,
   tabId: string,
-): string | null => s.pages[tabId]?.expandedPreset ?? null;
+  id: string,
+): boolean => s.pages[tabId]?.expandedPresets.includes(id) ?? false;
 
 export const selectPresetName = (s: AppState, id: string): string =>
-  s.presets.find((p) => p.id === id)?.name ?? "(missing preset)";
+  selectPreset(s, id)?.name ?? "(missing preset)";
 
-/** Builds a fresh array on every call. */
+/** The presets page `tabId` can pick for `section`: the saved ones for its
+ * table, and any unsaved one it uses, which is its own to uncheck. Builds a
+ * fresh array on every call. */
 export const selectPresetsFor = (
   s: AppState,
-  baseTable: string,
+  tabId: string,
   section: Section,
-): Preset[] =>
-  s.presets.filter((p) => p.section === section && p.baseTable === baseTable);
-
-export const selectPresetDirty = (s: AppState, id: string): boolean => {
-  const edit = s.presetEdits[id];
-  if (!edit) return false;
-  const saved = s.presets.find((p) => p.id === id);
-  if (!saved) return true;
-  return (
-    saved.name !== edit.name ||
-    saved.definition !== edit.definition ||
-    saved.isDefault !== edit.isDefault
-  );
+): Preset[] => {
+  const baseTable = selectPageBase(s, tabId);
+  const live = selectPageTab(s, tabId)?.live;
+  return [
+    ...s.presets.filter(
+      (p) => p.section === section && p.baseTable === baseTable,
+    ),
+    ...s.unsavedPresets.filter(
+      (p) => p.section === section && live && usesPreset(live, p.id),
+    ),
+  ];
 };
 
-export const selectPresetEdit = (
-  s: AppState,
-  id: string,
-): PresetEdit | undefined => s.presetEdits[id];
+/** Whether preset `id` is one the backend has never heard of. */
+export const selectPresetIsNew = (s: AppState, id: string): boolean =>
+  s.unsavedPresets.some((p) => p.id === id);
+
+/** Whether preset `id` needs the user before the backend can have it: it's
+ * never been saved, its last write failed, or its name is blank (which can't be
+ * stored). Anything else is on its way there by itself. Drives the ✱ marker and
+ * the editor's Save and Revert, as `selectIsUnsaved` does a query's. */
+export const selectPresetUnsaved = (s: AppState, id: string): boolean => {
+  if (selectPresetIsNew(s, id)) return true;
+  if (s.presetSaves[id]?.failed) return true;
+  return selectPreset(s, id)?.name.trim() === "";
+};
 
 /** A query or playlist whose definition uses a preset. `name` is empty for a
  * query that's never been saved. */
@@ -497,9 +507,29 @@ export function presetUsers(
   return users;
 }
 
-/** The preset with `id`, as saved — a reference already in state. */
-export const selectPreset = (s: AppState, id: string): Preset | undefined =>
-  s.presets.find((p) => p.id === id);
+/** What a preset's editor reports it's used in: "in 5 queries", "in 1 query and
+ * 2 playlists". */
+export function presetUsageLabel(users: readonly PresetUser[]): string {
+  const playlists = users.filter((u) => u.kind === "playlist").length;
+  const queries = users.length - playlists;
+  const count = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+  const parts = [
+    ...(queries > 0 || playlists === 0
+      ? [count(queries, "query", "queries")]
+      : []),
+    ...(playlists > 0 ? [count(playlists, "playlist", "playlists")] : []),
+  ];
+  return `in ${parts.join(" and ")}`;
+}
+
+/** The preset with `id`, saved or not — a reference already in state. */
+export function selectPreset(s: AppState, id: string): Preset | undefined {
+  return (
+    s.presets.find((p) => p.id === id) ??
+    s.unsavedPresets.find((p) => p.id === id)
+  );
+}
 
 /** The introspection schema having loaded (compiles can proceed): a dev/test
  * override (`setSchemaJson`) counts too, independently of `schema.status`. */
@@ -529,22 +559,12 @@ export const selectSettingValue = (s: AppState, key: SettingKey): string =>
 export const selectPrelude = (s: AppState): string =>
   selectSettingValue(s, "querydown_prelude");
 
-/** The preset list to run/preview against: each saved preset overlaid with any
- * in-progress edit, so results reflect pending preset changes before they're
- * committed. Builds a fresh array on every call — internal to `actions.ts`'s
- * compile/run path, not meant for a component subscription. */
+/** The preset list to run/preview against: the saved presets, and the unsaved
+ * ones queries can already run with. Builds a fresh array on every call —
+ * internal to `actions.ts`'s compile/run path, not meant for a component
+ * subscription. */
 export function selectEffectivePresets(s: AppState): Preset[] {
-  return s.presets.map((p) => {
-    const edit = s.presetEdits[p.id];
-    return edit
-      ? {
-          ...p,
-          name: edit.name,
-          definition: edit.definition,
-          isDefault: edit.isDefault,
-        }
-      : p;
-  });
+  return [...s.presets, ...s.unsavedPresets];
 }
 
 /** Whether two references name the same database row. */

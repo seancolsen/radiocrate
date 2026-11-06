@@ -8,7 +8,9 @@
 // to itself. So the save is formulated as the edit is made but held here, and
 // only sent once the app has been idle for a while: no request in flight, none
 // sent, and no write deferred for the whole of the idle period. Anything that
-// happens restarts it.
+// happens restarts it. A saved preset's edits go through the same queue, for
+// the same reasons, and a caller that knows the user has finished (they've left
+// a preset's editor, or closed a tab) can `flush` a write early.
 //
 // A later write under the same key replaces the one waiting there, so a burst
 // of edits sends one request, carrying the last of them. Writes under one key

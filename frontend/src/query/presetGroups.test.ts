@@ -58,6 +58,13 @@ describe("groupPresets", () => {
       ["track", 3],
     ]);
   });
+
+  it("sorts a preset by its listed name, when it has one", () => {
+    const named = (id: string) => ({ ...PRESETS[0], id, name: id });
+    const [group] = groupPresets([named("a"), named("b")], [], { b: "" });
+    const section = group.sections.find((x) => x.presets.length > 0);
+    expect(section?.presets.map((p) => p.id)).toEqual(["b", "a"]);
+  });
 });
 
 describe("presetTables", () => {

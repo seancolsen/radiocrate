@@ -1,9 +1,9 @@
 import type { JSX } from "react";
 import {
   selectBuilderSection,
-  selectExpandedPreset,
   selectFullEditorOpen,
   selectPageDiagnostic,
+  selectPresetExpanded,
   selectPresetName,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
@@ -35,7 +35,7 @@ export default function QueryDiagnosticBar(props: {
     if (selectBuilderSection(s, props.tabId) !== origin.section) return false;
     return (
       origin.kind === "custom" ||
-      selectExpandedPreset(s, props.tabId) === origin.id
+      selectPresetExpanded(s, props.tabId, origin.id)
     );
   });
   const { revealDiagnostic } = useAppActions();

@@ -182,6 +182,20 @@ function RoadTripSortOptions(): JSX.Element | null {
  * and a default display — so the preset manager has a table with something
  * in every section, and one with an empty section or two. With no schema
  * loaded, those two are the tables it lists. */
+/** The filter section's options menu on "Lemonade", once it's open. */
+function LemonadeFilterOptions(): JSX.Element | null {
+  const open = useApp((s) => selectTab(s, LEMONADE.id) !== undefined);
+  if (!open) return null;
+  return (
+    <Menu defaultOpen width="240px" trigger={() => null}>
+      <SectionOptionsMenu tabId={LEMONADE.id} section="filter" />
+    </Menu>
+  );
+}
+
+/** The id of "loved", the default filter {@link seedManagedPresets} adds. */
+const LOVED_PRESET_ID = "00000000-0000-0000-0000-0000000000b1";
+
 function seedManagedPresets(stores: Stores): void {
   const preset = (
     n: number,
@@ -965,7 +979,7 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
-  // A problem in a collapsed filter preset: its tab outlined in red, and the
+  // A problem in a collapsed filter preset: its row outlined in red, and the
   // strip offering "Show" to expand it, with the place the bracket opened and
   // the place it should have closed, and the compiler's hint.
   "query-builder/preset-problem": {
@@ -1112,7 +1126,8 @@ export const STORIES: Record<string, Story> = {
 
   // ── The builders, without the toolbar above them ─────────────────────────
   // Preset expanded, no unsaved edits: the inline editor (name + apply-by-
-  // default + definition), no star/revert/save.
+  // default + definition), no star/revert/save, and how many queries use it at
+  // the heading's far right.
   "filter-builder/preset-expanded": {
     width: 1280,
     setup: expandedVettedPreset,
@@ -1125,15 +1140,107 @@ export const STORIES: Record<string, Story> = {
     setup: expandedVettedPreset,
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
-  // The same preset made dirty by toggling "Apply by default" on: red ✱ plus
-  // revert and save appear, and the checkbox is checked.
-  "filter-builder/modified-preset": {
+  // The same preset after a write of a change to it failed: red ✱ plus revert
+  // and save appear, and the checkbox (the change) is checked.
+  "filter-builder/preset-save-failed": {
     width: 1280,
     setup: (stores) => {
       expandedVettedPreset(stores);
-      stores.app.actions.patchPresetEdit(VETTED_PRESET_ID, { isDefault: true });
+      // Straight into the store: through the actions, the editor's mounting
+      // under StrictMode would send the write, and the stand-in backend accept it.
+      stores.app.store.setState((s) => {
+        const preset = s.presets.find((p) => p.id === VETTED_PRESET_ID)!;
+        s.presetSaves[VETTED_PRESET_ID] = {
+          saved: { ...preset },
+          failed: true,
+        };
+        preset.isDefault = true;
+      });
     },
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // Three presets, each on its own line under the custom input: two closed
+  // ones, as wide as their headings, with Inline and Remove beside the name,
+  // and one open, with Inline alone, directly beside its name and its "Default".
+  "filter-builder/presets": {
+    width: 1280,
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        filter: {
+          custom: "jazz playcount:<100",
+          presets: [
+            VETTED_PRESET_ID,
+            LOVED_PRESET_ID,
+            "00000000-0000-0000-0000-0000000000b4",
+          ],
+        },
+      });
+      stores.app.store.setState((s) => {
+        s.presets.push({
+          ...s.presets.find((p) => p.id === VETTED_PRESET_ID)!,
+          id: "00000000-0000-0000-0000-0000000000b4",
+          name: "a much longer preset name",
+          definition: "year:>=1990",
+        });
+      });
+      stores.app.actions.toggleBuilderSection(id, "filter");
+      stores.app.actions.toggleExpandPreset(id, LOVED_PRESET_ID);
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // Two presets open at once.
+  "filter-builder/presets-expanded": {
+    width: 1280,
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        filter: {
+          custom: "",
+          presets: [VETTED_PRESET_ID, LOVED_PRESET_ID],
+        },
+      });
+      stores.app.actions.toggleBuilderSection(id, "filter");
+      stores.app.actions.toggleExpandPreset(id, VETTED_PRESET_ID);
+      stores.app.actions.toggleExpandPreset(id, LOVED_PRESET_ID);
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // "Add new": a blank preset in force before it's ever been saved, open with
+  // discard and a save that waits for a name.
+  "filter-builder/new-preset": {
+    width: 1280,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.addNewPreset(id, "filter");
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // A sort section holding one preset, closed.
+  "sort-builder/preset": {
+    width: 1280,
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        sort: { preset: "00000000-0000-0000-0000-0000000000b2" },
+      });
+      stores.app.actions.toggleBuilderSection(id, "sort");
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // The filter section's options menu: the presets, then "Add new" and "Manage
+  // presets".
+  "section-options/filter": {
+    width: 320,
+    height: 280,
+    setup: (stores) => {
+      seedManagedPresets(stores);
+      openWithDefinition(stores, FILTER_DEF);
+    },
+    render: () => <LemonadeFilterOptions />,
   },
   // A playlist's filter, applying a condition: "Remove these tracks" and "Keep
   // only these tracks" at the builder's foot.
@@ -1166,7 +1273,7 @@ export const STORIES: Record<string, Story> = {
       ),
     render: () => <QueryBuilder tabId={PLAYLIST_SOURCE.id} />,
   },
-  // Sort built-in: the Shuffle preset tab beside its Reshuffle button.
+  // Sort built-in: the Shuffle preset beside its Reshuffle button.
   "sort-builder/shuffle": {
     width: 1280,
     setup: (stores) => {
@@ -1205,9 +1312,9 @@ export const STORIES: Record<string, Story> = {
     setup: seedExpandedTables,
     render: () => <PresetManager />,
   },
-  // "vetted" open in the builders' inline editor, with an edit to its
-  // definition not yet saved: the ✱ shows on the row as well as in the
-  // editor.
+  // "vetted" and "loved" open at once in the builders' inline editor, with an
+  // edit to the first on its way to the backend: nothing to do about it, so no
+  // ✱ on the row and no save in the editor.
   "preset-manager/expanded": {
     width: 720,
     height: 640,
@@ -1215,7 +1322,8 @@ export const STORIES: Record<string, Story> = {
     setup: (stores) => {
       seedExpandedTables(stores);
       stores.app.actions.toggleManagedPreset(VETTED_PRESET_ID);
-      stores.app.actions.patchPresetEdit(VETTED_PRESET_ID, {
+      stores.app.actions.toggleManagedPreset(LOVED_PRESET_ID);
+      stores.app.actions.patchPreset(VETTED_PRESET_ID, {
         definition: "rating.value:>=4",
       });
     },
@@ -1230,10 +1338,10 @@ export const STORIES: Record<string, Story> = {
     setup: (stores) => {
       seedManagedPresets(stores);
       stores.app.actions.openPresetDraft("track", "filter");
-      stores.app.actions.patchPresetDraft("track", "filter", {
-        name: "nineties",
-        definition: "year:>=1990 year:<2000",
-      });
+      stores.app.actions.patchPreset(
+        stores.app.store.getState().unsavedPresets[0].id,
+        { name: "nineties", definition: "year:>=1990 year:<2000" },
+      );
       const albumSort = stores.app.store
         .getState()
         .presets.find((p) => p.baseTable === "album");

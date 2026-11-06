@@ -1,54 +1,25 @@
 import { useRef, type JSX } from "react";
 import {
   selectEditorDiagnostic,
-  selectExpandedPreset,
   selectPageBase,
   selectPageSections,
-  selectPresetHasDiagnostic,
-  selectPresetName,
   selectPrelude,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
 import { FilterEntryActions } from "./EntryActions";
-import PresetEditor from "./PresetEditor";
-import PresetTab from "./PresetTab";
+import QueryPresetRow from "./QueryPresetRow";
 import { useBuilderFocus } from "./useBuilderFocus";
 
-/** One preset tab in the filter row, subscribed narrowly to its own name and
- * expanded state — like `Explorer`'s `OpenedTabRow` — so one preset's tab
- * doesn't re-render because another's expanded. */
-function FilterPresetTab(props: { tabId: string; id: string }): JSX.Element {
-  const name = useApp((s) => selectPresetName(s, props.id));
-  const expanded = useApp(
-    (s) => selectExpandedPreset(s, props.tabId) === props.id,
-  );
-  const problem = useApp((s) =>
-    selectPresetHasDiagnostic(s, props.tabId, props.id),
-  );
-  const { toggleExpandPreset } = useAppActions();
-  return (
-    <PresetTab
-      name={name}
-      expanded={expanded}
-      problem={problem}
-      onClick={() => toggleExpandPreset(props.tabId, props.id)}
-    />
-  );
-}
-
 /** The filter builder. A custom Querydown input combined (via AND at run time)
- * with any number of presets, the latter shown as right-aligned tabs beside
- * the input. When the input would grow too narrow the tabs wrap to their own
- * right-aligned row below it (flex-wrap). Expanding a preset reveals its
- * inline editor full-width below the row. On a playlist, a filter that applies
- * puts "Remove these tracks" and "Keep only these tracks" at the foot. */
+ * with any number of presets, listed below it, one to a line, each opening its
+ * own inline editor. On a playlist, a filter that applies puts "Remove these
+ * tracks" and "Keep only these tracks" at the foot. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const base = useApp((s) => selectPageBase(s, props.tabId));
   const canSave = base !== "";
   const prelude = useApp(selectPrelude);
-  const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "filter"),
   );
@@ -56,8 +27,6 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
     useAppActions();
 
   const presets = live?.filter.presets ?? [];
-  const expandedInFilter =
-    expandedPreset && presets.includes(expandedPreset) ? expandedPreset : null;
 
   // `query.focus_filter` opens this section and asks for the caret. The
   // request is consumed once: `useBuilderFocus` also fires on mount (when the
@@ -68,35 +37,35 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="min-w-0 flex-1 basis-[400px]">
-          <CustomInput
-            ref={inputRef}
-            value={live?.filter.custom ?? ""}
-            context={{
-              grammar: "conditions",
-              baseTable: base,
-              definitions: prelude,
-            }}
-            hint="Filter"
-            diagnostic={diagnostic}
-            canSave={canSave}
-            onInput={(t) => setFilterCustom(props.tabId, t)}
-            onClear={() => clearFilterCustom(props.tabId)}
-            onSaveAsPreset={() =>
-              openPresetSave("filter", live?.filter.custom ?? "")
-            }
-          />
+      <CustomInput
+        ref={inputRef}
+        value={live?.filter.custom ?? ""}
+        context={{
+          grammar: "conditions",
+          baseTable: base,
+          definitions: prelude,
+        }}
+        hint="Filter"
+        diagnostic={diagnostic}
+        canSave={canSave}
+        onInput={(t) => setFilterCustom(props.tabId, t)}
+        onClear={() => clearFilterCustom(props.tabId)}
+        onSaveAsPreset={() =>
+          openPresetSave("filter", live?.filter.custom ?? "")
+        }
+      />
+      {presets.length > 0 && (
+        <div className="flex flex-col items-start gap-1">
+          {presets.map((id) => (
+            <QueryPresetRow
+              key={id}
+              tabId={props.tabId}
+              section="filter"
+              id={id}
+            />
+          ))}
         </div>
-        {presets.length > 0 && (
-          <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-2">
-            {presets.map((id) => (
-              <FilterPresetTab key={id} tabId={props.tabId} id={id} />
-            ))}
-          </div>
-        )}
-      </div>
-      {expandedInFilter && <PresetEditor presetId={expandedInFilter} />}
+      )}
       <FilterEntryActions tabId={props.tabId} />
     </div>
   );

@@ -34,7 +34,7 @@ import Sort from "~icons/material-symbols/swap-vert";
 import Display from "~icons/material-symbols/key-visualizer";
 import More from "~icons/material-symbols/more-vert";
 import Custom from "~icons/material-symbols/auto-fix-high";
-import Preset from "~icons/material-symbols/link";
+import Merge from "~icons/material-symbols/merge";
 import Unsaved from "~icons/material-symbols/emergency";
 import QueryError from "~icons/material-symbols/error-outline";
 // One glyph, two concepts: `Revert` and `Undo` share the same icon.
@@ -128,7 +128,7 @@ export const Icons = {
   Display, // Display section toggle
   More, // ⋮ menu trigger (split button + custom input)
   Custom, // "Custom …" options-menu entry
-  Preset, // preset tab / options-menu preset rows
+  Merge, // "Inline into custom": a preset folded into the custom Querydown
   Unsaved, // red ✱ dirty-preset marker
   QueryError, // a problem with a query (the error strip)
   Revert, // undo: revert changes / revert preset edit

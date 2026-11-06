@@ -1,7 +1,9 @@
+import type { Preset } from "api-client";
 import type { AudioQualityPref } from "../../audio/engine";
 import {
   definitionFromStored,
   definitionToStored,
+  usesPreset,
   type QueryDefinition,
 } from "../../query/definition";
 import {
@@ -222,6 +224,8 @@ export type StoredTab =
 export interface StoredTabs {
   tabs: StoredTab[];
   activeTabId: string | null;
+  /** The unsaved presets those tabs use, which exist nowhere else. */
+  unsavedPresets: Preset[];
 }
 
 const OPEN_TABS_KEY = "openTabs";
@@ -236,6 +240,8 @@ const OPEN_TABS_VERSION = 1;
 interface OpenTabsRecord {
   version: number;
   activeTabId: string | null;
+  /** Absent from records written before queries could use unsaved presets. */
+  unsavedPresets?: Preset[];
   tabs: Array<
     | {
         kind: "query";
@@ -267,7 +273,7 @@ interface OpenTabsRecord {
  * version or a corrupt value restores nothing, and a malformed or duplicate
  * entry is skipped. */
 export function storedTabs(env: AppEnv): StoredTabs {
-  const none: StoredTabs = { tabs: [], activeTabId: null };
+  const none: StoredTabs = { tabs: [], activeTabId: null, unsavedPresets: [] };
   let record: Partial<OpenTabsRecord>;
   try {
     const raw = env.storage.getItem(OPEN_TABS_KEY);
@@ -340,7 +346,13 @@ export function storedTabs(env: AppEnv): StoredTabs {
     }
   }
   const active = record.activeTabId;
-  return { tabs, activeTabId: typeof active === "string" ? active : null };
+  return {
+    tabs,
+    activeTabId: typeof active === "string" ? active : null,
+    unsavedPresets: Array.isArray(record.unsavedPresets)
+      ? record.unsavedPresets
+      : [],
+  };
 }
 
 /** Writes the open tabs through, or clears the record once none are left. */
@@ -348,6 +360,7 @@ export function persistTabs(
   env: AppEnv,
   tabs: readonly Tab[],
   activeTabId: string | null,
+  unsavedPresets: readonly Preset[],
 ): void {
   try {
     if (tabs.length === 0) {
@@ -357,6 +370,13 @@ export function persistTabs(
     const record: OpenTabsRecord = {
       version: OPEN_TABS_VERSION,
       activeTabId,
+      unsavedPresets: unsavedPresets.filter((preset) =>
+        tabs.some(
+          (t) =>
+            (t.kind === "query" || t.kind === "playlist") &&
+            usesPreset(t.live, preset.id),
+        ),
+      ),
       tabs: tabs.map((t): OpenTabsRecord["tabs"][number] => {
         switch (t.kind) {
           case "query":

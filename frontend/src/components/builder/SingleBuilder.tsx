@@ -1,20 +1,18 @@
 import { useRef, type JSX } from "react";
+import { Icons } from "../../icons";
 import { sectionLabel } from "../../query/definition";
 import { sectionGrammar } from "../../editor/querydownEditor";
 import {
   selectEditorDiagnostic,
-  selectExpandedPreset,
   selectPageBase,
   selectPageSections,
-  selectPresetHasDiagnostic,
-  selectPresetName,
   selectPrelude,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
 import { SortEntryActions } from "./EntryActions";
-import PresetEditor from "./PresetEditor";
-import PresetTab from "./PresetTab";
+import { BuiltinPresetRow } from "./PresetRow";
+import QueryPresetRow from "./QueryPresetRow";
 import { useBuilderFocus } from "./useBuilderFocus";
 
 /** The sort/display builder. The section holds exactly one thing: a custom
@@ -30,23 +28,10 @@ export default function SingleBuilder(props: {
   );
   const base = useApp((s) => selectPageBase(s, props.tabId));
   const prelude = useApp(selectPrelude);
-  const expandedPreset = useApp((s) => selectExpandedPreset(s, props.tabId));
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, props.section),
   );
-  const presetId = content && "preset" in content ? content.preset : undefined;
-  const presetName = useApp((s) =>
-    presetId ? selectPresetName(s, presetId) : "",
-  );
-  const presetProblem = useApp((s) =>
-    presetId ? selectPresetHasDiagnostic(s, props.tabId, presetId) : false,
-  );
-  const {
-    setSectionCustomText,
-    openPresetSave,
-    toggleExpandPreset,
-    reshuffle,
-  } = useAppActions();
+  const { setSectionCustomText, openPresetSave, reshuffle } = useAppActions();
 
   // `query.focus_sort` / `query.focus_display` open this section and ask for
   // the caret; see the twin hook use in `FilterBuilder`. A section holding a
@@ -75,36 +60,35 @@ export default function SingleBuilder(props: {
         />
       )}
       {content && "preset" in content && (
-        <>
-          <div className="flex">
-            <PresetTab
-              name={presetName}
-              expanded={expandedPreset === content.preset}
-              problem={presetProblem}
-              onClick={() => toggleExpandPreset(props.tabId, content.preset)}
-            />
-          </div>
-          {expandedPreset === content.preset && (
-            <PresetEditor presetId={content.preset} />
-          )}
-        </>
+        <div className="flex flex-col items-start">
+          <QueryPresetRow
+            tabId={props.tabId}
+            section={props.section}
+            id={content.preset}
+          />
+        </div>
       )}
       {content &&
         "builtin" in content &&
         content.builtin.preset === "shuffle" && (
           <div className="flex">
-            <PresetTab
-              builtin
-              name="Shuffle"
-              onReshuffle={() => reshuffle(props.tabId, props.section)}
-            />
+            <BuiltinPresetRow name="Shuffle">
+              <button
+                type="button"
+                className="border-edge text-ink hover:bg-hover ml-1 flex items-center gap-1.5 rounded border px-2 text-sm"
+                onClick={() => reshuffle(props.tabId, props.section)}
+              >
+                <Icons.Shuffle className="text-ink-weak size-4" />
+                Reshuffle
+              </button>
+            </BuiltinPresetRow>
           </div>
         )}
       {content &&
         "builtin" in content &&
         content.builtin.preset === "playlist_order" && (
           <div className="flex">
-            <PresetTab builtin name="Playlist order" />
+            <BuiltinPresetRow name="Playlist order" />
           </div>
         )}
       {props.section === "sort" && <SortEntryActions tabId={props.tabId} />}

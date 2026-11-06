@@ -4,7 +4,6 @@ import { Icons } from "../../icons";
 import {
   playlistOrderContent,
   sectionLabel,
-  sectionSeedText,
   type Section,
 } from "../../query/definition";
 import {
@@ -14,7 +13,12 @@ import {
   selectTab,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
-import { MenuHeading, MenuSeparator, MenuToggleItem } from "../ui/Menu";
+import {
+  MenuHeading,
+  MenuItem,
+  MenuSeparator,
+  MenuToggleItem,
+} from "../ui/Menu";
 
 /** The body of a section's ⋮ options menu — the shared flat list. The filter
  * section combines presets, so its rows are checkboxes (toggle membership);
@@ -24,7 +28,9 @@ import { MenuHeading, MenuSeparator, MenuToggleItem } from "../ui/Menu";
  * Layout: on a playlist's sort only, "Playlist order" (no sorting conditions,
  * the default) first; then the always-present "Custom …" entry, then
  * (sort-of-track only) the built-in Shuffle preset under a BUILT-IN heading,
- * then the user presets. */
+ * then the user presets, with "Add new" (a preset in force in the section,
+ * before it's ever saved) and "Manage presets" (the manager, opened at this
+ * table) at their end. */
 export default function SectionOptionsMenu(props: {
   tabId: string;
   section: Section;
@@ -35,12 +41,15 @@ export default function SectionOptionsMenu(props: {
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
   );
   const presets = useApp(
-    useShallow((s) =>
-      selectPresetsFor(s, selectPageBase(s, props.tabId), props.section),
-    ),
+    useShallow((s) => selectPresetsFor(s, props.tabId, props.section)),
   );
-  const allPresets = useApp((s) => s.presets);
-  const { setSectionContent, toggleFilterPreset, reshuffle } = useAppActions();
+  const {
+    setSectionContent,
+    toggleFilterPreset,
+    reshuffle,
+    addNewPreset,
+    openPresetsTab,
+  } = useAppActions();
 
   const kind = props.section === "filter" ? "checkbox" : "radio";
   const customLabel = `Custom ${sectionLabel(props.section).toLowerCase()}`;
@@ -71,9 +80,7 @@ export default function SectionOptionsMenu(props: {
     if (props.section === "filter") return; // disabled — no-op
     const content = live?.[props.section];
     if (!content || "custom" in content) return; // already custom
-    setSectionContent(props.tabId, props.section, {
-      custom: sectionSeedText(content, allPresets),
-    });
+    setSectionContent(props.tabId, props.section, { custom: "" });
   };
   const choosePreset = (id: string) => {
     if (props.section === "filter") {
@@ -121,22 +128,28 @@ export default function SectionOptionsMenu(props: {
           />
         </>
       )}
-      {presets.length > 0 && (
-        <>
-          <MenuSeparator />
-          <MenuHeading text="USER DEFINED PRESETS" />
-          {presets.map((preset) => (
-            <MenuToggleItem
-              key={preset.id}
-              kind={kind}
-              icon={Icons.Preset}
-              label={preset.name}
-              checked={presetChecked(preset.id)}
-              onClick={() => choosePreset(preset.id)}
-            />
-          ))}
-        </>
-      )}
+      <MenuSeparator />
+      <MenuHeading text="USER DEFINED PRESETS" />
+      {presets.map((preset) => (
+        <MenuToggleItem
+          key={preset.id}
+          kind={kind}
+          label={preset.name.trim() === "" ? "Unnamed preset" : preset.name}
+          checked={presetChecked(preset.id)}
+          onClick={() => choosePreset(preset.id)}
+        />
+      ))}
+      <MenuItem
+        icon={Icons.Add}
+        label="Add new"
+        disabled={base === ""}
+        onClick={() => addNewPreset(props.tabId, props.section)}
+      />
+      <MenuItem
+        icon={Icons.Presets}
+        label="Manage presets"
+        onClick={() => openPresetsTab(base === "" ? undefined : base)}
+      />
     </div>
   );
 }

@@ -32,13 +32,18 @@ import type { ThemePref } from "./theme";
 export type { ThemePref };
 export type { AudioQualityPref };
 
-/** An in-progress, uncommitted edit of a saved preset's fields. Keyed by preset
- * id in `presetEdits`; persists across collapse / tab navigation. This session
- * it commits only to local state. */
-export interface PresetEdit {
-  name: string;
-  definition: string;
-  isDefault: boolean;
+/** The fields of a preset its editor edits. */
+export type PresetFields = Pick<Preset, "name" | "definition" | "isDefault">;
+
+/** How a saved preset stands against the backend while it has changes the
+ * backend hasn't acknowledged, keyed by preset id in `presetSaves`. The changes
+ * themselves are already in `presets`: that's the version everything uses, and
+ * the write catches up once the app goes quiet (see `api/idleQueue.ts`). */
+export interface PresetSaveState {
+  /** The preset as the backend has it: what a revert goes back to. */
+  saved: Preset;
+  /** Whether the last write failed. The error bar has reported it. */
+  failed: boolean;
 }
 
 /** The "Save as preset" naming-dialog state. */
@@ -49,17 +54,6 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
-/** A new preset being written in the preset manager, inline at the top of its
- * table's section: the fields its editor edits, and the id it'll be created
- * with. */
-export interface PresetDraft extends PresetEdit {
-  id: string;
-}
-
-/** Where a {@link PresetDraft} sits: its table and section, as one key. */
-export const presetDraftKey = (baseTable: string, section: Section): string =>
-  `${section}:${baseTable}`;
-
 /** The preset manager's own state: what it shows open, and the presets being
  * written in it. Kept in the store (not the page) so the actions that create a
  * preset can steer it — a new preset opens expanded. */
@@ -67,16 +61,29 @@ export interface PresetManagerState {
   /** The tables whose sections are shown; every other table is collapsed to
    * its heading. */
   expandedTables: string[];
-  /** The preset whose inline editor is open (null = none). */
-  expanded: string | null;
-  /** New presets being written, by {@link presetDraftKey} — at most one per
-   * table's section. */
-  drafts: Record<string, PresetDraft>;
+  /** The presets whose inline editors are open. */
+  expanded: string[];
+  /** The unsaved presets begun here (in `unsavedPresets`), which it lists
+   * until they're saved or discarded, or it closes. */
+  drafts: string[];
+  /** The name each open preset is listed by: the one it opened with (blank for
+   * a new one, which puts it at the top of its section). A preset holds its
+   * place until it's closed, rather than moving under the caret as it's
+   * renamed. */
+  listedNames: Record<string, string>;
+  /** The table to scroll into view once the page is showing, if any. */
+  revealTable: string | null;
 }
 
 /** The preset manager as it opens: every table collapsed, nothing open. */
 export function initialPresetManager(): PresetManagerState {
-  return { expandedTables: [], expanded: null, drafts: {} };
+  return {
+    expandedTables: [],
+    expanded: [],
+    drafts: [],
+    listedNames: {},
+    revealTable: null,
+  };
 }
 
 /** Which of a page's result rows "Export results data" writes out. */
@@ -398,8 +405,9 @@ export interface QueryPageState {
    * has no sections to open, and a query converted back to sections finds its
    * section state where it left it. */
   fullEditorOpen: boolean;
-  /** The expanded preset id (null = none expanded). */
-  expandedPreset: string | null;
+  /** The presets whose inline editors are open. Only ever what the user opened:
+   * nothing but closing it, or taking it out of the query, closes one. */
+  expandedPresets: string[];
   /** The page's undo history, checkpointed at every run of its query (see
    * `state/undoHistory.ts`). Replaced wholesale on every change, like
    * `selection`. */
@@ -422,7 +430,7 @@ export function emptyPage(): QueryPageState {
     diagnostic: null,
     builderSection: null,
     fullEditorOpen: false,
-    expandedPreset: null,
+    expandedPresets: [],
     undo: EMPTY_HISTORY,
     writing: false,
   };
@@ -449,11 +457,16 @@ export interface AppState {
   pages: Record<string, QueryPageState>;
   /** Whether the initial `preset.list` load has landed. */
   presetsStatus: ResourceStatus;
-  /** Saved query-section presets — a mutable copy of `preset.list` so local
-   * "Save as preset" / inline edits can add and update entries this session. */
+  /** Saved query-section presets, as the user has them: `preset.list`, plus
+   * every local change from the moment it's made. */
   presets: Preset[];
-  /** In-progress preset edits, keyed by preset id. */
-  presetEdits: Record<string, PresetEdit>;
+  /** Saved presets with changes the backend hasn't acknowledged. */
+  presetSaves: Record<string, PresetSaveState>;
+  /** Presets the backend has never heard of: being written, in a query that
+   * already runs with them or in the preset manager. A query can use one
+   * like any other, but what it stores leaves the reference out until the
+   * preset is saved. */
+  unsavedPresets: Preset[];
   /** The "Save as preset" dialog, when open. */
   presetSave: PresetSave | null;
   /** The preset manager's listing state. */
@@ -567,6 +580,7 @@ export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 function restoredTabs(env: AppEnv): {
   tabs: Tab[];
   activeTabId: string | null;
+  unsavedPresets: Preset[];
 } {
   const stored = storedTabs(env);
   const tabs = stored.tabs.map((t): Tab => {
@@ -588,11 +602,11 @@ function restoredTabs(env: AppEnv): {
   const activeTabId = tabs.some((t) => t.id === stored.activeTabId)
     ? stored.activeTabId
     : (tabs[0]?.id ?? null);
-  return { tabs, activeTabId };
+  return { tabs, activeTabId, unsavedPresets: stored.unsavedPresets };
 }
 
 export function initialState(env: AppEnv): AppState {
-  const { tabs, activeTabId } = restoredTabs(env);
+  const { tabs, activeTabId, unsavedPresets } = restoredTabs(env);
   return {
     sidebarOpen: storedSidebarOpen(env),
     explorerWidth: storedExplorerWidth(env),
@@ -606,7 +620,8 @@ export function initialState(env: AppEnv): AppState {
     pages: {},
     presetsStatus: "loading",
     presets: [],
-    presetEdits: {},
+    presetSaves: {},
+    unsavedPresets,
     presetSave: null,
     presetManager: initialPresetManager(),
     pendingPresetDelete: null,

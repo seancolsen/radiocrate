@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Preset } from "api-client";
 import {
+  appendCustom,
   definitionForBase,
   emptyDefinition,
+  presetSectionIn,
   rebasedDefinition,
   toFullQuery,
+  withoutPresets,
   type QueryDefinition,
 } from "./definition";
 
@@ -125,5 +128,69 @@ describe("toFullQuery", () => {
     expect(toFullQuery(definition({ full: "#album $title" }), PRESETS)).toBe(
       "#album $title",
     );
+  });
+});
+
+describe("withoutPresets", () => {
+  const def: QueryDefinition = {
+    base: "track",
+    filter: { custom: "jazz", presets: ["kept", "gone"] },
+    sort: { preset: "gone" },
+    display: { preset: "kept" },
+  };
+  const gone = (id: string) => id === "gone";
+
+  it("takes a reference out of the filter, and puts back a section's fallback", () => {
+    expect(
+      withoutPresets(def, gone, {
+        sort: { custom: "\\\\title" },
+        display: { custom: "" },
+      }),
+    ).toEqual({
+      base: "track",
+      filter: { custom: "jazz", presets: ["kept"] },
+      sort: { custom: "\\\\title" },
+      display: { preset: "kept" },
+    });
+  });
+
+  it("hands back the definition itself when it has none", () => {
+    const clean = emptyDefinition();
+    expect(withoutPresets(clean, gone, clean)).toBe(clean);
+  });
+});
+
+describe("presetSectionIn", () => {
+  const def: QueryDefinition = {
+    base: "track",
+    filter: { custom: "", presets: ["f"] },
+    sort: { preset: "s" },
+    display: { preset: "d" },
+  };
+
+  it("names the section that holds the preset", () => {
+    expect(presetSectionIn(def, "f")).toBe("filter");
+    expect(presetSectionIn(def, "s")).toBe("sort");
+    expect(presetSectionIn(def, "d")).toBe("display");
+    expect(presetSectionIn(def, "other")).toBeNull();
+  });
+
+  it("finds none in a full query, which ignores its sections", () => {
+    expect(presetSectionIn({ ...def, full: "#track" }, "f")).toBeNull();
+  });
+});
+
+describe("appendCustom", () => {
+  it("adds text after what's there, on a line of its own", () => {
+    expect(appendCustom("year:1999", "  title:x\n")).toBe("year:1999\ntitle:x");
+  });
+
+  it("takes the place of nothing but blank", () => {
+    expect(appendCustom("", "title:x")).toBe("title:x");
+    expect(appendCustom(" \n", "title:x")).toBe("title:x");
+  });
+
+  it("adds nothing for blank text", () => {
+    expect(appendCustom("year:1999", " ")).toBe("year:1999");
   });
 });

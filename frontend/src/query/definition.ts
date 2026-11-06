@@ -143,6 +143,53 @@ export function usesPreset(
   );
 }
 
+/** Which of `def`'s sections holds preset `id`, if one does. */
+export function presetSectionIn(
+  def: Pick<QueryDefinition, "filter" | "sort" | "display" | "full">,
+  id: string,
+): Section | null {
+  if (!usesPreset(def, id)) return null;
+  if (def.filter.presets.includes(id)) return "filter";
+  return "preset" in def.sort && def.sort.preset === id ? "sort" : "display";
+}
+
+/** `def` without its references to the presets `gone` picks out: gone from the
+ * filter's list, and a sort or display that holds one back to what it holds in
+ * `fallback`. `def` itself, when it has none. */
+export function withoutPresets<
+  D extends Pick<QueryDefinition, "filter" | "sort" | "display">,
+>(
+  def: D,
+  gone: (id: string) => boolean,
+  fallback: Pick<QueryDefinition, "sort" | "display">,
+): D {
+  const holdsGone = (c: SectionContent) => "preset" in c && gone(c.preset);
+  if (
+    !def.filter.presets.some(gone) &&
+    !holdsGone(def.sort) &&
+    !holdsGone(def.display)
+  ) {
+    return def;
+  }
+  return {
+    ...def,
+    filter: {
+      ...def.filter,
+      presets: def.filter.presets.filter((id) => !gone(id)),
+    },
+    sort: holdsGone(def.sort) ? fallback.sort : def.sort,
+    display: holdsGone(def.display) ? fallback.display : def.display,
+  };
+}
+
+/** Custom filter text `custom` with `text` added after it, on a line of its
+ * own: what inlining a preset into a filter leaves. */
+export function appendCustom(custom: string, text: string): string {
+  const added = text.trim();
+  if (added === "") return custom;
+  return custom.trim() === "" ? added : `${custom}\n${added}`;
+}
+
 /** A fresh definition for `base`, seeded with that table's default presets:
  * every default filter preset, plus the default sort and display, if any. */
 export function definitionForBase(
@@ -333,9 +380,8 @@ export function resolveSection(
   return unmapped(builtinQuerydown(content.builtin));
 }
 
-/** The Querydown text a sort/display section resolves to, used to seed the
- * custom editor when switching a preset/built-in back to "Custom …" so nothing
- * is lost. A dangling preset reference resolves to empty rather than
+/** The Querydown text a sort/display section resolves to, for flattening it
+ * into a full query. A dangling preset reference resolves to empty rather than
  * throwing. */
 export function sectionSeedText(
   content: SectionContent,

@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAppStore,
+  initialPresetManager,
+  presetUsageLabel,
   presetUsers,
+  selectEffectivePresets,
+  selectPreset,
+  selectPresetsFor,
+  selectPresetUnsaved,
   PRELUDE_TAB_ID,
   PRESETS_TAB_ID,
   type AppStoreBundle,
@@ -11,6 +17,8 @@ import { fakeEnv } from "./testEnv";
 import { buildResultFromStringRows } from "../../query/result";
 import { presetTables } from "../../query/presetGroups";
 import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
+import { PLAYLIST_SOURCE } from "../../dev/fixtures";
+import type { QueryDefinition } from "../../query/definition";
 
 // `settingSet`/`settingDelete`/`dml`, the query-tree writes and the preset writes are the only
 // api-client calls the tests below exercise directly; every other export is used as-is (its return value
@@ -34,6 +42,7 @@ vi.mock("api-client", async (importOriginal) => {
     presetAdd: vi.fn(() => Promise.resolve(null)),
     presetUpdate: vi.fn(() => Promise.resolve(null)),
     presetDelete: vi.fn(() => Promise.resolve(null)),
+    presetList: vi.fn(() => Promise.resolve([])),
   };
 });
 // A playlist's entries, read as raw SQL, so duplicating and deleting one can be
@@ -100,6 +109,7 @@ import {
   presetAdd,
   presetDelete,
   presetUpdate,
+  presetList,
   queryAdd,
   sourceArrange,
   queryDelete,
@@ -398,11 +408,11 @@ describe("toggleFilterPreset", () => {
     });
     bundle.actions.toggleFilterPreset("a", "p1"); // add it
     bundle.actions.toggleExpandPreset("a", "p1"); // expand it
-    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBe("p1");
+    expect(bundle.store.getState().pages["a"]?.expandedPresets).toEqual(["p1"]);
 
     bundle.actions.toggleFilterPreset("a", "p1"); // remove it again
 
-    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBeNull();
+    expect(bundle.store.getState().pages["a"]?.expandedPresets).toEqual([]);
   });
 
   it("leaves a different preset's expansion alone", () => {
@@ -411,7 +421,23 @@ describe("toggleFilterPreset", () => {
     bundle.actions.toggleExpandPreset("a", "other");
     bundle.actions.toggleFilterPreset("a", "p1");
     bundle.actions.toggleFilterPreset("a", "p1");
-    expect(bundle.store.getState().pages["a"]?.expandedPreset).toBe("other");
+    expect(bundle.store.getState().pages["a"]?.expandedPresets).toEqual([
+      "other",
+    ]);
+  });
+
+  it("keeps any number open, through switching sections", () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    const expanded = () => bundle.store.getState().pages["a"]?.expandedPresets;
+    bundle.actions.toggleExpandPreset("a", "p1");
+    bundle.actions.toggleExpandPreset("a", "p2");
+    expect(expanded()).toEqual(["p1", "p2"]);
+    bundle.actions.toggleBuilderSection("a", "sort");
+    bundle.actions.focusBuilderSection("a", "filter");
+    expect(expanded()).toEqual(["p1", "p2"]);
+    bundle.actions.toggleExpandPreset("a", "p1");
+    expect(expanded()).toEqual(["p2"]);
   });
 });
 
@@ -470,15 +496,24 @@ describe("default presets", () => {
     expect(defaults(bundle)).toEqual(["f", "s", "d", "s-album", added]);
   });
 
-  it("making a display the default displaces the old one, and its open edit", () => {
+  it("making a display the default displaces the old one at once", () => {
     bundle.store.setState((s) => {
       s.presets.push({ ...preset("d2", "display"), isDefault: false });
     });
-    bundle.actions.beginPresetEdit("d");
-    bundle.actions.patchPresetEdit("d2", { isDefault: true });
-    bundle.actions.commitPresetEdit("d2");
+    bundle.actions.patchPreset("d2", { isDefault: true });
     expect(defaults(bundle)).toEqual(["f", "s", "s-album", "d2"]);
-    expect(bundle.store.getState().presetEdits["d"]?.isDefault).toBe(false);
+  });
+
+  it("gives an unsaved preset no say in what's a default", () => {
+    bundle.actions.openPresetDraft("track", "display");
+    const id = bundle.store.getState().unsavedPresets[0].id;
+    bundle.actions.patchPreset(id, { name: "mine", isDefault: true });
+    expect(defaults(bundle)).toEqual(["f", "s", "d", "s-album"]);
+    bundle.actions.newQueryTab();
+    const tab = bundle.store.getState().tabs.at(-1);
+    expect(tab?.kind === "query" && tab.live.display).toEqual({ preset: "d" });
+    bundle.actions.savePreset(id);
+    expect(defaults(bundle)).toEqual(["f", "s", "s-album", id]);
   });
 });
 
@@ -525,11 +560,10 @@ describe("the preset manager", () => {
     bundle.actions.toggleManagedPreset("f");
     bundle.actions.openPresetDraft("track", "sort");
     bundle.actions.closeTab(PRESETS_TAB_ID);
-    expect(bundle.store.getState().presetManager).toEqual({
-      expandedTables: [],
-      expanded: null,
-      drafts: {},
-    });
+    const s = bundle.store.getState();
+    expect(s.presetManager).toEqual(initialPresetManager());
+    // The unsaved preset it was writing goes with it.
+    expect(s.unsavedPresets).toEqual([]);
   });
 
   it("expands one table, or every table on a Ctrl+Click", () => {
@@ -552,13 +586,15 @@ describe("the preset manager", () => {
 
   it("duplicates a preset as an ordinary one, opened in the manager", () => {
     bundle.actions.duplicatePreset("s");
-    const draft = bundle.store.getState().presetManager.drafts["sort:track"];
+    const draft = bundle.store.getState().unsavedPresets[0];
     expect(draft).toMatchObject({
       name: "s copy",
       definition: "s definition",
+      section: "sort",
       isDefault: false,
     });
-    bundle.actions.confirmPresetDraft("track", "sort");
+    expect(bundle.store.getState().presetManager.drafts).toEqual([draft.id]);
+    bundle.actions.savePreset(draft.id);
     const s = bundle.store.getState();
     const copy = s.presets.at(-1)!;
     expect(copy).toMatchObject({
@@ -570,10 +606,11 @@ describe("the preset manager", () => {
     expect(copy.id).not.toBe("s");
     // The original stays the default.
     expect(s.presets.find((p) => p.id === "s")?.isDefault).toBe(true);
-    expect(s.presetManager.drafts).toEqual({});
+    expect(s.unsavedPresets).toEqual([]);
     expect(s.presetManager).toMatchObject({
+      drafts: [],
       expandedTables: ["track"],
-      expanded: copy.id,
+      expanded: [copy.id],
     });
     expect(presetAdd).toHaveBeenCalledWith(copy);
   });
@@ -583,11 +620,9 @@ describe("the preset manager", () => {
     expect(bundle.store.getState().presetManager.expandedTables).toEqual([
       "album",
     ]);
-    bundle.actions.patchPresetDraft("album", "sort", {
-      name: "by year",
-      isDefault: true,
-    });
-    bundle.actions.confirmPresetDraft("album", "sort");
+    const id = bundle.store.getState().unsavedPresets[0].id;
+    bundle.actions.patchPreset(id, { name: "by year", isDefault: true });
+    bundle.actions.savePreset(id);
     // The album's default sort doesn't displace the track's.
     expect(
       presets(bundle)
@@ -599,30 +634,54 @@ describe("the preset manager", () => {
     ]);
   });
 
-  it("keeps a new preset being written when its section's + is pressed again", () => {
+  it("discards a new preset being written", () => {
     bundle.actions.openPresetDraft("track", "filter");
-    bundle.actions.patchPresetDraft("track", "filter", { name: "half done" });
-    bundle.actions.openPresetDraft("track", "filter");
-    bundle.actions.openPresetDraft("track", "display");
-    const { drafts } = bundle.store.getState().presetManager;
-    expect(drafts["filter:track"]?.name).toBe("half done");
-    expect(Object.keys(drafts).sort()).toEqual([
-      "display:track",
-      "filter:track",
-    ]);
-    bundle.actions.cancelPresetDraft("track", "filter");
-    expect(Object.keys(bundle.store.getState().presetManager.drafts)).toEqual([
-      "display:track",
-    ]);
+    const id = bundle.store.getState().unsavedPresets[0].id;
+    bundle.actions.requestPresetDelete(id);
+    const s = bundle.store.getState();
+    expect(s.pendingPresetDelete).toBeNull();
+    expect(s.unsavedPresets).toEqual([]);
+    expect(s.presetManager.drafts).toEqual([]);
+    expect(s.presetManager.expanded).toEqual([]);
   });
 
   it("won't create a preset without a name", () => {
     bundle.actions.openPresetDraft("track", "filter");
-    bundle.actions.confirmPresetDraft("track", "filter");
+    const id = bundle.store.getState().unsavedPresets[0].id;
+    bundle.actions.savePreset(id);
     expect(presets(bundle)).toHaveLength(2);
-    expect(
-      bundle.store.getState().presetManager.drafts["filter:track"],
-    ).toBeDefined();
+    expect(bundle.store.getState().unsavedPresets.map((p) => p.id)).toEqual([
+      id,
+    ]);
+    expect(presetAdd).not.toHaveBeenCalled();
+  });
+
+  it("opens any number of presets, each holding its place until closed", () => {
+    bundle.actions.toggleManagedPreset("f");
+    bundle.actions.toggleManagedPreset("s");
+    bundle.actions.patchPreset("f", { name: "zebra" });
+    const { expanded, listedNames } = bundle.store.getState().presetManager;
+    expect(expanded).toEqual(["f", "s"]);
+    expect(listedNames).toEqual({ f: "f", s: "s" });
+    bundle.actions.toggleManagedPreset("f");
+    const m = bundle.store.getState().presetManager;
+    expect(m.expanded).toEqual(["s"]);
+    expect(m.listedNames).toEqual({ s: "s" });
+  });
+
+  it("opens at a table, bringing it into view", () => {
+    bundle.actions.openPresetsTab("album");
+    expect(bundle.store.getState().presetManager).toMatchObject({
+      expandedTables: ["album"],
+      revealTable: "album",
+    });
+    bundle.actions.clearPresetManagerReveal();
+    bundle.actions.openPresetsTab("album");
+    bundle.actions.openPresetsTab("track");
+    expect(bundle.store.getState().presetManager).toMatchObject({
+      expandedTables: ["album", "track"],
+      revealTable: "track",
+    });
   });
 
   it("deletes a preset, and whatever was open on it", () => {
@@ -636,35 +695,417 @@ describe("the preset manager", () => {
     });
     bundle.actions.toggleExpandPreset("a", "f");
     bundle.actions.toggleManagedPreset("f");
-    bundle.actions.patchPresetEdit("f", { name: "renamed" });
+    bundle.actions.patchPreset("f", { name: "renamed" });
     bundle.actions.requestPresetDelete("f");
     bundle.actions.confirmPresetDelete();
     const s = bundle.store.getState();
     expect(s.presets.map((p) => p.id)).toEqual(["s"]);
-    expect(s.presetEdits).toEqual({});
-    expect(s.presetManager.expanded).toBeNull();
-    expect(s.pages["a"]?.expandedPreset).toBeNull();
+    expect(s.presetSaves).toEqual({});
+    expect(s.presetManager.expanded).toEqual([]);
+    expect(s.pages["a"]?.expandedPresets).toEqual([]);
     expect(s.pendingPresetDelete).toBeNull();
     expect(presetDelete).toHaveBeenCalledWith({ id: "f" });
   });
+});
 
-  it("re-runs the open pages that use a preset once an edit to it is saved", () => {
-    const open = (id: string, filterPresets: string[]) =>
-      bundle.actions.openTab({
-        id,
-        name: id,
+describe("editing a preset", () => {
+  const IDLE = 5000;
+  const preset = (id: string, section = "filter") => ({
+    id,
+    name: id,
+    baseTable: "track",
+    section,
+    definition: `title:${id}`,
+    isDefault: false,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+  /** Opens a saved query tab with `id`, using `filterPresets`. */
+  const open = (id: string, filterPresets: string[] = []) =>
+    bundle.actions.openTab({
+      id,
+      name: id,
+      definition: JSON.stringify({
+        base: "track",
+        filter: { custom: "", presets: filterPresets },
+      }),
+    });
+  const live = (id: string) => {
+    const t = bundle.store.getState().tabs.find((x) => x.id === id);
+    if (t?.kind !== "query") throw new Error(`no query tab ${id}`);
+    return t.live;
+  };
+
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(presetAdd).mockReset();
+    vi.mocked(presetAdd).mockResolvedValue(null);
+    vi.mocked(presetUpdate).mockReset();
+    vi.mocked(presetUpdate).mockResolvedValue(null);
+    vi.mocked(sourceUpdateDefinition).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+    bundle.store.setState((s) => {
+      s.presets.push(preset("f"), preset("s", "sort"));
+    });
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("applies a change at once and writes it once the app goes quiet", async () => {
+    bundle.actions.patchPreset("f", { definition: "title:a" });
+    bundle.actions.patchPreset("f", { definition: "title:ab" });
+    const s = bundle.store.getState();
+    expect(s.presets[0].definition).toBe("title:ab");
+    expect(selectEffectivePresets(s)[0].definition).toBe("title:ab");
+    expect(selectPresetUnsaved(s, "f")).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(IDLE - 1);
+    expect(presetUpdate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(presetUpdate).toHaveBeenCalledTimes(1);
+    expect(presetUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "f", definition: "title:ab" }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bundle.store.getState().presetSaves).toEqual({});
+  });
+
+  it("writes at once when the user leaves the editor", async () => {
+    bundle.actions.patchPreset("f", { name: "renamed" });
+    bundle.actions.flushPresetSave("f");
+    expect(presetUpdate).toHaveBeenCalledTimes(1);
+    expect(presetUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "f", name: "renamed" }),
+    );
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(presetUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a later change waiting past a write that landed", async () => {
+    let land = () => {};
+    vi.mocked(presetUpdate).mockReturnValueOnce(
+      new Promise((resolve) => {
+        land = () => resolve(null);
+      }),
+    );
+    bundle.actions.patchPreset("f", { definition: "title:one" });
+    bundle.actions.flushPresetSave("f");
+    bundle.actions.patchPreset("f", { definition: "title:two" });
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bundle.store.getState().presetSaves["f"]?.saved.definition).toBe(
+      "title:one",
+    );
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(presetUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ definition: "title:two" }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bundle.store.getState().presetSaves).toEqual({});
+  });
+
+  it("marks a failed write, retries it on Save, and reverts to the backend's copy", async () => {
+    vi.mocked(presetUpdate).mockRejectedValueOnce(new Error("no"));
+    bundle.actions.patchPreset("f", { definition: "title:bad" });
+    bundle.actions.flushPresetSave("f");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(selectPresetUnsaved(bundle.store.getState(), "f")).toBe(true);
+
+    vi.mocked(presetUpdate).mockRejectedValueOnce(new Error("no"));
+    bundle.actions.savePreset("f");
+    expect(presetUpdate).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(selectPresetUnsaved(bundle.store.getState(), "f")).toBe(true);
+
+    bundle.actions.revertPreset("f");
+    const s = bundle.store.getState();
+    expect(s.presets[0].definition).toBe("title:f");
+    expect(selectPresetUnsaved(s, "f")).toBe(false);
+    expect(s.presetSaves).toEqual({});
+  });
+
+  it("holds the write while the name is blank", async () => {
+    bundle.actions.patchPreset("f", { name: " " });
+    expect(selectPresetUnsaved(bundle.store.getState(), "f")).toBe(true);
+    bundle.actions.flushPresetSave("f");
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(presetUpdate).not.toHaveBeenCalled();
+
+    bundle.actions.revertPreset("f");
+    expect(bundle.store.getState().presets[0].name).toBe("f");
+    expect(selectPresetUnsaved(bundle.store.getState(), "f")).toBe(false);
+  });
+
+  it("re-runs the open pages using it, after a pause in the typing", async () => {
+    open("uses", ["f"]);
+    open("doesnt");
+    // Their first runs land.
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(runSql).mockClear();
+    bundle.actions.patchPreset("f", { definition: "title:x" });
+    bundle.actions.patchPreset("f", { definition: "title:xy" });
+    await vi.advanceTimersByTimeAsync(299);
+    expect(runSql).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    // Only the page using it, once.
+    expect(runSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't re-run for a change to its name", async () => {
+    open("uses", ["f"]);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(runSql).mockClear();
+    bundle.actions.patchPreset("f", { name: "renamed" });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runSql).not.toHaveBeenCalled();
+  });
+
+  it("keeps unwritten changes through a reload of the list", async () => {
+    vi.mocked(presetList).mockResolvedValueOnce([
+      preset("f"),
+      preset("s", "sort"),
+    ]);
+    bundle.actions.patchPreset("f", { definition: "title:mine" });
+    await bundle.actions.loadPresets();
+    const s = bundle.store.getState();
+    expect(s.presets[0].definition).toBe("title:mine");
+    expect(s.presets[1].definition).toBe("title:s");
+  });
+
+  describe("in a query", () => {
+    it("inlines a filter preset after what's there, on a new line", () => {
+      open("a", ["f"]);
+      bundle.actions.setFilterCustom("a", "year:1999");
+      bundle.actions.toggleExpandPreset("a", "f");
+      bundle.actions.inlinePreset("a", "filter", "f");
+      expect(live("a").filter).toEqual({
+        custom: "year:1999\ntitle:f",
+        presets: [],
+      });
+      expect(bundle.store.getState().pages["a"]?.expandedPresets).toEqual([]);
+    });
+
+    it("inlines a filter preset as the whole of an empty custom filter", () => {
+      open("a", ["f"]);
+      bundle.actions.inlinePreset("a", "filter", "f");
+      expect(live("a").filter).toEqual({ custom: "title:f", presets: [] });
+    });
+
+    it("inlines the version being edited", () => {
+      open("a", ["f"]);
+      bundle.actions.patchPreset("f", { definition: "title:edited" });
+      bundle.actions.inlinePreset("a", "filter", "f");
+      expect(live("a").filter.custom).toBe("title:edited");
+    });
+
+    it("inlines a sort preset as the custom sort", () => {
+      open("a");
+      bundle.actions.setSectionContent("a", "sort", { preset: "s" });
+      bundle.actions.inlinePreset("a", "sort", "s");
+      expect(live("a").sort).toEqual({ custom: "title:s" });
+    });
+
+    it("removes a preset, leaving the section empty", () => {
+      open("a", ["f"]);
+      bundle.actions.setSectionContent("a", "sort", { preset: "s" });
+      bundle.actions.removePreset("a", "filter", "f");
+      bundle.actions.removePreset("a", "sort", "s");
+      expect(live("a").filter.presets).toEqual([]);
+      expect(live("a").sort).toEqual({ custom: "" });
+    });
+
+    it("removes a playlist's sort preset back to the playlist's order", () => {
+      bundle.actions.openTab(PLAYLIST_SOURCE);
+      const id = PLAYLIST_SOURCE.id;
+      bundle.actions.setSectionContent(id, "sort", { preset: "s" });
+      bundle.actions.removePreset(id, "sort", "s");
+      const t = bundle.store.getState().tabs.find((x) => x.id === id);
+      expect(t?.kind === "playlist" && t.live.sort).toEqual({
+        builtin: { preset: "playlist_order" },
+      });
+    });
+  });
+
+  describe("that's never been saved", () => {
+    const added = () => bundle.store.getState().unsavedPresets[0];
+
+    it("adds a blank one in force in the section, open, before any save", () => {
+      open("a");
+      bundle.actions.addNewPreset("a", "filter");
+      const s = bundle.store.getState();
+      expect(added()).toMatchObject({
+        name: "",
+        definition: "",
+        baseTable: "track",
+        section: "filter",
+      });
+      expect(live("a").filter.presets).toEqual([added().id]);
+      expect(s.pages["a"]?.builderSection).toBe("filter");
+      expect(s.pages["a"]?.expandedPresets).toEqual([added().id]);
+      expect(s.presets.map((p) => p.id)).toEqual(["f", "s"]);
+      expect(selectEffectivePresets(s).map((p) => p.id)).toContain(added().id);
+      expect(selectPresetUnsaved(s, added().id)).toBe(true);
+      expect(presetAdd).not.toHaveBeenCalled();
+    });
+
+    it("runs the query with it as it's written, writing nothing", async () => {
+      open("a");
+      await vi.advanceTimersByTimeAsync(0);
+      bundle.actions.addNewPreset("a", "filter");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(runSql).mockClear();
+      bundle.actions.patchPreset(added().id, { definition: "title:new" });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(runSql).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(IDLE);
+      expect(presetUpdate).not.toHaveBeenCalled();
+      expect(presetAdd).not.toHaveBeenCalled();
+    });
+
+    it("leaves it out of what a saved query stores, until it's saved", async () => {
+      vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
+      open("a", ["f"]);
+      bundle.store.setState((s) => {
+        const t = s.tabs.find((x) => x.id === "a");
+        if (t?.kind === "query") t.persisted = true;
+      });
+      bundle.actions.addNewPreset("a", "filter");
+      const { id } = added();
+      await vi.advanceTimersByTimeAsync(IDLE);
+      const stored = () =>
+        JSON.parse(
+          vi.mocked(sourceUpdateDefinition).mock.lastCall![0].definition,
+        ) as QueryDefinition;
+      expect(stored().filter.presets).toEqual(["f"]);
+      // In force all the same.
+      expect(live("a").filter.presets).toEqual(["f", id]);
+
+      bundle.actions.patchPreset(id, { name: "mine" });
+      bundle.actions.savePreset(id);
+      expect(presetAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ id, name: "mine" }),
+      );
+      await vi.advanceTimersByTimeAsync(IDLE);
+      expect(stored().filter.presets).toEqual(["f", id]);
+    });
+
+    it("keeps a saved sort in what's stored while an unsaved one is in force", async () => {
+      vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
+      open("a");
+      bundle.store.setState((s) => {
+        const t = s.tabs.find((x) => x.id === "a");
+        if (t?.kind === "query") {
+          t.persisted = true;
+          t.saved = { ...t.saved, sort: { preset: "s" } };
+          t.live = { ...t.live, sort: { preset: "s" } };
+        }
+      });
+      bundle.actions.addNewPreset("a", "sort");
+      await vi.advanceTimersByTimeAsync(IDLE);
+      const def = JSON.parse(
+        vi.mocked(sourceUpdateDefinition).mock.lastCall![0].definition,
+      ) as QueryDefinition;
+      expect(def.sort).toEqual({ preset: "s" });
+      expect(live("a").sort).toEqual({ preset: added().id });
+    });
+
+    it("puts it back to unsaved if the backend turns it down", async () => {
+      open("a");
+      bundle.actions.addNewPreset("a", "filter");
+      const { id } = added();
+      bundle.actions.patchPreset(id, { name: "mine" });
+      vi.mocked(presetAdd).mockRejectedValueOnce(new Error("no"));
+      bundle.actions.savePreset(id);
+      expect(bundle.store.getState().unsavedPresets).toEqual([]);
+      await vi.advanceTimersByTimeAsync(0);
+      const s = bundle.store.getState();
+      expect(s.presets.map((p) => p.id)).toEqual(["f", "s"]);
+      expect(s.unsavedPresets.map((p) => p.name)).toEqual(["mine"]);
+      expect(live("a").filter.presets).toEqual([id]);
+    });
+
+    it("discarding takes it out of every page, though undo can bring it back", async () => {
+      open("a");
+      await vi.advanceTimersByTimeAsync(0);
+      bundle.actions.addNewPreset("a", "filter");
+      await vi.advanceTimersByTimeAsync(0);
+      const { id } = added();
+      bundle.actions.revertPreset(id);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(live("a").filter.presets).toEqual([]);
+      expect(bundle.store.getState().pages["a"]?.expandedPresets).toEqual([]);
+
+      bundle.actions.undo("a");
+      expect(live("a").filter.presets).toEqual([id]);
+      expect(selectPreset(bundle.store.getState(), id)).toBeDefined();
+    });
+
+    it("goes when the last tab that could use it closes", async () => {
+      open("a");
+      await vi.advanceTimersByTimeAsync(0);
+      bundle.actions.addNewPreset("a", "filter");
+      bundle.actions.closeTab("a");
+      expect(bundle.store.getState().unsavedPresets).toEqual([]);
+    });
+
+    it("only lists it in the menu of the page using it", () => {
+      open("a");
+      open("b");
+      bundle.actions.addNewPreset("a", "filter");
+      const ids = (tabId: string) =>
+        selectPresetsFor(bundle.store.getState(), tabId, "filter").map(
+          (p) => p.id,
+        );
+      expect(ids("a")).toEqual(["f", added().id]);
+      expect(ids("b")).toEqual(["f"]);
+    });
+
+    it("survives a reload with the tabs using it", () => {
+      const env = fakeEnv();
+      const first = createAppStore(env);
+      first.actions.openTab({
+        id: "a",
+        name: "a",
         definition: JSON.stringify({
           base: "track",
-          filter: { custom: "", presets: filterPresets },
+          filter: { custom: "", presets: [] },
         }),
       });
-    open("uses", ["f"]);
-    open("doesnt", []);
-    bundle.actions.patchPresetEdit("f", { definition: "year:1999" });
-    bundle.actions.commitPresetEdit("f");
-    const pages = bundle.store.getState().pages;
-    expect(pages["uses"]?.running).toBe(true);
-    expect(pages["doesnt"]?.running ?? false).toBe(false);
+      first.actions.addNewPreset("a", "filter");
+      const [unsaved] = first.store.getState().unsavedPresets;
+      first.actions.patchPreset(unsaved.id, { definition: "title:mine" });
+      const second = createAppStore(env);
+      expect(second.store.getState().unsavedPresets).toEqual([
+        expect.objectContaining({ id: unsaved.id, definition: "title:mine" }),
+      ]);
+    });
+  });
+});
+
+describe("presetUsageLabel", () => {
+  const users = (queries: number, playlists = 0) => [
+    ...Array.from({ length: queries }, (_, i) => ({
+      id: `q${i}`,
+      kind: "query" as const,
+      name: "",
+    })),
+    ...Array.from({ length: playlists }, (_, i) => ({
+      id: `p${i}`,
+      kind: "playlist" as const,
+      name: "",
+    })),
+  ];
+
+  it("counts queries and playlists", () => {
+    expect(presetUsageLabel(users(0))).toBe("in 0 queries");
+    expect(presetUsageLabel(users(1))).toBe("in 1 query");
+    expect(presetUsageLabel(users(5))).toBe("in 5 queries");
+    expect(presetUsageLabel(users(0, 1))).toBe("in 1 playlist");
+    expect(presetUsageLabel(users(2, 3))).toBe("in 2 queries and 3 playlists");
   });
 });
 

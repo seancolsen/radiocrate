@@ -10,7 +10,7 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import FieldLabel from "../../components/record/FieldLabel";
 import ModifiedStar from "../../components/record/ModifiedStar";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
-import PresetTab from "../../components/builder/PresetTab";
+import { PresetRowView } from "../../components/builder/PresetRow";
 import QuerydownEditor from "../../components/builder/QuerydownEditor";
 import DiagnosticMessage from "../../components/builder/DiagnosticMessage";
 import { Checkbox } from "../../components/ui/Checkbox";
@@ -495,24 +495,39 @@ function Menus(): JSX.Element {
   );
 }
 
+const noop = () => {};
+
 function Surfaces(): JSX.Element {
   return (
     <Section title="Presets, records and chips">
       <div className="flex flex-col gap-3">
         <Row>
           <Specimen caption="preset">
-            <PresetTab name="Vetted" />
+            <PresetRowView name="Vetted" expanded={false} onToggle={noop} />
           </Specimen>
           <Specimen caption="preset, expanded">
-            <div>
-              <PresetTab name="Vetted" expanded />
-              <div className="bg-preset text-ink rounded-b-md px-2 py-1.5 font-mono text-xs">
+            <PresetRowView
+              name="Vetted"
+              isDefault
+              expanded
+              onToggle={noop}
+              usage="in 5 queries"
+            >
+              <div className="text-ink px-2 pb-1.5 font-mono text-xs">
                 rating.value:&gt;=4
               </div>
-            </div>
+            </PresetRowView>
           </Specimen>
           <Specimen caption="preset, problem">
-            <PresetTab name="Vetted" problem />
+            <PresetRowView
+              name="Vetted"
+              expanded={false}
+              problem
+              onToggle={noop}
+            />
+          </Specimen>
+          <Specimen caption="preset, unsaved">
+            <PresetRowView name="" unsaved expanded={false} onToggle={noop} />
           </Specimen>
           <Specimen caption="drag chip">
             <div className="bg-accent text-panel flex items-center gap-1 rounded-md px-2 py-1 text-sm whitespace-nowrap shadow-md">
