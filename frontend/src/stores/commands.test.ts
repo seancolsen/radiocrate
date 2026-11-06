@@ -84,6 +84,16 @@ describe("commands store", () => {
     });
   });
 
+  describe('run("query.new")', () => {
+    it("opens a new query, with or without a tab open", () => {
+      commands.actions.run("query.new");
+      commands.actions.run("query.new");
+      const { tabs, activeTabId } = app.store.getState();
+      expect(tabs.map((t) => t.kind)).toEqual(["query", "query"]);
+      expect(activeTabId).toBe(tabs[1].id);
+    });
+  });
+
   describe("selection commands", () => {
     it("route to the focused record form instead of the result rows", () => {
       app.actions.openTab({ id: "t", name: "t", definition: "{}" });

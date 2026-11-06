@@ -52,37 +52,20 @@ function WiredTabHandle(props: {
   );
 }
 
-/** The tab bar across the top: the explorer toggle, one handle per open tab
- * (drag-to-reorder: the dragged handle stays put, dimmed, and an accent line
- * marks the gap it would drop into), then a new-query button. Height is TAB_BAR_HEIGHT (34px);
- * the bar background is a step darker than the content panel.
- *
- * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
- * every page the same (select, close, drag to reorder). */
-export default function TabBar(): JSX.Element {
+/** Opens and closes the explorer. Its own component so that its tooltip goes
+ * with it when the last tab closes, even from under a resting pointer. */
+function ExplorerToggle(): JSX.Element {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
-  const tabs = useApp((s) => s.tabs);
-  const activeTabId = useApp((s) => s.activeTabId);
   const actions = useAppActions();
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dnd = useTabDragReorder(() => containerRef.current);
-  const explorerTip = useTooltip({
+  const tip = useTooltip({
     label: sidebarOpen ? "Close explorer" : "Open explorer",
     command: "explorer.toggle",
   });
-  const newQueryTip = useTooltip({ label: "New query" });
-
   return (
-    <div
-      ref={containerRef}
-      data-testid="tab-bar"
-      className="bg-bar relative flex h-[34px] shrink-0 items-stretch"
-    >
-      {/* Explorer toggle: always present. */}
+    <>
       <button
         type="button"
-        {...explorerTip.triggerProps}
+        {...tip.triggerProps}
         className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
         onClick={() => actions.toggleSidebar()}
       >
@@ -92,7 +75,35 @@ export default function TabBar(): JSX.Element {
           <Icons.ExplorerOpen className="size-5" />
         )}
       </button>
-      {explorerTip.tooltip}
+      {tip.tooltip}
+    </>
+  );
+}
+
+/** The tab bar across the top: the explorer toggle, one handle per open tab
+ * (drag-to-reorder: the dragged handle stays put, dimmed, and an accent line
+ * marks the gap it would drop into), then a new-query button. Height is TAB_BAR_HEIGHT (34px);
+ * the bar background is a step darker than the content panel.
+ *
+ * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
+ * every page the same (select, close, drag to reorder). */
+export default function TabBar(): JSX.Element {
+  const tabs = useApp((s) => s.tabs);
+  const activeTabId = useApp((s) => s.activeTabId);
+  const actions = useAppActions();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dnd = useTabDragReorder(() => containerRef.current);
+  const newQueryTip = useTooltip({ label: "New query", command: "query.new" });
+
+  return (
+    <div
+      ref={containerRef}
+      data-testid="tab-bar"
+      className="bg-bar relative flex h-[34px] shrink-0 items-stretch"
+    >
+      {/* With no tabs open, the explorer is held open: nothing to toggle. */}
+      {tabs.length > 0 && <ExplorerToggle />}
 
       {tabs.map((tab) => (
         <WiredTabHandle

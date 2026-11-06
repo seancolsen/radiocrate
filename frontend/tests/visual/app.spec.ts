@@ -27,17 +27,17 @@ async function mockRpc(page: Page) {
 }
 
 for (const colorScheme of SCHEMES) {
-  // The app frame with no tabs open and the explorer closed.
-  test(`app/everything-closed - ${colorScheme}`, async ({ page }) => {
+  // The app frame with no tabs open: the explorer held open beside the logo and
+  // the ways to get started.
+  test(`app/no-tabs - ${colorScheme}`, async ({ page }) => {
     await mockRpc(page);
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     await page.evaluate(() => document.fonts.ready);
-    await expect(page).toHaveScreenshot(
-      snapshot("app/everything-closed", colorScheme),
-      { fullPage: true },
-    );
+    await expect(page).toHaveScreenshot(snapshot("app/no-tabs", colorScheme), {
+      fullPage: true,
+    });
   });
 
   // The keyboard-shortcuts editor filling the only open tab: the whole command

@@ -39,6 +39,10 @@ async function openApp(
   await mockRpc(page);
   await page.setViewportSize(viewport);
   await page.goto(`/?${query}`);
+  // The explorer is pinned until the seeded tabs arrive.
+  if (query.includes("tabs=")) {
+    await expect(page.locator("[data-tab-id]").first()).toBeVisible();
+  }
 }
 
 const explorer = (page: Page) =>
@@ -290,6 +294,125 @@ test.describe("the explorer's layout", () => {
         .locator("canvas")
         .evaluate((el) => (el as HTMLElement & { marked?: boolean }).marked),
     ).toBe(true);
+  });
+});
+
+test.describe("with no tabs open", () => {
+  const toggle = (page: Page) =>
+    page.getByRole("button", { name: /^(Open|Close) explorer$/ });
+  const tabHandles = (page: Page) => page.locator("[data-tab-id]");
+
+  test.describe("beside a closed explorer's main column", () => {
+    test.use({ hasTouch: false });
+
+    test.beforeEach(async ({ page }) => {
+      await openApp(page, { width: 1280, height: 800 }, "sidebar=closed");
+      await expect(explorer(page)).toBeVisible();
+    });
+
+    test("the explorer stays open with no toggle, and no way to toggle it", async ({
+      page,
+    }) => {
+      await expect(toggle(page)).toHaveCount(0);
+      await page.keyboard.press("Control+b");
+      await expect(explorer(page)).toBeVisible();
+      expect(
+        await page.evaluate(() => localStorage.getItem("sidebarOpen")),
+      ).toBe("false");
+    });
+
+    test("opening a tab hands the explorer back to its stored state", async ({
+      page,
+    }) => {
+      await page
+        .getByRole("button", { name: "New Query", exact: true })
+        .click();
+      await expect(tabHandles(page)).toHaveCount(1);
+      await expect(explorer(page)).toBeHidden();
+      await expect(toggle(page)).toHaveAccessibleName("Open explorer");
+    });
+
+    test("closing the last tab brings it all back", async ({ page }) => {
+      await page
+        .getByRole("button", { name: "New Query", exact: true })
+        .click();
+      await expect(explorer(page)).toBeHidden();
+      await page.keyboard.press("Control+Alt+w");
+      await expect(tabHandles(page)).toHaveCount(0);
+      await expect(explorer(page)).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "New Query", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("each button shows its shortcut, and does what it does", async ({
+      page,
+    }) => {
+      const newQuery = page.getByRole("button", {
+        name: "New Query",
+        exact: true,
+      });
+      await expect(newQuery).toHaveAttribute("aria-keyshortcuts", "Control+N");
+      await expect(newQuery).toContainText("Ctrl+N");
+      const palette = page.getByRole("button", {
+        name: "Command Palette",
+        exact: true,
+      });
+      await expect(palette).toHaveAttribute(
+        "aria-keyshortcuts",
+        "Control+Shift+P",
+      );
+      await expect(palette).toContainText("Ctrl+Shift+P");
+      await palette.click();
+      await expect(page.getByRole("combobox")).toBeFocused();
+    });
+
+    test("Ctrl+N opens a new query", async ({ page }) => {
+      await page.keyboard.press("Control+n");
+      await expect(tabHandles(page)).toHaveCount(1);
+      await page.keyboard.press("Control+n");
+      await expect(tabHandles(page)).toHaveCount(2);
+    });
+  });
+
+  test.describe("on a phone", () => {
+    test("the explorer is a column, leaving the buttons within reach", async ({
+      page,
+    }) => {
+      await openApp(page, PHONE, "");
+      const box = (await explorer(page).boundingBox())!;
+      expect(box.x).toBe(0);
+      const button = page.getByRole("button", {
+        name: "New Query",
+        exact: true,
+      });
+      expect((await button.boundingBox())!.x).toBeGreaterThanOrEqual(
+        box.x + box.width,
+      );
+      await button.tap();
+      await expect(tabHandles(page)).toHaveCount(1);
+      await expect(explorer(page)).toBeHidden();
+    });
+
+    test("nothing swipes the column away", async ({ page }) => {
+      await openApp(page, PHONE, "");
+      const f = await dragAndRest(page, 190, 300, -120);
+      await f.up();
+      expect(await explorerLeft(page)).toBe(0);
+      await expect(explorer(page)).toBeVisible();
+    });
+
+    test("a drawer left open by the last tab closing doesn't return", async ({
+      page,
+    }) => {
+      await openApp(page);
+      await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
+      await page.keyboard.press("Control+Alt+w");
+      await expect(tabHandles(page)).toHaveCount(0);
+      await page.keyboard.press("Control+n");
+      await expect(tabHandles(page)).toHaveCount(1);
+      await expect(explorer(page)).toBeHidden();
+    });
   });
 });
 

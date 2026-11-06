@@ -6,6 +6,9 @@ import { usePersistentSidebar } from "./usePersistentSidebar";
 
 /** The least width a persistent panel leaves to the main content. */
 const MIN_MAIN_WIDTH = 240;
+/** The least width a pinned panel leaves to the main content on a viewport too
+ * narrow for {@link MIN_MAIN_WIDTH}. */
+const MIN_PINNED_MAIN_WIDTH = 180;
 /** The least width a drawer leaves uncovered, for its scrim to be tapped on. */
 const MIN_SCRIM_WIDTH = 48;
 
@@ -103,11 +106,15 @@ function Drawer(props: {
  * `main`; narrower, it becomes a modal drawer over `main`. Either way its width
  * is the caller's, which the panel's handle asks to change.
  *
+ * `pinned` holds it open as a column at any width, with nothing to close it.
+ *
  * `main` keeps its place among the children in both layouts, so crossing from
  * one to the other (rotating a phone) doesn't remount the page. */
 export default function SidebarLeft(props: {
   open: boolean;
   onClose: () => void;
+  /** Open as a column whatever `open` says and however narrow the viewport. */
+  pinned?: boolean;
   /** The panel's width in CSS px. */
   width: number;
   /** A new width, while the panel's handle is being dragged… */
@@ -122,6 +129,8 @@ export default function SidebarLeft(props: {
   main: ReactNode;
 }): JSX.Element {
   const persistent = usePersistentSidebar();
+  const column = props.pinned || (persistent && props.open);
+  const columnReserve = persistent ? MIN_MAIN_WIDTH : MIN_PINNED_MAIN_WIDTH;
   const panel = (
     reserve: number,
     className?: string,
@@ -141,14 +150,13 @@ export default function SidebarLeft(props: {
 
   return (
     <>
-      {persistent &&
-        props.open &&
-        panel(MIN_MAIN_WIDTH, "shrink-0", {
+      {column &&
+        panel(columnReserve, "shrink-0", {
           width: `${props.width}px`,
-          maxWidth: `calc(100% - ${MIN_MAIN_WIDTH}px)`,
+          maxWidth: `calc(100% - ${columnReserve}px)`,
         })}
       {props.main}
-      {!persistent && (
+      {!persistent && !props.pinned && (
         <Drawer open={props.open} onClose={props.onClose} width={props.width}>
           {panel(MIN_SCRIM_WIDTH)}
         </Drawer>

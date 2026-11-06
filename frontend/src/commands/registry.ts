@@ -12,8 +12,6 @@
 // Commands whose target feature hasn't been built yet are omitted rather than
 // left dead:
 //
-// - `query.new` — the tab bar's "+" is still an inert placeholder; there is no
-//   create-a-query path in the store yet.
 // - `tabs.pin_active` / `tabs.unpin_active` — tabs carry no pinned state.
 //
 // Their ids stay reserved: a stored override for one of them is skipped on
@@ -31,6 +29,7 @@ export type CommandId =
   | "explorer.toggle"
   | "playback.toggle_play"
   | "playback.next_track"
+  | "query.new"
   | "query.focus_filter"
   | "query.focus_sort"
   | "query.focus_display"
@@ -133,9 +132,10 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     defaultChord: null,
   },
   {
+    // Needs a tab open: with none, the explorer is held open (`App`).
     id: "explorer.toggle",
     title: "Explorer: Toggle explorer sidebar",
-    when: "always",
+    when: "activeTab",
     defaultChord: chordOf("mod+B"),
   },
   {
@@ -149,6 +149,12 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Playback: Skip to next track",
     when: "trackLoaded",
     defaultChord: chordOf("shift+N"),
+  },
+  {
+    id: "query.new",
+    title: "Query: New query",
+    when: "always",
+    defaultChord: chordOf("mod+N"),
   },
   {
     id: "query.focus_filter",

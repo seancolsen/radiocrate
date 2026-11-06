@@ -71,6 +71,7 @@ import { Menu, MenuItem, MenuSubmenu } from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
 import ScrollArea from "../../components/ui/ScrollArea";
 import SidebarLeft from "../../components/ui/SidebarLeft";
+import NoTabsPage from "../../components/NoTabsPage";
 
 // The visual-test harness's catalogue: one entry per snapshot, each putting a
 // single component on screen with the state or props that snapshot is about —
@@ -694,6 +695,16 @@ export const STORIES: Record<string, Story> = {
       openLemonade(stores);
     },
     render: () => <TabBar />,
+  },
+
+  // ── The content area with no tab open ────────────────────────────────────
+  // As narrow as a phone leaves it beside the explorer: each shortcut wraps
+  // under its button's label.
+  "no-tabs-page/narrow": {
+    width: 180,
+    height: 400,
+    frame: "flex flex-col",
+    render: () => <NoTabsPage />,
   },
 
   // ── Settings ─────────────────────────────────────────────────────────────

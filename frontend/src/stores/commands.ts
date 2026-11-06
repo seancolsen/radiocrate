@@ -363,6 +363,9 @@ export function createCommandsStore(
       case "playback.next_track":
         app.actions.skipNext();
         break;
+      case "query.new":
+        app.actions.newQueryTab();
+        break;
       case "query.focus_filter":
         if (queryId) app.actions.focusBuilderSection(queryId, "filter");
         break;

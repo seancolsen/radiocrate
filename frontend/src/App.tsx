@@ -1,10 +1,12 @@
-import { Activity, type JSX } from "react";
+import { Activity, useEffect, type JSX } from "react";
 import { useShallow } from "zustand/shallow";
 import { selectTab } from "./stores/app";
 import { useApp, useAppActions } from "./stores/react";
 import SidebarLeft from "./components/ui/SidebarLeft";
+import { usePersistentSidebar } from "./components/ui/usePersistentSidebar";
 import Explorer from "./components/Explorer";
 import TabBar from "./components/TabBar";
+import NoTabsPage from "./components/NoTabsPage";
 import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import PresetManager from "./components/PresetManager";
@@ -64,9 +66,7 @@ function TabContent(): JSX.Element {
           <TabPage tabId={id} />
         </Activity>
       ))}
-      {!tabIds.includes(activeTabId ?? "") && (
-        <div className="bg-panel min-h-0 flex-1" />
-      )}
+      {!tabIds.includes(activeTabId ?? "") && <NoTabsPage />}
     </>
   );
 }
@@ -90,8 +90,16 @@ function Main(): JSX.Element {
 export default function App(): JSX.Element {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
   const explorerWidth = useApp((s) => s.explorerWidth);
+  const noTabs = useApp((s) => s.tabs.length === 0);
+  const persistent = usePersistentSidebar();
   const { setSidebarOpen, setExplorerWidth, commitExplorerWidth } =
     useAppActions();
+
+  // With no tabs the explorer is pinned, so a drawer that was open is finished
+  // with: left open, it would come back over whichever tab opens next.
+  useEffect(() => {
+    if (noTabs && !persistent) setSidebarOpen(false);
+  }, [noTabs, persistent, setSidebarOpen]);
 
   return (
     <div
@@ -105,6 +113,7 @@ export default function App(): JSX.Element {
     >
       <SidebarLeft
         open={sidebarOpen}
+        pinned={noTabs}
         onClose={() => setSidebarOpen(false)}
         width={explorerWidth}
         onResize={setExplorerWidth}

@@ -97,6 +97,13 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  test(`no-tabs-page/narrow - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "no-tabs-page/narrow", colorScheme);
+    await expect(stage).toHaveScreenshot(
+      snapshot("no-tabs-page/narrow", colorScheme),
+    );
+  });
+
   // The new query dragged over Road Trip's left half: its handle stays where
   // it is, dimmed, and the drop line stands between Lemonade and Road Trip.
   test(`tab-bar/drop-line - ${colorScheme}`, async ({ page }) => {
@@ -298,7 +305,7 @@ test.describe("an icon-only button's tooltip", () => {
     const stage = await openStory(page, "tab-bar/tooltip", "light");
     const newQuery = stage.getByRole("button", { name: "New query" });
     await newQuery.hover();
-    await expect(tooltip(page)).toHaveText("New query");
+    await expect(tooltip(page)).toHaveText("New queryCtrl+N");
     await page.mouse.down();
     await expect(tooltip(page)).toHaveCount(0);
     await page.mouse.up();

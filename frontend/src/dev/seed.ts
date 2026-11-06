@@ -122,9 +122,12 @@ export function applySeed(stores: Stores): void {
     installRecordFixture(Number(params.get("recordDelay") ?? 0) || 0);
   }
 
-  const sidebar = params.get("sidebar");
-  if (sidebar === "open") app.actions.setSidebarOpen(true);
-  else if (sidebar === "closed") app.actions.setSidebarOpen(false);
+  // Waits for any seeded tabs, as a drawer can't stay open with no tab open.
+  const applySidebar = () => {
+    const sidebar = params.get("sidebar");
+    if (sidebar === "open") app.actions.setSidebarOpen(true);
+    else if (sidebar === "closed") app.actions.setSidebarOpen(false);
+  };
 
   // The keyboard-shortcuts editor is a tab like any other, so it's opened
   // last — after the seeded query tabs below have picked their active one —
@@ -142,6 +145,7 @@ export function applySeed(stores: Stores): void {
     for (const tab of app.store.getState().tabs) app.actions.closeTab(tab.id);
   }
   if (names.length === 0) {
+    applySidebar();
     if (shortcuts) app.actions.openShortcutsTab();
     return;
   }
@@ -161,6 +165,7 @@ export function applySeed(stores: Stores): void {
       if (seeded || status !== "ready") return;
       seeded = true;
       unsubscribe();
+      applySidebar();
 
       const queries = app.store.getState().sources.data;
       for (const name of names) {
