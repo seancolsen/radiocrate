@@ -86,14 +86,14 @@ function PlaybackLogSection(props: {
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="control text-ink hover:bg-hover rounded-md px-3"
+          className="control text-ink hover:bg-hover rounded-md"
           onClick={copy}
         >
           Copy log
         </button>
         <button
           type="button"
-          className="control text-ink hover:bg-hover rounded-md px-3"
+          className="control text-ink hover:bg-hover rounded-md"
           onClick={() => {
             props.onClear();
             setStatus("Cleared.");
@@ -168,14 +168,14 @@ export function AboutDialog(props: {
           <div className="mt-3 flex flex-wrap justify-end gap-2">
             <button
               type="button"
-              className="control text-ink hover:bg-hover rounded-md px-3"
+              className="control text-ink hover:bg-hover rounded-md"
               onClick={() => setConfirming(false)}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="control bg-accent text-panel rounded-md px-3"
+              className="control bg-accent text-panel rounded-md"
               onClick={() => props.onReloadFresh()}
             >
               Reload fresh copy
@@ -186,7 +186,7 @@ export function AboutDialog(props: {
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            className="control text-ink hover:bg-hover rounded-md px-3"
+            className="control text-ink hover:bg-hover rounded-md"
             onClick={() => setConfirming(true)}
           >
             Reload fresh copy
@@ -194,14 +194,14 @@ export function AboutDialog(props: {
           <button
             type="button"
             disabled={props.checking ?? false}
-            className="control text-ink hover:bg-hover rounded-md px-3 disabled:opacity-40"
+            className="control text-ink hover:bg-hover rounded-md disabled:opacity-40"
             onClick={() => props.onCheck()}
           >
             Check for updates
           </button>
           <button
             type="button"
-            className="control bg-accent text-panel rounded-md px-3"
+            className="control bg-accent text-panel rounded-md"
             onClick={() => props.onClose()}
           >
             Close

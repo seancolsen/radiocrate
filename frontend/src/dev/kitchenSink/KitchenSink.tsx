@@ -242,11 +242,10 @@ function FieldLabels(): JSX.Element {
 
 // The text buttons' classes, as the modals spell them (see the note at the
 // top of this file).
-const PRIMARY =
-  "control bg-accent text-panel rounded-md px-3 disabled:opacity-40";
-const DANGER = "control bg-danger rounded-md px-3 text-white";
-const BORDERED = "control text-ink border-edge hover:bg-hover rounded-md px-3";
-const PLAIN = "control text-ink hover:bg-hover rounded-md px-3";
+const PRIMARY = "control bg-accent text-panel rounded-md disabled:opacity-40";
+const DANGER = "control bg-danger rounded-md text-white";
+const BORDERED = "control text-ink border-edge hover:bg-hover rounded-md";
+const PLAIN = "control text-ink hover:bg-hover rounded-md";
 
 function Buttons(): JSX.Element {
   const [filterOn, setFilterOn] = useState(true);
@@ -340,9 +339,9 @@ function Buttons(): JSX.Element {
 }
 
 const INPUT =
-  "control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent rounded-md px-2.5 outline-none";
+  "control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent rounded-md outline-none";
 const SELECT =
-  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md px-2 py-0 outline-none";
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none";
 
 /** A display section touching most of the highlighting's palette: columns,
  * a path, a count, a function, an alias, and annotations. */
@@ -404,7 +403,7 @@ function Inputs(): JSX.Element {
             <textarea
               rows={1}
               defaultValue="Lemonade"
-              className="control border-accent bg-panel text-ink w-48 resize-none rounded px-1 outline-none"
+              className="control border-accent bg-panel text-ink w-48 resize-none rounded outline-none"
             />
           </Specimen>
         </Row>

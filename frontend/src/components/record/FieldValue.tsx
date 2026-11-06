@@ -107,7 +107,7 @@ export function ValueInput(props: {
       ref={ref}
       rows={1}
       spellCheck={false}
-      className="control border-accent bg-panel text-ink w-full resize-none overflow-hidden rounded px-1 outline-none"
+      className="control border-accent bg-panel text-ink w-full resize-none overflow-hidden rounded outline-none"
       value={text}
       onChange={(e) => {
         setText(e.currentTarget.value);

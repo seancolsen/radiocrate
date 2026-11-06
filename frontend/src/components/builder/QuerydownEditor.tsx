@@ -205,8 +205,8 @@ const QuerydownEditor = forwardRef<
           : "bg-panel text-sm leading-5",
         props.look !== "sheet" &&
           (props.trailingSpace
-            ? "[--qd-pad:2px_28px_2px_10px]"
-            : "[--qd-pad:2px_10px]"),
+            ? "[--qd-pad:2px_28px_2px_4px]"
+            : "[--qd-pad:2px_4px]"),
       )}
     />
   );

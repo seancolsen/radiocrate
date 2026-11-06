@@ -30,7 +30,7 @@ function PresetSaveModalBody(props: {
         ref={fieldRef}
         type="text"
         placeholder="Preset name"
-        className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent mb-3 w-full rounded-md px-2.5 outline-none"
+        className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent mb-3 w-full rounded-md outline-none"
         value={props.save.name}
         onChange={(e) => patchPresetSave({ name: e.currentTarget.value })}
         onKeyDown={(e) => {
@@ -45,7 +45,7 @@ function PresetSaveModalBody(props: {
       <div className="mt-4 flex justify-end gap-2">
         <button
           type="button"
-          className="control text-ink hover:bg-hover rounded-md px-3"
+          className="control text-ink hover:bg-hover rounded-md"
           onClick={() => cancelPresetSave()}
         >
           Cancel
@@ -53,7 +53,7 @@ function PresetSaveModalBody(props: {
         <button
           type="button"
           disabled={!nameOk}
-          className="control bg-accent text-panel rounded-md px-3 disabled:opacity-40"
+          className="control bg-accent text-panel rounded-md disabled:opacity-40"
           onClick={() => confirmPresetSave(props.tabId)}
         >
           Save

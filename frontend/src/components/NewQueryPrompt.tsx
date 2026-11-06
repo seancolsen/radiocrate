@@ -29,7 +29,7 @@ export default function NewQueryPrompt(props: { tabId: string }): JSX.Element {
         </label>
         <select
           id={selectId}
-          className="control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md px-2 py-0 outline-none"
+          className="control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none"
           value={base}
           onChange={(e) => setBase(props.tabId, e.currentTarget.value)}
         >
@@ -42,7 +42,7 @@ export default function NewQueryPrompt(props: { tabId: string }): JSX.Element {
       </div>
       <button
         type="button"
-        className="control text-ink border-edge hover:bg-hover rounded-md px-3"
+        className="control text-ink border-edge hover:bg-hover rounded-md"
         onClick={() => runQuery(props.tabId)}
       >
         Show all results

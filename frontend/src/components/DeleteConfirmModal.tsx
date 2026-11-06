@@ -36,14 +36,14 @@ export default function DeleteConfirmModal(): JSX.Element | null {
       <div className="mt-4 flex justify-end gap-2">
         <button
           type="button"
-          className="control text-ink hover:bg-hover rounded-md px-3"
+          className="control text-ink hover:bg-hover rounded-md"
           onClick={() => cancelDelete()}
         >
           Cancel
         </button>
         <button
           type="button"
-          className="control bg-danger rounded-md px-3 text-white"
+          className="control bg-danger rounded-md text-white"
           onClick={() => confirmDelete()}
         >
           Delete

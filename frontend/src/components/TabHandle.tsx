@@ -22,7 +22,7 @@ function RenameInput(props: {
     <input
       ref={ref}
       type="text"
-      className="control border-edge bg-panel text-ink focus:border-accent min-w-0 flex-1 rounded px-1 outline-none"
+      className="control border-edge bg-panel text-ink focus:border-accent min-w-0 flex-1 rounded outline-none"
       value={props.value}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}

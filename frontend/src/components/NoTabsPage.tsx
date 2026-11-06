@@ -18,7 +18,7 @@ function StartButton(props: {
     <button
       type="button"
       aria-keyshortcuts={chord ? chordToAria(chord) : undefined}
-      className="control text-ink border-edge hover:bg-hover flex flex-wrap items-center justify-between gap-x-6 gap-y-1 rounded-md px-3"
+      className="control text-ink border-edge hover:bg-hover flex flex-wrap items-center justify-between gap-x-6 gap-y-1 rounded-md"
       onClick={props.onClick}
     >
       {props.label}

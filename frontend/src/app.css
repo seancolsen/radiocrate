@@ -135,6 +135,10 @@
    rows, presets and chips all share it, so they line up wherever they meet, and
    none of them hard-codes a height: a control that wraps just grows.
 
+   The 4px of padding at the sides looks even with the 2px above and below,
+   since a line of text has its own space above and below the letters. Buttons
+   and inputs keep it; a menu row or a chip can widen it with a `px-*`.
+
    The border is always there, transparent by default (a fill runs under it), so
    coloring it on hover or focus never moves anything. Tailwind sorts this ahead
    of its own border-color, padding and text utilities, so `border-edge`,
@@ -144,12 +148,14 @@
    own sums: the Querydown editor (--qd-pad, QuerydownEditor.tsx), a preset's
    heading (PresetRow.tsx), a field label (FieldLabel.tsx), an embedded record
    (EmbeddedRecord.tsx). A native <select> has inner metrics of its own that
-   vary by platform, so it's the one that sets a height outright. Change them
-   together. */
+   vary by platform, already including padding at the sides, so it's the one
+   that sets a height outright and drops its padding (`h-[26px] p-0`). Change
+   them together. */
 @utility control {
   border-width: 1px;
   border-color: transparent;
   padding-block: 2px;
+  padding-inline: 4px;
   font-size: var(--text-sm);
   line-height: 20px;
 }

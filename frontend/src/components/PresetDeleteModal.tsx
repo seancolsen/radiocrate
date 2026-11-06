@@ -50,14 +50,14 @@ function PresetDeleteModalBody(props: { preset: Preset }): JSX.Element {
       <div className="mt-4 flex justify-end gap-2">
         <button
           type="button"
-          className="control text-ink hover:bg-hover rounded-md px-3"
+          className="control text-ink hover:bg-hover rounded-md"
           onClick={() => cancelPresetDelete()}
         >
           Cancel
         </button>
         <button
           type="button"
-          className="control bg-danger rounded-md px-3 text-white"
+          className="control bg-danger rounded-md text-white"
           onClick={() => confirmPresetDelete()}
         >
           Delete

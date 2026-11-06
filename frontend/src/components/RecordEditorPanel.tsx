@@ -61,7 +61,7 @@ function ToolbarButton(props: {
     <button
       type="button"
       disabled={props.disabled}
-      className={cx("control flex shrink-0 items-center gap-1 rounded px-1.5", {
+      className={cx("control flex shrink-0 items-center gap-1 rounded", {
         "text-ink hover:bg-hover": !props.disabled,
         "text-ink-weak/40": props.disabled,
       })}
