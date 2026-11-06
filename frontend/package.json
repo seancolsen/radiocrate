@@ -23,6 +23,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
     "@fontsource-variable/noto-sans": "^5.3.0",
+    "@fontsource-variable/noto-sans-mono": "^5.3.0",
     "@lezer/common": "^1.5.5",
     "@lezer/highlight": "^1.2.5",
     "apache-arrow": "^18.0.0",
