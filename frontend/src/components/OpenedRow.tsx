@@ -7,7 +7,7 @@ import { useTooltip } from "./ui/Tooltip";
  * that kind. Clicking the body selects it; a close (×) sits at the right. The
  * active row is marked with a left accent bar (matching the tab bar's blue top
  * edge), not a fill. A red ✱ marks an open tab with unsaved edits. An unsaved
- * query, which has no name yet, reads "new" in gray italics, as its tab
+ * query, which has no name yet, reads "new" in gray, as its tab
  * handle does. */
 export default function OpenedRow(props: {
   name: string;
@@ -44,7 +44,7 @@ export default function OpenedRow(props: {
         <span
           className={cx("ml-2 min-w-0 truncate text-sm", {
             "text-ink": props.name !== "",
-            "text-ink-weak italic": props.name === "",
+            "text-ink-weak": props.name === "",
           })}
         >
           {props.name || "new"}

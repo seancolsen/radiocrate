@@ -47,7 +47,7 @@ function SwitcherRow(props: {
       <span
         className={cx("min-w-0 flex-1 truncate text-[13px]", {
           "text-ink": tab.name !== "",
-          "text-ink-weak italic": tab.name === "",
+          "text-ink-weak": tab.name === "",
         })}
       >
         {tab.name || "new"}

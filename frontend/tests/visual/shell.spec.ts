@@ -69,7 +69,7 @@ for (const colorScheme of SCHEMES) {
   });
 
   // A saved query's handle beside a new query's, which has no name yet and
-  // reads "new" in gray italics.
+  // reads "new" in gray.
   test(`tab-bar/new-query - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "tab-bar/new-query", colorScheme);
     await expect(stage.getByText("new", { exact: true })).toBeVisible();

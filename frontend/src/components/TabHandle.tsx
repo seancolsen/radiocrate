@@ -44,7 +44,7 @@ function RenameInput(props: {
 }
 
 /** One tab handle: the page kind's icon, the name (ellipsis when crowded; an
- * unsaved query that hasn't been named reads "new" in gray italics), an
+ * unsaved query that hasn't been named reads "new" in gray), an
  * unsaved-changes ✱ marker, and a close × (a middle-click on the handle closes
  * it too). Only the top corners are rounded so it
  * sits flush with the content below.
@@ -127,7 +127,7 @@ export default function TabHandle(props: {
         <>
           <span
             className={cx("min-w-0 flex-1 truncate text-sm", {
-              "text-ink-weak italic": props.name === "",
+              "text-ink-weak": props.name === "",
             })}
           >
             {props.name || "new"}

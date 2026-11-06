@@ -661,7 +661,7 @@ export const STORIES: Record<string, Story> = {
 
   // ── The tab bar ──────────────────────────────────────────────────────────
   // A saved query beside a new one, active: the new query has no name yet, so
-  // its handle reads "new" in gray italics, with the ✱ of a query the backend
+  // its handle reads "new" in gray, with the ✱ of a query the backend
   // doesn't have.
   "tab-bar/new-query": {
     width: 520,

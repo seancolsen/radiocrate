@@ -40,7 +40,7 @@ test("an unsaved query can be named on its tab, in plain text", async ({
   await page.goto("/?tabs=Lemonade");
   await page.getByRole("button", { name: "New query" }).click();
   const fresh = handles(page).nth(1);
-  await expect(fresh.getByText("new")).toHaveClass(/italic/);
+  await expect(fresh.getByText("new")).not.toHaveClass(/italic/);
 
   await fresh.dblclick();
   await page.keyboard.type("Road trip");
