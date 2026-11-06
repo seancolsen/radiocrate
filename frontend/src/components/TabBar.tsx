@@ -8,6 +8,7 @@ import {
 } from "../stores/app";
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
 import TabHandle from "./TabHandle";
+import { useTooltip } from "./ui/Tooltip";
 import { tabIcon } from "./tabKind";
 
 /** One tab handle, wired to the store. Split out from {@link TabBar} so its
@@ -66,6 +67,11 @@ export default function TabBar(): JSX.Element {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dnd = useTabDragReorder(() => containerRef.current);
+  const explorerTip = useTooltip({
+    label: sidebarOpen ? "Close explorer" : "Open explorer",
+    command: "explorer.toggle",
+  });
+  const newQueryTip = useTooltip({ label: "New query" });
 
   return (
     <div
@@ -76,7 +82,7 @@ export default function TabBar(): JSX.Element {
       {/* Explorer toggle: always present. */}
       <button
         type="button"
-        aria-label={sidebarOpen ? "Close explorer" : "Open explorer"}
+        {...explorerTip.triggerProps}
         className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
         onClick={() => actions.toggleSidebar()}
       >
@@ -86,6 +92,7 @@ export default function TabBar(): JSX.Element {
           <Icons.ExplorerOpen className="size-5" />
         )}
       </button>
+      {explorerTip.tooltip}
 
       {tabs.map((tab) => (
         <WiredTabHandle
@@ -111,12 +118,13 @@ export default function TabBar(): JSX.Element {
           from the explorer, which saves it as it's created.) */}
       <button
         type="button"
-        aria-label="New query"
+        {...newQueryTip.triggerProps}
         className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
         onClick={() => actions.newQueryTab()}
       >
         <Icons.Query className="size-5" />
       </button>
+      {newQueryTip.tooltip}
     </div>
   );
 }

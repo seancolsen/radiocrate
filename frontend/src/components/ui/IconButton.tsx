@@ -1,5 +1,7 @@
 import { forwardRef, type MouseEvent } from "react";
+import type { CommandId } from "../../commands/registry";
 import type { IconComponent } from "../../icons";
+import { useTooltip } from "./Tooltip";
 import { cx } from "./cx";
 
 /** A frameless icon button — 26px square by default, or a 20px `size="sm"` for
@@ -15,13 +17,27 @@ import { cx } from "./cx";
  * but not the keyboard, and doesn't steal focus from what's already focused
  * when clicked.
  *
+ * Having no text of its own, it wears a tooltip: `label` is said once, and is
+ * both what the tooltip shows and the button's `aria-label`. `command` names
+ * the command a keyboard shortcut runs to the same effect, so its chord shows
+ * in the tooltip too (and goes out as `aria-keyshortcuts`). See `useTooltip`.
+ *
  * The ref forwards to the `<button>` so callers (e.g. a menu trigger) can
  * anchor to it. */
 const IconButton = forwardRef<
   HTMLButtonElement,
   {
     icon: IconComponent;
+    /** The button's name: its tooltip and its `aria-label`. */
     label: string;
+    /** The command whose keyboard shortcut does what this button does. */
+    command?: CommandId;
+    /** Longer text the tooltip shows in place of `label`, for a help button
+     * (see `TooltipSpec.description`). */
+    description?: string;
+    /** Which of the button's edges the tooltip lines up with (centered by
+     * default). */
+    tooltipAlign?: "start" | "center" | "end";
     /** Extra classes for the *glyph* rather than the button — the button's own
      * look is this component's to decide, but what the icon is doing inside it
      * isn't (the toolbar's Refresh spins while its query runs). */
@@ -32,35 +48,41 @@ const IconButton = forwardRef<
     active?: boolean;
     size?: "sm" | "md";
     tabIndex?: number;
-    /** The id of what describes the button further (a tooltip). */
-    describedBy?: string;
   }
 >(function IconButton(props, ref) {
   const Icon = props.icon;
+  const { triggerProps, tooltip } = useTooltip({
+    label: props.label,
+    command: props.command,
+    description: props.description,
+    align: props.tooltipAlign,
+  });
   return (
-    <button
-      ref={ref}
-      type="button"
-      aria-label={props.label}
-      aria-describedby={props.describedBy}
-      disabled={props.disabled}
-      tabIndex={props.tabIndex}
-      className={cx(
-        "flex shrink-0 items-center justify-center rounded ring-1 ring-transparent ring-inset",
-        {
-          "size-5": props.size === "sm",
-          "size-[26px]": props.size !== "sm",
-          "text-ink-weak hover:ring-accent": !props.disabled && !props.danger,
-          "text-danger hover:ring-accent": !props.disabled && props.danger,
-          "text-ink-weak/40": props.disabled,
-          "bg-hover": props.active,
-        },
-      )}
-      onMouseDown={(e) => props.tabIndex === -1 && e.preventDefault()}
-      onClick={(e) => props.onClick?.(e)}
-    >
-      <Icon className={cx("size-4", props.iconClassName)} />
-    </button>
+    <>
+      <button
+        ref={ref}
+        type="button"
+        {...triggerProps}
+        disabled={props.disabled}
+        tabIndex={props.tabIndex}
+        className={cx(
+          "flex shrink-0 items-center justify-center rounded ring-1 ring-transparent ring-inset",
+          {
+            "size-5": props.size === "sm",
+            "size-[26px]": props.size !== "sm",
+            "text-ink-weak hover:ring-accent": !props.disabled && !props.danger,
+            "text-danger hover:ring-accent": !props.disabled && props.danger,
+            "text-ink-weak/40": props.disabled,
+            "bg-hover": props.active,
+          },
+        )}
+        onMouseDown={(e) => props.tabIndex === -1 && e.preventDefault()}
+        onClick={(e) => props.onClick?.(e)}
+      >
+        <Icon className={cx("size-4", props.iconClassName)} />
+      </button>
+      {tooltip}
+    </>
   );
 });
 

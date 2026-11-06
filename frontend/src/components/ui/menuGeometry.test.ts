@@ -29,6 +29,9 @@ describe("placeDropdown", () => {
     expect(placeDropdown(wide, size, VIEWPORT, "below", "end").left).toBe(
       430 - 200,
     );
+    expect(placeDropdown(wide, size, VIEWPORT, "below", "center").left).toBe(
+      415 - 100,
+    );
   });
 
   it("flips above when there's no room below, but room above", () => {
@@ -61,6 +64,9 @@ describe("placeDropdown", () => {
     expect(placeDropdown(nearLeft, size, VIEWPORT, "below", "end").left).toBe(
       M,
     );
+    expect(
+      placeDropdown(nearLeft, size, VIEWPORT, "below", "center").left,
+    ).toBe(M);
   });
 });
 

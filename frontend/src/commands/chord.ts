@@ -187,21 +187,60 @@ export function chordsEqual(a: Chord, b: Chord): boolean {
   );
 }
 
-/** A human-readable rendering for the current OS: `⇧⌘P` on macOS (⌃⌥⇧⌘ order,
- * no separators), `Ctrl+Shift+P` elsewhere. */
-export function formatChord(chord: Chord, mac: boolean = isMac()): string {
-  let s = "";
+/** The keys of a chord as the current OS names them, modifiers first: `⇧ ⌘ P`
+ * on macOS (⌃⌥⇧⌘ order), `Ctrl Shift P` elsewhere — one keycap each. */
+export function chordKeys(chord: Chord, mac: boolean = isMac()): string[] {
+  const keys: string[] = [];
   if (mac) {
-    if (chord.ctrl && !chord.mod) s += "⌃"; // ⌃
-    if (chord.alt) s += "⌥"; // ⌥
-    if (chord.shift) s += "⇧"; // ⇧
-    if (chord.mod) s += "⌘"; // ⌘
+    if (chord.ctrl && !chord.mod) keys.push("⌃");
+    if (chord.alt) keys.push("⌥");
+    if (chord.shift) keys.push("⇧");
+    if (chord.mod) keys.push("⌘");
   } else {
-    if (chord.mod || chord.ctrl) s += "Ctrl+";
-    if (chord.alt) s += "Alt+";
-    if (chord.shift) s += "Shift+";
+    if (chord.mod || chord.ctrl) keys.push("Ctrl");
+    if (chord.alt) keys.push("Alt");
+    if (chord.shift) keys.push("Shift");
   }
-  return s + chord.key;
+  keys.push(chord.key);
+  return keys;
+}
+
+/** A human-readable rendering for the current OS: `⇧⌘P` on macOS (no
+ * separators), `Ctrl+Shift+P` elsewhere. */
+export function formatChord(chord: Chord, mac: boolean = isMac()): string {
+  return chordKeys(chord, mac).join(mac ? "" : "+");
+}
+
+/** The key names `aria-keyshortcuts` wants (the DOM's `KeyboardEvent.key`
+ * values) where they differ from a chord's canonical ones. */
+const ARIA_KEYS: Readonly<Record<string, string>> = {
+  Down: "ArrowDown",
+  Up: "ArrowUp",
+  Left: "ArrowLeft",
+  Right: "ArrowRight",
+  Comma: ",",
+  Period: ".",
+  Minus: "-",
+  Equals: "=",
+  Slash: "/",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Backtick: "`",
+  OpenBracket: "[",
+  CloseBracket: "]",
+};
+
+/** The chord as an `aria-keyshortcuts` value, e.g. `Control+Shift+P` (or
+ * `Meta+Shift+P` on macOS, where `mod` is ⌘). */
+export function chordToAria(chord: Chord, mac: boolean = isMac()): string {
+  const parts: string[] = [];
+  if (chord.mod) parts.push(mac ? "Meta" : "Control");
+  if (chord.ctrl && !chord.mod) parts.push("Control");
+  if (chord.alt) parts.push("Alt");
+  if (chord.shift) parts.push("Shift");
+  parts.push(ARIA_KEYS[chord.key] ?? chord.key);
+  return parts.join("+");
 }
 
 /** The chord a key-press event stands for, or `null` when its key can't be

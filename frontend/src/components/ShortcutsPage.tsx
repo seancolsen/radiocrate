@@ -1,11 +1,6 @@
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX, type ReactNode } from "react";
 import { useShallow } from "zustand/shallow";
-import {
-  chordFromEvent,
-  chordsEqual,
-  formatChord,
-  type Chord,
-} from "../commands/chord";
+import { chordFromEvent, chordsEqual, type Chord } from "../commands/chord";
 import { bindingFor } from "../commands/keymap";
 import {
   ALL_COMMANDS,
@@ -24,6 +19,7 @@ import { useCommandActions, useCommands } from "../stores/react";
 import { Modal } from "./ui/Modal";
 import { ContextMenu } from "./ui/ContextMenu";
 import { MenuItem } from "./ui/Menu";
+import { Kbd } from "./ui/Kbd";
 import { cx } from "./ui/cx";
 
 // The Keyboard Shortcuts editor: a VS Code-style table of every command, its
@@ -57,14 +53,22 @@ interface RowMenu {
   y: number;
 }
 
-/** A bordered, read-only box showing a chord (or a prompt), matching the app's
- * text-input chrome so the record/capture affordance reads as a field. */
-function RecordBox(props: { text: string; className?: string }): JSX.Element {
+/** A bordered, read-only box showing a chord (or, until one is pressed, a
+ * prompt), matching the app's text-input chrome so the record/capture
+ * affordance reads as a field. */
+function RecordBox(props: {
+  chord: Chord | null;
+  prompt: ReactNode;
+  className?: string;
+}): JSX.Element {
   return (
     <div
-      className={`bg-panel border-accent text-ink flex h-[34px] items-center rounded-md border px-2.5 text-[13px] ${props.className ?? ""}`}
+      className={cx(
+        "bg-panel border-accent text-ink flex h-[34px] items-center rounded-md border px-2.5 text-[13px]",
+        props.className,
+      )}
     >
-      {props.text}
+      {props.chord ? <Kbd chord={props.chord} /> : props.prompt}
     </div>
   );
 }
@@ -97,11 +101,8 @@ export function CaptureDialog(props: {
       </h2>
       <p className="text-ink mb-3 text-sm">{commandDef(props.cmd).title}</p>
       <RecordBox
-        text={
-          props.pending
-            ? formatChord(props.pending)
-            : "Press desired key combination…"
-        }
+        chord={props.pending}
+        prompt="Press desired key combination…"
       />
       {conflicts.length > 0 && (
         <p className="text-accent mt-2 text-xs">
@@ -168,14 +169,15 @@ function ShortcutsRow(props: {
         {props.def.title}
       </span>
       {/* Tinted when it differs from the built-in default. */}
-      <span
-        className={cx("w-[170px] shrink-0 truncate text-xs", {
-          "text-accent": overridden && chord !== null,
-          "text-ink": !overridden && chord !== null,
-          "text-ink-weak": chord === null,
-        })}
-      >
-        {chord ? formatChord(chord) : "—"}
+      <span className="flex w-[170px] shrink-0 overflow-hidden text-xs">
+        {chord ? (
+          <Kbd
+            chord={chord}
+            className={overridden ? "text-accent" : "text-ink"}
+          />
+        ) : (
+          <span className="text-ink-weak">—</span>
+        )}
       </span>
       <span className="text-ink-weak w-[130px] shrink-0 truncate text-xs">
         {whenLabel(props.def.when)}
@@ -291,7 +293,8 @@ export default function ShortcutsPage(): JSX.Element {
           {recordMode ? (
             <RecordBox
               className="max-w-[420px] min-w-0 flex-1"
-              text={recorded ? formatChord(recorded) : "Press keys to search…"}
+              chord={recorded}
+              prompt="Press keys to search…"
             />
           ) : (
             <input

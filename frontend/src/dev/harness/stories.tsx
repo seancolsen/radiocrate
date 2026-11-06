@@ -656,6 +656,19 @@ export const STORIES: Record<string, Story> = {
     render: () => <TabBar />,
   },
 
+  // The explorer toggle hovered: its tooltip names it and shows the shortcut
+  // that does the same, as keycaps. Tall enough to hold the tooltip below the
+  // bar. (The hover is the test's.)
+  "tab-bar/tooltip": {
+    width: 320,
+    height: 72,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      openLemonade(stores);
+    },
+    render: () => <TabBar />,
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
     width: 200,

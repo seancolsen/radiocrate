@@ -84,6 +84,16 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The explorer toggle hovered: its label and its shortcut, as keycaps.
+  test(`tab-bar/tooltip - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "tab-bar/tooltip", colorScheme);
+    await stage.getByRole("button", { name: /explorer$/ }).hover();
+    await expect(page.getByTestId("tooltip")).toContainText("Ctrl+B");
+    await expect(stage).toHaveScreenshot(
+      snapshot("tab-bar/tooltip", colorScheme),
+    );
+  });
+
   // The new query dragged over Road Trip's left half: its handle stays where
   // it is, dimmed, and the drop line stands between Lemonade and Road Trip.
   test(`tab-bar/drop-line - ${colorScheme}`, async ({ page }) => {
@@ -261,6 +271,49 @@ for (const colorScheme of SCHEMES) {
     );
   });
 }
+
+test.describe("an icon-only button's tooltip", () => {
+  const tooltip = (page: Page) => page.getByTestId("tooltip");
+
+  test("says the button's name and its shortcut, to the eye and to ARIA", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "tab-bar/tooltip", "light");
+    const toggle = stage.getByRole("button", { name: /explorer$/ });
+    await expect(toggle).toHaveAttribute("aria-keyshortcuts", "Control+B");
+    await toggle.hover();
+    await expect(tooltip(page)).toHaveText(
+      `${await toggle.getAttribute("aria-label")}Ctrl+B`,
+    );
+    // Its text is the button's name already, so it's hidden from ARIA.
+    await expect(tooltip(page)).toHaveAttribute("aria-hidden", "true");
+  });
+
+  test("hides when the button is pressed, and stays hidden", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "tab-bar/tooltip", "light");
+    const newQuery = stage.getByRole("button", { name: "New query" });
+    await newQuery.hover();
+    await expect(tooltip(page)).toHaveText("New query");
+    await page.mouse.down();
+    await expect(tooltip(page)).toHaveCount(0);
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    await expect(tooltip(page)).toHaveCount(0);
+  });
+
+  test("shows at once on keyboard focus, and Escape hides it", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "tab-bar/tooltip", "light");
+    await stage.getByRole("button", { name: /explorer$/ }).focus();
+    await page.keyboard.press("Tab");
+    await expect(tooltip(page)).toContainText("Close Lemonade");
+    await page.keyboard.press("Escape");
+    await expect(tooltip(page)).toHaveCount(0);
+  });
+});
 
 test.describe("dragging a tab", () => {
   const dropLine = (page: Page) =>

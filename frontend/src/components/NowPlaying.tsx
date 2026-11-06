@@ -4,6 +4,7 @@ import { formatSeconds } from "../query/format";
 import { useApp, useAppActions } from "../stores/react";
 import IconButton from "./ui/IconButton";
 import { Menu } from "./ui/Menu";
+import { useTooltip } from "./ui/Tooltip";
 import { cx } from "./ui/cx";
 import PlaybackActionsMenu from "./PlaybackActionsMenu";
 
@@ -122,6 +123,10 @@ export default function NowPlaying(): JSX.Element | null {
   const playing = useApp((s) => s.playback.playing);
   const hasNext = useApp((s) => s.playback.hasNext);
   const actions = useAppActions();
+  const { triggerProps, tooltip } = useTooltip({
+    label: playing ? "Pause" : "Play",
+    command: "playback.toggle_play",
+  });
 
   if (!track) return null;
 
@@ -132,7 +137,7 @@ export default function NowPlaying(): JSX.Element | null {
     >
       <button
         type="button"
-        aria-label={playing ? "Pause" : "Play"}
+        {...triggerProps}
         className="bg-now-playing flex size-9 shrink-0 items-center justify-center rounded-full text-white hover:brightness-110"
         onClick={() => actions.togglePlayPause()}
       >
@@ -142,6 +147,7 @@ export default function NowPlaying(): JSX.Element | null {
           <Icons.Play className="size-6" />
         )}
       </button>
+      {tooltip}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-[26px] items-center gap-1">
           <div className="flex min-w-0 flex-1 items-baseline gap-5">
@@ -155,6 +161,7 @@ export default function NowPlaying(): JSX.Element | null {
           <IconButton
             icon={Icons.Next}
             label="Next"
+            command="playback.next_track"
             disabled={!hasNext}
             onClick={() => actions.skipNext()}
           />

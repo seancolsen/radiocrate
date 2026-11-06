@@ -14,12 +14,14 @@ import PresetTab from "../../components/builder/PresetTab";
 import QuerydownEditor from "../../components/builder/QuerydownEditor";
 import DiagnosticMessage from "../../components/builder/DiagnosticMessage";
 import { Checkbox } from "../../components/ui/Checkbox";
+import { Kbd } from "../../components/ui/Kbd";
 import IconButton from "../../components/ui/IconButton";
 import SplitButton from "../../components/ui/SplitButton";
 import { MenuItem, MenuToggleItem } from "../../components/ui/Menu";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { cx } from "../../components/ui/cx";
+import { chordOf } from "../../commands/chord";
 import AppInMiniature from "./AppInMiniature";
 
 // The kitchen sink's page: every piece of UI that carries color, grouped by
@@ -322,6 +324,14 @@ function Buttons(): JSX.Element {
               onMainClick={() => {}}
               menu={<MenuItem label="Clear" />}
             />
+          </Specimen>
+        </Row>
+        <Row>
+          <Specimen caption="shortcut">
+            <Kbd chord={chordOf("mod+shift+P")} className="text-ink" />
+          </Specimen>
+          <Specimen caption="shortcut, overridden">
+            <Kbd chord={chordOf("mod+alt+J")} className="text-accent" />
           </Specimen>
         </Row>
       </div>

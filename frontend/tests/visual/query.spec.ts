@@ -651,3 +651,24 @@ for (const colorScheme of SCHEMES) {
     );
   });
 }
+
+// A section toggle wears a tooltip only while the narrow toolbar has dropped
+// its text label — and then the label is its accessible name too.
+test("a section toggle's tooltip stands in for its hidden label", async ({
+  page,
+}) => {
+  const tooltip = page.getByTestId("tooltip");
+
+  let stage = await openStory(page, "query-builder/filter-open", "light");
+  let filter = stage.getByRole("button", { name: "Filter", pressed: true });
+  await expect(filter).not.toHaveAttribute("aria-label");
+  await filter.hover();
+  await page.waitForTimeout(800);
+  await expect(tooltip).toHaveCount(0);
+
+  stage = await openStory(page, "query-builder/filter-open-narrow", "light");
+  filter = stage.getByRole("button", { name: "Filter", pressed: true });
+  await expect(filter).toHaveAttribute("aria-keyshortcuts", "Control+Shift+F");
+  await filter.hover();
+  await expect(tooltip).toHaveText("FilterCtrl+Shift+F");
+});

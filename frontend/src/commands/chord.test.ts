@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   chordFromEvent,
+  chordKeys,
   chordMatchesEvent,
+  chordToAria,
   chordToStorage,
   chordsEqual,
   formatChord,
@@ -172,6 +174,35 @@ describe("formatChord", () => {
     expect(formatChord(c, true)).toBe("⌥⇧⌘Q");
     expect(formatChord(chord({ ctrl: true, alt: true, key: "Q" }), true)).toBe(
       "⌃⌥Q",
+    );
+  });
+});
+
+describe("chordKeys", () => {
+  it("splits a chord into one keycap per key", () => {
+    const c = chord({ mod: true, alt: true, key: "Right" });
+    expect(chordKeys(c, true)).toEqual(["⌥", "⌘", "Right"]);
+    expect(chordKeys(c, false)).toEqual(["Ctrl", "Alt", "Right"]);
+    expect(chordKeys(chord({ key: "Delete" }), false)).toEqual(["Delete"]);
+  });
+});
+
+describe("chordToAria", () => {
+  it("names `mod` for the platform", () => {
+    const c = chord({ mod: true, shift: true, key: "P" });
+    expect(chordToAria(c, true)).toBe("Meta+Shift+P");
+    expect(chordToAria(c, false)).toBe("Control+Shift+P");
+  });
+
+  it("spells keys the way KeyboardEvent.key does", () => {
+    expect(chordToAria(chord({ shift: true, key: "Space" }), false)).toBe(
+      "Shift+Space",
+    );
+    expect(
+      chordToAria(chord({ mod: true, alt: true, key: "Left" }), false),
+    ).toBe("Control+Alt+ArrowLeft");
+    expect(chordToAria(chord({ ctrl: true, key: "Comma" }), true)).toBe(
+      "Control+,",
     );
   });
 });

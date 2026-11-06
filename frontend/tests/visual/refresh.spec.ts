@@ -61,14 +61,16 @@ async function openShortGrid(page: Page, url: string) {
  * The pointer is taken back off the grid before the second shot: a hovered row
  * is painted lighter than its neighbours, and leaving the pointer on one would
  * put a highlight in the buffer that every later comparison would have to
- * reproduce exactly.  */
+ * reproduce exactly. It rests on the tab bar's empty right end: over a button
+ * (the explorer toggle in the corner) it would raise that button's tooltip
+ * over the grid.  */
 async function scrollResults(page: Page) {
   // Every open tab keeps its page; only the active one's canvas is visible.
   const canvas = page.locator("canvas:visible");
   const top = await canvas.screenshot();
   await canvas.hover({ position: { x: 200, y: 20 } });
   await page.mouse.wheel(0, 120);
-  await page.mouse.move(2, 2);
+  await page.mouse.move(1000, 17);
   await page.waitForTimeout(150); // let the fling-free wheel scroll settle
   return { canvas, top, scrolled: await canvas.screenshot() };
 }

@@ -61,13 +61,14 @@ function fitSpan(start: number, size: number, length: number) {
  * the whole panel but the other has, and otherwise taking whichever side has
  * more room and scrolling. Horizontally, `align` lines the panel up with the
  * trigger's left (`start`) or right (`end`) edge, then slides it back inside
- * the viewport if that runs off an edge. */
+ * the viewport if that runs off an edge. A tooltip uses `center` too, hanging
+ * centered under (or over) the control it names. */
 export function placeDropdown(
   anchor: Rect,
   size: Size,
   viewport: Size,
   side: "below" | "above",
-  align: "start" | "end",
+  align: "start" | "center" | "end",
 ): Placement {
   const m = VIEWPORT_MARGIN;
   const room = {
@@ -85,7 +86,12 @@ export function placeDropdown(
           : "above";
   const maxHeight = Math.max(0, room[chosen]);
   const height = Math.min(size.height, maxHeight);
-  const start = align === "start" ? anchor.left : anchor.right - size.width;
+  const start =
+    align === "start"
+      ? anchor.left
+      : align === "end"
+        ? anchor.right - size.width
+        : (anchor.left + anchor.right - size.width) / 2;
   return {
     left: fitSpan(start, size.width, viewport.width),
     top:

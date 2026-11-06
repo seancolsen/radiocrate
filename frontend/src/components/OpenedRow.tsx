@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Icons, type IconComponent } from "../icons";
 import { cx } from "./ui/cx";
+import { useTooltip } from "./ui/Tooltip";
 
 /** A row in the "Opened" section: an open tab of any kind, its icon taken from
  * that kind. Clicking the body selects it; a close (×) sits at the right. The
@@ -17,6 +18,10 @@ export default function OpenedRow(props: {
   onClose: () => void;
 }): JSX.Element {
   const Icon = props.icon;
+  const closeTip = useTooltip({
+    label: `Close ${props.name || "new query"}`,
+    command: props.active ? "tabs.close_active" : undefined,
+  });
   return (
     <div
       className={cx(
@@ -53,7 +58,7 @@ export default function OpenedRow(props: {
       </button>
       <button
         type="button"
-        aria-label={`Close ${props.name || "new query"}`}
+        {...closeTip.triggerProps}
         className="text-ink-weak hover:bg-hover hover:text-ink ml-1 flex size-[22px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();
@@ -62,6 +67,7 @@ export default function OpenedRow(props: {
       >
         <Icons.Close className="size-[15px]" />
       </button>
+      {closeTip.tooltip}
     </div>
   );
 }

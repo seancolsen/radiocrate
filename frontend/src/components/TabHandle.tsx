@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type JSX, type PointerEvent } from "react";
 import { Icons, type IconComponent } from "../icons";
 import { cx } from "./ui/cx";
+import { useTooltip } from "./ui/Tooltip";
 
 /** The inline rename `<input>`, mounted only while `renaming` is true — so it
  * gets a fresh instance (and thus a fresh mount) each time renaming starts,
@@ -74,6 +75,10 @@ export default function TabHandle(props: {
   onRenameCancel: () => void;
 }): JSX.Element {
   const Icon = props.icon;
+  const closeTip = useTooltip({
+    label: `Close ${props.name || "new query"}`,
+    command: props.active ? "tabs.close_active" : undefined,
+  });
   return (
     <div
       data-tab-id={props.id}
@@ -127,16 +132,20 @@ export default function TabHandle(props: {
       )}
       <button
         type="button"
-        aria-label={`Close ${props.name || "new query"}`}
+        {...closeTip.triggerProps}
         className="hover:bg-hover flex size-[18px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();
           props.onClose();
         }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          closeTip.triggerProps.onPointerDown?.();
+        }}
       >
         <Icons.Close className="size-[15px]" />
       </button>
+      {closeTip.tooltip}
     </div>
   );
 }

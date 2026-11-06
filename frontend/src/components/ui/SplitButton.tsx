@@ -1,20 +1,25 @@
 import type { JSX, ReactNode } from "react";
+import type { CommandId } from "../../commands/registry";
 import { Icons, type IconComponent } from "../../icons";
 import { Menu } from "./Menu";
+import { useTooltip } from "./Tooltip";
 import { cx } from "./cx";
 
 /** A labelled toggle button. Its main (icon + label) area toggles a builder
  * section via `onMainClick`. While `active` it takes the blue
  * fill and, unless `showMenu` is false, grows an embedded ⋮ trigger (set off by a
  * lighter tint) that opens the section's options `menu`. `showLabel` drops the
- * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮).
- * `alert` marks it with a red dot: the error strip's problem is in its
- * section. */
+ * text label on a narrow toolbar, leaving the icon (and, while active, the ⋮)
+ * — and an icon alone wears the label as its tooltip instead, with `command`'s
+ * shortcut beside it. `alert` marks it with a red dot: the error strip's
+ * problem is in its section. */
 export default function SplitButton(props: {
   icon: IconComponent;
   label: string;
   active: boolean;
   showLabel?: boolean;
+  /** The command whose keyboard shortcut opens this section. */
+  command?: CommandId;
   showMenu?: boolean;
   alert?: boolean;
   onMainClick: () => void;
@@ -24,6 +29,10 @@ export default function SplitButton(props: {
   const showLabel = props.showLabel !== false;
   const withMenu =
     props.active && props.showMenu !== false && props.menu != null;
+  const mainTip = useTooltip(
+    showLabel ? null : { label: props.label, command: props.command },
+  );
+  const menuTip = useTooltip({ label: `${props.label} options` });
 
   return (
     <div
@@ -38,6 +47,7 @@ export default function SplitButton(props: {
       <button
         type="button"
         aria-pressed={props.active}
+        {...mainTip.triggerProps}
         className={cx("flex items-center gap-[5px] rounded-l px-1.5", {
           "rounded-r": !withMenu,
         })}
@@ -58,13 +68,14 @@ export default function SplitButton(props: {
           </span>
         )}
       </button>
+      {mainTip.tooltip}
       {withMenu && (
         <Menu
           align="end"
           trigger={(api) => (
             <button
               type="button"
-              aria-label={`${props.label} options`}
+              {...menuTip.triggerProps}
               className="bg-split-trigger text-ink-weak hover:text-ink flex h-full w-[22px] items-center justify-center rounded-r"
               onClick={() => api.toggle()}
             >
@@ -75,6 +86,7 @@ export default function SplitButton(props: {
           {props.menu}
         </Menu>
       )}
+      {withMenu && menuTip.tooltip}
     </div>
   );
 }

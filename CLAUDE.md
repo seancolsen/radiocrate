@@ -158,6 +158,34 @@ rules.
   through portals, so a form that must ignore focus moving into its own portaled
   menu listens with a native `focusout` listener.
 
+### Icon-only buttons get tooltips
+
+Every button that shows an icon and no text wears a tooltip naming it. Write
+the name **once**; it becomes both the tooltip and the `aria-label`.
+
+- **Use `IconButton`** (`components/ui/IconButton.tsx`) wherever its look fits.
+  Its `label` is the tooltip and the accessible name, so it needs nothing more.
+- **A button `IconButton` can't style** (the tab bar's toggles, the play button,
+  a close ×) spreads `useTooltip({ label })` from `components/ui/Tooltip.tsx`:
+  `{...triggerProps}` onto the `<button>`, and `{tooltip}` rendered beside it.
+  Don't also write `aria-label` or `title` by hand. If the button has its own
+  handler for one of the tooltip's events (`onPointerDown`, …), call the
+  tooltip's from it.
+- **The label is a name, not help text:** "Save", "Close explorer",
+  "Playback actions". A few words, sentence case, no trailing period.
+- **Give it the `command`** whose keyboard shortcut does the same thing (`Save`
+  → `tabs.save_active`). The chord as the user has bound it shows in the
+  tooltip and goes out as `aria-keyshortcuts`. Only when the button and the
+  command really do the same thing: a tab's close × names `tabs.close_active`
+  only on the active tab.
+- **A button whose text label sometimes hides** (a `SplitButton` on a narrow
+  toolbar) passes `null` to `useTooltip` while the label shows. Then it has no
+  tooltip and no `aria-label`, since the visible text already names it.
+- **Disclosure chevrons** (`ExpansionToggle`, a tree row's ▸) are the exception
+  and get no tooltip.
+- **Draw a keyboard shortcut with `<Kbd chord={…} />`** (`components/ui/Kbd.tsx`),
+  never as plain `formatChord` text.
+
 ## Git commits
 
 Whenever you change files in the repo, make a Git commit at the end of your turn, without being asked. Commit straight to the current branch (usually `main`), and don't push.

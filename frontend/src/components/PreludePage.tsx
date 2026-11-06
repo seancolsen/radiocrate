@@ -13,7 +13,6 @@ import {
   useSettledDiagnostic,
 } from "./builder/useDiagnostics";
 import IconButton from "./ui/IconButton";
-import { Tooltip } from "./ui/Tooltip";
 
 // The Querydown prelude editor: a tab holding the prelude in a page-filling
 // editor, under a toolbar of Reset to default · Save … and, at the far right, a
@@ -84,15 +83,12 @@ export default function PreludePage(): JSX.Element {
           )}
         </button>
         <div className="flex-1" />
-        <Tooltip align="end" content={PRELUDE.description}>
-          {(describedBy) => (
-            <IconButton
-              icon={Icons.Help}
-              label="Help"
-              describedBy={describedBy}
-            />
-          )}
-        </Tooltip>
+        <IconButton
+          icon={Icons.Help}
+          label="Help"
+          description={PRELUDE.description}
+          tooltipAlign="end"
+        />
       </div>
       {problem && (
         <div className="border-edge shrink-0 border-b px-2.5 py-2">

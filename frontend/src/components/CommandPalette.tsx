@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { chordMatchesEvent, formatChord } from "../commands/chord";
+import { chordMatchesEvent } from "../commands/chord";
 import { rankCommands } from "../commands/rank";
 import type { CommandContext, CommandDef } from "../commands/registry";
 import { selectAvailableCommands, selectBinding } from "../stores/commands";
@@ -24,6 +24,7 @@ import {
   useCommands,
   useForms,
 } from "../stores/react";
+import { Kbd } from "./ui/Kbd";
 import { cx } from "./ui/cx";
 
 // The command palette — a VS Code-style overlay for finding and running
@@ -71,11 +72,7 @@ const PaletteRow = forwardRef<
       <span className="text-ink min-w-0 flex-1 truncate text-[13px]">
         {props.def.title}
       </span>
-      {chord && (
-        <span className="text-ink-weak shrink-0 text-xs whitespace-nowrap">
-          {formatChord(chord)}
-        </span>
-      )}
+      {chord && <Kbd chord={chord} className="text-ink-weak shrink-0" />}
     </div>
   );
 });

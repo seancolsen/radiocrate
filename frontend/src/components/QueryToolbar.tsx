@@ -1,4 +1,5 @@
 import { useRef, type JSX } from "react";
+import type { CommandId } from "../commands/registry";
 import { Icons, type IconComponent } from "../icons";
 import { sectionLabel, type Section } from "../query/definition";
 import {
@@ -30,10 +31,16 @@ import { useElementWidth } from "./ui/useElementWidth";
 /** Width at/below which the bar drops the section buttons' text labels. */
 const COMPACT_WIDTH = 500;
 
-const SECTIONS: { section: Section; icon: IconComponent }[] = [
-  { section: "filter", icon: Icons.Filter },
-  { section: "sort", icon: Icons.Sort },
-  { section: "display", icon: Icons.Display },
+/** The section toggles, each with the command that opens (and focuses) its
+ * builder from the keyboard. */
+const SECTIONS: {
+  section: Section;
+  icon: IconComponent;
+  command: CommandId;
+}[] = [
+  { section: "filter", icon: Icons.Filter, command: "query.focus_filter" },
+  { section: "sort", icon: Icons.Sort, command: "query.focus_sort" },
+  { section: "display", icon: Icons.Display, command: "query.focus_display" },
 ];
 
 /** A human label for the result count, thousands grouped ("1,362 results"). */
@@ -127,6 +134,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
               label={sectionLabel(s.section)}
               active={section === s.section}
               showLabel={!compact}
+              command={s.command}
               alert={problemSection === s.section}
               onMainClick={() => toggleBuilderSection(props.tabId, s.section)}
               menu={
@@ -157,6 +165,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <IconButton
             icon={Icons.Save}
             label="Save"
+            command="tabs.save_active"
             onClick={() => saveQuery(props.tabId)}
           />
         )}

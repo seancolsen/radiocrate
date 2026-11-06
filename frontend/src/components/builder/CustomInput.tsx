@@ -3,6 +3,7 @@ import { Icons } from "../../icons";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QuerydownContext } from "../../editor/querydownEditor";
 import { Menu, MenuItem } from "../ui/Menu";
+import { useTooltip } from "../ui/Tooltip";
 import QuerydownEditor from "./QuerydownEditor";
 
 /** An auto-growing monospace Querydown editor — the toolbar's builder
@@ -37,6 +38,7 @@ const CustomInput = forwardRef<
   }
 >(function CustomInput(props, ref) {
   const hasText = props.value.trim() !== "";
+  const menuTip = useTooltip({ label: "Input options" });
 
   return (
     <div className="relative w-full">
@@ -59,7 +61,7 @@ const CustomInput = forwardRef<
             trigger={(api) => (
               <button
                 type="button"
-                aria-label="Custom input options"
+                {...menuTip.triggerProps}
                 className="text-ink-weak hover:text-ink flex size-6 items-center justify-center rounded"
                 onClick={() => api.toggle()}
               >
@@ -81,6 +83,7 @@ const CustomInput = forwardRef<
               />
             )}
           </Menu>
+          {menuTip.tooltip}
         </div>
       )}
     </div>
