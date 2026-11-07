@@ -423,6 +423,20 @@ export function selectFormSummary(s: FormState): RecordFormSummary {
   };
 }
 
+/** The root records' UUID `id`s, one per line, for copying — `undefined` when
+ * the root's table has no UUID `id` column (or it hasn't loaded yet). */
+export function selectRootIds(s: FormState): string | undefined {
+  const root = s.records[ROOT_ID];
+  const field = root?.fields.find(
+    (f) => f.kind === "primitive" && f.column === "id",
+  );
+  if (field?.kind !== "primitive" || field.valueType !== "uuid") {
+    return undefined;
+  }
+  const ids = root?.values.id?.filter((v): v is string => v !== null);
+  return ids && ids.length > 0 ? ids.join("\n") : undefined;
+}
+
 /** How many fields the user has hidden among those this form has opened so far:
  * the root's table, and the table of every record opened within it. A field
  * counts once however many of its records are open, and not at all where it's

@@ -9,7 +9,7 @@ import ModifiedStar from "./ModifiedStar";
 //
 // It's the query result row's DOM cousin — same field-layout algorithm, same
 // surface treatment (gradient, hover, selected fill) — with the deviations the
-// spec calls for: every cell is small and light whatever the column says, the
+// spec calls for: every cell is label-sized and dark whatever the column says, the
 // widget is bordered and rounded to a semicircle at each end, and a single line
 // comes to the standard control height (see `control` in `app.css`). Its cells are positioned rather than flowed, exactly as the canvas
 // positions them, so a preview reads like the row it previews.
@@ -83,7 +83,7 @@ export default function EmbeddedRecord(props: {
   return (
     <div
       ref={ref}
-      className="rc-embedded text-ink-weak focus:outline-accent relative min-w-0 flex-1 cursor-default text-[11px] outline-none select-none focus:outline-2 focus:outline-offset-0"
+      className="rc-embedded text-ink focus:outline-accent relative min-w-0 flex-1 cursor-default text-xs outline-none select-none focus:outline-2 focus:outline-offset-0"
       style={{ height: `${height}px`, borderRadius: `${RADIUS}px` }}
       data-selected={props.selected ? "true" : undefined}
       data-form-item={props.focusable ? "" : undefined}

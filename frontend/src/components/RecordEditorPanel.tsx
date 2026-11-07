@@ -11,6 +11,7 @@ import {
   selectAnyExpanded,
   selectFormModified,
   selectHiddenFieldCount,
+  selectRootIds,
   type RecordFormModel,
 } from "../stores/recordForm";
 import {
@@ -81,7 +82,7 @@ function ToolbarButton(props: {
 }
 
 /** The form's actions menu (⋮): Collapse all, shown only while something is
- * expanded; the way to show or hide again the fields the user has hidden, shown
+ * expanded; Copy id, when the record has a UUID `id`; the way to show or hide again the fields the user has hidden, shown
  * only while the form has any; and Refresh, which reloads the record from the
  * database. Refresh is off while there are unsaved changes or a save is in
  * flight, since it would throw the changes away — Reset is the deliberate way to
@@ -94,6 +95,7 @@ function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
   const metadata = useApp((s) => s.fieldMetadata.data);
   const showHidden = useApp((s) => s.showHiddenFields);
   const { setShowHiddenFields } = useAppActions();
+  const rootIds = useFormState(model, selectRootIds);
   const hiddenCount = useFormState(model, (s) =>
     selectHiddenFieldCount(s, metadata),
   );
@@ -131,6 +133,17 @@ function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
             onClick={() => setShowHiddenFields(true)}
           />
         ))}
+      {rootIds !== undefined && (
+        <MenuItem
+          icon={Icons.Copy}
+          label="Copy id"
+          onClick={() => {
+            void navigator.clipboard
+              ?.writeText(rootIds)
+              .catch((err) => console.error("copy failed", err));
+          }}
+        />
+      )}
       <MenuItem
         icon={Icons.Refresh}
         label="Refresh"
