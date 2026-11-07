@@ -245,6 +245,7 @@ export class CanvasGrid {
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
   private dirty = false;
+  private destroyed = false;
   private flinging = false;
   private velocity = 0; // logical px per ms
   private lastFrameT = 0;
@@ -322,6 +323,10 @@ export class CanvasGrid {
         document.fonts.load(`14px ${family}`, "Aa"),
         document.fonts.ready,
       ]).then(() => {
+        // The fonts can outlast this grid, and its canvas may have a new grid
+        // by now (a tab shown again, a StrictMode remount) that this would
+        // paint over.
+        if (this.destroyed) return;
         this.metrics.clear(); // real font may differ from the fallback metrics
         this.requestDraw();
       });
@@ -331,6 +336,7 @@ export class CanvasGrid {
   }
 
   destroy(): void {
+    this.destroyed = true;
     const c = this.canvas;
     c.removeEventListener("wheel", this.onWheel);
     c.removeEventListener("pointerdown", this.onPointerDown);
