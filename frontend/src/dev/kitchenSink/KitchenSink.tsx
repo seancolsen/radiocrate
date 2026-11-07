@@ -354,7 +354,7 @@ function Buttons(): JSX.Element {
 const INPUT =
   "control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent rounded-md outline-none";
 const SELECT =
-  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none";
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md py-0 outline-none";
 
 /** A display section touching most of the highlighting's palette: columns,
  * a path, a count, a function, an alias, and annotations. */

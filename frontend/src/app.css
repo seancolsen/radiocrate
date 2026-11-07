@@ -148,9 +148,9 @@
    own sums: the Querydown editor (--qd-pad, QuerydownEditor.tsx), a preset's
    heading (PresetRow.tsx), a field label (FieldLabel.tsx), an embedded record
    (EmbeddedRecord.tsx). A native <select> has inner metrics of its own that
-   vary by platform, already including padding at the sides, so it's the one
-   that sets a height outright and drops its padding (`h-[26px] p-0`). Change
-   them together. */
+   vary by platform, so it's the one that sets a height outright and drops its
+   padding above and below (`h-[26px] py-0`), keeping the 4px at the sides.
+   Change them together. */
 @utility control {
   border-width: 1px;
   border-color: transparent;

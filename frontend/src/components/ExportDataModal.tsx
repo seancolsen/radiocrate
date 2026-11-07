@@ -35,7 +35,7 @@ const QUIET_BUTTON_CLASS =
   "control text-ink enabled:hover:bg-hover focus-visible:border-accent flex items-center gap-1 rounded-md outline-none disabled:opacity-40";
 
 const SELECT_CLASS =
-  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none";
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md py-0 outline-none";
 
 /** The "Export data" dialog: which rows and columns to export, and where to —
  * the clipboard, or a CSV file. Takes its values as props, so the visual

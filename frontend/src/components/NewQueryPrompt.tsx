@@ -29,7 +29,7 @@ export default function NewQueryPrompt(props: { tabId: string }): JSX.Element {
         </label>
         <select
           id={selectId}
-          className="control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none"
+          className="control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md py-0 outline-none"
           value={base}
           onChange={(e) => setBase(props.tabId, e.currentTarget.value)}
         >
