@@ -27,6 +27,30 @@ async function hoverOpen(page: Page, name: string, firstChild: string) {
   await expect(row(page, firstChild)).toBeVisible();
 }
 
+test.describe("placement", () => {
+  // The font swapping in moves the menu's anchor, so a menu that opened on the
+  // fallback font has to follow it. A menu left behind sits a pixel off, which
+  // is how the menu snapshots used to flake: they'd pass or fail depending on
+  // whether the font beat the last placement.
+  test("a menu that opens before the font arrives moves with its anchor", async ({
+    page,
+  }) => {
+    await page.route(/\.woff2/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await route.continue();
+    });
+    await openStory(page, "settings/menu", "light");
+    await expect
+      .poll(() =>
+        page.getByRole("menu").evaluate((panel) => {
+          const anchor = panel.parentElement!.getBoundingClientRect();
+          return panel.getBoundingClientRect().top - anchor.bottom;
+        }),
+      )
+      .toBe(4);
+  });
+});
+
 test.describe("submenus under the pointer", () => {
   test.beforeEach(async ({ page }) => {
     await openStory(page, "menu/nested", "light");

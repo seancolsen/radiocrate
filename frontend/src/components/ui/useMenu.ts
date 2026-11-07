@@ -389,8 +389,9 @@ type Place = (
  * element `getAnchor` returns (read at placement time, so an anchor whose ref
  * React attaches after this panel's effects run — a parent's — still counts):
  * before its first paint, after every render (its rows may have changed its
- * size), and whenever the window resizes or anything scrolls (which moves the
- * anchor out from under it). */
+ * size), and whenever the window resizes, anything scrolls or a font swaps in
+ * (each of which moves the anchor out from under it, and a font can resize the
+ * panel too). */
 export function usePlacement(
   panelRef: RefObject<HTMLElement | null>,
   getAnchor: (() => Element | null | undefined) | null,
@@ -408,9 +409,11 @@ export function usePlacement(
     };
     window.addEventListener("resize", update);
     document.addEventListener("scroll", update, true);
+    document.fonts.addEventListener("loadingdone", update);
     return () => {
       window.removeEventListener("resize", update);
       document.removeEventListener("scroll", update, true);
+      document.fonts.removeEventListener("loadingdone", update);
     };
   }, [panelRef]);
 }
