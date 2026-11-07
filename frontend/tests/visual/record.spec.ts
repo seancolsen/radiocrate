@@ -835,3 +835,53 @@ test.describe("rearranging fields", () => {
     await expect(page.getByRole("menuitem")).toHaveCount(0);
   });
 });
+
+// The tree stays open from one form to the next, and from one visit to the next,
+// by the path to each item: the same place on another record, and nowhere else.
+test("the record editor reopens what was left expanded", async ({ page }) => {
+  // Track 3's: its second credit stays closed, so only the first is remembered.
+  let stage = await openStory(page, "record-editor/items-expanded", "light");
+  await stage.getByRole("button", { name: "Expand credits" }).click();
+  await stage.getByRole("button", { name: /^Expand Beyoncé/ }).click();
+  await stage.getByRole("button", { name: "Expand artist" }).click();
+  await expect(
+    stage.getByRole("button", { name: "Collapse artist" }),
+  ).toBeVisible();
+
+  // Track 5, which the user hasn't opened anything on, on a new visit.
+  stage = await openStory(page, "record-editor/modified", "light");
+  await expect(
+    stage.getByRole("button", { name: "Collapse credits" }),
+  ).toBeVisible();
+  await expect(
+    stage.getByRole("button", { name: /^Collapse Beyoncé/ }),
+  ).toBeVisible();
+  await expect(
+    stage.getByRole("button", { name: "Collapse artist" }),
+  ).toBeVisible();
+  await expect(
+    stage.getByRole("button", { name: /^Expand The Weeknd/ }),
+  ).toBeVisible();
+});
+
+test("the record editor reopens a long text field, not a short one", async ({
+  page,
+}) => {
+  let stage = await openStory(page, "record-editor/items-expanded", "light");
+  await stage.getByRole("button", { name: "Expand title" }).click();
+  await expect(
+    stage.getByRole("button", { name: "Collapse title" }),
+  ).toBeVisible();
+
+  stage = await openStory(page, "record-editor/items-expanded", "light");
+  await expect(
+    stage.getByRole("button", { name: "Collapse title" }),
+  ).toBeVisible();
+
+  // Track 5's title fits on its line, so there is nothing to expand.
+  stage = await openStory(page, "record-editor/modified", "light");
+  await expect(stage.getByText("6 Inch", { exact: true })).toBeVisible();
+  await expect(
+    stage.getByRole("button", { name: /(Collapse|Expand) title/ }),
+  ).toHaveCount(0);
+});

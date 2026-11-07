@@ -27,6 +27,7 @@ import {
   selectModifiedRecords,
 } from "../forms";
 import {
+  createExpansionMemory,
   createRecordForm,
   distinctItemId,
   fieldItemId,
@@ -48,6 +49,7 @@ import {
   selectSharedValue,
   VARIED,
   variedChildId,
+  type ExpansionMemory,
   type RecordFormModel,
   type RecordFormOptions,
 } from ".";
@@ -1512,5 +1514,198 @@ describe("modification", () => {
     expect(selectFocusedForm(forms.store.getState())).toBe(model);
     model.noteBlur();
     expect(selectFocusedForm(forms.store.getState())).toBeUndefined();
+  });
+});
+
+describe("remembered expansion", () => {
+  /** A memory over a fake `localStorage`, returned with it so a test can start a
+   * second memory from what the first one wrote, as a new visit would. */
+  function memory(items = new Map<string, string>()) {
+    const storage = {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+    };
+    return { expansion: createExpansionMemory({ storage }), items };
+  }
+
+  const CREDITS = fieldItemId(ROOT_ID, "#credit");
+  const FIRST = `${CREDITS_LIST}[0]`;
+  const SECOND = `${CREDITS_LIST}[1]`;
+
+  function serveTracks() {
+    serve({
+      track: [
+        trackRow("t1", "Formation", "Pop", 2, 0, "a1"),
+        trackRow("t2", "Sorry", "Pop", 2, 0, "a1"),
+      ],
+      credit: [creditRow("c1", "Lead"), creditRow("c2", "Featured")],
+      albums: { a1: "Lemonade" },
+    });
+  }
+
+  /** A form on a track, opened and loaded. */
+  async function opened(expansion: ExpansionMemory, id = "t1") {
+    const model = form([trackKey(id)], { expansion });
+    model.start();
+    await flush();
+    await flush();
+    await flush();
+    return model;
+  }
+
+  it("reopens the tree from the top, on another record, down to the same paths", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const first = await opened(expansion);
+    first.toggleField(ROOT_ID, credits(first));
+    await flush();
+    first.toggleChild(FIRST);
+    await flush();
+
+    const second = await opened(expansion, "t2");
+    const s = second.store.getState();
+    expect(s.expanded[CREDITS]).toBe(true);
+    expect(s.lists[CREDITS_LIST]?.status).toBe("loaded");
+    // Only the record the user opened, by its place in the list.
+    expect(s.expanded[FIRST]).toBe(true);
+    expect(s.records[FIRST]?.status).toBe("loaded");
+    expect(s.expanded[SECOND]).toBeUndefined();
+    expect(s.records[SECOND]?.status).toBe("unloaded");
+  });
+
+  it("survives into a new visit", async () => {
+    serveTracks();
+    const { expansion, items } = memory();
+    const first = await opened(expansion);
+    first.toggleField(ROOT_ID, credits(first));
+    await flush();
+
+    const later = await opened(memory(items).expansion);
+    expect(later.store.getState().expanded[CREDITS]).toBe(true);
+  });
+
+  it("keeps a path to its root table", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    expansion.set("credit", CREDITS, true);
+    const model = await opened(expansion);
+    expect(model.store.getState().expanded[CREDITS]).toBeUndefined();
+  });
+
+  it("reopens a linked record's own fields under it", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const album = fieldItemId(ROOT_ID, "album");
+    const child = scalarChildId(ROOT_ID, "album");
+    const tracks = fieldItemId(child, "#track");
+    expansion.set("track", album, true);
+    expansion.set("track", tracks, true);
+    const model = await opened(expansion);
+    const s = model.store.getState();
+    expect(s.expanded[album]).toBe(true);
+    expect(s.records[child]?.status).toBe("loaded");
+    expect(s.expanded[tracks]).toBe(true);
+  });
+
+  it("forgets what the user closes, and only that", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const first = await opened(expansion);
+    first.toggleField(ROOT_ID, credits(first));
+    await flush();
+    first.toggleChild(FIRST);
+    await flush();
+    first.toggleField(ROOT_ID, credits(first));
+
+    expect(expansion.has("track", CREDITS)).toBe(false);
+    // What's inside stays, so the field opens back onto it, as it does in a form.
+    expect(expansion.has("track", FIRST)).toBe(true);
+    const second = await opened(expansion, "t2");
+    expect(second.store.getState().expanded[FIRST]).toBeUndefined();
+    second.toggleField(ROOT_ID, credits(second));
+    await flush();
+    expect(second.store.getState().expanded[FIRST]).toBe(true);
+  });
+
+  it("forgets the lot on Collapse all", async () => {
+    serveTracks();
+    const { expansion, items } = memory();
+    expansion.set("track", `${CREDITS_LIST}[5]`, true);
+    const model = await opened(expansion);
+    model.toggleField(ROOT_ID, credits(model));
+    await flush();
+    model.collapseAll();
+    expect(expansion.has("track", CREDITS)).toBe(false);
+    expect(expansion.has("track", `${CREDITS_LIST}[5]`)).toBe(false);
+    expect(items.size).toBe(0);
+  });
+
+  it("keeps the memory of a field with nothing to open on this record", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const { expansion } = memory();
+    expansion.set("track", CREDITS, true);
+    const model = await opened(expansion);
+    expect(model.store.getState().expanded[CREDITS]).toBeUndefined();
+    expect(expansion.has("track", CREDITS)).toBe(true);
+  });
+
+  it("doesn't count an opening the user didn't ask for", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const model = await opened(expansion);
+    model.addChild(ROOT_ID, credits(model));
+    expect(model.store.getState().expanded[CREDITS]).toBe(true);
+    expect(expansion.has("track", CREDITS)).toBe(false);
+  });
+
+  it("opens a text field only once its row says it's cut off", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const title = fieldItemId(ROOT_ID, "title");
+    expansion.set("track", title, true);
+    const model = await opened(expansion);
+    expect(model.store.getState().expanded[title]).toBeUndefined();
+    model.restoreTextField(ROOT_ID, "title");
+    expect(model.store.getState().expanded[title]).toBe(true);
+  });
+
+  it("doesn't reopen what this form has closed", async () => {
+    serveTracks();
+    const { expansion } = memory();
+    const title = fieldItemId(ROOT_ID, "title");
+    const model = await opened(expansion);
+    model.toggleField(ROOT_ID, scalarField(model, ROOT_ID, "title"), true);
+    model.toggleField(ROOT_ID, scalarField(model, ROOT_ID, "title"), false);
+    expansion.set("track", title, true);
+    model.restoreTextField(ROOT_ID, "title");
+    expect(model.store.getState().expanded[title]).toBe(false);
+  });
+
+  it("doesn't remember items that name a value or a made-up record", () => {
+    const { expansion } = memory();
+    const model = form([trackKey("t1")], { expansion });
+    const ids = [
+      distinctItemId(ROOT_ID, "genre", "Rock"),
+      distinctItemId(ROOT_ID, "genre", null),
+      variedChildId(ROOT_ID, "album", "a1"),
+      `${CREDITS_LIST}[new:1]`,
+    ];
+    for (const id of ids) {
+      model.toggleChild(id, true);
+      expect(expansion.has("track", id)).toBe(false);
+    }
+  });
+
+  it("restores nothing from a value it can't read", () => {
+    const { expansion } = memory(new Map([["recordExpansion", "{not json"]]));
+    expect(expansion.has("track", CREDITS)).toBe(false);
+    const other = memory(
+      new Map([
+        ["recordExpansion", JSON.stringify({ track: "r", album: [1] })],
+      ]),
+    ).expansion;
+    expect(other.has("track", "r")).toBe(false);
+    expect(other.has("album", "1")).toBe(false);
   });
 });

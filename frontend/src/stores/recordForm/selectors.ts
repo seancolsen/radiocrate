@@ -227,6 +227,31 @@ export const selectListsDistinct = (
   selectSharedValue(s, recordId, column) === VARIED ||
   selectDistinctEdit(s, recordId, column) !== null;
 
+/** Whether a field's row has anything to expand, given the form's state and
+ * whether its collapsed value is cut off — which only the rendered row can say. */
+export function selectFieldExpandable(
+  s: FormState,
+  recordId: string,
+  field: FormField,
+  overflowing: boolean,
+): boolean {
+  if (field.kind === "multiRecord") {
+    // A field with no records anywhere has nothing to open — one base record
+    // having some is enough — and one whose table has no record identity at all
+    // can be counted but not listed.
+    const most = selectCountMax(s, recordId, field.key) ?? 0;
+    return most > 0 && field.keyColumns.length > 0;
+  }
+  // A scalar field the records disagree on opens into the distinct values they
+  // hold, whichever kind it is — that list is the only way such a field gets a
+  // value at all, so it always opens.
+  if (selectListsDistinct(s, recordId, field.column)) return true;
+  if (field.kind === "scalarLink") {
+    return selectHasLinkedRecord(s, recordId, field);
+  }
+  return field.valueType === "text" && overflowing;
+}
+
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>
   s.expanded[itemId] === true;

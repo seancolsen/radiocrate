@@ -10,12 +10,15 @@ import {
   type FormsStoreBundle,
 } from "./forms";
 import { createMenusStore, type MenusStoreBundle } from "./menus";
+import { createExpansionMemory, type ExpansionMemory } from "./recordForm";
 import { createUpdateStore, type UpdateStoreBundle } from "./update";
 import { embedChanges } from "../query/fieldMetadata";
 
 export interface Stores {
   app: AppStoreBundle;
   forms: FormsStoreBundle;
+  /** What the user has left expanded in the record editor, for every form. */
+  recordExpansion: ExpansionMemory;
   menus: MenusStoreBundle;
   commands: CommandsStoreBundle;
   update: UpdateStoreBundle;
@@ -75,6 +78,7 @@ function sameRetention(
 export function createStores(env: AppEnv = browserEnv()): Stores {
   const app = createAppStore(env);
   const forms = createFormsStore();
+  const recordExpansion = createExpansionMemory(env);
   const menus = createMenusStore();
   const commands = createCommandsStore(app, forms, menus);
   const update = createUpdateStore(app, forms);
@@ -172,5 +176,5 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     app.dispose();
   }
 
-  return { app, forms, menus, commands, update, dispose };
+  return { app, forms, recordExpansion, menus, commands, update, dispose };
 }

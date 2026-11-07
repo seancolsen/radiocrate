@@ -8,6 +8,8 @@ export {
   type RecordFormOptions,
 } from "./model";
 
+export { createExpansionMemory, type ExpansionMemory } from "./expansionMemory";
+
 // The ids and the shared-value vocabulary are the model's own, so callers reach
 // them through it.
 export {

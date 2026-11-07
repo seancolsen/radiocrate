@@ -97,6 +97,7 @@ import {
   distinctItemId,
   embedEditorId,
   fieldItemId,
+  isDurableItemId,
   listId,
   newChildId,
   ROOT_ID,
@@ -106,10 +107,12 @@ import {
 } from "../../record/formIds";
 import { planSave, type SavePlan } from "../../record/formSave";
 import type { RecordFormSummary } from "../forms";
+import type { ExpansionMemory } from "./expansionMemory";
 import {
   distinctValues,
   selectBeyondBulk,
   selectCountMax,
+  selectFieldExpandable,
   selectFieldOf,
   selectFormSummary,
   selectSharedValue,
@@ -152,6 +155,10 @@ export interface RecordFormOptions {
    * read whenever embedded records are fetched, and absent to go by what the form
    * generates. A change reaches the form through `refreshEmbeds`. */
   fieldMetadata?: () => MetadataByTable;
+  /** What the user has left expanded in earlier forms: this form opens with the
+   * same items open, and records what the user opens and closes in it. Absent,
+   * everything starts closed and stays forgotten. */
+  expansion?: ExpansionMemory;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -201,6 +208,10 @@ export interface RecordFormActions {
   /** Expand/collapse a child record within a multi-record field, loading its
    * data the first time it opens. */
   toggleChild: (id: string, open?: boolean) => void;
+  /** Opens a text field the user left expanded, if they did and nothing has
+   * closed it in this form since. Called by its row, the only thing that knows
+   * the value is cut off and so has something to expand into. */
+  restoreTextField: (recordId: string, fieldKey: string) => void;
   /** Expand/collapse every item alongside this one — Ctrl+Click on a toggle. */
   toggleSiblings: (itemId: string, open: boolean) => void;
 
@@ -934,6 +945,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         n.status = "loaded";
       });
       loadScalarEmbeds(id);
+      restoreFields(id);
     } catch (err) {
       if (tokens.get(id) !== token) return;
       patchRecord(id, { status: "error", error: errorMessage(err) });
@@ -1040,6 +1052,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       // What came back may be fewer records than the counts said (a base record
       // the field is empty for), or more rows than one apiece.
       recountField(recordId, field);
+      restoreChildren(id);
     } catch (err) {
       if (tokens.get(id) !== token) return;
       patchList(id, { status: "error", error: errorMessage(err) });
@@ -1556,6 +1569,60 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     if (!open) reconcileFocus(itemId);
   };
 
+  /** Opens a field onto whatever it expands into, loading that the first time. */
+  const openField = (recordId: string, field: FormField) => {
+    setExpandedItem(fieldItemId(recordId, field.key), true);
+    // A scalar field the records disagree on opens into the distinct values
+    // they hold rather than into one value's own contents: a linked record
+    // apiece to preview and open, where an ordinary link has the single
+    // record every one of them points at.
+    if (field.kind === "scalarLink") {
+      if (beyondBulk(recordId, field)) ensureVariedChildren(recordId, field);
+      else ensureScalarChild(recordId, field);
+    } else if (field.kind === "multiRecord") {
+      ensureList(recordId, field);
+    }
+  };
+
+  /** Opens a record within a multi-record field, loading it the first time. */
+  const openChild = (id: string) => {
+    setExpandedItem(id, true);
+    if (get().records[id]?.status === "unloaded") void loadRecord(id);
+  };
+
+  /** Whether the user left an item expanded in an earlier form on this table.
+   * An item this form has already opened or closed has settled the matter. */
+  const shouldRestore = (itemId: string): boolean =>
+    get().expanded[itemId] === undefined &&
+    opts.expansion?.has(opts.table, itemId) === true;
+
+  /** Reopens what the user left expanded among a record's fields, now its data
+   * says which of them have anything to open. Each one that loads a record comes
+   * back here for that record's fields, and so the tree reopens from the top
+   * down. Text fields wait for their rows (`restoreTextField`). */
+  const restoreFields = (recordId: string) => {
+    for (const field of get().records[recordId]?.fields ?? []) {
+      if (
+        shouldRestore(fieldItemId(recordId, field.key)) &&
+        selectFieldExpandable(get(), recordId, field, false)
+      ) {
+        openField(recordId, field);
+      }
+    }
+  };
+
+  /** The same among the rows of a multi-record field, by position. */
+  const restoreChildren = (list: string) => {
+    for (const child of get().lists[list]?.childIds ?? []) {
+      if (shouldRestore(child)) openChild(child);
+    }
+  };
+
+  /** Records an expansion the user asked for, for the next form to open with. */
+  const rememberExpansion = (itemId: string, open: boolean) => {
+    if (isDurableItemId(itemId)) opts.expansion?.set(opts.table, itemId, open);
+  };
+
   /** The items a keyboard command acts on: the selection, or — with nothing
    * selected — whatever is focused. */
   const actionTargets = (): string[] => {
@@ -1678,7 +1745,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         field.kind === "multiRecord" &&
         (selectCountMax(get(), recordId, field.key) ?? 0) > 0
       ) {
-        model.toggleField(recordId, field, true);
+        openField(recordId, field);
       }
     },
     closeEmbedEditor: (recordId, fieldKey, section) =>
@@ -1699,25 +1766,21 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const expanded = get().expanded[itemId] === true;
       const next = open ?? !expanded;
       if (next === expanded) return;
-      setExpandedItem(itemId, next);
-      if (!next) return;
-      // A scalar field the records disagree on opens into the distinct values
-      // they hold rather than into one value's own contents: a linked record
-      // apiece to preview and open, where an ordinary link has the single
-      // record every one of them points at.
-      if (field.kind === "scalarLink") {
-        if (beyondBulk(recordId, field)) ensureVariedChildren(recordId, field);
-        else ensureScalarChild(recordId, field);
-      } else if (field.kind === "multiRecord") {
-        ensureList(recordId, field);
-      }
+      rememberExpansion(itemId, next);
+      if (next) openField(recordId, field);
+      else setExpandedItem(itemId, false);
     },
     toggleChild: (id, open) => {
       const expanded = get().expanded[id] === true;
       const next = open ?? !expanded;
       if (next === expanded) return;
-      setExpandedItem(id, next);
-      if (next && get().records[id]?.status === "unloaded") void loadRecord(id);
+      rememberExpansion(id, next);
+      if (next) openChild(id);
+      else setExpandedItem(id, false);
+    },
+    restoreTextField: (recordId, fieldKey) => {
+      const itemId = fieldItemId(recordId, fieldKey);
+      if (shouldRestore(itemId)) setExpandedItem(itemId, true);
     },
     toggleSiblings: (itemId, open) => {
       const group = items.get(itemId)?.group;
@@ -1868,6 +1931,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const { expanded, focused } = get();
       const open = Object.keys(expanded).filter((id) => expanded[id]);
       if (open.length === 0) return;
+      opts.expansion?.clear(opts.table);
       set((s) => {
         for (const id of open) s.expanded[id] = false;
       });

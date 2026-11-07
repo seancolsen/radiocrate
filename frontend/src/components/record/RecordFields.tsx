@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,7 @@ import {
   selectDistinctEdit,
   selectDistinctText,
   selectEmbedEditorOpen,
+  selectFieldExpandable,
   selectFieldModified,
   selectHasLinkedRecord,
   selectIsExpanded,
@@ -44,7 +46,6 @@ import {
   VARIED,
   variedChildId,
   type DistinctValue,
-  type FormState,
   type RecordFormModel,
   type SharedValue,
 } from "../../stores/recordForm";
@@ -238,32 +239,6 @@ function FieldList(props: {
   );
 }
 
-/** Whether a field's row has anything to expand, given the form's state and
- * whether its collapsed value is cut off. Shared by the row's render and the
- * item handle it registers, which asks later, from `getState()`. */
-function fieldExpandable(
-  s: FormState,
-  recordId: string,
-  field: FormField,
-  overflowing: boolean,
-): boolean {
-  if (field.kind === "multiRecord") {
-    // A field with no records anywhere has nothing to open — one base record
-    // having some is enough — and one whose table has no record identity at all
-    // can be counted but not listed.
-    const most = selectCountMax(s, recordId, field.key) ?? 0;
-    return most > 0 && field.keyColumns.length > 0;
-  }
-  // A scalar field the records disagree on opens into the distinct values they
-  // hold, whichever kind it is — that list is the only way such a field gets a
-  // value at all, so it always opens.
-  if (selectListsDistinct(s, recordId, field.column)) return true;
-  if (field.kind === "scalarLink") {
-    return selectHasLinkedRecord(s, recordId, field);
-  }
-  return field.valueType === "text" && overflowing;
-}
-
 /** One field: its row, plus whatever the row expands into. */
 function FieldRow(props: {
   model: RecordFormModel;
@@ -317,8 +292,16 @@ function FieldRow(props: {
   );
 
   const expandable = useFormState(model, (s) =>
-    fieldExpandable(s, recordId, field, overflowing),
+    selectFieldExpandable(s, recordId, field, overflowing),
   );
+
+  // A text field only has anything to expand once its value is measured and
+  // turns out to be cut off, so that's when a remembered expansion can land.
+  useLayoutEffect(() => {
+    if (field.kind === "primitive" && expandable) {
+      model.restoreTextField(recordId, field.key);
+    }
+  }, [model, recordId, field, expandable]);
 
   /** Whether the records the form is on disagree about this field — the state
    * with no value of its own to show, which expands into the values they hold
@@ -406,7 +389,7 @@ function FieldRow(props: {
     model.registerItem(itemId, {
       group: recordId,
       expandable: () =>
-        fieldExpandable(
+        selectFieldExpandable(
           model.store.getState(),
           recordId,
           field,

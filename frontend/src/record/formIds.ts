@@ -79,6 +79,16 @@ export function fieldItemId(recordId: string, fieldKey: string): string {
   return `${recordId}:${fieldKey}`;
 }
 
+/** Whether an item's id names the same place on any record, which is what makes
+ * its expansion worth remembering for the next form (`ExpansionMemory`): a path of
+ * fields and list positions, as opposed to one running through a *value*
+ * ({@link variedChildId}, {@link distinctItemId}) or a record the form made up
+ * ({@link newChildId}). A field key holding one of these marks just goes
+ * unremembered. */
+export function isDurableItemId(id: string): boolean {
+  return !/=|!null$|\[new:/.test(id);
+}
+
 /** The id a field's Querydown editor is tracked as open under, there being one per
  * section of the query it edits. */
 export function embedEditorId(
