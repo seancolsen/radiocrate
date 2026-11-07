@@ -45,6 +45,7 @@ export type CommandId =
   | "results.edit_selected"
   | "results.select_all"
   | "record.save"
+  | "record.autocomplete"
   | "selection.expand_nested"
   | "selection.collapse_nested"
   | "selection.delete"
@@ -71,7 +72,8 @@ export type When =
   | "transport"
   | "resultsFocused"
   | "recordForm"
-  | "recordModified";
+  | "recordModified"
+  | "recordAutocomplete";
 
 /** A snapshot of the app state the {@link When} predicates read, computed per
  * input pass / palette render. */
@@ -99,6 +101,9 @@ export interface CommandContext {
   recordFormFocused: boolean;
   /** The active tab's record editor holds unsaved changes. */
   recordFormModified: boolean;
+  /** A record editor field is in edit mode, with a value autocomplete can offer
+   * suggestions for. */
+  recordAutocompleteAvailable: boolean;
 }
 
 export interface CommandDef {
@@ -278,6 +283,14 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     when: "recordModified",
     defaultChord: chordOf("mod+S"),
   },
+  {
+    // Only claims the chord where there's autocomplete to turn on. Anywhere else
+    // Ctrl+Enter is left to the text box, where it ends the edit as Enter does.
+    id: "record.autocomplete",
+    title: "Record editor: Autocomplete value",
+    when: "recordAutocomplete",
+    defaultChord: chordOf("ctrl+Enter"),
+  },
   // The three commands below act on the record editor form's selection — the
   // items it has selected, or the one it has focused. They're gated on the form
   // holding focus, which is what lets them claim bare arrow keys and Delete
@@ -404,6 +417,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.recordFormFocused;
     case "recordModified":
       return ctx.recordFormModified;
+    case "recordAutocomplete":
+      return ctx.recordAutocompleteAvailable;
   }
 }
 
@@ -453,5 +468,7 @@ export function whenLabel(when: When): string {
       return "record editor focused";
     case "recordModified":
       return "record editor modified";
+    case "recordAutocomplete":
+      return "editing a record field";
   }
 }

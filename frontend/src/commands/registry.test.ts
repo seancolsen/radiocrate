@@ -79,6 +79,7 @@ const NOWHERE: CommandContext = {
   trackLoaded: false,
   recordFormFocused: false,
   recordFormModified: false,
+  recordAutocompleteAvailable: false,
 };
 
 /** A context in which every command applies (which no real state is). */
@@ -91,6 +92,7 @@ const EVERYWHERE: CommandContext = {
   trackLoaded: true,
   recordFormFocused: true,
   recordFormModified: true,
+  recordAutocompleteAvailable: true,
 };
 
 describe("the keymap", () => {

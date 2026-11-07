@@ -154,6 +154,11 @@ export interface FormState {
    * {@link FormState.editing} when that's what is being edited, and only
    * meaningful while it still names the same item (see `selectDistinctEdit`). */
   distinctEdit: DistinctEdit | null;
+  /** The {@link FormState.editing} id whose text box is in autocomplete mode —
+   * showing the values its column holds, and searching them as the user types.
+   * Only meaningful while it still names the same item (see
+   * `selectIsAutocompleting`). */
+  autocomplete: string | null;
   /** The item id holding focus within this form, or null when focus is
    * elsewhere. */
   focused: string | null;
@@ -216,6 +221,7 @@ export function initialFormState(): FormState {
     editing: null,
     editingSelectAll: false,
     distinctEdit: null,
+    autocomplete: null,
     focused: null,
     selection: [],
     menu: null,

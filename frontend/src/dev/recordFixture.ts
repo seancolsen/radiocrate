@@ -13,7 +13,8 @@
 // `query/embeddedRecord.ts` and `query/relatedRecords.ts` generate —
 // `col:="value"` / `link.col:="value"` conditions, `[{…} {…}]`
 // alternatives, `$col` / `$link.col` / `$#table` display expressions, `\\col` /
-// `\\col \d` sorting — rather than being a SQL engine. If the generators learn a
+// `\\col \d` sorting, and the distinct values `query/valueSuggestions.ts` asks
+// for — rather than being a SQL engine. If the generators learn a
 // new shape, this learns it too.
 
 import { addInferredLinks } from "../query/schema";
@@ -329,6 +330,19 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
       conditions.every((condition) => matches(q.base, row, condition)),
     ),
   );
+  // `$col \gs2 $%count \sd1`: a column's distinct values with their counts, the
+  // commonest first. Ties go by byte, as DuckDB's default collation has them.
+  const grouped = /^\$(\S+) \\gs2 \$%count \\sd1$/.exec(q.display);
+  if (grouped) {
+    const counts = new Map<string | null, number>();
+    for (const row of rows) {
+      const value = readPath(q.base, row, grouped[1]);
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+    return [...counts]
+      .sort(([a, x], [b, y]) => y - x || ((a ?? "") < (b ?? "") ? -1 : 1))
+      .map(([value, count]) => [value, String(count)]);
+  }
   const terms = parseSort(q.sort);
   rows.sort((a, b) => {
     for (const { path, descending } of terms) {

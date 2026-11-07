@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 import { castDraft } from "immer";
 import {
   selectTab,
@@ -69,6 +69,7 @@ import RecordPicker from "../../components/RecordPicker";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import SectionOptionsMenu from "../../components/builder/SectionOptionsMenu";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
+import { ValueInput } from "../../components/record/FieldValue";
 import { CaptureDialog } from "../../components/ShortcutsPage";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
@@ -433,6 +434,37 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
       </div>
     ),
   };
+}
+
+/** Commonest first: every value held by a different number of records. */
+const PAGED_VALUES = Array.from({ length: 120 }, (_, i) => ({
+  value: `Value ${i + 1}`,
+  count: 120 - i,
+}));
+
+/** A text box in edit mode with autocomplete on, over more values than fit on one
+ * page. */
+function PagedAutocomplete(): JSX.Element {
+  const [text, setText] = useState("");
+  return (
+    <ValueInput
+      text={text}
+      label="title"
+      editing={true}
+      expanded={false}
+      multiline={true}
+      selectAll={false}
+      autocomplete={{
+        active: true,
+        toggle: () => undefined,
+        close: () => undefined,
+        search: () => Promise.resolve(PAGED_VALUES),
+      }}
+      onBeginEdit={() => undefined}
+      onInput={setText}
+      onCommit={() => undefined}
+    />
+  );
 }
 
 /** `story`, on a `track` table the user has customized with `fields`, and
@@ -1621,6 +1653,16 @@ export const STORIES: Record<string, Story> = {
   // keeping its linebreak, and "Hold Up" in an open editor — an edit to the
   // one record holding it.
   "record-editor/varied-editing": recordEditor([1, 2, 3]),
+  // A value in edit mode with autocomplete on (the test does the opening): the
+  // chevron in its box, and the titles `track` holds below it.
+  "record-editor/autocomplete": recordEditor([5]),
+  // The same list with enough values to page through, on its text box alone.
+  "value-autocomplete/paged": {
+    width: 340,
+    height: 420,
+    frame: "flex items-start",
+    render: () => <PagedAutocomplete />,
+  },
   // The user's own arrangement of `track`: `title` moved up to the top, and
   // `disc_number` and the credits hidden but on show, their labels dimmed.
   "record-editor/fields-customized": withFieldMetadata(recordEditor([1]), [

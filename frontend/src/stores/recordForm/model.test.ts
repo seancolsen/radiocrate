@@ -42,6 +42,9 @@ import {
   selectEmbedEditorOpen,
   selectFieldModified,
   selectAnyExpanded,
+  selectCanAutocomplete,
+  selectFormSummary,
+  selectIsAutocompleting,
   selectFormModified,
   selectHiddenFieldCount,
   selectIsBulkBlocked,
@@ -1707,5 +1710,113 @@ describe("remembered expansion", () => {
     ).expansion;
     expect(other.has("track", "r")).toBe(false);
     expect(other.has("album", "1")).toBe(false);
+  });
+});
+
+describe("autocomplete", () => {
+  /** A form on `t1` with its data landed, and `title` in edit mode. */
+  async function editing() {
+    serve({ track: [trackRow("t1", "Sorry", "Pop", 0)] });
+    const model = form();
+    model.start();
+    await flush();
+    model.beginEdit(ROOT_ID, "title");
+    return model;
+  }
+  const state = (model: RecordFormModel) => model.store.getState();
+  const on = (model: RecordFormModel, key = "title") =>
+    selectIsAutocompleting(state(model), fieldItemId(ROOT_ID, key));
+
+  it("is only offered on a field in edit mode", async () => {
+    const model = await editing();
+    expect(selectCanAutocomplete(state(model))).toBe(true);
+    model.commitEdit(ROOT_ID, "title", "Sorry");
+    expect(selectCanAutocomplete(state(model))).toBe(false);
+  });
+
+  it("stands down while the value holds a line break", async () => {
+    const model = await editing();
+    model.editValue(ROOT_ID, "title", "two\nlines");
+    expect(selectCanAutocomplete(state(model))).toBe(false);
+    model.toggleAutocomplete();
+    expect(on(model)).toBe(false);
+  });
+
+  it("isn't offered on a column with a unique constraint of its own", async () => {
+    serve({ track: [trackRow("t1", "Sorry", "Pop", 0)] });
+    const model = createRecordForm({
+      tables: TABLES.map((t) =>
+        t.name === "track"
+          ? { ...t, uniqueConstraints: [...t.uniqueConstraints, ["title"]] }
+          : t,
+      ),
+      table: "track",
+      keys: [trackKey("t1")],
+      schemaJson: "{}",
+    });
+    model.start();
+    await flush();
+    model.beginEdit(ROOT_ID, "title");
+    expect(selectCanAutocomplete(state(model))).toBe(false);
+  });
+
+  it("toggles, and goes off with the edit", async () => {
+    const model = await editing();
+    model.toggleAutocomplete();
+    expect(on(model)).toBe(true);
+    model.toggleAutocomplete();
+    expect(on(model)).toBe(false);
+    model.toggleAutocomplete();
+    model.commitEdit(ROOT_ID, "title", "Sorry");
+    model.beginEdit(ROOT_ID, "title");
+    expect(on(model)).toBe(false);
+  });
+
+  it("searches the column's distinct values, as a list to offer", async () => {
+    const model = await editing();
+    runner.mockResolvedValueOnce([
+      ["Sorry", "2"],
+      [null, "9"],
+    ]);
+    const field = scalarField(model, ROOT_ID, "title");
+    if (field.kind !== "primitive") throw new Error("not primitive");
+    await expect(model.searchValues(ROOT_ID, field, "SOR")).resolves.toEqual([
+      { value: "Sorry", count: 2 },
+    ]);
+    expect(runner.mock.lastCall?.[0]).toEqual({
+      base: "track",
+      filter: 'title:"SOR"',
+      sort: "",
+      display: "$title \\gs2 $%count \\sd1",
+    });
+  });
+
+  it("tells the forms store, whether or not an item has focus", async () => {
+    const model = await editing();
+    expect(state(model).focused).toBeNull();
+    expect(selectFormSummary(state(model)).canAutocomplete).toBe(true);
+  });
+
+  it("is offered on a distinct value being edited", async () => {
+    serve({
+      track: [
+        trackRow("t1", "Sorry", "Pop", 0),
+        trackRow("t2", "Hold Up", "Pop", 0),
+      ],
+    });
+    const model = form([trackKey("t1"), trackKey("t2")]);
+    model.start();
+    await flush();
+    const field = scalarField(model, ROOT_ID, "title");
+    if (field.kind !== "primitive") throw new Error("not primitive");
+    model.beginEditDistinct(ROOT_ID, field, "Sorry");
+    expect(selectCanAutocomplete(state(model))).toBe(true);
+    model.toggleAutocomplete();
+    const itemId = distinctItemId(ROOT_ID, "title", "Sorry");
+    expect(selectIsAutocompleting(state(model), itemId)).toBe(true);
+    model.editDistinct("two\nlines");
+    expect(selectCanAutocomplete(state(model))).toBe(false);
+    model.commitDistinct("Sorry");
+    expect(selectIsAutocompleting(state(model), itemId)).toBe(false);
   });
 });

@@ -184,6 +184,41 @@ export function selectDistinctText(
   return current ?? "";
 }
 
+/** Whether the field in edit mode can offer autocomplete, the same for a field's
+ * own editor and a distinct value's. It has to be a plain column (a linked record
+ * is picked, not typed) that doesn't require a value of its own on each record,
+ * since suggesting another record's value would only offer a conflict, and hold
+ * one line of text: suggestions are all whole values, nothing to continue a
+ * second line with. */
+export function selectCanAutocomplete(s: FormState): boolean {
+  const { editing, distinctEdit } = s;
+  if (editing === null) return false;
+  const distinct = distinctEdit?.itemId === editing ? distinctEdit : null;
+  const recordId =
+    distinct?.recordId ??
+    Object.keys(s.records).find((id) =>
+      s.records[id].fields.some((f) => fieldItemId(id, f.key) === editing),
+    );
+  if (recordId === undefined) return false;
+  const field = distinct
+    ? selectFieldOf(s, recordId, distinct.fieldKey)
+    : s.records[recordId].fields.find(
+        (f) => fieldItemId(recordId, f.key) === editing,
+      );
+  if (field?.kind !== "primitive" || field.readOnly || field.unique) {
+    return false;
+  }
+  const text = distinct
+    ? selectDistinctText(s, editing, distinct.from)
+    : selectSharedValue(s, recordId, field.column);
+  return !(typeof text === "string" && text.includes("\n"));
+}
+
+/** Whether `itemId` is in edit mode, with its text box in autocomplete mode. */
+export function selectIsAutocompleting(s: FormState, itemId: string): boolean {
+  return s.editing === itemId && s.autocomplete === itemId;
+}
+
 /** A column's values as its list of distinct values shows them: as they are,
  * except that the records an edit in progress is writing to still read as the
  * value they held when it began. So the list holds still while the user types —
@@ -445,6 +480,7 @@ export function selectFormSummary(s: FormState): RecordFormSummary {
     selecting: s.selection.length > 0,
     pickerOpen: s.picker !== null,
     modified: selectFormModified(s),
+    canAutocomplete: selectCanAutocomplete(s),
   };
 }
 

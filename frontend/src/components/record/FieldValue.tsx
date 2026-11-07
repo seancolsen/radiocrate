@@ -1,4 +1,5 @@
 import {
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,6 +11,13 @@ import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
 import { useResizeObserver } from "../ui/useElementWidth";
+import {
+  AutocompleteToggle,
+  suggestionId,
+  useValueSuggestions,
+  ValueSuggestionsPanel,
+  type ValueAutocomplete,
+} from "./ValueSuggestions";
 import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
 
@@ -48,7 +56,15 @@ export type EditExit = "self" | "next" | "previous" | "none";
  *
  * The form doesn't wait for any of them, though: `onInput` writes each keystroke
  * through to the form as it happens, so `text` (and the star marking the value
- * modified) tracks the typing. */
+ * modified) tracks the typing.
+ *
+ * Handed an `autocomplete`, an editor wears a chevron that brings up the values
+ * its column already holds (`ValueSuggestions.tsx`), narrowed by whatever has been
+ * typed since the edit began. While that list is up, the
+ * arrow keys and PageUp/PageDown move through it, Esc closes it (only), Enter
+ * takes the highlighted value and stays in edit mode so it can be adjusted, and
+ * Tab takes it on the way to the next field. With nothing highlighted, Enter and
+ * Tab are what they always are. */
 export function ValueInput(props: {
   /** The value, as the form holds it right now. */
   text: string;
@@ -68,15 +84,28 @@ export function ValueInput(props: {
   selectAll: boolean;
   /** The text's color and font, for a value that doesn't read as prose. */
   tone?: string;
+  /** What to offer as this value is edited. Absent for a value that has nothing
+   * to offer right now, whose box behaves as if the feature weren't there. */
+  autocomplete?: ValueAutocomplete;
   onBeginEdit: () => void;
   onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
   onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
 }): JSX.Element {
-  const { text, editing, selectAll, onOverflow } = props;
+  const { text, editing, selectAll, autocomplete, onOverflow } = props;
   const tone = props.tone ?? "text-ink";
   const ref = useRef<HTMLTextAreaElement>(null);
+  const listId = useId();
+  // What the edit began from isn't a search: the chevron on a filled value is
+  // asking what else there is, where a search for the value would only find it
+  // again. Whatever has been typed over it since is.
+  const [begun, setBegun] = useState({ editing, text });
+  if (begun.editing !== editing) setBegun({ editing, text });
+  const suggestions = useValueSuggestions(
+    autocomplete,
+    text === begun.text ? "" : text,
+  );
   const [cutOff, setCutOff] = useState(false);
   /** Whether the box is showing all of the value, rather than its one line. */
   const whole = editing || props.expanded;
@@ -119,6 +148,11 @@ export function ValueInput(props: {
    * does, and Shift+Enter is what starts a new line from there. */
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!editing) return;
+    if (suggestions.active && suggestions.onKey(e, pick)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const exit: EditExit | undefined =
       e.key === "Escape"
         ? "self"
@@ -134,7 +168,19 @@ export function ValueInput(props: {
     if (!exit) return;
     e.preventDefault();
     e.stopPropagation();
-    props.onCommit(text, exit);
+    props.onCommit(
+      (e.key === "Tab" && suggestions.highlighted?.value) || text,
+      exit,
+    );
+  };
+
+  /** Takes a suggestion as the value, and the list down with it. The edit goes
+   * on, for the value to be adjusted, or left, and it counts as what the edit
+   * began from: the user didn't type it. */
+  const pick = (value: string) => {
+    props.onInput(value);
+    setBegun({ editing, text: value });
+    autocomplete?.close();
   };
 
   return (
@@ -149,9 +195,20 @@ export function ValueInput(props: {
         // keyboard (decimal, so a DECIMAL/DOUBLE column can take its point).
         inputMode={props.numeric ? "decimal" : undefined}
         aria-label={props.label}
+        aria-autocomplete={autocomplete ? "list" : undefined}
+        aria-controls={suggestions.active ? listId : undefined}
+        aria-activedescendant={
+          suggestions.active && suggestions.cursor.highlight !== null
+            ? suggestionId(listId, suggestions.cursor.highlight)
+            : undefined
+        }
         className={cx(
           `control block w-full resize-none overflow-hidden rounded outline-none ${tone}`,
-          { "border-accent bg-panel": editing, "whitespace-nowrap": !whole },
+          {
+            "border-accent bg-panel": editing,
+            "whitespace-nowrap": !whole,
+            "pr-6": editing && autocomplete !== undefined,
+          },
         )}
         value={
           whole ? text : text.replace(/\r?\n/g, (n) => " ".repeat(n.length))
@@ -181,6 +238,20 @@ export function ValueInput(props: {
         >
           …
         </span>
+      )}
+      {editing && autocomplete && (
+        <AutocompleteToggle
+          active={autocomplete.active}
+          onToggle={autocomplete.toggle}
+        />
+      )}
+      {suggestions.active && (
+        <ValueSuggestionsPanel
+          anchorRef={ref}
+          listId={listId}
+          suggestions={suggestions}
+          onPick={pick}
+        />
       )}
     </div>
   );
@@ -266,6 +337,8 @@ export default function FieldValue(props: {
   /** How many different values the records hold here — only read while `value`
    * is `VARIED`, which is the one state that has no value of its own to show. */
   distinct: number;
+  /** What the value's text box offers as it's edited, if anything. */
+  autocomplete?: ValueAutocomplete;
 }): JSX.Element | null {
   // Nothing loaded for this field yet — no value, no pencil.
   if (props.value === undefined) return null;
@@ -332,6 +405,7 @@ export default function FieldValue(props: {
       }
       selectAll={props.editingSelectAll}
       tone={tone}
+      autocomplete={props.autocomplete}
       onBeginEdit={() => props.onBeginEdit()}
       onInput={(text) => props.onInput(text)}
       onCommit={(text, exit) => props.onCommit(text, exit)}

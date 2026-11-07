@@ -197,6 +197,35 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A value's autocomplete, up: the chevron in its box and the column's values
+  // under it. The list portals out of the panel, but lands on top of the stage.
+  test(`record-editor/autocomplete - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/autocomplete",
+      colorScheme,
+    );
+    await stage.getByRole("textbox", { name: "title" }).click();
+    await page.keyboard.press("Control+Enter");
+    await expect(page.getByRole("option")).toHaveCount(5);
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/autocomplete", colorScheme),
+    );
+  });
+
+  // The pager, which only comes up once the values overrun a page.
+  test(`value-autocomplete/paged - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "value-autocomplete/paged",
+      colorScheme,
+    );
+    await expect(page.getByText("1–50 of 120")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("value-autocomplete/paged", colorScheme),
+    );
+  });
+
   // The modal picker on its own: the search box with its sort and display
   // buttons, and the results as the embedded records they're about to become.
   // Shot through the dialog (it portals out of the stage).
@@ -564,6 +593,187 @@ test.describe("customizing embedded records", () => {
     await expect(editor).not.toBeFocused();
     await openEmbedEditor(page, stage, "file", "Display");
     await expect(editor).toBeFocused();
+  });
+});
+
+test.describe("autocomplete", () => {
+  const options = (page: Page) => page.getByRole("option");
+  const chevron = (stage: Locator) =>
+    stage.getByRole("button", { name: "Autocomplete", exact: true });
+
+  /** The record editor on track 5, with its title in edit mode. */
+  async function editTitle(page: Page) {
+    const stage = await openStory(page, "record-editor/autocomplete", "light");
+    const title = stage.getByRole("textbox", { name: "title" });
+    await title.click();
+    await expect(valueEditor(stage)).toBeFocused();
+    return { stage, title };
+  }
+
+  test("shows a chevron only in edit mode, and only offers when asked", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "record-editor/autocomplete", "light");
+    const title = stage.getByRole("textbox", { name: "title" });
+    await expect(title).toBeVisible();
+    await expect(chevron(stage)).toHaveCount(0);
+
+    await title.click();
+    await expect(chevron(stage)).toBeVisible();
+    await page.keyboard.type("x");
+    await page.waitForTimeout(300);
+    await expect(options(page)).toHaveCount(0);
+  });
+
+  test("the chevron turns it on and off, and the edit goes on", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await chevron(stage).click();
+    await expect(options(page)).toHaveCount(5);
+    await expect(valueEditor(stage)).toBeFocused();
+    await chevron(stage).click();
+    await expect(options(page)).toHaveCount(0);
+    await expect(valueEditor(stage)).toBeFocused();
+  });
+
+  test("typing searches what the values contain, whatever the case", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+    await valueEditor(stage).fill("SORRY");
+    await expect(options(page)).toHaveText(["Sorry1"]);
+    await valueEditor(stage).fill("nothing like this");
+    await expect(page.getByText("No matching values")).toBeVisible();
+  });
+
+  test("the keyboard picks a value, and leaves the edit going", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect(options(page).nth(2)).toHaveAttribute("aria-selected", "true");
+    await expect(options(page).nth(2)).toContainText("Hold Up");
+    await page.keyboard.press("Enter");
+
+    await expect(options(page)).toHaveCount(0);
+    await expect(valueEditor(stage)).toBeFocused();
+    await expect(valueEditor(stage)).toHaveValue("Hold Up");
+    // With the list gone, Enter is back to ending the edit.
+    await page.keyboard.press("Enter");
+    await expect(valueEditor(stage)).toHaveCount(0);
+  });
+
+  test("Escape closes the list and nothing else; Enter on no highlight ends the edit", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+    await page.keyboard.press("Escape");
+    await expect(options(page)).toHaveCount(0);
+    await expect(valueEditor(stage)).toBeFocused();
+
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+    await page.keyboard.press("Enter");
+    await expect(valueEditor(stage)).toHaveCount(0);
+    await expect(options(page)).toHaveCount(0);
+  });
+
+  test("Tab takes the highlighted value on its way to the next field", async ({
+    page,
+  }) => {
+    const { stage, title } = await editTitle(page);
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+    const first = await options(page)
+      .first()
+      .locator("span")
+      .first()
+      .innerText();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Tab");
+    await expect(options(page)).toHaveCount(0);
+    await expect(title).toHaveValue(first);
+    await expect(valueEditor(stage)).toHaveCount(0);
+  });
+
+  test("clicking a value takes it, and clicking away closes the list", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await page.keyboard.press("Control+Enter");
+    const third = options(page).nth(2);
+    const value = await third.locator("span").first().innerText();
+    await third.click();
+    await expect(valueEditor(stage)).toHaveValue(value);
+    await expect(valueEditor(stage)).toBeFocused();
+
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(5);
+    await stage.getByRole("heading").click();
+    await expect(options(page)).toHaveCount(0);
+    await expect(valueEditor(stage)).toHaveCount(0);
+  });
+
+  test("a second line takes the feature away, and Ctrl+Enter with it", async ({
+    page,
+  }) => {
+    const { stage } = await editTitle(page);
+    await page.keyboard.press("Shift+Enter");
+    await expect(chevron(stage)).toHaveCount(0);
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveCount(0);
+    await page.keyboard.press("Backspace");
+    await expect(chevron(stage)).toBeVisible();
+  });
+
+  test("a number column searches what its values contain too", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "record-editor/autocomplete", "light");
+    const disc = stage.getByRole("textbox", { name: "disc_number" });
+    await disc.click();
+    await page.keyboard.press("Control+Enter");
+    await expect(options(page)).toHaveText(["15"]);
+    await valueEditor(stage).fill("9");
+    await expect(page.getByText("No matching values")).toBeVisible();
+  });
+
+  test("the pager and PageDown turn pages, and the arrows cross them", async ({
+    page,
+  }) => {
+    await openStory(page, "value-autocomplete/paged", "light");
+    await expect(page.getByText("1–50 of 120")).toBeVisible();
+    await expect(options(page)).toHaveCount(50);
+
+    await page.getByRole("button", { name: "Next page" }).click();
+    await expect(page.getByText("51–100 of 120")).toBeVisible();
+    await page.keyboard.press("PageDown");
+    await expect(page.getByText("101–120 of 120")).toBeVisible();
+    await expect(options(page)).toHaveCount(20);
+    await expect(
+      page.getByRole("button", { name: "Next page" }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Previous page" }).click();
+    await expect(page.getByText("51–100 of 120")).toBeVisible();
+
+    await page.keyboard.press("ArrowUp");
+    await expect(options(page).last()).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByText("101–120 of 120")).toBeVisible();
+    await expect(options(page).first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 

@@ -32,6 +32,7 @@ import {
 } from "./app";
 import type { FormsState, FormsStoreBundle } from "./forms";
 import {
+  selectAutocompleteForm,
   selectFocusedForm,
   selectModifiedForm,
   selectRecordPickerOpen,
@@ -178,6 +179,7 @@ export function selectCommandContext(
     recordFormFocused,
     recordFormModified:
       active !== null && selectModifiedForm(forms, active) !== undefined,
+    recordAutocompleteAvailable: selectAutocompleteForm(forms) !== undefined,
   };
 }
 
@@ -451,6 +453,9 @@ export function createCommandsStore(
       case "record.save":
         if (tabId)
           void selectModifiedForm(forms.store.getState(), tabId)?.save();
+        break;
+      case "record.autocomplete":
+        selectAutocompleteForm(forms.store.getState())?.toggleAutocomplete();
         break;
       case "results.edit_selected": {
         if (!tabId) break;

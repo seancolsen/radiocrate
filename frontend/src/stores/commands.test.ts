@@ -32,6 +32,7 @@ const IDLE_SUMMARY: RecordFormSummary = {
   selecting: false,
   pickerOpen: false,
   modified: false,
+  canAutocomplete: false,
 };
 
 /** A stubbed, focused-and-mounted record form: enough for the selection
@@ -119,6 +120,60 @@ describe("commands store", () => {
 
       commands.actions.run("results.select_next");
       expect(moveRowSelection).toHaveBeenCalledWith("t", true, false);
+    });
+  });
+
+  describe("record.autocomplete", () => {
+    beforeEach(() => vi.stubGlobal("HTMLElement", class {}));
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** A mounted form with a field in edit mode that can offer autocomplete. A
+     * click into a value begins an edit without giving the form a focused item,
+     * so the summary says nothing of focus. */
+    function mountEditingForm(canAutocomplete: boolean) {
+      const summary = createStore<RecordFormSummary>()(() => ({
+        ...IDLE_SUMMARY,
+        canAutocomplete,
+      }));
+      const model = {
+        store: summary,
+        getSummary: () => summary.getState(),
+        dispose: vi.fn(),
+        toggleAutocomplete: vi.fn(),
+      } as unknown as RecordFormModel;
+      forms.actions.stashedForm("t", ["r1"], () => model);
+      forms.actions.mount("t", ["r1"]);
+      return model;
+    }
+    /** Ctrl+Enter, in a text box, as the global keydown pass sees it. */
+    function pressCtrlEnter() {
+      const event = {
+        code: "Enter",
+        key: "Enter",
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        target: null,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      };
+      commands.actions.handleKeyDown(event as unknown as KeyboardEvent);
+      return event;
+    }
+
+    it("takes Ctrl+Enter on a field that can offer autocomplete", () => {
+      const model = mountEditingForm(true);
+      const event = pressCtrlEnter();
+      expect(model.toggleAutocomplete).toHaveBeenCalledTimes(1);
+      expect(event.preventDefault).toHaveBeenCalled();
+    });
+
+    it("leaves Ctrl+Enter alone anywhere else", () => {
+      const model = mountEditingForm(false);
+      const event = pressCtrlEnter();
+      expect(model.toggleAutocomplete).not.toHaveBeenCalled();
+      expect(event.preventDefault).not.toHaveBeenCalled();
     });
   });
 

@@ -124,7 +124,19 @@ describe("buildFormFields", () => {
       valueType: "text",
       nullable: false,
       readOnly: false,
+      unique: false,
     });
+  });
+
+  it("marks a primitive field unique when one column's constraint says so", () => {
+    const unique = (table: string, key: string) => {
+      const field = buildFormFields(TABLES, table).find((f) => f.key === key);
+      return field?.kind === "primitive" && field.unique;
+    };
+    expect(unique("artist", "name")).toBe(true);
+    expect(unique("album", "title")).toBe(false);
+    // Part of a key across several columns, it can repeat.
+    expect(unique("credit", "ord")).toBe(false);
   });
 
   it("marks a primitive field read-only when it's the table's primary key", () => {

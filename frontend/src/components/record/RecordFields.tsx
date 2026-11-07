@@ -21,6 +21,7 @@ import FieldValue, {
   type EditExit,
 } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
+import type { ValueAutocomplete } from "./ValueSuggestions";
 import {
   distinctItemId,
   distinctValues,
@@ -37,6 +38,8 @@ import {
   selectFieldExpandable,
   selectFieldModified,
   selectHasLinkedRecord,
+  selectCanAutocomplete,
+  selectIsAutocompleting,
   selectIsExpanded,
   selectIsSelected,
   selectListsDistinct,
@@ -655,6 +658,28 @@ function Subtree(props: { children: ReactNode }): JSX.Element {
   return <div className="border-edge ml-2 border-l pl-2">{props.children}</div>;
 }
 
+/** What a value's text box offers as it's edited: its column's values, for a box
+ * in edit mode whose field can have them. */
+function useAutocomplete(
+  model: RecordFormModel,
+  recordId: string,
+  field: PrimitiveField | ScalarLinkField,
+  itemId: string,
+): ValueAutocomplete | undefined {
+  const available = useFormState(
+    model,
+    (s) => s.editing === itemId && selectCanAutocomplete(s),
+  );
+  const active = useFormState(model, (s) => selectIsAutocompleting(s, itemId));
+  if (!available || field.kind !== "primitive") return undefined;
+  return {
+    active,
+    toggle: () => model.toggleAutocomplete(),
+    close: () => model.closeAutocomplete(),
+    search: (text) => model.searchValues(recordId, field, text),
+  };
+}
+
 /** Wires a field value's edit mode to the model. (`multiRecord` fields never
  * reach here — they show a count instead, and the caller narrows them out.)
  * Its own component so that only the row entering or leaving edit mode
@@ -676,6 +701,7 @@ function FieldValueSlot(props: {
   const itemId = fieldItemId(recordId, field.key);
   const editing = useFormState(model, (s) => s.editing === itemId);
   const editingSelectAll = useFormState(model, (s) => s.editingSelectAll);
+  const autocomplete = useAutocomplete(model, recordId, field, itemId);
   return (
     <FieldValue
       field={field}
@@ -692,6 +718,7 @@ function FieldValueSlot(props: {
       onContextMenu={props.onContextMenu}
       onOverflow={props.onOverflow}
       distinct={props.distinct}
+      autocomplete={autocomplete}
     />
   );
 }
@@ -780,6 +807,7 @@ function DistinctValueRow(props: {
   const expandId = childId ?? itemId;
   const expanded = useFormState(model, (s) => selectIsExpanded(s, expandId));
   const editing = useFormState(model, (s) => s.editing === itemId);
+  const autocomplete = useAutocomplete(model, recordId, field, itemId);
   /** What its text box holds: the value, or what it's been edited to so far. */
   const inputText = useFormState(model, (s) =>
     selectDistinctText(s, itemId, value),
@@ -854,6 +882,7 @@ function DistinctValueRow(props: {
       multiline={field.kind === "primitive" && field.valueType === "text"}
       numeric={field.kind === "primitive" && field.valueType === "number"}
       selectAll={false}
+      autocomplete={autocomplete}
       onBeginEdit={beginEdit}
       onInput={(input) => model.editDistinct(input)}
       onCommit={commit}

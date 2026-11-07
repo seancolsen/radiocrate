@@ -53,6 +53,9 @@ export interface PrimitiveField extends FieldBase {
   /** Whether this column is the table's primary key — issued by the database,
    * not the user, so the form never lets it be edited. */
   readOnly: boolean;
+  /** Whether a single-column UNIQUE constraint keeps each record's value to
+   * itself — which rules out offering it another record's. */
+  unique: boolean;
 }
 
 /** A field backed by a foreign-key column, referencing one record in
@@ -173,6 +176,9 @@ export function buildFormFields(
         valueType: valueTypeOf(column.type),
         nullable: column.nullable,
         readOnly: column.name === pk,
+        unique: table.uniqueConstraints.some(
+          (cols) => cols.length === 1 && cols[0] === column.name,
+        ),
       });
     }
   }

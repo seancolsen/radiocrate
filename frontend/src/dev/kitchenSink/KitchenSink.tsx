@@ -158,6 +158,7 @@ const primitive = (label: string, valueType: ValueType): FormField => ({
   valueType,
   nullable: true,
   readOnly: false,
+  unique: false,
 });
 
 /** One field of every kind a label tells apart, captioned with what makes it

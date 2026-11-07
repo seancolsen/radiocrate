@@ -56,6 +56,8 @@ export interface RecordFormSummary {
   selecting: boolean;
   pickerOpen: boolean;
   modified: boolean;
+  /** Whether it has a field in edit mode that can offer autocomplete. */
+  canAutocomplete: boolean;
 }
 
 /** One stashed form: which records of which tab it's on, the model itself,
@@ -151,6 +153,16 @@ export function selectFocusedForm(s: FormsState): RecordFormModel | undefined {
   return s.entries.find(
     (e) => e.mounted > 0 && (e.summary.focused || e.summary.selecting),
   )?.model;
+}
+
+/** The form with a field in edit mode that can offer autocomplete, if any: what
+ * Ctrl+Enter acts on. Clicking into a value begins an edit without giving the form
+ * a focused item, so this can't be left to {@link selectFocusedForm}. */
+export function selectAutocompleteForm(
+  s: FormsState,
+): RecordFormModel | undefined {
+  return s.entries.find((e) => e.mounted > 0 && e.summary.canAutocomplete)
+    ?.model;
 }
 
 /** The form of `tabId` that holds unsaved changes and is on screen, if any:

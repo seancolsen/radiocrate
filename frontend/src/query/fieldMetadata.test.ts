@@ -33,6 +33,7 @@ const fields = (...keys: string[]): FormField[] =>
     valueType: "text",
     nullable: true,
     readOnly: false,
+    unique: false,
   }));
 const keysOf = (list: readonly { key: string }[]) => list.map((f) => f.key);
 /** Metadata for columns named by key. */

@@ -60,6 +60,11 @@ import {
   type RecordQuery,
   type ScalarLinkField,
 } from "../../query/recordForm";
+import {
+  parseSuggestions,
+  suggestionsQuery,
+  type ValueSuggestion,
+} from "../../query/valueSuggestions";
 import { isShared, VARIED, type ColumnValues } from "../../record/formValues";
 import {
   childRecordsQuery,
@@ -113,6 +118,7 @@ import {
   selectBeyondBulk,
   selectCountMax,
   selectFieldExpandable,
+  selectCanAutocomplete,
   selectFieldOf,
   selectFormSummary,
   selectSharedValue,
@@ -237,6 +243,19 @@ export interface RecordFormActions {
    * is stored as NULL, unless the column is non-nullable text — the one kind of
    * field an empty string is itself a legitimate value for. */
   commitEdit: (recordId: string, column: string, value: string) => void;
+
+  /** Turn autocomplete mode on or off for the value in edit mode, when it can
+   * have it (`selectCanAutocomplete`). Leaving edit mode turns it off as well. */
+  toggleAutocomplete: () => void;
+  /** Turn autocomplete mode off, staying in edit mode. */
+  closeAutocomplete: () => void;
+  /** The values `field`'s column holds across every record of its table that
+   * match what's typed, as autocomplete offers them. */
+  searchValues: (
+    recordId: string,
+    field: PrimitiveField,
+    search: string,
+  ) => Promise<readonly ValueSuggestion[]>;
 
   /** Write everything the user has changed to the database, in one DML request:
    * every edited value, every record created, every record removed. On success
@@ -1827,7 +1846,28 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       setColumn(recordId, column, storedValue(recordId, column, value));
       set((s) => {
         s.editing = null;
+        s.autocomplete = null;
       });
+    },
+    toggleAutocomplete: () => {
+      if (!selectCanAutocomplete(get())) return;
+      set((s) => {
+        s.autocomplete = s.autocomplete === s.editing ? null : s.editing;
+      });
+    },
+    closeAutocomplete: () => {
+      set((s) => {
+        s.autocomplete = null;
+      });
+    },
+    searchValues: async (recordId, field, search) => {
+      const table = get().records[recordId]?.table;
+      if (table === undefined) return [];
+      const rows = await runRecordQuery(
+        suggestionsQuery(table, field, search),
+        opts.schemaJson,
+      );
+      return parseSuggestions(rows, field, search);
     },
 
     save: async () => {
@@ -2167,6 +2207,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         }
         s.editing = null;
         s.distinctEdit = null;
+        s.autocomplete = null;
       });
       // Every record agreeing now, there is no list to show: the field closes
       // onto the one value it holds, as it does when one is taken for all.

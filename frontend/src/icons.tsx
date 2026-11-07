@@ -27,6 +27,7 @@ import Hide from "~icons/material-symbols/visibility-off";
 import Show from "~icons/material-symbols/visibility";
 import ExpandOpen from "~icons/material-symbols/expand-more";
 import ExpandClosed from "~icons/material-symbols/chevron-right";
+import PagePrevious from "~icons/material-symbols/chevron-left";
 import Settings from "~icons/material-symbols/settings";
 import Save from "~icons/material-symbols/save";
 import Build from "~icons/material-symbols/build";
@@ -121,6 +122,8 @@ export const Icons = {
   Show, // record editor: un-hide a field, or show the hidden fields
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron
+  PagePrevious, // a pager: the page before
+  PageNext: ExpandClosed, // a pager: the page after
   Settings, // static Settings footer
   Save, // toolbar save (shown while unsaved, or after a failed save)
   Undo, // toolbar undo (step the query back)

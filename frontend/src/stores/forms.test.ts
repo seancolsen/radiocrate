@@ -39,6 +39,7 @@ const IDLE: RecordFormSummary = {
   selecting: false,
   pickerOpen: false,
   modified: false,
+  canAutocomplete: false,
 };
 
 describe("forms store", () => {
