@@ -194,12 +194,17 @@ const FIELDS: readonly { caption: string; field: FormField }[] = [
   },
 ];
 
-function Label(props: { field: FormField; menuOpen?: boolean }): JSX.Element {
+function Label(props: {
+  field: FormField;
+  menuOpen?: boolean;
+  hiddenField?: boolean;
+}): JSX.Element {
   return (
     <FieldLabel
       field={props.field}
       itemId={props.field.key}
       menuOpen={props.menuOpen ?? false}
+      hiddenField={props.hiddenField}
       onClick={() => {}}
       onDblClick={() => {}}
       onFocus={() => {}}
@@ -224,6 +229,13 @@ function FieldLabels(): JSX.Element {
           {FIELDS.map(({ caption, field }) => (
             <Specimen key={field.key} caption={`${caption}, focused`}>
               <Label field={field} menuOpen />
+            </Specimen>
+          ))}
+        </Row>
+        <Row>
+          {FIELDS.map(({ caption, field }) => (
+            <Specimen key={field.key} caption={`${caption}, hidden`}>
+              <Label field={field} hiddenField />
             </Specimen>
           ))}
         </Row>
@@ -529,6 +541,15 @@ function Surfaces(): JSX.Element {
             <div className="control bg-accent text-panel flex items-center gap-1 rounded-md px-2 whitespace-nowrap shadow-md">
               <Icons.Playlist className="size-[14px] shrink-0" />3 tracks
             </div>
+          </Specimen>
+          <Specimen caption="drag chip, field">
+            <div className="control bg-accent text-panel flex items-center gap-1 rounded-md px-2 whitespace-nowrap shadow-md">
+              <Icons.FieldText className="size-[14px] shrink-0" />
+              title
+            </div>
+          </Specimen>
+          <Specimen caption="drop line">
+            <div className="bg-accent h-0.5 w-24 rounded-full" />
           </Specimen>
         </Row>
         <Row>

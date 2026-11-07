@@ -1468,6 +1468,7 @@ test("a primitive field's menu edits, clears and copies it", async ({
     "Edit",
     "Clear",
     "Copy",
+    "Hide field",
   ]);
   // The label says what the menu is about to act on, as if it were focused: it
   // wears the same blue border a focused label would, instead of its usual
@@ -1495,6 +1496,7 @@ test("a primitive field's menu edits, clears and copies it", async ({
     "Edit",
     "Clear",
     "Copy",
+    "Hide field",
   ]);
   await page.getByRole("menuitem", { name: "Edit" }).click();
   await expect(valueEditor(editor)).toBeFocused();
@@ -1510,7 +1512,7 @@ test("a field menu traps focus and Up/Down/Enter drive it, not the form undernea
   await rightClick(formItem(editor, "r:title"));
   const menu = page.getByRole("menu");
   const items = menu.getByRole("menuitem");
-  await expect(items).toHaveText(["Edit", "Clear", "Copy"]);
+  await expect(items).toHaveText(["Edit", "Clear", "Copy", "Hide field"]);
 
   // Opening moves real focus into the menu — off the label it was raised on,
   // even though the label keeps its focus-styled border (spec: the label says
@@ -1556,6 +1558,7 @@ test("a primary key's menu only offers to copy it, never to edit or clear it", a
   await rightClick(formItem(editor, "r:id"));
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Copy",
+    "Hide field",
   ]);
   await page.keyboard.press("Escape");
 
@@ -1578,6 +1581,7 @@ test("a multi-record field's menu adds and deletes records", async ({
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "New record",
     "Delete all records",
+    "Hide field",
   ]);
   await page.getByRole("menuitem", { name: "New record" }).click();
   await expect(selectableRecords(editor).first()).toHaveText("New");
@@ -1605,6 +1609,7 @@ test("a scalar linked record field's menu enters a new record", async ({
     "Pick a record",
     "Enter a new record",
     "Clear",
+    "Hide field",
   ]);
   await menu.getByRole("menuitem", { name: "Enter a new record" }).click();
 

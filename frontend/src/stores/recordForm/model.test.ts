@@ -26,6 +26,7 @@ import {
   selectFieldModified,
   selectAnyExpanded,
   selectFormModified,
+  selectHiddenFieldCount,
   selectIsBulkBlocked,
   selectListsDistinct,
   selectSharedValue,
@@ -208,6 +209,60 @@ const CREDITS_LIST = listId(ROOT_ID, "#credit");
 
 beforeEach(() => {
   runner.mockReset();
+});
+
+describe("selectHiddenFieldCount", () => {
+  const hide = (...keys: string[]) =>
+    Object.fromEntries(
+      keys.map((key) => [key, { visible: false, order: null }]),
+    );
+
+  it("is zero without any metadata", () => {
+    expect(selectHiddenFieldCount(form().store.getState(), {})).toBe(0);
+  });
+
+  it("counts the fields of the form's table, whichever kind they are", () => {
+    const s = form().store.getState();
+    expect(
+      selectHiddenFieldCount(s, {
+        track: {
+          ...hide("title", "#credit"),
+          genre: { visible: true, order: 1 },
+        },
+      }),
+    ).toBe(2);
+  });
+
+  it("ignores other tables, and columns the table no longer has", () => {
+    const s = form().store.getState();
+    expect(
+      selectHiddenFieldCount(s, {
+        track: hide("gone"),
+        credit: hide("role"),
+      }),
+    ).toBe(0);
+  });
+
+  it("counts a nested record's table, and each field once", async () => {
+    serve({
+      track: [trackRow("t1", "Formation", "Pop", 2)],
+      credit: [creditRow("c1", "Lead"), creditRow("c2", "Featured")],
+    });
+    const model = form();
+    model.start();
+    await flush();
+    model.toggleField(ROOT_ID, credits(model));
+    await flush();
+    const s = model.store.getState();
+    expect(
+      selectHiddenFieldCount(s, {
+        track: hide("title"),
+        // `track` is the credits' contextual filter here, so they have no such
+        // field to hide. `role` is there on both of them.
+        credit: hide("role", "track"),
+      }),
+    ).toBe(2);
+  });
 });
 
 describe("loading", () => {

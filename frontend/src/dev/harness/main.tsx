@@ -27,9 +27,10 @@ const story = STORIES[storyId];
  * shoot that. */
 function Harness() {
   const stores = useStores();
-  // The canned query and preset lists resolve a tick after mount, and some
-  // stories are built on top of them (a preset's name, a tab's saved query),
-  // so setup waits for both — then the story renders into a settled store.
+  // The canned query, preset and column metadata lists resolve a tick after
+  // mount, and some stories are built on top of them (a preset's name, a tab's
+  // saved query), so setup waits for them — then the story renders into a
+  // settled store.
   // `dataReady` comes straight from the store subscription (no separate
   // "ready" state of our own to keep in sync with it — state management:
   // "force update / external sync" is what `useApp` already is), and
@@ -40,8 +41,10 @@ function Harness() {
   // subscribed story tree — lands before this frame is ever shown.
   const queriesReady = useApp((s) => s.sources.status === "ready");
   const presetsReady = useApp((s) => s.presetsStatus === "ready");
+  const metadataReady = useApp((s) => s.columnMetadata.status === "ready");
   const dataReady =
-    story?.setup === undefined || (queriesReady && presetsReady);
+    story?.setup === undefined ||
+    (queriesReady && presetsReady && metadataReady);
   const setupRan = useRef(false);
 
   useLayoutEffect(() => {

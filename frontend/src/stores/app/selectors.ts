@@ -13,6 +13,10 @@ import {
   type Sections,
 } from "../../query/playlist";
 import { resultToCsv } from "../../query/exportCsv";
+import {
+  NO_TABLE_METADATA,
+  type TableMetadata,
+} from "../../query/columnMetadata";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
@@ -401,6 +405,13 @@ export function selectRecordGroupsForRows(
     rows,
   );
 }
+
+/** The customized fields of `table`, or a shared empty object for a table with
+ * none. */
+export const selectTableMetadata = (
+  s: AppState,
+  table: string,
+): TableMetadata => s.columnMetadata.data[table] ?? NO_TABLE_METADATA;
 
 export const selectRecordEditor = (
   s: AppState,

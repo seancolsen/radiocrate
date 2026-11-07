@@ -14,6 +14,7 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { PageDefinition, PlaylistDefinition } from "../../query/playlist";
 import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
+import type { MetadataByTable } from "../../query/columnMetadata";
 import type { SchemaTable } from "../../query/schema";
 import { SETTINGS, type SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
@@ -542,6 +543,14 @@ export interface AppState {
   /** The user-customized settings, loaded once via `setting.list`. A missing
    * key reads as that setting's default (see `state/settings.ts`). */
   settingOverrides: SettingOverrides;
+  /** What the user has customized about each table's record editor fields
+   * (loads via `column_metadata.list`; see `query/columnMetadata.ts`). Applied as
+   * the form renders, so one change reaches every open form on that table. */
+  columnMetadata: ResourceState<MetadataByTable>;
+  /** Whether record editors show the fields the user has hidden. For the whole
+   * app rather than for one form, since a form lasts only as long as the
+   * selection stays on its records. */
+  showHiddenFields: boolean;
   /** The audio-streaming quality preference (persisted, like theme). */
   audioQuality: AudioQualityPref;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
@@ -682,6 +691,8 @@ export function initialState(env: AppEnv): AppState {
     ratings: { status: "loading", data: [] },
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
+    columnMetadata: { status: "loading", data: {} },
+    showHiddenFields: false,
     audioQuality: storedAudioQuality(env),
     recordSidebarWidth: storedRecordSidebarWidth(env),
     rowPatch: undefined,

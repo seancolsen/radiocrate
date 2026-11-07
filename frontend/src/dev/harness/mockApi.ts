@@ -46,8 +46,17 @@ function echoDml(operations: DmlOp[]): DmlResult {
   ) as DmlResult;
 }
 
+/** Every call the page has made, on `window.__rpcCalls`: a spec can't see them
+ * go over the network, since the stub answers before anything gets that far. */
+declare global {
+  interface Window {
+    __rpcCalls?: { method: string; params: unknown }[];
+  }
+}
+
 /** The result for one JSON-RPC method, or a thrown message for a failed call. */
 function rpcResult(method: string, params: unknown): unknown {
+  (window.__rpcCalls ??= []).push({ method, params });
   switch (method) {
     case "source.list":
       return SOURCES_FIXTURE;
@@ -60,6 +69,7 @@ function rpcResult(method: string, params: unknown): unknown {
     // every setting its built-in value.
     case "keybinding.list":
     case "setting.list":
+    case "column_metadata.list":
       return [];
     // Constant, never the real `__BUILD_ID__`: a story that showed the build
     // this checkout happens to be would rewrite its baseline on every commit.

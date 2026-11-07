@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
+    AppVersion, ColumnMetadata, ColumnMetadataSetOrderParams, ColumnMetadataSetVisibleParams,
+    ColumnOrder, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
     Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting,
     SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
     SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
@@ -245,6 +246,22 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 delete_preset(conn, &p.id)?;
                 Ok(Value::Null)
             })
+        }
+        "column_metadata.list" => state.read(|conn| -> Result<Value, String> {
+            let rows = list_column_metadata(conn)?;
+            serde_json::to_value(rows).map_err(|e| e.to_string())
+        }),
+        "column_metadata.set_visible" => {
+            let p: ColumnMetadataSetVisibleParams = from_params(params)?;
+            state.write(|conn| {
+                set_column_visible(conn, &p.table, &p.column, p.visible)?;
+                Ok(Value::Null)
+            })
+        }
+        "column_metadata.set_order" => {
+            let p: ColumnMetadataSetOrderParams = from_params(params)?;
+            state
+                .write_mut(|conn| set_column_order(conn, &p.table, &p.orders).map(|()| Value::Null))
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
             let bindings = list_keybindings(conn)?;
@@ -611,6 +628,63 @@ fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn list_column_metadata(conn: &Connection) -> Result<Vec<ColumnMetadata>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT \"table\", \"column\", visible, \"order\" FROM metadata.\"column\" \
+             ORDER BY \"table\", \"column\"",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ColumnMetadata {
+                table: row.get(0)?,
+                column: row.get(1)?,
+                visible: row.get(2)?,
+                order: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Sets one field's visibility, creating its row if this is the first thing
+/// customized about it. Leaves its `order` as it is.
+fn set_column_visible(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    visible: bool,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO metadata.\"column\" (\"table\", \"column\", visible) VALUES (?, ?, ?) \
+         ON CONFLICT (\"table\", \"column\") DO UPDATE SET visible = excluded.visible",
+        duckdb::params![table, column, visible],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Sets the sort keys of a table's fields in one transaction, creating the rows
+/// of any field not customized yet. Leaves their `visible` as it is.
+fn set_column_order(
+    conn: &mut Connection,
+    table: &str,
+    orders: &[ColumnOrder],
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for entry in orders {
+        tx.execute(
+            "INSERT INTO metadata.\"column\" (\"table\", \"column\", \"order\") VALUES (?, ?, ?) \
+             ON CONFLICT (\"table\", \"column\") DO UPDATE SET \"order\" = excluded.\"order\"",
+            duckdb::params![table, entry.column, entry.order],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
 }
 
 fn list_keybindings(conn: &Connection) -> Result<Vec<Keybinding>, String> {
@@ -1027,6 +1101,94 @@ mod tests {
             .map(|q| q.name)
             .collect();
         assert_eq!(names, ["first", "second"]);
+    }
+
+    fn column_row(table: &str, column: &str, visible: bool, order: Option<f64>) -> ColumnMetadata {
+        ColumnMetadata {
+            table: table.to_string(),
+            column: column.to_string(),
+            visible,
+            order,
+        }
+    }
+
+    fn order_of(column: &str, order: f64) -> ColumnOrder {
+        ColumnOrder {
+            column: column.to_string(),
+            order,
+        }
+    }
+
+    #[test]
+    fn column_metadata_starts_empty() {
+        let conn = setup();
+        assert_eq!(list_column_metadata(&conn).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn hiding_a_column_leaves_its_order_and_ordering_leaves_its_visibility() {
+        let mut conn = setup();
+        set_column_visible(&conn, "track", "genre", false).unwrap();
+        assert_eq!(
+            list_column_metadata(&conn).unwrap(),
+            vec![column_row("track", "genre", false, None)],
+        );
+
+        set_column_order(
+            &mut conn,
+            "track",
+            &[order_of("genre", 1.0), order_of("title", 2.0)],
+        )
+        .unwrap();
+        assert_eq!(
+            list_column_metadata(&conn).unwrap(),
+            vec![
+                column_row("track", "genre", false, Some(1.0)),
+                column_row("track", "title", true, Some(2.0)),
+            ],
+        );
+
+        set_column_visible(&conn, "track", "genre", true).unwrap();
+        set_column_order(&mut conn, "track", &[order_of("title", 0.5)]).unwrap();
+        assert_eq!(
+            list_column_metadata(&conn).unwrap(),
+            vec![
+                column_row("track", "genre", true, Some(1.0)),
+                column_row("track", "title", true, Some(0.5)),
+            ],
+        );
+    }
+
+    #[test]
+    fn the_same_column_name_is_separate_per_table() {
+        let conn = setup();
+        set_column_visible(&conn, "track", "title", false).unwrap();
+        set_column_visible(&conn, "album", "title", true).unwrap();
+        assert_eq!(
+            list_column_metadata(&conn).unwrap(),
+            vec![
+                column_row("album", "title", true, None),
+                column_row("track", "title", false, None),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_table_needs_a_unique_table_and_column() {
+        let conn = setup();
+        let insert = "INSERT INTO metadata.\"column\" (\"table\", \"column\") VALUES ('a', 'b')";
+        conn.execute_batch(insert).unwrap();
+        assert!(conn.execute_batch(insert).is_err());
+    }
+
+    #[test]
+    fn the_metadata_schema_stays_out_of_introspection() {
+        let conn = setup();
+        let json: String = conn
+            .query_row(introspection::introspection_sql(), [], |row| row.get(0))
+            .unwrap();
+        let schema = introspection::Schema::parse(&json).unwrap();
+        assert!(schema.table("column").is_none());
     }
 
     #[test]

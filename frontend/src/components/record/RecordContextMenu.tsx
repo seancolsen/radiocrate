@@ -11,7 +11,9 @@ import {
   type RecordFormModel,
   type SharedValue,
 } from "../../stores/recordForm";
-import { useFormState } from "../../stores/react";
+import { selectTableMetadata } from "../../stores/app";
+import { useApp, useAppActions, useFormState } from "../../stores/react";
+import { isFieldHidden } from "../../query/columnMetadata";
 import type { FormField } from "../../query/recordForm";
 
 // The form's context menus — one component for all of them, because only one is
@@ -20,7 +22,9 @@ import type { FormField } from "../../query/recordForm";
 // Which entries appear follows the target (spec: "Interactions"): a field offers
 // what its *kind* can do, an embedded record offers what can be done to the
 // record it previews. Every action here is ephemeral, like every other form
-// modification — nothing reaches the database until the form is saved.
+// modification — nothing reaches the database until the form is saved. The one
+// exception is hiding a field, which is about the form and not about any record's
+// data: it applies at once, for every record of the table.
 //
 // An entry the form can't carry out across several records at once is shown
 // grayed rather than dropped, so the menu says the same things wherever it's
@@ -142,7 +146,13 @@ export default function RecordContextMenu(props: {
   model: RecordFormModel;
 }): JSX.Element | null {
   const { model } = props;
+  const actions = useAppActions();
   const open = useFormState(model, (s) => s.menu);
+  const table = useFormState(model, (s) =>
+    s.menu ? s.records[s.menu.target.recordId]?.table : undefined,
+  );
+  const metadata = useApp((s) => selectTableMetadata(s, table ?? ""));
+  const showHidden = useApp((s) => s.showHiddenFields);
   // The target's field and what the entries depend on, each a narrow read
   // (state management rule 2) — the entries themselves are built in render.
   const field = useFormState(model, (s) =>
@@ -167,6 +177,26 @@ export default function RecordContextMenu(props: {
 
   if (!open) return null;
   const entries = menuEntries(model, open, field, blocked, value);
+  if (open.target.kind === "field" && field && table !== undefined) {
+    const hidden = isFieldHidden(metadata, field.key);
+    entries.push(
+      hidden
+        ? {
+            icon: Icons.Show,
+            label: "Un-hide field",
+            run: () => actions.setFieldHidden(table, field.key, false),
+          }
+        : {
+            icon: Icons.Hide,
+            label: "Hide field",
+            run: () => {
+              // The label the menu would hand focus back to is about to go.
+              if (!showHidden) model.noteBlur();
+              actions.setFieldHidden(table, field.key, true);
+            },
+          },
+    );
+  }
   return (
     <ContextMenu x={open.x} y={open.y} onClose={() => model.closeMenu()}>
       {entries.map((entry) => (

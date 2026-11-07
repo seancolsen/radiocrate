@@ -256,6 +256,47 @@ pub struct SettingDeleteParams {
     pub key: String,
 }
 
+/// One row of `metadata.column`: what the user has customized about one field of
+/// a table's record editor form. See migration 0009.
+///
+/// `column` is the field's key: a column name, or `#<table>` for the field listing
+/// the records of `<table>` that reference this one. The backend never interprets
+/// it, and a field with no row is simply visible, in its default place.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnMetadata {
+    pub table: String,
+    pub column: String,
+    pub visible: bool,
+    pub order: Option<f64>,
+}
+
+/// Params for `column_metadata.set_visible`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnMetadataSetVisibleParams {
+    pub table: String,
+    pub column: String,
+    pub visible: bool,
+}
+
+/// A field's new sort key, within one `column_metadata.set_order` call.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnOrder {
+    pub column: String,
+    pub order: f64,
+}
+
+/// Params for `column_metadata.set_order`: every sort key that changes in `table`
+/// because of one rearrangement, applied in one transaction.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnMetadataSetOrderParams {
+    pub table: String,
+    pub orders: Vec<ColumnOrder>,
+}
+
 /// One method in the RPC surface, as consumed by the client generator.
 ///
 /// The registry ([`METHODS`]) is the one hand-maintained list here; it names each
@@ -403,6 +444,24 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "column_metadata.list",
+        func: "columnMetadataList",
+        params: None,
+        result: "ColumnMetadata[]",
+    },
+    Method {
+        wire: "column_metadata.set_visible",
+        func: "columnMetadataSetVisible",
+        params: Some("ColumnMetadataSetVisibleParams"),
+        result: "null",
+    },
+    Method {
+        wire: "column_metadata.set_order",
+        func: "columnMetadataSetOrder",
+        params: Some("ColumnMetadataSetOrderParams"),
+        result: "null",
+    },
+    Method {
         wire: "collection.rescan",
         func: "collectionRescan",
         params: None,
@@ -454,5 +513,9 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", PresetDeleteParams::decl(&cfg)),
         format!("export {}", KeybindingDeleteParams::decl(&cfg)),
         format!("export {}", SettingDeleteParams::decl(&cfg)),
+        format!("export {}", ColumnMetadata::decl(&cfg)),
+        format!("export {}", ColumnMetadataSetVisibleParams::decl(&cfg)),
+        format!("export {}", ColumnOrder::decl(&cfg)),
+        format!("export {}", ColumnMetadataSetOrderParams::decl(&cfg)),
     ]
 }

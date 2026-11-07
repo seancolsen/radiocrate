@@ -130,7 +130,9 @@ export function valueTypeOf(type: string | undefined): ValueType {
  * `hidden` drops columns from the form — the contextual filter of a record
  * reached *through* a multi-record field (every credit listed under a track has
  * the same `track`, so that field is noise). It only hides the field; the column
- * still identifies the record for loading.
+ * still identifies the record for loading. The fields the *user* has hidden and
+ * rearranged are a matter of how the form renders these, not of which there are
+ * (`columnMetadata.ts`).
  *
  * Returns `[]` for a table the schema doesn't have. */
 export function buildFormFields(

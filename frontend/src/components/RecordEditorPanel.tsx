@@ -10,6 +10,7 @@ import {
   createRecordForm,
   selectAnyExpanded,
   selectFormModified,
+  selectHiddenFieldCount,
   type RecordFormModel,
 } from "../stores/recordForm";
 import {
@@ -80,18 +81,26 @@ function ToolbarButton(props: {
 }
 
 /** The form's actions menu (⋮): Collapse all, shown only while something is
- * expanded, and Refresh, which reloads the record from the database. Refresh
- * is off while there are unsaved changes or a save is in flight, since it would
- * throw the changes away — Reset is the deliberate way to do that. */
+ * expanded; the way to show or hide again the fields the user has hidden, shown
+ * only while the form has any; and Refresh, which reloads the record from the
+ * database. Refresh is off while there are unsaved changes or a save is in
+ * flight, since it would throw the changes away — Reset is the deliberate way to
+ * do that. */
 function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
   const { model } = props;
   const anyExpanded = useFormState(model, selectAnyExpanded);
   const modified = useFormState(model, selectFormModified);
   const saving = useFormState(model, (s) => s.saving);
+  const metadata = useApp((s) => s.columnMetadata.data);
+  const showHidden = useApp((s) => s.showHiddenFields);
+  const { setShowHiddenFields } = useAppActions();
+  const hiddenCount = useFormState(model, (s) =>
+    selectHiddenFieldCount(s, metadata),
+  );
   return (
     <Menu
       align="end"
-      width="180px"
+      width="190px"
       trigger={(api) => (
         <IconButton
           icon={Icons.More}
@@ -108,6 +117,20 @@ function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
           onClick={() => model.collapseAll()}
         />
       )}
+      {hiddenCount > 0 &&
+        (showHidden ? (
+          <MenuItem
+            icon={Icons.Hide}
+            label="Hide hidden fields"
+            onClick={() => setShowHiddenFields(false)}
+          />
+        ) : (
+          <MenuItem
+            icon={Icons.Show}
+            label={`Show ${hiddenCount} hidden ${hiddenCount === 1 ? "field" : "fields"}`}
+            onClick={() => setShowHiddenFields(true)}
+          />
+        ))}
       <MenuItem
         icon={Icons.Refresh}
         label="Refresh"

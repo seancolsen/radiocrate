@@ -8,6 +8,7 @@ import {
   type RecordRef,
 } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
+import type { TableMetadata } from "../../query/columnMetadata";
 import { SETTINGS } from "../../state/settings";
 import {
   FILTER_DEF,
@@ -426,6 +427,21 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
         <RecordEditorPanel tabId={LEMONADE.id} />
       </div>
     ),
+  };
+}
+
+/** `story`, on a `track` table the user has customized with `fields`, and
+ * showing what they've hidden. */
+function withColumnMetadata(story: Story, fields: TableMetadata): Story {
+  return {
+    ...story,
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.columnMetadata.data = { track: fields };
+        s.showHiddenFields = true;
+      });
+      story.setup?.(stores);
+    },
   };
 }
 
@@ -1593,6 +1609,17 @@ export const STORIES: Record<string, Story> = {
   // keeping its linebreak, and "Hold Up" in an open editor — an edit to the
   // one record holding it.
   "record-editor/varied-editing": recordEditor([1, 2, 3]),
+  // The user's own arrangement of `track`: `title` moved up to the top, and
+  // `disc_number` and `#credit` hidden but on show, their labels dimmed.
+  "record-editor/fields-customized": withColumnMetadata(recordEditor([1]), {
+    id: { visible: true, order: 2 },
+    title: { visible: true, order: 1 },
+    disc_number: { visible: false, order: null },
+    "#credit": { visible: false, order: null },
+  }),
+  // `title` being dragged (the test does the dragging): dimmed where it is, its
+  // chip following the pointer, and the drop line in the gap it would land in.
+  "record-editor/field-drag": recordEditor([1]),
   // The modal record picker on its own: the search box with its sort and
   // display buttons, the results as the embedded records they're about to
   // become, and the "New record" way out. `initialSort`/`initialDisplay` are

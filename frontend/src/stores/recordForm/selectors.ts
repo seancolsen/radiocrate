@@ -7,6 +7,10 @@
 // `selectFormSummary`, which builds a fresh object (state management rule 2) —
 // the forms store compares it shallowly, and nothing renders from it directly.
 
+import {
+  isFieldHidden,
+  type MetadataByTable,
+} from "../../query/columnMetadata";
 import type { FormField, ScalarLinkField } from "../../query/recordForm";
 import {
   fieldItemId,
@@ -393,6 +397,27 @@ export function selectFormSummary(s: FormState): RecordFormSummary {
     pickerOpen: s.picker !== null,
     modified: selectFormModified(s),
   };
+}
+
+/** How many fields the user has hidden among those this form has opened so far:
+ * the root's table, and the table of every record opened within it. A field
+ * counts once however many of its records are open, and not at all where it's
+ * already left out as a nested record's contextual filter. */
+export function selectHiddenFieldCount(
+  s: FormState,
+  metadata: MetadataByTable,
+): number {
+  const hidden = new Set<string>();
+  for (const node of Object.values(s.records)) {
+    const table = metadata[node.table];
+    if (!table) continue;
+    for (const field of node.fields) {
+      if (isFieldHidden(table, field.key)) {
+        hidden.add(`${node.table}\0${field.key}`);
+      }
+    }
+  }
+  return hidden.size;
 }
 
 /** Whether any field or record in the form is expanded. */

@@ -145,6 +145,7 @@ const ScrollArea = forwardRef<
     <div className="relative min-h-0 flex-1">
       <div
         ref={viewportRef}
+        data-scroll-area
         data-testid="scroll-area-scroller"
         className="absolute inset-0 touch-pan-y touch-pinch-zoom [scrollbar-width:none] overflow-y-auto overscroll-y-contain [&::-webkit-scrollbar]:hidden"
       >

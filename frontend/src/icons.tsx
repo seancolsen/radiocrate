@@ -23,6 +23,8 @@ import ExplorerClose from "~icons/material-symbols/left-panel-close";
 import Close from "~icons/material-symbols/close";
 import Add from "~icons/material-symbols/add";
 import Refresh from "~icons/material-symbols/refresh";
+import Hide from "~icons/material-symbols/visibility-off";
+import Show from "~icons/material-symbols/visibility";
 import ExpandOpen from "~icons/material-symbols/expand-more";
 import ExpandClosed from "~icons/material-symbols/chevron-right";
 import Settings from "~icons/material-symbols/settings";
@@ -115,6 +117,8 @@ export const Icons = {
   Close, // tab close ×, opened-row ×
   Add, // "+": add a new item
   Refresh, // Sources-section reload + toolbar run
+  Hide, // record editor: hide a field, or hide the hidden fields again
+  Show, // record editor: un-hide a field, or show the hidden fields
   ExpandOpen, // expanded section chevron
   ExpandClosed, // collapsed section chevron
   Settings, // static Settings footer

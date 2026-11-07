@@ -6,11 +6,13 @@ import {
   type JSX,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
-import FieldLabel from "./FieldLabel";
+import FieldLabel, { fieldAppearance } from "./FieldLabel";
 import FieldValue, {
   OneLineValue,
   ValueInput,
@@ -44,9 +46,13 @@ import {
   type RecordFormModel,
   type SharedValue,
 } from "../../stores/recordForm";
-import { useFormState } from "../../stores/react";
+import { selectTableMetadata } from "../../stores/app";
+import { useApp, useAppActions, useFormState } from "../../stores/react";
+import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
+import { arrangeFields, isFieldHidden } from "../../query/columnMetadata";
 import { nounFor } from "../../query/entityNames";
+import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
@@ -61,6 +67,11 @@ import type {
 // record's fields, a field's expansion, a multi-record field's children, and
 // each of those children's own fields — which is what lets the user recurse into
 // the data as deep as it goes, so they live in one file.
+//
+// The order a record's fields show in, and which of them show at all, is the
+// user's to customize for the whole table (`query/columnMetadata.ts`). That's
+// applied here as they render rather than held in the form: a node's `fields`
+// stay as the schema gives them, and every form on the table follows along.
 //
 // Every row is the same three slots in the same order: expansion toggle, field
 // label, value. Rows an item can't fill still reserve the space, so toggles and
@@ -120,22 +131,96 @@ export default function RecordNodeView(props: {
   const status = useFormState(model, (s) => s.records[recordId]?.status);
   const error = useFormState(model, (s) => s.records[recordId]?.error ?? null);
   const isNew = useFormState(model, (s) => s.records[recordId]?.isNew === true);
-  if (!fields) return null;
+  const table = useFormState(model, (s) => s.records[recordId]?.table);
+  if (!fields || table === undefined) return null;
   return (
     <LoadingRegion loading={status === "loading"}>
-      {fields.map((field) => (
-        <FieldRow
-          key={field.key}
-          model={model}
-          recordId={recordId}
-          isNew={isNew}
-          field={field}
-        />
-      ))}
+      <FieldList
+        model={model}
+        recordId={recordId}
+        table={table}
+        isNew={isNew}
+        fields={fields}
+      />
       {status === "error" && (
         <p className="text-danger px-1 py-0.5 text-xs">{error}</p>
       )}
     </LoadingRegion>
+  );
+}
+
+/** A record's fields as the user has arranged them for its table, and the drag
+ * that rearranges them. A nested record's fields are a list of their own, within
+ * one of the rows of this one, and a field can only be dropped in its own list:
+ * rearranging is for one table at a time. */
+function FieldList(props: {
+  model: RecordFormModel;
+  recordId: string;
+  table: string;
+  isNew: boolean;
+  fields: readonly FormField[];
+}): JSX.Element {
+  const { model, recordId, table, fields } = props;
+  const metadata = useApp((s) => selectTableMetadata(s, table));
+  const showHidden = useApp((s) => s.showHiddenFields);
+  const { moveField } = useAppActions();
+  const shown = useMemo(
+    () => arrangeFields(fields, metadata, showHidden),
+    [fields, metadata, showHidden],
+  );
+
+  const listRef = useRef<HTMLDivElement>(null);
+  const dnd = useFieldDrag({
+    listRef,
+    keys: shown.map((field) => field.key),
+    onDrop: (key, target) => moveField(table, key, target.above, target.below),
+    onHold: (key, x, y) =>
+      model.openMenu({
+        target: { kind: "field", recordId, fieldKey: key },
+        x,
+        y,
+      }),
+  });
+  const drag = dnd.drag;
+  const dragged = shown.find((field) => field.key === drag?.item);
+
+  return (
+    <div ref={listRef} className="relative">
+      {shown.map((field) => (
+        <div
+          key={field.key}
+          data-field-row
+          className={cx({ "opacity-50": field.key === drag?.item })}
+        >
+          <FieldRow
+            model={model}
+            recordId={recordId}
+            isNew={props.isNew}
+            field={field}
+            hiddenField={isFieldHidden(metadata, field.key)}
+            onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
+            labelPressed={dnd.pressing}
+          />
+        </div>
+      ))}
+      {drag?.target && (
+        <div
+          aria-hidden="true"
+          className="bg-accent pointer-events-none absolute right-1 left-5 h-0.5 -translate-y-1/2 rounded-full"
+          style={{ top: drag.lineTop }}
+        />
+      )}
+      {drag &&
+        dragged &&
+        createPortal(
+          <DragChip
+            icon={fieldAppearance(dragged).icon}
+            label={dragged.label}
+            style={{ transform: dragChipTransform(drag.x, drag.y) }}
+          />,
+          document.body,
+        )}
+    </div>
   );
 }
 
@@ -172,6 +257,12 @@ function FieldRow(props: {
   /** Whether the record this field belongs to is one the form is creating. */
   isNew: boolean;
   field: FormField;
+  /** Whether the user has hidden this field, and it's on show regardless. */
+  hiddenField: boolean;
+  /** A press on the field's label, which may be the start of a drag. */
+  onLabelPointerDown: (e: PointerEvent<HTMLElement>) => void;
+  /** Whether a touch is resting on a label, on its way to picking it up. */
+  labelPressed: () => boolean;
 }): JSX.Element {
   const { model, recordId, field } = props;
 
@@ -391,11 +482,18 @@ function FieldRow(props: {
             field={field}
             itemId={itemId}
             menuOpen={menuOpen}
+            hiddenField={props.hiddenField}
             onClick={() => model.focusItem(itemId)}
             onDblClick={activate}
             onFocus={() => model.noteFocus(itemId)}
             onKeyDown={onLabelKeyDown}
-            onContextMenu={(e) => openMenu(e, "field")}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              // A touch resting on the label is picking it up; its menu comes
+              // with the release, if the field isn't moved.
+              if (!props.labelPressed()) openMenu(e, "field");
+            }}
+            onPointerDown={props.onLabelPointerDown}
           />
           {/* A field of a record still being created shows no star of its own:
               there's nothing yet to compare it against. The record's parent

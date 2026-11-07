@@ -1,4 +1,4 @@
-import type { JSX, KeyboardEvent, MouseEvent } from "react";
+import type { JSX, KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { Icons, type IconComponent } from "../../icons";
 import type { FormField } from "../../query/recordForm";
 import { cx } from "../ui/cx";
@@ -7,7 +7,7 @@ import { cx } from "../ui/cx";
  * tint that says what kind of data it holds. Both are chosen from the field's
  * kind first (a linked record and a list of records read as links, whatever
  * their column type), then its value category. */
-function appearance(field: FormField): {
+export function fieldAppearance(field: FormField): {
   icon: IconComponent;
   tint: string;
 } {
@@ -44,19 +44,25 @@ function appearance(field: FormField): {
  * it, a keyboard-driven focus (which also matches `:focus-visible`) stacked a
  * second ring on top of this one, reading as a thicker border than a
  * mouse-driven focus got. Its 2px border trades against its padding to come to
- * the standard control height (see `control` in `app.css`). */
+ * the standard control height (see `control` in `app.css`).
+ *
+ * It's also where the field is picked up to drag it among the others. A field the
+ * user has hidden, on show because they asked to see those, reads as dimmed. */
 export default function FieldLabel(props: {
   field: FormField;
   itemId: string;
   /** Whether this label's own context menu is open. */
   menuOpen: boolean;
+  /** Whether the field is one the user has hidden. */
+  hiddenField?: boolean;
   onClick: () => void;
   onDblClick: () => void;
   onFocus: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
   onContextMenu: (e: MouseEvent<HTMLElement>) => void;
+  onPointerDown?: (e: PointerEvent<HTMLElement>) => void;
 }): JSX.Element {
-  const look = appearance(props.field);
+  const look = fieldAppearance(props.field);
   const Icon = look.icon;
   return (
     <span
@@ -70,10 +76,11 @@ export default function FieldLabel(props: {
       // same-specificity utilities settle by stylesheet order, not DOM order,
       // so a plain `border-accent` class can lose to it outright.
       className={cx(
-        `text-ink focus:border-accent flex shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 py-px text-xs/5 outline-none select-none ${look.tint}`,
+        `text-ink focus:border-accent flex shrink-0 cursor-default items-center gap-1 rounded-md border-2 px-1.5 py-px text-xs/5 outline-none select-none [-webkit-touch-callout:none] ${look.tint}`,
         {
           "border-accent": props.menuOpen,
           "border-transparent": !props.menuOpen,
+          "opacity-60": props.hiddenField,
         },
       )}
       onClick={() => props.onClick()}
@@ -81,6 +88,7 @@ export default function FieldLabel(props: {
       onFocus={() => props.onFocus()}
       onKeyDown={(e) => props.onKeyDown(e)}
       onContextMenu={(e) => props.onContextMenu(e)}
+      onPointerDown={props.onPointerDown}
     >
       <Icon className="size-3.5 shrink-0 opacity-70" />
       <span className="max-w-40 truncate">{props.field.label}</span>

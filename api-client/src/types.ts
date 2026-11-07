@@ -80,3 +80,11 @@ export type PresetDeleteParams = { id: string, };
 export type KeybindingDeleteParams = { commandId: string, };
 
 export type SettingDeleteParams = { key: string, };
+
+export type ColumnMetadata = { table: string, column: string, visible: boolean, order: number | null, };
+
+export type ColumnMetadataSetVisibleParams = { table: string, column: string, visible: boolean, };
+
+export type ColumnOrder = { column: string, order: number, };
+
+export type ColumnMetadataSetOrderParams = { table: string, orders: Array<ColumnOrder>, };

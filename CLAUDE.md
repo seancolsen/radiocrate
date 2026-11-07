@@ -197,6 +197,43 @@ the name **once**; it becomes both the tooltip and the `aria-label`.
 - **Draw a keyboard shortcut with `<Kbd chord={…} />`** (`components/ui/Kbd.tsx`),
   never as plain `formatChord` text.
 
+## UX standards
+
+### Drag to rearrange
+
+Anything the user rearranges by dragging works the same way, so a gesture learned
+in one list works in the next. Build it on `usePressDrag`
+(`frontend/src/gestures/usePressDrag.ts`), which implements everything here except
+what's drawn. `useFieldDrag` (the record editor's fields) is the small example;
+`useTreeDrag` (the explorer) adds nesting.
+
+- **The item doesn't move while it's dragged.** It stays in its place, grayed out
+  (`opacity-50`), and nothing else in the list shifts. The list only changes on
+  drop.
+- **A chip follows the pointer** (`DragChip`, placed with `dragChipTransform`),
+  naming what's in hand: an icon and a few words.
+- **A blue line marks where it would land** (`bg-accent h-0.5`), in the gap between
+  two items. No line when the drop would change nothing. A drop *into* something
+  (a folder, a playlist) outlines the target instead.
+- **Mouse or pen:** a press past `DRAG_THRESHOLD` picks the item up. Below that it's
+  an ordinary click, and double click and right-click keep their usual meanings.
+- **Touch:** a vertical swipe scrolls the list, as it would anywhere. Touch-and-hold
+  (`LONG_PRESS_MS`) picks the item up. Touch-and-hold-and-release without moving it
+  raises its context menu, which is the touch equivalent of a right-click, so
+  anything draggable keeps a way to reach its menu.
+- **While dragging,** the list scrolls near its edges, Escape cancels, and the click
+  the release produces is swallowed.
+
+What the caller has to do: mark the draggable element `select-none
+[-webkit-touch-callout:none]`; have its `onContextMenu` call `preventDefault()` and
+open nothing while `pressing()` is true, since the hook raises the menu on release
+through `onHold`; and return `target: null` from `locate` for a drop that goes
+nowhere. Test the touch paths through CDP's `Input.dispatchTouchEvent`, as
+`tests/visual/explorer.spec.ts` and `record.spec.ts` do.
+
+Not everything is there yet: the explorer tree draws no chip, and the tab bar has
+its own horizontal hook (`useTabDragReorder`).
+
 ## Git commits
 
 Whenever you change files in the repo, make a Git commit at the end of your turn, without being asked. Commit straight to the current branch (usually `main`), and don't push.
