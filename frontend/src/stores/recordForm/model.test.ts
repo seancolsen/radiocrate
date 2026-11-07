@@ -1,3 +1,5 @@
+import type { FieldRef } from "api-client";
+import { fieldRefKey } from "../../query/fieldMetadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DmlOperation, DmlResult } from "api-client";
 import type { RecordRows } from "../../query/recordData";
@@ -212,10 +214,16 @@ beforeEach(() => {
 });
 
 describe("selectHiddenFieldCount", () => {
-  const hide = (...keys: string[]) =>
+  const hide = (...fields: (string | FieldRef)[]) =>
     Object.fromEntries(
-      keys.map((key) => [key, { visible: false, order: null }]),
+      fields.map((field) => [
+        fieldRefKey(typeof field === "string" ? { columnName: field } : field),
+        { visible: false, order: null },
+      ]),
     );
+  const CREDITS_LINK: FieldRef = {
+    multiLink: { relatedTableName: "credit", fkColumnName: "track" },
+  };
 
   it("is zero without any metadata", () => {
     expect(selectHiddenFieldCount(form().store.getState(), {})).toBe(0);
@@ -226,18 +234,20 @@ describe("selectHiddenFieldCount", () => {
     expect(
       selectHiddenFieldCount(s, {
         track: {
-          ...hide("title", "#credit"),
-          genre: { visible: true, order: 1 },
+          ...hide("title", CREDITS_LINK),
+          [fieldRefKey({ columnName: "genre" })]: { visible: true, order: 1 },
         },
       }),
     ).toBe(2);
   });
 
-  it("ignores other tables, and columns the table no longer has", () => {
+  it("ignores other tables, and fields the table no longer has", () => {
     const s = form().store.getState();
     expect(
       selectHiddenFieldCount(s, {
-        track: hide("gone"),
+        track: hide("gone", {
+          multiLink: { relatedTableName: "credit", fkColumnName: "gone" },
+        }),
         credit: hide("role"),
       }),
     ).toBe(0);

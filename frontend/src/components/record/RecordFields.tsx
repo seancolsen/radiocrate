@@ -50,17 +50,18 @@ import { selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
-import { arrangeFields, isFieldHidden } from "../../query/columnMetadata";
+import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
-import type {
-  FormField,
-  MultiRecordField,
-  PrimitiveField,
-  ScalarLinkField,
+import {
+  fieldRef,
+  type FormField,
+  type MultiRecordField,
+  type PrimitiveField,
+  type ScalarLinkField,
 } from "../../query/recordForm";
 
 // The form's tree, rendered. The components here call each other in a cycle — a
@@ -69,7 +70,7 @@ import type {
 // the data as deep as it goes, so they live in one file.
 //
 // The order a record's fields show in, and which of them show at all, is the
-// user's to customize for the whole table (`query/columnMetadata.ts`). That's
+// user's to customize for the whole table (`query/fieldMetadata.ts`). That's
 // applied here as they render rather than held in the form: a node's `fields`
 // stay as the schema gives them, and every form on the table follows along.
 //
@@ -173,7 +174,17 @@ function FieldList(props: {
   const dnd = useFieldDrag({
     listRef,
     keys: shown.map((field) => field.key),
-    onDrop: (key, target) => moveField(table, key, target.above, target.below),
+    onDrop: (key, target) => {
+      const refOf = (shownKey: string | undefined) => {
+        const field = shown.find((f) => f.key === shownKey);
+        return field && fieldRef(field);
+      };
+      const moved = refOf(key);
+      return (
+        moved !== undefined &&
+        moveField(table, moved, refOf(target.above), refOf(target.below))
+      );
+    },
     onHold: (key, x, y) =>
       model.openMenu({
         target: { kind: "field", recordId, fieldKey: key },
@@ -197,7 +208,7 @@ function FieldList(props: {
             recordId={recordId}
             isNew={props.isNew}
             field={field}
-            hiddenField={isFieldHidden(metadata, field.key)}
+            hiddenField={isFieldHidden(metadata, fieldRef(field))}
             onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
             labelPressed={dnd.pressing}
           />

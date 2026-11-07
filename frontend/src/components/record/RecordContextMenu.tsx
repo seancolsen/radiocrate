@@ -13,8 +13,8 @@ import {
 } from "../../stores/recordForm";
 import { selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
-import { isFieldHidden } from "../../query/columnMetadata";
-import type { FormField } from "../../query/recordForm";
+import { isFieldHidden } from "../../query/fieldMetadata";
+import { fieldRef, type FormField } from "../../query/recordForm";
 
 // The form's context menus — one component for all of them, because only one is
 // ever open and the model already knows what it was raised on.
@@ -178,13 +178,14 @@ export default function RecordContextMenu(props: {
   if (!open) return null;
   const entries = menuEntries(model, open, field, blocked, value);
   if (open.target.kind === "field" && field && table !== undefined) {
-    const hidden = isFieldHidden(metadata, field.key);
+    const ref = fieldRef(field);
+    const hidden = isFieldHidden(metadata, ref);
     entries.push(
       hidden
         ? {
             icon: Icons.Show,
             label: "Un-hide field",
-            run: () => actions.setFieldHidden(table, field.key, false),
+            run: () => actions.setFieldHidden(table, ref, false),
           }
         : {
             icon: Icons.Hide,
@@ -192,7 +193,7 @@ export default function RecordContextMenu(props: {
             run: () => {
               // The label the menu would hand focus back to is about to go.
               if (!showHidden) model.noteBlur();
-              actions.setFieldHidden(table, field.key, true);
+              actions.setFieldHidden(table, ref, true);
             },
           },
     );

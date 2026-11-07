@@ -7,6 +7,7 @@
 // structure": every column of the edited table becomes a field, and every table
 // that references it becomes a field too.
 
+import type { FieldRef } from "api-client";
 import { pluralOrRaw } from "./entityNames";
 import {
   identifyingColumns,
@@ -132,7 +133,7 @@ export function valueTypeOf(type: string | undefined): ValueType {
  * the same `track`, so that field is noise). It only hides the field; the column
  * still identifies the record for loading. The fields the *user* has hidden and
  * rearranged are a matter of how the form renders these, not of which there are
- * (`columnMetadata.ts`).
+ * (`fieldMetadata.ts`).
  *
  * Returns `[]` for a table the schema doesn't have. */
 export function buildFormFields(
@@ -192,6 +193,20 @@ export function buildFormFields(
     });
   }
   return fields;
+}
+
+/** Which field `field` is, in the terms the database stores what's customized about
+ * it (`fieldMetadata.ts`). Unlike `key`, which only has to tell a form's fields
+ * apart, this says what the field stands for. */
+export function fieldRef(field: FormField): FieldRef {
+  return field.kind === "multiRecord"
+    ? {
+        multiLink: {
+          relatedTableName: field.table,
+          fkColumnName: field.column,
+        },
+      }
+    : { columnName: field.column };
 }
 
 /** A Querydown query in the four parts `compile_sections` takes (the record

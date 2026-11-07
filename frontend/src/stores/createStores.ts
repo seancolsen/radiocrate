@@ -83,7 +83,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   void app.actions.loadPresets();
   void app.actions.loadSchema();
   void app.actions.loadSettings();
-  void app.actions.loadColumnMetadata();
+  void app.actions.loadFieldMetadata();
   void commands.actions.loadKeymap();
 
   // Cross-store wiring (state→state rules): it enforces state consistency and

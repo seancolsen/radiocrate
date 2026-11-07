@@ -41,7 +41,7 @@ function Harness() {
   // subscribed story tree — lands before this frame is ever shown.
   const queriesReady = useApp((s) => s.sources.status === "ready");
   const presetsReady = useApp((s) => s.presetsStatus === "ready");
-  const metadataReady = useApp((s) => s.columnMetadata.status === "ready");
+  const metadataReady = useApp((s) => s.fieldMetadata.status === "ready");
   const dataReady =
     story?.setup === undefined ||
     (queriesReady && presetsReady && metadataReady);

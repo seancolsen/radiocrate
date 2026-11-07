@@ -28,9 +28,9 @@ vi.mock("api-client", async (importOriginal) => {
   return {
     ...actual,
     settingSet: vi.fn(() => Promise.resolve(null)),
-    columnMetadataList: vi.fn(() => Promise.resolve([])),
-    columnMetadataSetVisible: vi.fn(() => Promise.resolve(null)),
-    columnMetadataSetOrder: vi.fn(() => Promise.resolve(null)),
+    metadataFieldList: vi.fn(() => Promise.resolve([])),
+    metadataFieldSetVisible: vi.fn(() => Promise.resolve(null)),
+    metadataFieldSetOrder: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
     folderAdd: vi.fn(() => Promise.resolve(null)),
@@ -105,9 +105,10 @@ vi.mock("../../query/lineage", () => ({
 
 import {
   collectionRescan,
-  columnMetadataList,
-  columnMetadataSetOrder,
-  columnMetadataSetVisible,
+  metadataFieldList,
+  metadataFieldSetOrder,
+  metadataFieldSetVisible,
+  type FieldRef,
   dml,
   folderAdd,
   folderDelete,
@@ -139,7 +140,8 @@ import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
 import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
-import { buildFormFields } from "../../query/recordForm";
+import { fieldRefKey } from "../../query/fieldMetadata";
+import { buildFormFields, fieldRef } from "../../query/recordForm";
 import {
   selectCanConvertToPlaylist,
   selectCanExport,
@@ -4127,160 +4129,169 @@ describe("rearranging a playlist's rows", () => {
   });
 });
 
-describe("column metadata", () => {
+describe("field metadata", () => {
   let bundle: AppStoreBundle;
   beforeEach(() => {
-    vi.mocked(columnMetadataList).mockClear();
-    vi.mocked(columnMetadataSetVisible).mockClear();
-    vi.mocked(columnMetadataSetOrder).mockClear();
+    vi.mocked(metadataFieldList).mockClear();
+    vi.mocked(metadataFieldSetVisible).mockClear();
+    vi.mocked(metadataFieldSetOrder).mockClear();
     bundle = createAppStore(fakeEnv());
     bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
   });
   afterEach(() => bundle.dispose());
   const state = () => bundle.store.getState();
   const metadata = (table: string) => selectTableMetadata(state(), table);
+  const TITLE: FieldRef = { columnName: "title" };
+  const entry = (table: string, field: FieldRef) =>
+    metadata(table)[fieldRefKey(field)];
+  const albumFields = () =>
+    buildFormFields(state().schema.tables, "album").map(fieldRef);
   /** Lets the queued writes reach the mocks. */
   const settle = () => new Promise((resolve) => setTimeout(resolve));
 
   it("loads rows by table and field", async () => {
-    vi.mocked(columnMetadataList).mockResolvedValueOnce([
-      { table: "track", column: "title", visible: false, order: 2 },
+    vi.mocked(metadataFieldList).mockResolvedValueOnce([
+      { tableName: "track", field: TITLE, visible: false, order: 2 },
     ]);
-    await bundle.actions.loadColumnMetadata();
-    expect(state().columnMetadata.status).toBe("ready");
+    await bundle.actions.loadFieldMetadata();
+    expect(state().fieldMetadata.status).toBe("ready");
     expect(metadata("track")).toEqual({
-      title: { visible: false, order: 2 },
+      [fieldRefKey(TITLE)]: { visible: false, order: 2 },
     });
   });
 
   it("reads as nothing customized when the list fails", async () => {
-    vi.mocked(columnMetadataList).mockRejectedValueOnce(new Error("nope"));
+    vi.mocked(metadataFieldList).mockRejectedValueOnce(new Error("nope"));
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    await bundle.actions.loadColumnMetadata();
-    expect(state().columnMetadata.status).toBe("error");
+    await bundle.actions.loadFieldMetadata();
+    expect(state().fieldMetadata.status).toBe("error");
     expect(metadata("track")).toEqual({});
     error.mockRestore();
   });
 
   it("hides and un-hides a field at once, then writes it", async () => {
-    bundle.actions.setFieldHidden("track", "title", true);
-    expect(metadata("track").title).toEqual({ visible: false, order: null });
+    bundle.actions.setFieldHidden("track", TITLE, true);
+    expect(entry("track", TITLE)).toEqual({ visible: false, order: null });
     await settle();
-    expect(columnMetadataSetVisible).toHaveBeenLastCalledWith({
-      table: "track",
-      column: "title",
+    expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
+      tableName: "track",
+      field: TITLE,
       visible: false,
     });
 
-    bundle.actions.setFieldHidden("track", "title", false);
-    expect(metadata("track").title).toEqual({ visible: true, order: null });
+    bundle.actions.setFieldHidden("track", TITLE, false);
+    expect(entry("track", TITLE)).toEqual({ visible: true, order: null });
     await settle();
-    expect(columnMetadataSetVisible).toHaveBeenLastCalledWith({
-      table: "track",
-      column: "title",
+    expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
+      tableName: "track",
+      field: TITLE,
       visible: true,
     });
   });
 
+  it("writes a multi-record field as the link it stands for", async () => {
+    const link = albumFields().find((field) => "multiLink" in field);
+    expect(link).toEqual({
+      multiLink: { relatedTableName: "track", fkColumnName: "album" },
+    });
+    bundle.actions.setFieldHidden("album", link!, true);
+    expect(entry("album", link!)?.visible).toBe(false);
+    await settle();
+    expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
+      tableName: "album",
+      field: link,
+      visible: false,
+    });
+  });
+
   it("stops showing hidden fields once none are left", () => {
-    bundle.actions.setFieldHidden("track", "title", true);
-    bundle.actions.setFieldHidden("album", "title", true);
+    bundle.actions.setFieldHidden("track", TITLE, true);
+    bundle.actions.setFieldHidden("album", TITLE, true);
     bundle.actions.setShowHiddenFields(true);
 
-    bundle.actions.setFieldHidden("track", "title", false);
+    bundle.actions.setFieldHidden("track", TITLE, false);
     expect(state().showHiddenFields).toBe(true);
-    bundle.actions.setFieldHidden("album", "title", false);
+    bundle.actions.setFieldHidden("album", TITLE, false);
     expect(state().showHiddenFields).toBe(false);
   });
 
   it("resequences the whole table on its first move", async () => {
-    const keys = buildFormFields(state().schema.tables, "album").map(
-      (field) => field.key,
-    );
-    expect(keys.length).toBeGreaterThan(2);
-    const [first, second] = keys;
+    const refs = albumFields();
+    expect(refs.length).toBeGreaterThan(2);
+    const [first, second] = refs;
 
     expect(bundle.actions.moveField("album", second, undefined, first)).toBe(
       true,
     );
-    const expected = [second, first, ...keys.slice(2)];
-    expected.forEach((key, i) =>
-      expect(metadata("album")[key]).toEqual({ visible: true, order: i + 1 }),
+    const expected = [second, first, ...refs.slice(2)];
+    expected.forEach((field, i) =>
+      expect(entry("album", field)).toEqual({ visible: true, order: i + 1 }),
     );
     await settle();
-    expect(columnMetadataSetOrder).toHaveBeenLastCalledWith({
-      table: "album",
-      orders: expected.map((column, i) => ({ column, order: i + 1 })),
+    expect(metadataFieldSetOrder).toHaveBeenLastCalledWith({
+      tableName: "album",
+      orders: expected.map((field, i) => ({ field, order: i + 1 })),
     });
   });
 
   it("writes only the moved field once the table is sequenced", async () => {
-    const keys = buildFormFields(state().schema.tables, "album").map(
-      (field) => field.key,
-    );
-    const [first, second] = keys;
+    const refs = albumFields();
+    const [first, second] = refs;
     bundle.actions.moveField("album", second, undefined, first);
     await settle();
 
     // Back where it was: after `first`, which now holds 2, and before the third
     // field, which holds 3.
-    expect(bundle.actions.moveField("album", second, first, keys[2])).toBe(
+    expect(bundle.actions.moveField("album", second, first, refs[2])).toBe(
       true,
     );
-    expect(metadata("album")[second].order).toBe(2.5);
+    expect(entry("album", second).order).toBe(2.5);
     await settle();
-    expect(columnMetadataSetOrder).toHaveBeenLastCalledWith({
-      table: "album",
-      orders: [{ column: second, order: 2.5 }],
+    expect(metadataFieldSetOrder).toHaveBeenLastCalledWith({
+      tableName: "album",
+      orders: [{ field: second, order: 2.5 }],
     });
   });
 
   it("leaves a field's visibility alone when moving it", () => {
-    const [first, second] = buildFormFields(state().schema.tables, "album").map(
-      (field) => field.key,
-    );
+    const [first, second] = albumFields();
     bundle.actions.setFieldHidden("album", second, true);
     bundle.actions.moveField("album", second, undefined, first);
-    expect(metadata("album")[second]).toEqual({ visible: false, order: 1 });
+    expect(entry("album", second)).toEqual({ visible: false, order: 1 });
   });
 
   it("writes nothing for a move that goes nowhere", async () => {
-    const [first, second, third] = buildFormFields(
-      state().schema.tables,
-      "album",
-    ).map((field) => field.key);
+    const [first, second, third] = albumFields();
     expect(bundle.actions.moveField("album", second, first, third)).toBe(false);
     await settle();
-    expect(columnMetadataSetOrder).not.toHaveBeenCalled();
+    expect(metadataFieldSetOrder).not.toHaveBeenCalled();
   });
 
   it("sends writes one at a time, in order", async () => {
     let finishFirst = () => {};
-    vi.mocked(columnMetadataSetVisible).mockImplementationOnce(
+    vi.mocked(metadataFieldSetVisible).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finishFirst = () => resolve(null);
         }),
     );
-    bundle.actions.setFieldHidden("track", "title", true);
-    bundle.actions.setFieldHidden("track", "title", false);
+    bundle.actions.setFieldHidden("track", TITLE, true);
+    bundle.actions.setFieldHidden("track", TITLE, false);
     await settle();
-    expect(columnMetadataSetVisible).toHaveBeenCalledTimes(1);
+    expect(metadataFieldSetVisible).toHaveBeenCalledTimes(1);
     finishFirst();
     await settle();
-    expect(columnMetadataSetVisible).toHaveBeenCalledTimes(2);
+    expect(metadataFieldSetVisible).toHaveBeenCalledTimes(2);
   });
 
   it("puts what's stored back on screen when a write fails", async () => {
-    vi.mocked(columnMetadataSetVisible).mockRejectedValueOnce(
-      new Error("nope"),
-    );
-    vi.mocked(columnMetadataList).mockResolvedValueOnce([]);
+    vi.mocked(metadataFieldSetVisible).mockRejectedValueOnce(new Error("nope"));
+    vi.mocked(metadataFieldList).mockResolvedValueOnce([]);
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    bundle.actions.setFieldHidden("track", "title", true);
-    expect(metadata("track").title?.visible).toBe(false);
+    bundle.actions.setFieldHidden("track", TITLE, true);
+    expect(entry("track", TITLE)?.visible).toBe(false);
     await settle();
-    expect(metadata("track").title).toBeUndefined();
+    expect(entry("track", TITLE)).toBeUndefined();
     error.mockRestore();
   });
 });

@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, ColumnMetadata, ColumnMetadataSetOrderParams, ColumnMetadataSetVisibleParams, DmlRequest, DmlResult, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetOrderParams, MetadataFieldSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -89,16 +89,16 @@ export async function settingDelete(params: SettingDeleteParams): Promise<null> 
   return (await rpcCall("setting.delete", params)) as null;
 }
 
-export async function columnMetadataList(): Promise<ColumnMetadata[]> {
-  return (await rpcCall("column_metadata.list", null)) as ColumnMetadata[];
+export async function metadataFieldList(): Promise<FieldMetadataRow[]> {
+  return (await rpcCall("metadata.field.list", null)) as FieldMetadataRow[];
 }
 
-export async function columnMetadataSetVisible(params: ColumnMetadataSetVisibleParams): Promise<null> {
-  return (await rpcCall("column_metadata.set_visible", params)) as null;
+export async function metadataFieldSetVisible(params: MetadataFieldSetVisibleParams): Promise<null> {
+  return (await rpcCall("metadata.field.set_visible", params)) as null;
 }
 
-export async function columnMetadataSetOrder(params: ColumnMetadataSetOrderParams): Promise<null> {
-  return (await rpcCall("column_metadata.set_order", params)) as null;
+export async function metadataFieldSetOrder(params: MetadataFieldSetOrderParams): Promise<null> {
+  return (await rpcCall("metadata.field.set_order", params)) as null;
 }
 
 export async function collectionRescan(): Promise<null> {

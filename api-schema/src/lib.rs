@@ -256,45 +256,62 @@ pub struct SettingDeleteParams {
     pub key: String,
 }
 
-/// One row of `metadata.column`: what the user has customized about one field of
-/// a table's record editor form. See migration 0009.
-///
-/// `column` is the field's key: a column name, or `#<table>` for the field listing
-/// the records of `<table>` that reference this one. The backend never interprets
-/// it, and a field with no row is simply visible, in its default place.
+/// Which field of a table's record editor form a [`FieldMetadataRow`] is about:
+/// the `field` union of `metadata.field`. See migration 0010.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum FieldRef {
+    /// The field standing for this column.
+    ColumnName(String),
+    /// The field listing the records that reference this one.
+    MultiLink(MultiLink),
+}
+
+/// The records of `related_table_name` that reference a record through their
+/// `fk_column_name`: what a [`FieldRef::MultiLink`] field lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiLink {
+    pub related_table_name: String,
+    pub fk_column_name: String,
+}
+
+/// One row of `metadata.field`: what the user has customized about one field of a
+/// table's record editor form. A field with no row is simply visible, in its
+/// default place.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct ColumnMetadata {
-    pub table: String,
-    pub column: String,
+pub struct FieldMetadataRow {
+    pub table_name: String,
+    pub field: FieldRef,
     pub visible: bool,
     pub order: Option<f64>,
 }
 
-/// Params for `column_metadata.set_visible`.
+/// Params for `metadata.field.set_visible`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct ColumnMetadataSetVisibleParams {
-    pub table: String,
-    pub column: String,
+pub struct MetadataFieldSetVisibleParams {
+    pub table_name: String,
+    pub field: FieldRef,
     pub visible: bool,
 }
 
-/// A field's new sort key, within one `column_metadata.set_order` call.
+/// A field's new sort key, within one `metadata.field.set_order` call.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct ColumnOrder {
-    pub column: String,
+pub struct FieldOrder {
+    pub field: FieldRef,
     pub order: f64,
 }
 
-/// Params for `column_metadata.set_order`: every sort key that changes in `table`
-/// because of one rearrangement, applied in one transaction.
+/// Params for `metadata.field.set_order`: every sort key that changes in
+/// `table_name` because of one rearrangement, applied in one transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct ColumnMetadataSetOrderParams {
-    pub table: String,
-    pub orders: Vec<ColumnOrder>,
+pub struct MetadataFieldSetOrderParams {
+    pub table_name: String,
+    pub orders: Vec<FieldOrder>,
 }
 
 /// One method in the RPC surface, as consumed by the client generator.
@@ -444,21 +461,21 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
-        wire: "column_metadata.list",
-        func: "columnMetadataList",
+        wire: "metadata.field.list",
+        func: "metadataFieldList",
         params: None,
-        result: "ColumnMetadata[]",
+        result: "FieldMetadataRow[]",
     },
     Method {
-        wire: "column_metadata.set_visible",
-        func: "columnMetadataSetVisible",
-        params: Some("ColumnMetadataSetVisibleParams"),
+        wire: "metadata.field.set_visible",
+        func: "metadataFieldSetVisible",
+        params: Some("MetadataFieldSetVisibleParams"),
         result: "null",
     },
     Method {
-        wire: "column_metadata.set_order",
-        func: "columnMetadataSetOrder",
-        params: Some("ColumnMetadataSetOrderParams"),
+        wire: "metadata.field.set_order",
+        func: "metadataFieldSetOrder",
+        params: Some("MetadataFieldSetOrderParams"),
         result: "null",
     },
     Method {
@@ -513,9 +530,11 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", PresetDeleteParams::decl(&cfg)),
         format!("export {}", KeybindingDeleteParams::decl(&cfg)),
         format!("export {}", SettingDeleteParams::decl(&cfg)),
-        format!("export {}", ColumnMetadata::decl(&cfg)),
-        format!("export {}", ColumnMetadataSetVisibleParams::decl(&cfg)),
-        format!("export {}", ColumnOrder::decl(&cfg)),
-        format!("export {}", ColumnMetadataSetOrderParams::decl(&cfg)),
+        format!("export {}", FieldRef::decl(&cfg)),
+        format!("export {}", MultiLink::decl(&cfg)),
+        format!("export {}", FieldMetadataRow::decl(&cfg)),
+        format!("export {}", MetadataFieldSetVisibleParams::decl(&cfg)),
+        format!("export {}", FieldOrder::decl(&cfg)),
+        format!("export {}", MetadataFieldSetOrderParams::decl(&cfg)),
     ]
 }

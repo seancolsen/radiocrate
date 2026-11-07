@@ -91,7 +91,7 @@ function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
   const anyExpanded = useFormState(model, selectAnyExpanded);
   const modified = useFormState(model, selectFormModified);
   const saving = useFormState(model, (s) => s.saving);
-  const metadata = useApp((s) => s.columnMetadata.data);
+  const metadata = useApp((s) => s.fieldMetadata.data);
   const showHidden = useApp((s) => s.showHiddenFields);
   const { setShowHiddenFields } = useAppActions();
   const hiddenCount = useFormState(model, (s) =>

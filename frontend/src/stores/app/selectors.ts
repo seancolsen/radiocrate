@@ -16,7 +16,7 @@ import { resultToCsv } from "../../query/exportCsv";
 import {
   NO_TABLE_METADATA,
   type TableMetadata,
-} from "../../query/columnMetadata";
+} from "../../query/fieldMetadata";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
@@ -411,7 +411,7 @@ export function selectRecordGroupsForRows(
 export const selectTableMetadata = (
   s: AppState,
   table: string,
-): TableMetadata => s.columnMetadata.data[table] ?? NO_TABLE_METADATA;
+): TableMetadata => s.fieldMetadata.data[table] ?? NO_TABLE_METADATA;
 
 export const selectRecordEditor = (
   s: AppState,

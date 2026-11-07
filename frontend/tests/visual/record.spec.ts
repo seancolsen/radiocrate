@@ -307,8 +307,14 @@ test.describe("hiding fields", () => {
     await page.getByRole("menuitem", { name: "Hide field" }).click();
     expect(await fieldNames(stage)).not.toContain("title");
     await expect
-      .poll(() => rpcCalls(page, "column_metadata.set_visible"))
-      .toEqual([{ table: "track", column: "title", visible: false }]);
+      .poll(() => rpcCalls(page, "metadata.field.set_visible"))
+      .toEqual([
+        {
+          tableName: "track",
+          field: { columnName: "title" },
+          visible: false,
+        },
+      ]);
 
     await openActions(page);
     await page.getByRole("menuitem", { name: "Show 1 hidden field" }).click();
@@ -333,10 +339,14 @@ test.describe("hiding fields", () => {
     await page.getByRole("menuitem", { name: "Un-hide field" }).click();
     await expect(fieldLabel(stage, "title")).toHaveCSS("opacity", "1");
     await expect
-      .poll(() => rpcCalls(page, "column_metadata.set_visible"))
+      .poll(() => rpcCalls(page, "metadata.field.set_visible"))
       .toEqual([
-        { table: "track", column: "title", visible: false },
-        { table: "track", column: "title", visible: true },
+        {
+          tableName: "track",
+          field: { columnName: "title" },
+          visible: false,
+        },
+        { tableName: "track", field: { columnName: "title" }, visible: true },
       ]);
 
     await openActions(page);
@@ -406,34 +416,36 @@ test.describe("rearranging fields", () => {
   }) => {
     const stage = await loaded(page);
     const names = await fieldNames(stage);
-    const writes = () => rpcCalls(page, "column_metadata.set_order");
+    const writes = () => rpcCalls(page, "metadata.field.set_order");
 
     await dragLabel(page, stage, "title", "id", 0.1);
     await page.mouse.up();
     expect((await fieldNames(stage)).slice(0, 2)).toEqual(["title", "id"]);
     await expect.poll(async () => (await writes()).length).toBe(1);
     const [sent] = (await writes()) as {
-      table: string;
-      orders: { column: string; order: number }[];
+      tableName: string;
+      orders: { field: unknown; order: number }[];
     }[];
-    expect(sent.table).toBe("track");
-    // Every field gets a place, the `#…` ones listing related records included.
+    expect(sent.tableName).toBe("track");
+    // Every field gets a place, the ones listing related records included.
     expect(sent.orders.map((entry) => entry.order)).toEqual(
       names.map((_, i) => i + 1),
     );
-    expect(sent.orders.slice(0, 2).map((entry) => entry.column)).toEqual([
-      "title",
-      "id",
+    expect(sent.orders.slice(0, 2).map((entry) => entry.field)).toEqual([
+      { columnName: "title" },
+      { columnName: "id" },
     ]);
-    expect(sent.orders.at(-1)?.column).toMatch(/^#/);
+    expect(sent.orders.at(-1)?.field).toMatchObject({
+      multiLink: { fkColumnName: "track" },
+    });
 
     await dragLabel(page, stage, "id", "title", 0.1);
     await page.mouse.up();
     expect((await fieldNames(stage)).slice(0, 2)).toEqual(["id", "title"]);
     await expect.poll(async () => (await writes()).length).toBe(2);
     expect((await writes())[1]).toEqual({
-      table: "track",
-      orders: [{ column: "id", order: 0 }],
+      tableName: "track",
+      orders: [{ field: { columnName: "id" }, order: 0 }],
     });
   });
 

@@ -7,11 +7,12 @@
 // `selectFormSummary`, which builds a fresh object (state management rule 2) —
 // the forms store compares it shallowly, and nothing renders from it directly.
 
+import { isFieldHidden, type MetadataByTable } from "../../query/fieldMetadata";
 import {
-  isFieldHidden,
-  type MetadataByTable,
-} from "../../query/columnMetadata";
-import type { FormField, ScalarLinkField } from "../../query/recordForm";
+  fieldRef,
+  type FormField,
+  type ScalarLinkField,
+} from "../../query/recordForm";
 import {
   fieldItemId,
   listId,
@@ -412,7 +413,7 @@ export function selectHiddenFieldCount(
     const table = metadata[node.table];
     if (!table) continue;
     for (const field of node.fields) {
-      if (isFieldHidden(table, field.key)) {
+      if (isFieldHidden(table, fieldRef(field))) {
         hidden.add(`${node.table}\0${field.key}`);
       }
     }

@@ -69,7 +69,7 @@ function rpcResult(method: string, params: unknown): unknown {
     // every setting its built-in value.
     case "keybinding.list":
     case "setting.list":
-    case "column_metadata.list":
+    case "metadata.field.list":
       return [];
     // Constant, never the real `__BUILD_ID__`: a story that showed the build
     // this checkout happens to be would rewrite its baseline on every commit.

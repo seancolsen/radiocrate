@@ -8,7 +8,8 @@ import {
   type RecordRef,
 } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
-import type { TableMetadata } from "../../query/columnMetadata";
+import { fieldRefKey, type FieldMetadata } from "../../query/fieldMetadata";
+import type { FieldRef } from "api-client";
 import { SETTINGS } from "../../state/settings";
 import {
   FILTER_DEF,
@@ -432,12 +433,19 @@ function recordEditor(ns: readonly number[], saveFails?: string): Story {
 
 /** `story`, on a `track` table the user has customized with `fields`, and
  * showing what they've hidden. */
-function withColumnMetadata(story: Story, fields: TableMetadata): Story {
+function withFieldMetadata(
+  story: Story,
+  fields: readonly (readonly [FieldRef, FieldMetadata])[],
+): Story {
   return {
     ...story,
     setup: (stores) => {
       stores.app.store.setState((s) => {
-        s.columnMetadata.data = { track: fields };
+        s.fieldMetadata.data = {
+          track: Object.fromEntries(
+            fields.map(([field, metadata]) => [fieldRefKey(field), metadata]),
+          ),
+        };
         s.showHiddenFields = true;
       });
       story.setup?.(stores);
@@ -1610,13 +1618,16 @@ export const STORIES: Record<string, Story> = {
   // one record holding it.
   "record-editor/varied-editing": recordEditor([1, 2, 3]),
   // The user's own arrangement of `track`: `title` moved up to the top, and
-  // `disc_number` and `#credit` hidden but on show, their labels dimmed.
-  "record-editor/fields-customized": withColumnMetadata(recordEditor([1]), {
-    id: { visible: true, order: 2 },
-    title: { visible: true, order: 1 },
-    disc_number: { visible: false, order: null },
-    "#credit": { visible: false, order: null },
-  }),
+  // `disc_number` and the credits hidden but on show, their labels dimmed.
+  "record-editor/fields-customized": withFieldMetadata(recordEditor([1]), [
+    [{ columnName: "id" }, { visible: true, order: 2 }],
+    [{ columnName: "title" }, { visible: true, order: 1 }],
+    [{ columnName: "disc_number" }, { visible: false, order: null }],
+    [
+      { multiLink: { relatedTableName: "credit", fkColumnName: "track" } },
+      { visible: false, order: null },
+    ],
+  ]),
   // `title` being dragged (the test does the dragging): dimmed where it is, its
   // chip following the pointer, and the drop line in the gap it would land in.
   "record-editor/field-drag": recordEditor([1]),

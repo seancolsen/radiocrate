@@ -81,10 +81,14 @@ export type KeybindingDeleteParams = { commandId: string, };
 
 export type SettingDeleteParams = { key: string, };
 
-export type ColumnMetadata = { table: string, column: string, visible: boolean, order: number | null, };
+export type FieldRef = { "columnName": string } | { "multiLink": MultiLink };
 
-export type ColumnMetadataSetVisibleParams = { table: string, column: string, visible: boolean, };
+export type MultiLink = { relatedTableName: string, fkColumnName: string, };
 
-export type ColumnOrder = { column: string, order: number, };
+export type FieldMetadataRow = { tableName: string, field: FieldRef, visible: boolean, order: number | null, };
 
-export type ColumnMetadataSetOrderParams = { table: string, orders: Array<ColumnOrder>, };
+export type MetadataFieldSetVisibleParams = { tableName: string, field: FieldRef, visible: boolean, };
+
+export type FieldOrder = { field: FieldRef, order: number, };
+
+export type MetadataFieldSetOrderParams = { tableName: string, orders: Array<FieldOrder>, };

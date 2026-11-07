@@ -9,10 +9,10 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, ColumnMetadata, ColumnMetadataSetOrderParams, ColumnMetadataSetVisibleParams,
-    ColumnOrder, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
-    Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting,
-    SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
+    AppVersion, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams,
+    Keybinding, KeybindingDeleteParams, MetadataFieldSetOrderParams, MetadataFieldSetVisibleParams,
+    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
+    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
     SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
 };
 use axum::Json;
@@ -247,21 +247,22 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 Ok(Value::Null)
             })
         }
-        "column_metadata.list" => state.read(|conn| -> Result<Value, String> {
-            let rows = list_column_metadata(conn)?;
+        "metadata.field.list" => state.read(|conn| -> Result<Value, String> {
+            let rows = list_field_metadata(conn)?;
             serde_json::to_value(rows).map_err(|e| e.to_string())
         }),
-        "column_metadata.set_visible" => {
-            let p: ColumnMetadataSetVisibleParams = from_params(params)?;
+        "metadata.field.set_visible" => {
+            let p: MetadataFieldSetVisibleParams = from_params(params)?;
             state.write(|conn| {
-                set_column_visible(conn, &p.table, &p.column, p.visible)?;
+                set_field_visible(conn, &p.table_name, &p.field, p.visible)?;
                 Ok(Value::Null)
             })
         }
-        "column_metadata.set_order" => {
-            let p: ColumnMetadataSetOrderParams = from_params(params)?;
-            state
-                .write_mut(|conn| set_column_order(conn, &p.table, &p.orders).map(|()| Value::Null))
+        "metadata.field.set_order" => {
+            let p: MetadataFieldSetOrderParams = from_params(params)?;
+            state.write_mut(|conn| {
+                set_field_order(conn, &p.table_name, &p.orders).map(|()| Value::Null)
+            })
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
             let bindings = list_keybindings(conn)?;
@@ -630,20 +631,31 @@ fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn list_column_metadata(conn: &Connection) -> Result<Vec<ColumnMetadata>, String> {
+fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT \"table\", \"column\", visible, \"order\" FROM metadata.\"column\" \
-             ORDER BY \"table\", \"column\"",
+            "SELECT table_name, union_extract(field, 'column_name'), \
+             union_extract(field, 'multi_link').related_table_name, \
+             union_extract(field, 'multi_link').fk_column_name, visible, \"order\" \
+             FROM metadata.field \
+             ORDER BY table_name, union_tag(field)::text, field::text",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(ColumnMetadata {
-                table: row.get(0)?,
-                column: row.get(1)?,
-                visible: row.get(2)?,
-                order: row.get(3)?,
+            let column_name: Option<String> = row.get(1)?;
+            let field = match column_name {
+                Some(name) => FieldRef::ColumnName(name),
+                None => FieldRef::MultiLink(MultiLink {
+                    related_table_name: row.get(2)?,
+                    fk_column_name: row.get(3)?,
+                }),
+            };
+            Ok(FieldMetadataRow {
+                table_name: row.get(0)?,
+                field,
+                visible: row.get(4)?,
+                order: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -651,38 +663,62 @@ fn list_column_metadata(conn: &Connection) -> Result<Vec<ColumnMetadata>, String
         .map_err(|e| e.to_string())
 }
 
-/// Sets one field's visibility, creating its row if this is the first thing
-/// customized about it. Leaves its `order` as it is.
-fn set_column_visible(
+/// The SQL building `field` as a value of the `metadata.field.field` union, and the
+/// parameters it binds.
+fn field_ref_sql(field: &FieldRef) -> (&'static str, Vec<&str>) {
+    match field {
+        FieldRef::ColumnName(name) => ("union_value(column_name := ?)", vec![name]),
+        FieldRef::MultiLink(link) => (
+            "union_value(multi_link := {'related_table_name': ?, 'fk_column_name': ?})",
+            vec![&link.related_table_name, &link.fk_column_name],
+        ),
+    }
+}
+
+/// Creates the row of one field if it has none, or sets `column` on the one it has,
+/// leaving the rest of that row as it is. See migration 0010 on why the conflict has
+/// no target.
+fn upsert_field_metadata(
     conn: &Connection,
-    table: &str,
-    column: &str,
-    visible: bool,
+    table_name: &str,
+    field: &FieldRef,
+    column: &'static str,
+    value: &dyn duckdb::ToSql,
 ) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO metadata.\"column\" (\"table\", \"column\", visible) VALUES (?, ?, ?) \
-         ON CONFLICT (\"table\", \"column\") DO UPDATE SET visible = excluded.visible",
-        duckdb::params![table, column, visible],
-    )
-    .map_err(|e| e.to_string())?;
+    let (field_sql, field_params) = field_ref_sql(field);
+    let sql = format!(
+        "INSERT INTO metadata.field (table_name, field, {column}) VALUES (?, {field_sql}, ?) \
+         ON CONFLICT DO UPDATE SET {column} = excluded.{column}"
+    );
+    let mut params: Vec<&dyn duckdb::ToSql> = vec![&table_name];
+    params.extend(field_params.iter().map(|p| p as &dyn duckdb::ToSql));
+    params.push(value);
+    conn.execute(&sql, duckdb::params_from_iter(params))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Sets the sort keys of a table's fields in one transaction, creating the rows
-/// of any field not customized yet. Leaves their `visible` as it is.
-fn set_column_order(
+/// Sets one field's visibility, creating its row if this is the first thing
+/// customized about it. Leaves its `order` as it is.
+fn set_field_visible(
+    conn: &Connection,
+    table_name: &str,
+    field: &FieldRef,
+    visible: bool,
+) -> Result<(), String> {
+    upsert_field_metadata(conn, table_name, field, "visible", &visible)
+}
+
+/// Sets the sort keys of a table's fields in one transaction, creating the rows of
+/// any field not customized yet. Leaves their `visible` as it is.
+fn set_field_order(
     conn: &mut Connection,
-    table: &str,
-    orders: &[ColumnOrder],
+    table_name: &str,
+    orders: &[FieldOrder],
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for entry in orders {
-        tx.execute(
-            "INSERT INTO metadata.\"column\" (\"table\", \"column\", \"order\") VALUES (?, ?, ?) \
-             ON CONFLICT (\"table\", \"column\") DO UPDATE SET \"order\" = excluded.\"order\"",
-            duckdb::params![table, entry.column, entry.order],
-        )
-        .map_err(|e| e.to_string())?;
+        upsert_field_metadata(&tx, table_name, &entry.field, "\"order\"", &entry.order)?;
     }
     tx.commit().map_err(|e| e.to_string())
 }
@@ -1103,82 +1139,174 @@ mod tests {
         assert_eq!(names, ["first", "second"]);
     }
 
-    fn column_row(table: &str, column: &str, visible: bool, order: Option<f64>) -> ColumnMetadata {
-        ColumnMetadata {
-            table: table.to_string(),
-            column: column.to_string(),
+    fn column(name: &str) -> FieldRef {
+        FieldRef::ColumnName(name.to_string())
+    }
+
+    fn multi_link(related_table_name: &str, fk_column_name: &str) -> FieldRef {
+        FieldRef::MultiLink(MultiLink {
+            related_table_name: related_table_name.to_string(),
+            fk_column_name: fk_column_name.to_string(),
+        })
+    }
+
+    fn field_row(
+        table_name: &str,
+        field: FieldRef,
+        visible: bool,
+        order: Option<f64>,
+    ) -> FieldMetadataRow {
+        FieldMetadataRow {
+            table_name: table_name.to_string(),
+            field,
             visible,
             order,
         }
     }
 
-    fn order_of(column: &str, order: f64) -> ColumnOrder {
-        ColumnOrder {
-            column: column.to_string(),
-            order,
-        }
+    fn order_of(field: FieldRef, order: f64) -> FieldOrder {
+        FieldOrder { field, order }
     }
 
     #[test]
-    fn column_metadata_starts_empty() {
+    fn field_metadata_starts_empty() {
         let conn = setup();
-        assert_eq!(list_column_metadata(&conn).unwrap(), vec![]);
+        assert_eq!(list_field_metadata(&conn).unwrap(), vec![]);
     }
 
     #[test]
-    fn hiding_a_column_leaves_its_order_and_ordering_leaves_its_visibility() {
+    fn hiding_a_field_leaves_its_order_and_ordering_leaves_its_visibility() {
         let mut conn = setup();
-        set_column_visible(&conn, "track", "genre", false).unwrap();
+        set_field_visible(&conn, "track", &column("genre"), false).unwrap();
         assert_eq!(
-            list_column_metadata(&conn).unwrap(),
-            vec![column_row("track", "genre", false, None)],
+            list_field_metadata(&conn).unwrap(),
+            vec![field_row("track", column("genre"), false, None)],
         );
 
-        set_column_order(
+        set_field_order(
             &mut conn,
             "track",
-            &[order_of("genre", 1.0), order_of("title", 2.0)],
+            &[
+                order_of(column("genre"), 1.0),
+                order_of(column("title"), 2.0),
+            ],
         )
         .unwrap();
         assert_eq!(
-            list_column_metadata(&conn).unwrap(),
+            list_field_metadata(&conn).unwrap(),
             vec![
-                column_row("track", "genre", false, Some(1.0)),
-                column_row("track", "title", true, Some(2.0)),
+                field_row("track", column("genre"), false, Some(1.0)),
+                field_row("track", column("title"), true, Some(2.0)),
             ],
         );
 
-        set_column_visible(&conn, "track", "genre", true).unwrap();
-        set_column_order(&mut conn, "track", &[order_of("title", 0.5)]).unwrap();
+        set_field_visible(&conn, "track", &column("genre"), true).unwrap();
+        set_field_order(&mut conn, "track", &[order_of(column("title"), 0.5)]).unwrap();
         assert_eq!(
-            list_column_metadata(&conn).unwrap(),
+            list_field_metadata(&conn).unwrap(),
             vec![
-                column_row("track", "genre", true, Some(1.0)),
-                column_row("track", "title", true, Some(0.5)),
+                field_row("track", column("genre"), true, Some(1.0)),
+                field_row("track", column("title"), true, Some(0.5)),
             ],
         );
     }
 
     #[test]
-    fn the_same_column_name_is_separate_per_table() {
-        let conn = setup();
-        set_column_visible(&conn, "track", "title", false).unwrap();
-        set_column_visible(&conn, "album", "title", true).unwrap();
+    fn a_multi_link_field_round_trips_and_updates_in_place() {
+        let mut conn = setup();
+        let credits = multi_link("credit", "track");
+        set_field_visible(&conn, "track", &credits, false).unwrap();
+        set_field_order(&mut conn, "track", &[order_of(credits.clone(), 3.0)]).unwrap();
+        set_field_visible(&conn, "track", &credits, true).unwrap();
         assert_eq!(
-            list_column_metadata(&conn).unwrap(),
+            list_field_metadata(&conn).unwrap(),
+            vec![field_row("track", credits, true, Some(3.0))],
+        );
+    }
+
+    #[test]
+    fn resequencing_can_write_a_field_more_than_once() {
+        let mut conn = setup();
+        let orders = |first: f64, second: f64| {
+            [
+                order_of(multi_link("credit", "track"), first),
+                order_of(column("title"), second),
+            ]
+        };
+        set_field_order(&mut conn, "track", &orders(1.0, 2.0)).unwrap();
+        let [credits, title] = orders(3.0, 4.0);
+        let repeated = [credits.clone(), title, credits];
+        set_field_order(&mut conn, "track", &repeated).unwrap();
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
             vec![
-                column_row("album", "title", true, None),
-                column_row("track", "title", false, None),
+                field_row("track", column("title"), true, Some(4.0)),
+                field_row("track", multi_link("credit", "track"), true, Some(3.0)),
             ],
         );
     }
 
     #[test]
-    fn a_table_needs_a_unique_table_and_column() {
+    fn fields_are_told_apart_by_table_kind_and_both_parts_of_a_link() {
         let conn = setup();
-        let insert = "INSERT INTO metadata.\"column\" (\"table\", \"column\") VALUES ('a', 'b')";
-        conn.execute_batch(insert).unwrap();
-        assert!(conn.execute_batch(insert).is_err());
+        for (table_name, field) in [
+            ("album", column("title")),
+            ("track", column("title")),
+            ("track", column("credit")),
+            ("track", multi_link("credit", "track")),
+            ("track", multi_link("credit", "other_track")),
+            // Spells out how the first link above renders as text.
+            (
+                "track",
+                column("{'related_table_name': credit, 'fk_column_name': track}"),
+            ),
+        ] {
+            set_field_visible(&conn, table_name, &field, false).unwrap();
+        }
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_field_goes_over_the_wire_as_a_union_of_its_kinds() {
+        let params: MetadataFieldSetOrderParams = from_params(serde_json::json!({
+            "tableName": "track",
+            "orders": [
+                { "field": { "columnName": "title" }, "order": 1.0 },
+                {
+                    "field": {
+                        "multiLink": { "relatedTableName": "credit", "fkColumnName": "track" }
+                    },
+                    "order": 2.0
+                },
+            ],
+        }))
+        .unwrap();
+        assert_eq!(params.orders[0].field, column("title"));
+        assert_eq!(params.orders[1].field, multi_link("credit", "track"));
+
+        assert_eq!(
+            serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
+            serde_json::json!({
+                "tableName": "a",
+                "field": { "multiLink": { "relatedTableName": "b", "fkColumnName": "c" } },
+                "visible": true,
+                "order": null,
+            }),
+        );
+    }
+
+    #[test]
+    fn the_table_refuses_a_second_row_for_a_field() {
+        let conn = setup();
+        for field in [
+            "union_value(column_name := 'title')",
+            "union_value(multi_link := {'related_table_name': 'credit', 'fk_column_name': 'track'})",
+        ] {
+            let insert =
+                format!("INSERT INTO metadata.field (table_name, field) VALUES ('a', {field})");
+            conn.execute_batch(&insert).unwrap();
+            assert!(conn.execute_batch(&insert).is_err());
+        }
     }
 
     #[test]
@@ -1188,7 +1316,7 @@ mod tests {
             .query_row(introspection::introspection_sql(), [], |row| row.get(0))
             .unwrap();
         let schema = introspection::Schema::parse(&json).unwrap();
-        assert!(schema.table("column").is_none());
+        assert!(schema.table("field").is_none());
     }
 
     #[test]

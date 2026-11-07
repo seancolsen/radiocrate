@@ -62,6 +62,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 9,
         sql: include_str!("migrations/0009.sql"),
     },
+    Migration {
+        version: 10,
+        sql: include_str!("migrations/0010.sql"),
+    },
 ];
 
 fn init_db_version_metadata(conn: &Connection) -> Result<(), duckdb::Error> {

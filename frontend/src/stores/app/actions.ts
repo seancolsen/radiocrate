@@ -21,9 +21,10 @@ import {
   settingDelete,
   settingList,
   settingSet,
-  columnMetadataList,
-  columnMetadataSetOrder,
-  columnMetadataSetVisible,
+  metadataFieldList,
+  metadataFieldSetOrder,
+  metadataFieldSetVisible,
+  type FieldRef,
   type DmlOperation,
   type DmlResult,
   type Placement,
@@ -133,12 +134,17 @@ import {
   artistTracksFilter,
 } from "../../query/relatedRecords";
 import { childRecordsTabQuery, embedSpec } from "../../query/embeddedRecord";
-import { buildFormFields, type RecordQuery } from "../../query/recordForm";
+import {
+  buildFormFields,
+  fieldRef,
+  type RecordQuery,
+} from "../../query/recordForm";
 import {
   anyFieldHidden,
   fieldMoveOrders,
-  groupColumnMetadata,
-} from "../../query/columnMetadata";
+  fieldRefKey,
+  groupFieldMetadata,
+} from "../../query/fieldMetadata";
 import {
   analyzeColumnSources,
   recordKeyColumns,
@@ -295,19 +301,19 @@ export interface AppActions {
   loadSchema: () => Promise<void>;
   loadSettings: () => Promise<void>;
   /** Loads what the user has customized about each table's record editor fields. */
-  loadColumnMetadata: () => Promise<void>;
+  loadFieldMetadata: () => Promise<void>;
   /** Hides a table's field from every record editor, or un-hides it. Shows at
    * once; the write follows. */
-  setFieldHidden: (table: string, key: string, hidden: boolean) => void;
+  setFieldHidden: (table: string, field: FieldRef, hidden: boolean) => void;
   /** Moves a table's field between the two fields shown just above and just
    * below where it was dropped (`undefined` at an edge), writing as few sort keys
    * as it can (`fieldMoveOrders`). Shows at once; the write follows. Returns
    * whether the field moved. */
   moveField: (
     table: string,
-    key: string,
-    above: string | undefined,
-    below: string | undefined,
+    field: FieldRef,
+    above: FieldRef | undefined,
+    below: FieldRef | undefined,
   ) => boolean;
   /** Shows the hidden fields in every record editor, or hides them again. */
   setShowHiddenFields: (show: boolean) => void;
@@ -2665,15 +2671,15 @@ export function createAppActions(
     return true;
   };
 
-  // Column metadata writes go out one at a time, so a quick second change can't
+  // Field metadata writes go out one at a time, so a quick second change can't
   // overtake the first on its way to the database.
-  let columnMetadataWrites: Promise<unknown> = Promise.resolve();
-  const writeColumnMetadata = (write: () => Promise<unknown>) => {
-    columnMetadataWrites = columnMetadataWrites.then(write).catch((err) => {
+  let fieldMetadataWrites: Promise<unknown> = Promise.resolve();
+  const writeFieldMetadata = (write: () => Promise<unknown>) => {
+    fieldMetadataWrites = fieldMetadataWrites.then(write).catch((err) => {
       // The error bar has already reported it. What's on screen shows a change
       // that didn't land, so what's stored goes back on screen.
-      console.error("column metadata write failed", err);
-      return actions.loadColumnMetadata();
+      console.error("field metadata write failed", err);
+      return actions.loadFieldMetadata();
     });
   };
 
@@ -2745,53 +2751,61 @@ export function createAppActions(
         });
       }
     },
-    loadColumnMetadata: async () => {
+    loadFieldMetadata: async () => {
       try {
-        const rows = await columnMetadataList();
+        const rows = await metadataFieldList();
         set((s) => {
-          s.columnMetadata = {
+          s.fieldMetadata = {
             status: "ready",
-            data: groupColumnMetadata(rows ?? []),
+            data: groupFieldMetadata(rows ?? []),
           };
         });
       } catch (err) {
         // Every field shows, in its default place.
-        console.error("column metadata list failed", err);
+        console.error("field metadata list failed", err);
         set((s) => {
-          s.columnMetadata.status = "error";
+          s.fieldMetadata.status = "error";
         });
       }
     },
-    setFieldHidden: (table, key, hidden) => {
+    setFieldHidden: (table, field, hidden) => {
       set((s) => {
-        const fields = (s.columnMetadata.data[table] ??= {});
-        const field = (fields[key] ??= { visible: true, order: null });
-        field.visible = !hidden;
+        const fields = (s.fieldMetadata.data[table] ??= {});
+        const entry = (fields[fieldRefKey(field)] ??= {
+          visible: true,
+          order: null,
+        });
+        entry.visible = !hidden;
         // With nothing left to show, the next field hidden should go away rather
         // than stay up, dimmed, under a toggle the user has no reason to recall.
-        if (!anyFieldHidden(s.columnMetadata.data)) s.showHiddenFields = false;
+        if (!anyFieldHidden(s.fieldMetadata.data)) s.showHiddenFields = false;
       });
-      writeColumnMetadata(() =>
-        columnMetadataSetVisible({ table, column: key, visible: !hidden }),
+      writeFieldMetadata(() =>
+        metadataFieldSetVisible({ tableName: table, field, visible: !hidden }),
       );
     },
-    moveField: (table, key, above, below) => {
+    moveField: (table, field, above, below) => {
       const s0 = get();
       const orders = fieldMoveOrders(
-        buildFormFields(s0.schema.tables, table).map((field) => field.key),
+        buildFormFields(s0.schema.tables, table).map(fieldRef),
         selectTableMetadata(s0, table),
-        key,
+        field,
         above,
         below,
       );
       if (orders.length === 0) return false;
       set((s) => {
-        const fields = (s.columnMetadata.data[table] ??= {});
-        for (const { column, order } of orders) {
-          (fields[column] ??= { visible: true, order: null }).order = order;
+        const fields = (s.fieldMetadata.data[table] ??= {});
+        for (const { field: moved, order } of orders) {
+          (fields[fieldRefKey(moved)] ??= {
+            visible: true,
+            order: null,
+          }).order = order;
         }
       });
-      writeColumnMetadata(() => columnMetadataSetOrder({ table, orders }));
+      writeFieldMetadata(() =>
+        metadataFieldSetOrder({ tableName: table, orders }),
+      );
       return true;
     },
     setShowHiddenFields: (show) =>
