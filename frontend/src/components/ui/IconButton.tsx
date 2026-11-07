@@ -6,8 +6,8 @@ import { NESTED_BUTTON_CLASS, cx } from "./cx";
 
 /** A frameless icon button — 26px square by default, or a 20px `size="sm"` for
  * controls set inline within a tighter row (the record editor's field-row
- * buttons). The hover affordance is a 1px accent ring painted *inside* the
- * square (`ring-inset`) so hovering never shifts layout. This is the app's one
+ * buttons). The hover affordance is color, never a border: a `bg-hover` fill, and
+ * the icon darkening to full ink. This is the app's one
  * button style — every icon-only control uses it, so hovering reads the same
  * everywhere. Content is the icon gray by default; `danger` tints it red and a
  * disabled button dims and stops responding. `nested` is for a button set
@@ -70,15 +70,14 @@ const IconButton = forwardRef<
         tabIndex={props.tabIndex}
         className={cx(
           "flex shrink-0 items-center justify-center rounded",
-          props.nested
-            ? NESTED_BUTTON_CLASS
-            : "ring-1 ring-transparent ring-inset",
+          props.nested && NESTED_BUTTON_CLASS,
           {
             "size-5": props.size === "sm",
             "size-[26px]": props.size !== "sm",
             "text-ink-weak": !props.disabled && !props.danger,
             "text-danger": !props.disabled && props.danger,
-            "hover:ring-accent": !props.disabled && !props.nested,
+            "hover:bg-hover": !props.disabled && !props.nested,
+            "hover:text-ink": !props.disabled && !props.danger && !props.nested,
             "text-ink-weak/40": props.disabled,
             "bg-hover": props.active && !props.nested,
             "bg-ink/10": props.active && props.nested,

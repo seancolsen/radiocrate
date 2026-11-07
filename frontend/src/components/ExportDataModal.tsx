@@ -30,9 +30,9 @@ export interface ExportColumnOption {
 const BUTTON_CLASS =
   "control text-ink border-edge hover:bg-hover flex items-center gap-1.5 rounded-md disabled:opacity-40";
 
-/** A button that shows its border only on hover or focus. */
+/** A button that shows its fill only on hover, and its border on focus. */
 const QUIET_BUTTON_CLASS =
-  "control text-ink enabled:hover:border-edge focus-visible:border-accent flex items-center gap-1 rounded-md outline-none disabled:opacity-40";
+  "control text-ink enabled:hover:bg-hover focus-visible:border-accent flex items-center gap-1 rounded-md outline-none disabled:opacity-40";
 
 const SELECT_CLASS =
   "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md p-0 outline-none";
