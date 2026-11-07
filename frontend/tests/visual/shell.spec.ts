@@ -313,6 +313,41 @@ test.describe("an icon-only button's tooltip", () => {
     await expect(tooltip(page)).toHaveCount(0);
   });
 
+  test.describe("under a finger", () => {
+    test.use({ hasTouch: true });
+
+    test("shows on touch-and-hold, lingers past the release", async ({
+      page,
+    }) => {
+      const stage = await openStory(page, "tab-bar/tooltip", "light");
+      const newQuery = stage.getByRole("button", { name: "New query" });
+      const box = (await newQuery.boundingBox())!;
+      const touchPoints = [
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+      ];
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints,
+      });
+      await expect(tooltip(page)).toHaveText("New queryCtrl+N");
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+      await page.waitForTimeout(300);
+      await expect(tooltip(page)).toHaveCount(1);
+      await expect(tooltip(page)).toHaveCount(0);
+    });
+
+    test("a quick tap shows none", async ({ page }) => {
+      const stage = await openStory(page, "tab-bar/tooltip", "light");
+      await stage.getByRole("button", { name: "New query" }).tap();
+      await page.waitForTimeout(800);
+      await expect(tooltip(page)).toHaveCount(0);
+    });
+  });
+
   test("shows at once on keyboard focus, and Escape hides it", async ({
     page,
   }) => {

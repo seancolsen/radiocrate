@@ -150,7 +150,7 @@ export default function TabHandle(props: {
         }}
         onPointerDown={(e) => {
           e.stopPropagation();
-          closeTip.triggerProps.onPointerDown?.();
+          closeTip.triggerProps.onPointerDown?.(e);
         }}
       >
         <Icons.Close className="size-[15px]" />

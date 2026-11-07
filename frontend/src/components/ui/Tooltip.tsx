@@ -7,6 +7,7 @@ import {
   type FocusEvent,
   type JSX,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
 } from "react";
@@ -15,6 +16,7 @@ import { chordToAria } from "../../commands/chord";
 import type { CommandId } from "../../commands/registry";
 import { selectBinding } from "../../stores/commands";
 import { useCommands } from "../../stores/react";
+import { LONG_PRESS_MS } from "../../gestures/press";
 import { Kbd } from "./Kbd";
 import { placeDropdown } from "./menuGeometry";
 import { cx } from "./cx";
@@ -27,8 +29,10 @@ import { cx } from "./cx";
 // triggers names its command, and the shortcut's chord (as the user has bound
 // it) shows beside the label and goes out as `aria-keyshortcuts`.
 //
-// It shows after a short hover, at once on keyboard focus, and not at all for
-// touch. Pressing the control hides it until the pointer leaves, so it never
+// It shows after a short hover, at once on keyboard focus, and for touch after
+// a touch-and-hold, lingering a moment past the release so the finger isn't
+// left covering it. The release of a hold that showed one isn't a click.
+// Pressing the control hides it until the pointer leaves, so it never
 // covers the menu or the change the press brought up. Once one has shown,
 // moving straight on to a neighbor shows the neighbor's at once, the way a
 // toolbar's tooltips read along the row.
@@ -40,6 +44,8 @@ const WARM_MS = 400;
 /** Until when a tooltip shows without the delay: one has just hidden. Shared
  * by every tooltip — it's the row of them that's warm, not one. */
 let warmUntil = 0;
+/** How long a touch-held tooltip stays after the finger lifts. */
+const TOUCH_LINGER_MS = 1500;
 
 /** What a tooltip says, and where it hangs. */
 export interface TooltipSpec {
@@ -64,8 +70,12 @@ export interface TooltipTriggerProps {
   "aria-keyshortcuts"?: string;
   "aria-describedby"?: string;
   onPointerEnter?: (e: PointerEvent<HTMLElement>) => void;
-  onPointerLeave?: () => void;
-  onPointerDown?: () => void;
+  onPointerLeave?: (e?: PointerEvent<HTMLElement>) => void;
+  onPointerDown?: (e?: PointerEvent<HTMLElement>) => void;
+  onPointerUp?: (e: PointerEvent<HTMLElement>) => void;
+  onPointerCancel?: () => void;
+  onClickCapture?: (e: MouseEvent<HTMLElement>) => void;
+  onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   onFocus?: (e: FocusEvent<HTMLElement>) => void;
   onBlur?: () => void;
   onKeyDown?: (e: KeyboardEvent<HTMLElement>) => void;
@@ -88,6 +98,10 @@ export function useTooltip(spec: TooltipSpec | null): {
   const timer = useRef<number | undefined>(undefined);
   // A press hides the tooltip until the pointer leaves.
   const pressed = useRef(false);
+  // A touch is down on the control; and a touch-hold has shown the tooltip, so
+  // the release's click (and the context menu the OS raises) is to be eaten.
+  const touching = useRef(false);
+  const held = useRef(false);
   const command = spec?.command;
   const chord = useCommands((s) =>
     command ? selectBinding(s, command) : null,
@@ -120,13 +134,46 @@ export function useTooltip(spec: TooltipSpec | null): {
           show(e.currentTarget, false);
         }
       },
-      onPointerLeave: () => {
+      onPointerLeave: (e) => {
         pressed.current = false;
+        // A touch's pointer "leaves" as it lifts; the linger decides then.
+        if (e?.pointerType === "touch" && held.current) return;
         hide();
       },
-      onPointerDown: () => {
-        pressed.current = true;
+      onPointerDown: (e) => {
         hide();
+        if (e?.pointerType === "touch") {
+          touching.current = true;
+          held.current = false;
+          const el = e.currentTarget;
+          timer.current = window.setTimeout(() => {
+            held.current = true;
+            setAnchor(el);
+          }, LONG_PRESS_MS);
+        } else {
+          pressed.current = true;
+        }
+      },
+      onPointerUp: (e) => {
+        if (e.pointerType !== "touch") return;
+        touching.current = false;
+        window.clearTimeout(timer.current);
+        if (held.current)
+          timer.current = window.setTimeout(hide, TOUCH_LINGER_MS);
+      },
+      onPointerCancel: () => {
+        touching.current = false;
+        held.current = false;
+        hide();
+      },
+      onClickCapture: (e) => {
+        if (!held.current) return;
+        held.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      onContextMenu: (e) => {
+        if (touching.current || held.current) e.preventDefault();
       },
       // Keyboard focus only: a click focuses too, and the press already
       // decided the tooltip stays hidden.
