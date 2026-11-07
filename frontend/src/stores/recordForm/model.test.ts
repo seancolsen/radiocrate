@@ -24,6 +24,7 @@ import {
   distinctValues,
   selectDistinctCount,
   selectFieldModified,
+  selectAnyExpanded,
   selectFormModified,
   selectIsBulkBlocked,
   selectListsDistinct,
@@ -68,6 +69,17 @@ const TABLES: SchemaTable[] = [
       col("id", "UUID"),
       col("track", "UUID"),
       col("role", "VARCHAR", true),
+    ],
+    uniqueConstraints: [["id"]],
+  },
+  // Has a required timestamp, which a record drafted into it starts at "now".
+  {
+    name: "play",
+    columns: [
+      col("id", "UUID"),
+      col("track", "UUID"),
+      col("played_at", "TIMESTAMP"),
+      col("skipped_at", "TIMESTAMP", true),
     ],
     uniqueConstraints: [["id"]],
   },
@@ -910,6 +922,56 @@ describe("reset", () => {
 });
 
 describe("modification", () => {
+  it("is unmodified again once an added record is removed", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const model = form();
+    model.start();
+    await flush();
+
+    model.addChild(ROOT_ID, credits(model));
+    expect(
+      selectFieldModified(model.store.getState(), ROOT_ID, "#credit"),
+    ).toBe(true);
+    model.removeChild(ROOT_ID, credits(model), `${CREDITS_LIST}[new:1]`);
+
+    const s = model.store.getState();
+    expect(s.lists[CREDITS_LIST]?.childIds).toEqual([]);
+    expect(selectFieldModified(s, ROOT_ID, "#credit")).toBe(false);
+    expect(selectFormModified(s)).toBe(false);
+  });
+
+  it("starts a required timestamp of a drafted record at now", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const model = form();
+    model.start();
+    await flush();
+
+    model.addChild(
+      ROOT_ID,
+      fieldOf(model, ROOT_ID, "#play") as MultiRecordField,
+    );
+    const child =
+      model.store.getState().lists[listId(ROOT_ID, "#play")]?.childIds[0];
+    const s = model.store.getState();
+    expect(selectSharedValue(s, child!, "played_at")).toMatch(
+      /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/,
+    );
+    expect(selectSharedValue(s, child!, "skipped_at")).toBeNull();
+  });
+
+  it("collapses everything that is expanded", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const model = form();
+    model.start();
+    await flush();
+    expect(selectAnyExpanded(model.store.getState())).toBe(false);
+
+    model.toggleField(ROOT_ID, credits(model), true);
+    expect(selectAnyExpanded(model.store.getState())).toBe(true);
+    model.collapseAll();
+    expect(selectAnyExpanded(model.store.getState())).toBe(false);
+  });
+
   it("stars a collapsed field for an edit made anywhere inside it", async () => {
     serve({
       track: [trackRow("t1", "Formation", "Pop", 1)],

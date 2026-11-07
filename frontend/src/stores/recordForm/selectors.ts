@@ -394,3 +394,7 @@ export function selectFormSummary(s: FormState): RecordFormSummary {
     modified: selectFormModified(s),
   };
 }
+
+/** Whether any field or record in the form is expanded. */
+export const selectAnyExpanded = (s: FormState): boolean =>
+  Object.values(s.expanded).some(Boolean);

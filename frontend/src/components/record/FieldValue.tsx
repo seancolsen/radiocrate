@@ -59,6 +59,9 @@ export function ValueInput(props: {
   /** Whether Enter inserts a newline rather than ending the edit, when the
    * value already has one — see `onKeyDown`. */
   multiline: boolean;
+  /** Whether the value is a number, which brings up a phone's number pad rather
+   * than its full keyboard. */
+  numeric?: boolean;
   /** Whether an edit that pulls focus in should select the value whole, rather
    * than place the caret at its end — set when edit mode was entered by Tabbing
    * in from another field's editor. */
@@ -142,6 +145,9 @@ export function ValueInput(props: {
         tabIndex={-1}
         readOnly={!editing}
         spellCheck={false}
+        // A textarea has no `type=number`; `inputMode` is what picks the phone's
+        // keyboard (decimal, so a DECIMAL/DOUBLE column can take its point).
+        inputMode={props.numeric ? "decimal" : undefined}
         aria-label={props.label}
         className={cx(
           `control block w-full resize-none overflow-hidden rounded outline-none ${tone}`,
@@ -321,6 +327,9 @@ export default function FieldValue(props: {
       editing={props.editing}
       expanded={props.expanded}
       multiline={multiline}
+      numeric={
+        props.field.kind === "primitive" && props.field.valueType === "number"
+      }
       selectAll={props.editingSelectAll}
       tone={tone}
       onBeginEdit={() => props.onBeginEdit()}

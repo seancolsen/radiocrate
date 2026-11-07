@@ -71,9 +71,10 @@ export interface ListNode {
    * has to name them to delete them. Records the form itself created never get
    * here: they had nothing to delete. */
   removed: string[];
-  /** Whether the list's *membership* has been edited (a record added or
-   * removed). The records themselves report their own edits; this is the change
-   * that belongs to no single one of them. */
+  /** Whether a record the database holds has been taken out of the list (so
+   * it is also in {@link ListNode.removed}). Records the form created report
+   * themselves as new, and the records themselves report their own edits; this
+   * is the change that belongs to no single one of them. */
   dirty: boolean;
 }
 

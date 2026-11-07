@@ -6,7 +6,12 @@ import {
 } from "../stores/app";
 import { entityNames } from "../query/entityNames";
 import { recordIdentity } from "../stores/forms";
-import { createRecordForm, selectFormModified } from "../stores/recordForm";
+import {
+  createRecordForm,
+  selectAnyExpanded,
+  selectFormModified,
+  type RecordFormModel,
+} from "../stores/recordForm";
 import {
   useApp,
   useAppActions,
@@ -16,6 +21,7 @@ import {
 import { Icons, type IconComponent } from "../icons";
 import RecordForm from "./record/RecordForm";
 import IconButton from "./ui/IconButton";
+import { Menu, MenuItem } from "./ui/Menu";
 import ScrollArea from "./ui/ScrollArea";
 import SidebarResizeHandle from "./ui/SidebarResizeHandle";
 import { cx } from "./ui/cx";
@@ -73,24 +79,62 @@ function ToolbarButton(props: {
   );
 }
 
+/** The form's actions menu (⋮): Collapse all, shown only while something is
+ * expanded, and Refresh, which reloads the record from the database. Refresh
+ * is off while there are unsaved changes or a save is in flight, since it would
+ * throw the changes away — Reset is the deliberate way to do that. */
+function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
+  const { model } = props;
+  const anyExpanded = useFormState(model, selectAnyExpanded);
+  const modified = useFormState(model, selectFormModified);
+  const saving = useFormState(model, (s) => s.saving);
+  return (
+    <Menu
+      align="end"
+      width="180px"
+      trigger={(api) => (
+        <IconButton
+          icon={Icons.More}
+          label="Record actions"
+          active={api.open}
+          onClick={() => api.toggle()}
+        />
+      )}
+    >
+      {anyExpanded && (
+        <MenuItem
+          icon={Icons.ExpandClosed}
+          label="Collapse all"
+          onClick={() => model.collapseAll()}
+        />
+      )}
+      <MenuItem
+        icon={Icons.Refresh}
+        label="Refresh"
+        disabled={modified || saving}
+        onClick={() => model.reset()}
+      />
+    </Menu>
+  );
+}
+
 /** The record editor toolbar: what the form is editing, and the ways out of it.
  * `children` are the form's own buttons (Reset and Save), which only appear once
- * there's a form with something to reset or save; the X always closes the
- * sidebar (the changes, if any, stay with the tab). */
+ * there's a form with something to reset or save; `menu` is its actions menu;
+ * the X always closes the sidebar (the changes, if any, stay with the tab). */
 function PanelHeader(props: {
   heading: string;
   onClose: () => void;
+  menu?: ReactNode;
   children?: ReactNode;
 }): JSX.Element {
   return (
     <header className="border-edge flex items-center gap-1 border-b px-2 py-1.5">
-      <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
-        <Icons.Edit className="size-4" />
-      </span>
       <h2 className="text-ink min-w-0 flex-1 truncate text-sm font-semibold">
         {props.heading}
       </h2>
       {props.children}
+      {props.menu}
       <IconButton
         icon={Icons.Close}
         label="Close record editor"
@@ -236,7 +280,11 @@ function PanelForm(props: {
 
   return (
     <>
-      <PanelHeader heading={props.heading} onClose={props.onClose}>
+      <PanelHeader
+        heading={props.heading}
+        onClose={props.onClose}
+        menu={<FormActionsMenu model={model} />}
+      >
         {modified && (
           <>
             <ToolbarButton

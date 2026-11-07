@@ -720,6 +720,7 @@ function DistinctValueRow(props: {
       editing={editing}
       expanded={textBelow}
       multiline={field.kind === "primitive" && field.valueType === "text"}
+      numeric={field.kind === "primitive" && field.valueType === "number"}
       selectAll={false}
       onBeginEdit={beginEdit}
       onInput={(input) => model.editDistinct(input)}

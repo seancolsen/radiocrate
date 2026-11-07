@@ -215,6 +215,9 @@ export interface RecordFormActions {
   expandSelection: (open: boolean) => void;
   /** "Selection: Delete", likewise. */
   deleteSelection: () => void;
+  /** Collapse every expanded field and record in the form, at every depth.
+   * Nothing is unloaded: opening one again shows what it held. */
+  collapseAll: () => void;
 
   /** Clear a field — in the form only, until it's saved. A primitive or scalar
    * link goes to NULL (a scalar link dropping the record it pointed at with it);
@@ -488,7 +491,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
    * that field would (the column tying it to its parent isn't the user's to
    * fill in).
    *
-   * Its values are seeded NULL rather than left absent so the fields render as
+   * Its values are seeded NULL (bar a required timestamp's) rather than left absent so the fields render as
    * *known to be empty* — pencils and all — instead of as still loading. */
   const addNewRecord = (
     id: string,
@@ -498,13 +501,26 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   ) => {
     const fields = buildFormFields(opts.tables, table, hidden);
     const values: Record<string, ColumnValues> = {};
+    const blank: Record<string, ColumnValues> = {};
     const counts: Record<string, readonly number[]> = {};
     // One entry per record being created: one, ordinarily, and one per base
     // record when a multi-record field is being added to across several.
     const each = Array.from({ length: records }, () => null);
     for (const field of fields) {
       if (field.kind === "multiRecord") counts[field.key] = each.map(() => 0);
-      else values[field.column] = [...each];
+      else {
+        blank[field.column] = [...each];
+        // A required timestamp starts from now, as editing a NULL one does
+        // (`beginEdit`): the record can't be inserted without one, and the
+        // moment it was drafted is the likeliest value (a `play`'s `played_at`).
+        values[field.column] =
+          field.kind === "primitive" &&
+          field.valueType === "timestamp" &&
+          !field.nullable &&
+          !field.readOnly
+            ? each.map(formatCurrentTimestamp)
+            : [...each];
+      }
     }
     set((s) => {
       s.records[id] = castDraft({
@@ -515,7 +531,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         status: "loaded",
         error: null,
         values,
-        original: { ...values },
+        original: blank,
         counts,
         isNew: true,
       });
@@ -1059,11 +1075,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       (child) => !childRecordIds.includes(child),
     );
     if (remaining.length === list.childIds.length) return;
+    const removed = [...list.removed, ...deletable(childRecordIds)];
+    // Membership is only changed while a record the database holds is out of
+    // the list: dropping one the form itself created puts the list back as it
+    // was (an added record marks the field modified by being new, not here).
     patchList(id, {
       expected: remaining.length,
       childIds: remaining,
-      removed: [...list.removed, ...deletable(childRecordIds)],
-      dirty: true,
+      removed,
+      dirty: removed.length > 0,
     });
     // A row taken out takes every record it stood for with it, so the counts
     // come down by that much — one base record's by more than another's, when
@@ -1479,6 +1499,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         handle.setExpanded(open);
       }
     },
+    collapseAll: () => {
+      const { expanded, focused } = get();
+      const open = Object.keys(expanded).filter((id) => expanded[id]);
+      if (open.length === 0) return;
+      set((s) => {
+        for (const id of open) s.expanded[id] = false;
+      });
+      if (focused !== null) reconcileFocus(ROOT_ID);
+    },
     deleteSelection: () => {
       const targets = actionTargets();
       for (const itemId of targets) items.get(itemId)?.remove();
@@ -1594,7 +1623,6 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       patchList(id, {
         childIds: [child, ...list.childIds],
         expected: list.expected + records,
-        dirty: true,
       });
       // Adding to a field the user never opened leaves nothing to tally — the
       // counts its own load reported still stand, plus the record just filed
