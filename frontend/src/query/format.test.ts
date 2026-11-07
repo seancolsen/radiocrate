@@ -95,6 +95,22 @@ describe("Timestamp formatter", () => {
   });
 });
 
+describe("displayText's clock", () => {
+  it("counts a relative time back from the moment it's given", () => {
+    const meta = {
+      ...defaultColumnMetadata(),
+      formatter: {
+        type: "relativeTime",
+        units: ["minutes"],
+      } satisfies Formatter,
+    };
+    const now = new Date(2026, 5, 1, 12, 30).getTime();
+    expect(displayText(meta, "2026-06-01 12:00:00", now)).toBe(
+      "30 minutes ago",
+    );
+  });
+});
+
 describe("relativeBetween", () => {
   const at = (y: number, mo: number, d: number, h: number, mi: number) =>
     Date.UTC(y, mo - 1, d, h, mi, 0);

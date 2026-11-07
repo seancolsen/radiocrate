@@ -257,19 +257,22 @@ export function buildResultFromCells(
  * `hiddenColumns` names the positions (the key columns the record picker
  * addresses a chosen row by, typically) that should occupy a column slot
  * without the grid laying one out for them — the same "kept but not shown"
- * treatment {@link QueryResult} gives every hidden column. The column count is
- * read off the first row; with none, the result is the same empty one a real
- * zero-row query would produce. */
+ * treatment {@link QueryResult} gives every hidden column. `columns` is each
+ * column's metadata, positionally, where the query's annotations said anything.
+ * The column count is read off the first row; with none, the result is the same
+ * empty one a real zero-row query would produce. */
 export function buildResultFromStringRows(
   rows: readonly (readonly (string | null)[])[],
   hiddenColumns: readonly number[] = [],
+  columns: readonly ColumnMetadata[] = [],
 ): QueryResult {
   const columnCount = rows[0]?.length ?? 0;
   const vectors: Record<string, arrow.Vector> = {};
   const metas: ColumnMetadata[] = [];
   for (let c = 0; c < columnCount; c++) {
     vectors[`c${c}`] = arrow.vectorFromArray(rows.map((r) => r[c] ?? null));
-    metas.push({ ...defaultColumnMetadata(), hide: hiddenColumns.includes(c) });
+    const meta = columns[c] ?? defaultColumnMetadata();
+    metas.push({ ...meta, hide: meta.hide || hiddenColumns.includes(c) });
   }
   return buildResultFromCells(new arrow.Table(vectors), metas);
 }

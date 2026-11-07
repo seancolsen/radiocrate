@@ -20,6 +20,7 @@
 import { addInferredLinks } from "../query/schema";
 import { compile_sections } from "querydown-js";
 import { querydownReady } from "../query/querydown";
+import { columnMetadataFromAnnotation } from "../query/columns";
 import { setRecordQueryRunner } from "../query/recordData";
 import type { RecordQuery } from "../query/recordForm";
 
@@ -353,7 +354,11 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
     }
     return 0;
   });
-  const exprs = q.display.split(/\s+/).filter(Boolean);
+  // A column's annotation says how it's shown, which the query's compile reports.
+  const exprs = q.display
+    .replace(/@\{(?:[^{}]|\{[^{}]*\})*\}/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
   return rows.map((row) =>
     exprs.map((expr) =>
       expr.startsWith("$#")
@@ -371,7 +376,7 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
 export function installRecordFixture(delayMs: number): void {
   setRecordQueryRunner(async (q, schemaJson) => {
     await querydownReady();
-    compile_sections(
+    const { columnAnnotations } = compile_sections(
       schemaJson,
       "duckdb",
       q.base,
@@ -380,8 +385,9 @@ export function installRecordFixture(delayMs: number): void {
       q.sort,
       q.display,
     );
+    const columns = columnAnnotations.map(columnMetadataFromAnnotation);
     return new Promise((resolve) =>
-      setTimeout(() => resolve(fixtureQuery(q)), delayMs),
+      setTimeout(() => resolve({ rows: fixtureQuery(q), columns }), delayMs),
     );
   });
 }

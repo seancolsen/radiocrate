@@ -80,9 +80,13 @@ import {
   type EmbedSection,
   type MetadataByTable,
 } from "../../query/fieldMetadata";
+import type { ColumnMetadata } from "../../query/columns";
+import { embedPreview } from "../../query/embedPreview";
 import {
   isCompileError,
+  runDisplayQuery,
   runRecordQuery,
+  type RecordResult,
   type RecordRows,
 } from "../../query/recordData";
 import { childRecordsTabName, recordDescriptor } from "../../query/tabNames";
@@ -357,12 +361,14 @@ export interface RecordFormActions {
   closePicker: () => void;
   /** Point a scalar linked record field at an existing record the user chose in
    * the picker, closing it. `cells` is the preview the picker already loaded, so
-   * the embedded record renders without a further request. */
+   * the embedded record renders without a further request, shown as `columns`
+   * say. */
   pickRecord: (
     recordId: string,
     field: ScalarLinkField,
     keyValue: string,
     cells: readonly (string | null)[],
+    columns?: readonly ColumnMetadata[],
   ) => void;
 
   /** Take one of the values the form's records disagree on for *all* of them,
@@ -408,6 +414,7 @@ export interface RecordFormActions {
     from: string | null,
     keyValue: string,
     cells: readonly (string | null)[],
+    columns?: readonly ColumnMetadata[],
   ) => void;
 }
 
@@ -445,12 +452,32 @@ function childRowLayout(
   };
 }
 
+/** How a `childRecordsQuery`'s preview cells are shown: the part of its columns
+ * they came from. */
+function childPreviewColumns(
+  field: MultiRecordField,
+  { rows, columns: shown }: RecordResult,
+  columns: readonly string[],
+): readonly ColumnMetadata[] {
+  const start = field.keyColumns.length;
+  const width = previewWidthOf(rows[0], field.keyColumns, columns);
+  return shown.slice(start, start + width);
+}
+
 /** What a row of a multi-record field shows. With no preview columns to be had,
  * the key stands in for them. */
-function previewCells(group: ChildGroup): readonly (string | null)[] {
-  return group.cells.length > 0
-    ? group.cells
-    : (group.keys[0] ?? []).map((p) => p.value);
+function childEmbed(
+  group: ChildGroup,
+  columns: readonly ColumnMetadata[],
+): EmbedNode {
+  return {
+    status: "loaded",
+    ...embedPreview(
+      group.cells,
+      columns,
+      (group.keys[0] ?? []).map((p) => p.value),
+    ),
+  };
 }
 
 function errorMessage(err: unknown): string {
@@ -869,12 +896,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     tokens.set(id, token);
     setEmbed(id, { status: "loading", cells: [] });
     try {
-      const rows = await runRecordQuery(
+      const { rows, columns } = await runDisplayQuery(
         embeddedRecordQuery(table, key, spec),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
-      setEmbed(id, { status: "loaded", cells: rows[0] ?? keyCells });
+      setEmbed(id, {
+        status: "loaded",
+        ...embedPreview(rows[0] ?? [], columns, keyCells),
+      });
     } catch (err) {
       if (tokens.get(id) !== token) return;
       console.error("embedded record preview failed", errorMessage(err));
@@ -980,9 +1010,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     parents: readonly string[],
     spec: EmbedSpec,
     columns: readonly string[],
-  ): Promise<RecordRows> => {
+  ): Promise<RecordResult> => {
     const run = (s: EmbedSpec) =>
-      runRecordQuery(
+      runDisplayQuery(
         childRecordsQuery(field, parents, s, columns),
         opts.schemaJson,
       );
@@ -1006,6 +1036,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     child: string,
     field: MultiRecordField,
     group: ChildGroup,
+    previewColumns: readonly ColumnMetadata[],
   ) => {
     const node = recordNode(
       field.table,
@@ -1016,10 +1047,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     node.values[field.column] = [...group.links];
     node.original[field.column] = [...group.links];
     s.records[child] = castDraft(node);
-    s.embeds[child] = castDraft({
-      status: "loaded",
-      cells: previewCells(group),
-    });
+    s.embeds[child] = castDraft(childEmbed(group, previewColumns));
   };
 
   /** Loads the records behind a multi-record field: one query for all of them,
@@ -1041,20 +1069,22 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     patchList(id, { status: "loading", error: null });
     try {
       const columns = columnsOf(field.table);
-      const rows = await fetchChildRows(
+      const result = await fetchChildRows(
         field,
         parents,
         fieldSpec(recordId, field),
         columns,
       );
       if (tokens.get(id) !== token) return;
+      const { rows } = result;
       const groups = groupChildRows(rows, childRowLayout(field, rows, columns));
+      const previewColumns = childPreviewColumns(field, result, columns);
       // One write for the whole list, rather than one per row.
       set((s) => {
         const childIds: string[] = [];
         groups.forEach((group, index) => {
           const child = childId(id, index);
-          writeChild(s, child, field, group);
+          writeChild(s, child, field, group, previewColumns);
           childIds.push(child);
         });
         const list = s.lists[id];
@@ -1097,12 +1127,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     const token = ++tokenSeq;
     tokens.set(id, token);
     const columns = columnsOf(field.table);
-    const rows = await runRecordQuery(
+    const result = await runDisplayQuery(
       childRecordsQuery(field, parents, fieldSpec(recordId, field), columns),
       opts.schemaJson,
     );
     if (tokens.get(id) !== token) return;
+    const { rows } = result;
     const groups = groupChildRows(rows, childRowLayout(field, rows, columns));
+    const previewColumns = childPreviewColumns(field, result, columns);
     set((s) => {
       const list = s.lists[id];
       if (!list) return;
@@ -1126,14 +1158,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         if (removed.has(signature)) continue;
         let child = held.get(signature);
         if (child !== undefined) {
-          s.embeds[child] = castDraft({
-            status: "loaded",
-            cells: previewCells(group),
-          });
+          s.embeds[child] = castDraft(childEmbed(group, previewColumns));
         } else {
           while (s.records[childId(id, next)]) next++;
           child = childId(id, next);
-          writeChild(s, child, field, group);
+          writeChild(s, child, field, group, previewColumns);
         }
         placed.push(child);
       }
@@ -1193,12 +1222,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       return;
     }
     try {
-      const rows = await runRecordQuery(
+      const { rows, columns } = await runDisplayQuery(
         embeddedRecordQuery(table, key, spec),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
-      setEmbed(id, { status: "loaded", cells: rows[0] ?? [value] });
+      setEmbed(id, {
+        status: "loaded",
+        ...embedPreview(rows[0] ?? [], columns, [value]),
+      });
     } catch (err) {
       if (tokens.get(id) !== token) return;
       if (get().embeds[id]?.status !== "loaded") {
@@ -2142,7 +2174,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set((s) => {
         s.picker = null;
       }),
-    pickRecord: (recordId, field, keyValue, cells) => {
+    pickRecord: (recordId, field, keyValue, cells, columns) => {
       const id = scalarChildId(recordId, field.key);
       // The record the field pointed at before is not this one: its preview and
       // any sub-form the user had opened under it go, and a preview load still
@@ -2157,7 +2189,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       // Every record the form is on comes to point at the picked one.
       setColumn(recordId, field.column, keyValue);
       set((s) => {
-        s.embeds[id] = castDraft({ status: "loaded", cells });
+        s.embeds[id] = castDraft({ status: "loaded", cells, columns });
         s.picker = null;
       });
     },
@@ -2215,14 +2247,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         setExpandedItem(fieldItemId(recordId, fieldKey), false);
       }
     },
-    pickDistinctRecord: (recordId, field, from, keyValue, cells) => {
+    pickDistinctRecord: (recordId, field, from, keyValue, cells, columns) => {
       set((s) => {
         s.picker = null;
       });
       const values = get().records[recordId]?.values[field.column] ?? [];
       const indices = values.flatMap((held, i) => (held === from ? [i] : []));
       if (indices.length === 0 || from === keyValue) return;
-      const preview: EmbedNode = { status: "loaded", cells };
+      const preview: EmbedNode = { status: "loaded", cells, columns };
       // Re-pointing the last records that disagreed leaves them all on one
       // record — the same as taking it for every one of them.
       if (values.every((held) => held === from || held === keyValue)) {

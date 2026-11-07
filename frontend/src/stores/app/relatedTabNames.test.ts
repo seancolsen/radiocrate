@@ -25,7 +25,7 @@ describe("naming a tab for the record it lists records of", () => {
     answer = [];
     setRecordQueryRunner((query) => {
       asked.push(query);
-      return Promise.resolve(answer);
+      return Promise.resolve({ rows: answer, columns: [] });
     });
     bundle = createAppStore(fakeEnv());
     bundle.actions.openTab({ id: "a", name: "a", definition: "{}" });

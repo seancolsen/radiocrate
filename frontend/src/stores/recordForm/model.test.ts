@@ -6,6 +6,11 @@ import {
 } from "../../query/fieldMetadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DmlOperation, DmlResult } from "api-client";
+import {
+  columnMetadataFromAnnotation,
+  defaultColumnMetadata,
+  type ColumnMetadata,
+} from "../../query/columns";
 import type { RecordRows } from "../../query/recordData";
 import type { SchemaTable } from "../../query/schema";
 import type {
@@ -14,11 +19,23 @@ import type {
   ScalarLinkField,
 } from "../../query/recordForm";
 
-vi.mock("../../query/recordData", () => ({
-  runRecordQuery: vi.fn(),
-  isCompileError: (err: unknown) =>
-    err instanceof Error && err.message.startsWith("compile:"),
+/** What the next display queries' annotations say, positionally. */
+const annotated = vi.hoisted(() => ({
+  columns: [] as readonly ColumnMetadata[],
 }));
+
+vi.mock("../../query/recordData", () => {
+  const runRecordQuery = vi.fn();
+  return {
+    runRecordQuery,
+    runDisplayQuery: async (...args: unknown[]) => ({
+      rows: (await runRecordQuery(...args)) as unknown,
+      columns: annotated.columns,
+    }),
+    isCompileError: (err: unknown) =>
+      err instanceof Error && err.message.startsWith("compile:"),
+  };
+});
 
 import { runRecordQuery } from "../../query/recordData";
 import {
@@ -438,6 +455,83 @@ describe("customizing a field's embedded records", () => {
     model.start();
     await settle();
     expect(runner.mock.calls.at(-1)?.[0].display).toBe("$title $id");
+  });
+
+  describe("annotations", () => {
+    const LIGHT = columnMetadataFromAnnotation({ color: "light" });
+    const HIDDEN = columnMetadataFromAnnotation({ hide: "yes" });
+    const PLAIN = defaultColumnMetadata();
+    const embedOf = (model: RecordFormModel, id: string) =>
+      model.store.getState().embeds[id];
+
+    afterEach(() => {
+      annotated.columns = [];
+    });
+
+    it("keep a scalar linked record's preview shown as they say", async () => {
+      annotated.columns = [LIGHT];
+      serve({
+        track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")],
+        albums: { a1: "Lemonade" },
+      });
+      const { model } = customizable();
+      model.start();
+      await settle();
+      expect(embedOf(model, scalarChildId(ROOT_ID, "album"))).toEqual({
+        status: "loaded",
+        cells: ["Lemonade"],
+        columns: [LIGHT],
+      });
+    });
+
+    it("let the key stand in when they hide all of a scalar preview", async () => {
+      annotated.columns = [HIDDEN];
+      serve({
+        track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")],
+        albums: { a1: "Lemonade" },
+      });
+      const { model } = customizable();
+      model.start();
+      await settle();
+      expect(embedOf(model, scalarChildId(ROOT_ID, "album"))).toEqual({
+        status: "loaded",
+        cells: ["a1"],
+      });
+    });
+
+    it("are read past a list row's key, and stop before its columns", async () => {
+      // key, then `$role $a`, then every column of the table.
+      annotated.columns = [PLAIN, LIGHT, HIDDEN, PLAIN, PLAIN, PLAIN];
+      const { model } = await listed(
+        [listRow("c1", "Vocals", ["Vocals", "One"])],
+        creditsCustom('$role @{color:"light"} $a @{hide:"yes"}'),
+      );
+      expect(embedOf(model, childAt(0))?.columns).toEqual([LIGHT, HIDDEN]);
+      expect(embedOf(model, childAt(0))?.cells).toEqual(["Vocals", "One"]);
+    });
+
+    it("survive a list's refresh", async () => {
+      const { model, metadata } = await listed([
+        listRow("c1", "Vocals", ["Vocals"]),
+      ]);
+      annotated.columns = [PLAIN, LIGHT, PLAIN, PLAIN, PLAIN];
+      metadata.current = creditsCustom('$role @{color:"light"}');
+      model.refreshEmbeds([{ table: "track", fieldKey: CREDITS_REF }]);
+      await settle();
+      expect(embedOf(model, childAt(0))?.columns).toEqual([LIGHT]);
+    });
+
+    it("come along with a picked record", async () => {
+      serve({ track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")] });
+      const { model } = customizable();
+      model.start();
+      await settle();
+      const album = fieldOf(model, ROOT_ID, "album") as ScalarLinkField;
+      model.pickRecord(ROOT_ID, album, "a2", ["Renaissance"], [LIGHT]);
+      expect(embedOf(model, scalarChildId(ROOT_ID, "album"))?.columns).toEqual([
+        LIGHT,
+      ]);
+    });
   });
 
   it("shows the key for a display left blank, with no query to run", async () => {

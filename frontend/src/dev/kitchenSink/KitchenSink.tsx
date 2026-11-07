@@ -5,6 +5,10 @@ import {
   type ReactNode,
 } from "react";
 import { Icons } from "../../icons";
+import {
+  defaultColumnMetadata,
+  type ColumnMetadata,
+} from "../../query/columns";
 import type { FormField, ValueType } from "../../query/recordForm";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import FieldLabel from "../../components/record/FieldLabel";
@@ -362,6 +366,12 @@ const DISPLAY =
   "$title|upper -> name $album.year $#play @{align:right color:light} $file.added @{width:[120 300] formatter:{type:relativeTime units:[days weeks]}}";
 
 /** A Querydown problem over the editor's own text, so it's underlined. */
+/** An embedded record's columns when the second is annotated `color:"light"`. */
+const LIGHT_COLUMN: readonly ColumnMetadata[] = [
+  defaultColumnMetadata(),
+  { ...defaultColumnMetadata(), font_color: "light" },
+];
+
 const PROBLEM: QueryDiagnostic = {
   kind: "syntax",
   reason: "Unexpected end of input. Expected a value.",
@@ -566,6 +576,31 @@ function Surfaces(): JSX.Element {
               <div className="flex">
                 <EmbeddedRecord
                   cells={["Jack White", "Featured"]}
+                  focusable
+                  selected
+                />
+              </div>
+            </Specimen>
+          </div>
+        </Row>
+        <Row>
+          <div className="w-56">
+            <Specimen caption="embedded record, light column" stretch>
+              <div className="flex">
+                <EmbeddedRecord
+                  cells={["Beyoncé", "Featured"]}
+                  columns={LIGHT_COLUMN}
+                  focusable
+                />
+              </div>
+            </Specimen>
+          </div>
+          <div className="w-56">
+            <Specimen caption="light column, selected" stretch>
+              <div className="flex">
+                <EmbeddedRecord
+                  cells={["Jack White", "Featured"]}
+                  columns={LIGHT_COLUMN}
                   focusable
                   selected
                 />

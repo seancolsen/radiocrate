@@ -6,7 +6,7 @@ import {
   type RecordFormModel,
 } from "../../stores/recordForm";
 import { useFormState } from "../../stores/react";
-import { runRecordQuery } from "../../query/recordData";
+import { runDisplayQuery } from "../../query/recordData";
 import type { ScalarLinkField } from "../../query/recordForm";
 
 /** The record picker for whichever field has one open, or nothing. Rendered
@@ -71,8 +71,8 @@ function PickerAdapter(props: {
       keyColumn={field.keyColumn}
       initialSort={spec.sort}
       initialDisplay={spec.display.join(" ")}
-      runQuery={(query) => runRecordQuery(query, schemaJson)}
-      onPick={(keyValue, cells) => {
+      runQuery={(query) => runDisplayQuery(query, schemaJson)}
+      onPick={(keyValue, cells, columns) => {
         if (distinct) {
           model.pickDistinctRecord(
             recordId,
@@ -80,9 +80,10 @@ function PickerAdapter(props: {
             distinct.value,
             keyValue,
             cells,
+            columns,
           );
         } else {
-          model.pickRecord(recordId, field, keyValue, cells);
+          model.pickRecord(recordId, field, keyValue, cells, columns);
         }
         restoreFocus();
       }}

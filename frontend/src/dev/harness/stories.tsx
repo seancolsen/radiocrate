@@ -36,6 +36,8 @@ import {
   emptyDefinition,
   type QueryDefinition,
 } from "../../query/definition";
+import type { AnnotationValue } from "querydown-js";
+import { columnMetadataFromAnnotation } from "../../query/columns";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import {
   checkpoint,
@@ -201,6 +203,24 @@ function LemonadeFilterOptions(): JSX.Element | null {
 }
 
 /** The id of "loved", the default filter {@link seedManagedPresets} adds. */
+/** One column per annotation an embedded record reads: see
+ * `embedded-record/annotated`. */
+const EMBED_ANNOTATIONS: AnnotationValue[] = [
+  { hide: "yes" },
+  { width: 150 },
+  {
+    width: 60,
+    align: "right",
+    formatter: { type: "number", decimalPlaces: 2 },
+  },
+  { width: 60, align: "center", formatter: { type: "duration" } },
+  { prefix: "#", suffix: " plays", color: "light" },
+  { size: "small", color: "light" },
+];
+const ANNOTATED_EMBED_COLUMNS = EMBED_ANNOTATIONS.map(
+  columnMetadataFromAnnotation,
+);
+
 const LOVED_PRESET_ID = "00000000-0000-0000-0000-0000000000b1";
 
 function seedManagedPresets(stores: Stores): void {
@@ -1701,7 +1721,9 @@ export const STORIES: Record<string, Story> = {
         keyColumn="id"
         initialSort="\\\\name \\\\id"
         initialDisplay="$name"
-        runQuery={(q) => Promise.resolve(fixtureQuery(q))}
+        runQuery={(q) =>
+          Promise.resolve({ rows: fixtureQuery(q), columns: [] })
+        }
         onPick={() => {}}
         onCancel={() => {}}
         onCreate={() => {}}
@@ -1718,6 +1740,35 @@ export const STORIES: Record<string, Story> = {
     // from it.
     frame: "flex p-2",
     render: () => <EmbeddedRecord cells={["Beyoncé"]} focusable selected />,
+  },
+  // Every annotation a result column reads, on an embedded record's columns: a
+  // hidden one, fixed widths that wrap, alignment, a light small one, and text
+  // reshaped by a prefix, a suffix and two formatters.
+  "embedded-record/annotated": {
+    width: 320,
+    frame: "flex p-2",
+    render: () => (
+      <EmbeddedRecord
+        cells={["hidden-id", "Beyoncé", "3.14159", "00:03:42", "12", "lead"]}
+        columns={ANNOTATED_EMBED_COLUMNS}
+        focusable
+      />
+    ),
+  },
+  // A `relativeTime` cell, which keeps counting while nothing else changes.
+  "embedded-record/relative-time": {
+    width: 320,
+    frame: "flex p-2",
+    render: () => (
+      <EmbeddedRecord
+        cells={["2020-01-01 00:00:00"]}
+        columns={[
+          columnMetadataFromAnnotation({
+            formatter: { type: "relativeTime", units: ["minutes"] },
+          }),
+        ]}
+      />
+    ),
   },
 
   // ── Menus, on their own ──────────────────────────────────────────────────

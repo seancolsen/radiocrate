@@ -240,8 +240,7 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 - The embedded record component should function similarly to the query result row component, reusing field layout logic and implementation where possible.
 
 - The following style deviations from query result rows should apply:
-    - All text should be "small" size regardless of column annotations
-    - All text should be "light" color regardless of column annotations
+    - Column annotations apply as they do to a result row, except that text runs a size smaller, and every line keeps the one height
     - The component should have a border and large border radius
 
 - The border radius should be such that an embedded record widget with a single line of content has a perfect semicircle on the left and right. (And the border radius should remain static so that if the content wraps to multiple lines we'll see a flat border section on the left and right.)

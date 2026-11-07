@@ -256,7 +256,31 @@ for (const colorScheme of SCHEMES) {
       snapshot("embedded-record/selected", colorScheme),
     );
   });
+
+  // Its columns as their annotations have them.
+  test(`embedded-record/annotated - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "embedded-record/annotated",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded")).not.toContainText("hidden-id");
+    await expect(stage).toHaveScreenshot(
+      snapshot("embedded-record/annotated", colorScheme),
+    );
+  });
 }
+
+test("an embedded record's relative time keeps counting on a still page", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2020-01-01T00:05:30") });
+  const stage = await openStory(page, "embedded-record/relative-time", "light");
+  const widget = stage.locator(".rc-embedded");
+  await expect(widget).toHaveText("5 minutes ago");
+  await page.clock.fastForward("02:00");
+  await expect(widget).toHaveText("7 minutes ago");
+});
 
 for (const colorScheme of SCHEMES) {
   // The user's own arrangement of a table: `title` first, and two hidden fields
@@ -451,6 +475,17 @@ test.describe("customizing embedded records", () => {
     await expect(editor).toBeFocused();
     await expect(editor).toHaveText("$path");
     expect(await calls(page, "metadata.field.set_display")).toEqual([]);
+  });
+
+  test("annotations in what's typed shape the embedded record", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    const widget = stage.locator(".rc-embedded").first();
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, '$id @{hide:"yes"} $path @{prefix:"at "}');
+    await expect(widget).toHaveText(/^at .*\.flac$/);
+    await expect(widget.locator("span")).toHaveCount(1);
   });
 
   test("what's typed shows as it settles, and saves on leaving the editor", async ({

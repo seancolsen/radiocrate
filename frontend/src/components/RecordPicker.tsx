@@ -5,9 +5,11 @@ import LoadingRegion from "./ui/LoadingRegion";
 import CustomInput from "./builder/CustomInput";
 import { Icons } from "../icons";
 import { CanvasGrid } from "../grid/canvasGrid";
+import type { EmbedPreview } from "../query/embedPreview";
 import { recordPickerQuery } from "../query/embeddedRecord";
 import type { RecordQuery } from "../query/recordForm";
-import type { RecordRows } from "../query/recordData";
+import type { ColumnMetadata } from "../query/columns";
+import type { RecordResult, RecordRows } from "../query/recordData";
 import { buildResultFromStringRows } from "../query/result";
 
 // The modal record picker: a small query page in a dialog, letting the user
@@ -47,11 +49,15 @@ interface RecordPickerProps {
   initialDisplay: string;
   /** Runs one picker query. The picker builds the query (it knows its own
    * column order); the caller decides how it reaches a database. */
-  runQuery: (query: RecordQuery) => Promise<RecordRows>;
+  runQuery: (query: RecordQuery) => Promise<RecordResult>;
   /** The user chose a record: its key value, and the preview cells already
-   * loaded for it — so whatever replaces this modal renders without a further
-   * request. */
-  onPick: (keyValue: string, cells: readonly (string | null)[]) => void;
+   * loaded for it and how they're shown — so whatever replaces this modal renders
+   * without a further request. */
+  onPick: (
+    keyValue: string,
+    cells: readonly (string | null)[],
+    columns?: readonly ColumnMetadata[],
+  ) => void;
   /** Dismissed without picking (the X, the scrim, Escape). */
   onCancel: () => void;
   /** Offered as "New record" when the search finds nothing worth linking to,
@@ -60,14 +66,22 @@ interface RecordPickerProps {
   onCreate?: (seed: string | undefined) => void;
 }
 
-/** One result's preview cells: everything after the key column, or the key
- * itself when the display section yields nothing to show. */
-function cells(row: readonly (string | null)[]): readonly (string | null)[] {
-  const preview = row.slice(1);
-  return preview.some((cell) => cell !== null && cell !== "")
-    ? preview
-    : [row[0]];
+/** One result's preview: everything after the key column, or the key itself when
+ * the display section yields nothing to show. */
+function preview(
+  row: readonly (string | null)[],
+  columns: readonly ColumnMetadata[],
+): EmbedPreview {
+  const cells = row.slice(1);
+  const shown = columns.slice(1);
+  return cells.some(
+    (cell, i) => !shown[i]?.hide && cell !== null && cell !== "",
+  )
+    ? { cells, columns: shown }
+    : { cells: [row[0]] };
 }
+
+const NO_COLUMNS: readonly ColumnMetadata[] = [];
 
 /** A modal letting the user search `table` and pick one record from it. */
 export default function RecordPicker(props: RecordPickerProps): JSX.Element {
@@ -80,6 +94,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
   const [section, setSection] = useState<"sort" | "display" | null>(null);
 
   const [results, setResults] = useState<RecordRows>([]);
+  const [columns, setColumns] = useState(NO_COLUMNS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** The highlighted result — what Enter picks, and what Up/Down move. */
@@ -90,7 +105,8 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
   const choose = (row: readonly (string | null)[]) => {
     const key = row[0];
     if (key == null) return;
-    props.onPick(key, cells(row));
+    const picked = preview(row, columns);
+    props.onPick(key, picked.cells, picked.columns);
   };
 
   // The latest props and results, for what runs outside a render: the search
@@ -115,11 +131,12 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
       setLoading(true);
       try {
         const { table, keyColumn, runQuery } = latest.current.props;
-        const rows = await runQuery(
+        const result = await runQuery(
           recordPickerQuery(table, [keyColumn], filter, sort, display),
         );
         if (token.current !== mine) return;
-        setResults(rows);
+        setResults(result.rows);
+        setColumns(result.columns);
         setError(null);
         setIndex(0);
       } catch (err) {
@@ -228,8 +245,10 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
   // query page shows this exact result column-hidden too, in spirit if not in
   // mechanism (see `buildResultFromStringRows`).
   useLayoutEffect(() => {
-    gridRef.current?.setResult(buildResultFromStringRows(results, [0]));
-  }, [results]);
+    gridRef.current?.setResult(
+      buildResultFromStringRows(results, [0], columns),
+    );
+  }, [results, columns]);
   useLayoutEffect(() => {
     gridRef.current?.setSelection(new Set([index]));
     gridRef.current?.revealRow(index);

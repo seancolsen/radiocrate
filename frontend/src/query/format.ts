@@ -87,8 +87,13 @@ function parseUnits(v: AnnotationValue | undefined): RelativeUnit[] {
 }
 
 /** Formats `value` for display, or returns `null` when it can't be parsed (the
- * caller then renders the raw value unchanged). */
-export function formatValue(f: Formatter, value: string): string | null {
+ * caller then renders the raw value unchanged). `nowMs` is the moment a
+ * `relativeTime` cell counts back from. */
+export function formatValue(
+  f: Formatter,
+  value: string,
+  nowMs: number = Date.now(),
+): string | null {
   switch (f.type) {
     case "number": {
       const [min, max] = resolveDecimals(f.decimalPlaces);
@@ -99,14 +104,18 @@ export function formatValue(f: Formatter, value: string): string | null {
     case "timestamp":
       return formatTimestamp(value, f.format);
     case "relativeTime":
-      return formatRelative(value, f.units, Date.now());
+      return formatRelative(value, f.units, nowMs);
   }
 }
 
 /** Applies the column's formatter and prefix/suffix to one raw cell value. */
-export function displayText(meta: ColumnMetadata, value: string): string {
+export function displayText(
+  meta: ColumnMetadata,
+  value: string,
+  nowMs?: number,
+): string {
   const formatted = meta.formatter
-    ? (formatValue(meta.formatter, value) ?? value)
+    ? (formatValue(meta.formatter, value, nowMs) ?? value)
     : value;
   if (meta.prefix === "" && meta.suffix === "") return formatted;
   return `${meta.prefix}${formatted}${meta.suffix}`;

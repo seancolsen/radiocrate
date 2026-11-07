@@ -56,6 +56,7 @@ import { selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
+import { embedText } from "../../query/embedPreview";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
@@ -366,6 +367,7 @@ function FieldRow(props: {
     model,
     (s) => s.embeds[embedId]?.cells ?? NO_CELLS,
   );
+  const embedColumns = useFormState(model, (s) => s.embeds[embedId]?.columns);
 
   /** Whether the embedded record's preview is still on its way. A record the
    * form is *creating* has no preview to wait for — it renders as "New" — and one
@@ -556,6 +558,7 @@ function FieldRow(props: {
             >
               <EmbeddedRecord
                 cells={embedCells}
+                columns={embedColumns}
                 isNew={embedIsNew}
                 onClick={() => model.focusItem(itemId)}
                 onDblClick={() => model.toggleField(recordId, field)}
@@ -816,6 +819,9 @@ function DistinctValueRow(props: {
     model,
     (s) => (childId && s.embeds[childId]?.cells) || NO_CELLS,
   );
+  const columns = useFormState(model, (s) =>
+    childId ? s.embeds[childId]?.columns : undefined,
+  );
   const loading = useFormState(
     model,
     (s) =>
@@ -842,7 +848,7 @@ function DistinctValueRow(props: {
 
   /** What the expansion toggle's aria-label names: the preview, while it has
    * one, falling back to the id it was loaded from. */
-  const label = cells.filter(Boolean).join(" ") || (value ?? "");
+  const label = embedText({ cells, columns }) || (value ?? "");
   const records = `${count} ${count === 1 ? "record" : "records"}`;
 
   const beginEdit = () => {
@@ -906,6 +912,7 @@ function DistinctValueRow(props: {
           <LoadingRegion loading={loading} className="flex min-w-0 flex-1">
             <EmbeddedRecord
               cells={cells}
+              columns={columns}
               onDblClick={() => model.toggleChild(childId)}
             />
           </LoadingRegion>
@@ -1067,6 +1074,7 @@ function ChildRow(props: {
     model,
     (s) => s.embeds[recordId]?.cells ?? NO_CELLS,
   );
+  const columns = useFormState(model, (s) => s.embeds[recordId]?.columns);
   /** Whether this record is one the form is creating rather than one it
    * loaded — which is what the widget says, in place of a preview it has no
    * values for yet. */
@@ -1096,9 +1104,7 @@ function ChildRow(props: {
 
   /** What an expansion toggle's aria-label names this record: the preview it
    * shows, falling back to its key. */
-  const label = isNew
-    ? "new record"
-    : cells.filter(Boolean).join(" ") || keyText;
+  const label = isNew ? "new record" : embedText({ cells, columns }) || keyText;
 
   /** The records a menu raised on this one acts on: the whole selection when
    * this record is part of it, otherwise just this record. Fixed as the menu
@@ -1166,6 +1172,7 @@ function ChildRow(props: {
         )}
         <EmbeddedRecord
           cells={isNew ? NO_CELLS : cells}
+          columns={columns}
           isNew={isNew}
           itemId={recordId}
           focusable

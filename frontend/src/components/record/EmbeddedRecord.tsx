@@ -1,21 +1,27 @@
 import { useMemo, useRef, type JSX, type MouseEvent } from "react";
+import type { ColumnMetadata } from "../../query/columns";
+import { visibleCells } from "../../query/embedPreview";
 import { computeFieldLayout } from "../../query/fieldLayout";
-import { defaultColumnMetadata } from "../../query/columns";
+import { displayText } from "../../query/format";
 import { COL_GAP } from "../../query/rowGeometry";
+import { cx } from "../ui/cx";
 import { useElementWidth } from "../ui/useElementWidth";
+import { useMinuteClock } from "../ui/useMinuteClock";
 import ModifiedStar from "./ModifiedStar";
 
 // The embedded record: a preview of one row, inside the form.
 //
 // It's the query result row's DOM cousin — same field-layout algorithm, same
-// surface treatment (gradient, hover, selected fill) — with the deviations the
-// spec calls for: every cell is label-sized and dark whatever the column says, the
-// widget is bordered and rounded to a semicircle at each end, and a single line
-// comes to the standard control height (see `control` in `app.css`). Its cells are positioned rather than flowed, exactly as the canvas
-// positions them, so a preview reads like the row it previews.
+// surface treatment (gradient, hover, selected fill), same column annotations —
+// with the deviations the spec calls for: the widget is bordered and rounded to a
+// semicircle at each end, its text runs a size smaller, and every line is the one
+// height, so a single line comes to the standard control height (see `control` in
+// `app.css`) whatever its columns' sizes. Its cells are positioned rather than
+// flowed, exactly as the canvas positions them, so a preview reads like the row it
+// previews.
 //
 // Which columns it shows is decided in `query/embeddedRecord.ts`; this component
-// only receives their values.
+// only receives their values, and the annotations they came with.
 
 /** Horizontal padding inside the widget. Wider than a result row's, so text
  * clears the rounded ends rather than running into them. */
@@ -31,10 +37,6 @@ const BORDER = 1;
  * widget keeps flat sides between the same two rounded ends. */
 const RADIUS = (LINE_H + PAD_Y * 2 + BORDER * 2) / 2;
 
-/** The width bounds every preview column gets: the same defaults a result column
- * has when its query annotates it with nothing. */
-const META = defaultColumnMetadata();
-
 /** A preview of one record: its cells laid out like a result row.
  *
  * `cells` is empty while the preview is still loading (or for a record being
@@ -42,6 +44,9 @@ const META = defaultColumnMetadata();
  * list is visible before its contents arrive. */
 export default function EmbeddedRecord(props: {
   cells: readonly (string | null)[];
+  /** How each of `cells` is shown, by the annotations of the query it came from.
+   * Absent, every column has the defaults a result column would. */
+  columns?: readonly ColumnMetadata[];
   /** Whether this widget is a selected member of a multi-record field. */
   selected?: boolean;
   /** Whether the user can focus it (only multi-record members can). */
@@ -67,15 +72,23 @@ export default function EmbeddedRecord(props: {
   const ref = useRef<HTMLDivElement>(null);
   const width = useElementWidth(ref, "client");
 
-  const cells = props.cells;
+  const { cells, columns } = props;
+  const shown = useMemo(
+    () => visibleCells({ cells, columns }),
+    [cells, columns],
+  );
   const layout = useMemo(
     () =>
       computeFieldLayout(
-        cells.map(() => ({ min: META.min_width, max: META.max_width })),
+        shown.map(({ meta }) => ({ min: meta.min_width, max: meta.max_width })),
         Math.max(0, width - PAD_X * 2),
         COL_GAP,
       ),
-    [cells, width],
+    [shown, width],
+  );
+  // Only a `relativeTime` cell's text changes with the time.
+  const now = useMinuteClock(
+    shown.some(({ meta }) => meta.formatter?.type === "relativeTime"),
   );
   const height =
     Math.max(1, layout.lineCount) * LINE_H + PAD_Y * 2 + BORDER * 2;
@@ -106,20 +119,25 @@ export default function EmbeddedRecord(props: {
           New
         </span>
       )}
-      {cells.map((cell, index) => {
-        const placement = layout.placements[index];
+      {shown.map(({ index, value, meta }, position) => {
+        const placement = layout.placements[position];
         return (
           <span
             key={index}
-            className="absolute truncate"
+            className={cx(
+              "absolute truncate",
+              meta.font_size === "small" && "text-[10px]",
+              meta.font_color === "light" && "text-ink-weak",
+            )}
             style={{
               left: `${PAD_X + placement.x}px`,
               top: `${PAD_Y + placement.line * LINE_H}px`,
               width: `${placement.width}px`,
               lineHeight: `${LINE_H}px`,
+              textAlign: meta.text_align,
             }}
           >
-            {cell}
+            {displayText(meta, value ?? "", now)}
           </span>
         );
       })}

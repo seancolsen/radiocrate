@@ -16,6 +16,7 @@
 // Framework-free on purpose (no zustand, no immer): `record/formSave.ts`, a
 // framework-free module, reads these node types.
 
+import type { ColumnMetadata } from "../../query/columns";
 import type { FormField, RecordKey } from "../../query/recordForm";
 import type { ColumnValues } from "../../record/formValues";
 
@@ -83,6 +84,9 @@ export interface EmbedNode {
   status: LoadStatus;
   /** Positionally matching the display columns of the spec it was fetched with. */
   cells: readonly (string | null)[];
+  /** How each of those cells is shown, by the query's annotations. Absent when
+   * nothing has annotated them: a key standing in for a preview, say. */
+  columns?: readonly ColumnMetadata[];
 }
 
 /** What a context menu was raised on. A field's own menu ({@link FormMenu}) is
