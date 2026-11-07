@@ -12,6 +12,7 @@ export {
 // them through it.
 export {
   distinctItemId,
+  embedEditorId,
   fieldItemId,
   listId,
   ROOT_ID,

@@ -3,9 +3,9 @@
 // An embedded record is a preview of one row — the record behind a scalar linked
 // record field, or each of the records under a multi-record field — and its whole
 // job is to let the user recognize that record at a glance. Which columns do that
-// is eventually going to be user-configurable; until then it's derived from the
-// schema alone, by the points-based heuristic the spec lays out ("Loading data to
-// render embedded records").
+// is derived from the schema alone, by the points-based heuristic the spec lays
+// out ("Loading data to render embedded records"), until the user writes Querydown
+// of their own for a field (`customizedSpec`).
 //
 // The heuristic, in one paragraph: assemble the candidate result-column paths for
 // the target table (its own non-foreign-key columns, plus one level of recursion
@@ -30,9 +30,11 @@ import {
 
 /** The generated Querydown for previewing records of one table. */
 export interface EmbedSpec {
-  /** One display expression per preview column, e.g. `["$artist.name"]`.
-   * Empty when the schema offers nothing informative — the caller falls back to
-   * the record's key, which always identifies it, if drily. */
+  /** The display section in pieces, joined with spaces to make it. As generated,
+   * one expression per preview column, e.g. `["$artist.name"]`; as the user wrote
+   * it, the one piece, holding however many columns it asks for. Empty when there's
+   * nothing to show — the caller falls back to the record's key, which always
+   * identifies it, if drily. */
   display: readonly string[];
   /** The sorting section, e.g. `"\\order \\artist.name \\artist"`; empty when
    * there is nothing to sort by. */
@@ -208,6 +210,37 @@ export function embedSpec(
   };
 }
 
+/** `spec` as a field's customization overrules it: what the user wrote replaces the
+ * generated section, even if it's blank, which shows the key and sorts by it the way
+ * a table with nothing to generate does. With nothing customized this is `spec`
+ * itself, which is how a caller can tell. */
+export function customizedSpec(
+  spec: EmbedSpec,
+  custom: { display: string | null; sorting: string | null } | undefined,
+): EmbedSpec {
+  const display = custom?.display ?? null;
+  const sorting = custom?.sorting ?? null;
+  if (display === null && sorting === null) return spec;
+  return {
+    display:
+      display === null ? spec.display : display.trim() === "" ? [] : [display],
+    sort: sorting ?? spec.sort,
+  };
+}
+
+/** The Querydown a field's query runs by default: the text its display and sorting
+ * editors open with, before the user has written their own. Where `spec` has nothing
+ * to offer, that's the key, which is what the query goes by then. */
+export function defaultEmbedSections(
+  spec: EmbedSpec,
+  keyColumns: readonly string[],
+): { display: string; sorting: string } {
+  return {
+    display: spec.display.join(" ") || keyColumns.map((c) => `$${c}`).join(" "),
+    sorting: spec.sort || keyColumns.map((c) => `\\\\${c}`).join(" "),
+  };
+}
+
 /** The query behind one embedded record: the preview columns of the single
  * record `key` identifies. Used for a scalar linked record field, whose id
  * arrives with the parent record's own data.
@@ -267,7 +300,8 @@ export function recordPickerQuery(
  *
  * The result's columns are positional: `field.keyColumns` first, then
  * `spec.display`, then `columns`. With no preview columns to be had, the keys
- * stand in for them and order the list themselves. */
+ * stand in for them and order the list themselves. The preview is on a line of its
+ * own, so a `//` comment ending what the user wrote doesn't swallow `columns`. */
 export function childRecordsQuery(
   field: MultiRecordField,
   parents: readonly string[],
@@ -277,9 +311,10 @@ export function childRecordsQuery(
   const keys = field.keyColumns.map((c) => `$${c}`);
   return {
     ...childRecordsTabQuery(field, parents, spec),
-    display: [...keys, ...spec.display, ...columns.map((c) => `$${c}`)].join(
-      " ",
-    ),
+    display: [
+      [...keys, ...spec.display].join(" "),
+      columns.map((c) => `$${c}`).join(" "),
+    ].join("\n"),
   };
 }
 

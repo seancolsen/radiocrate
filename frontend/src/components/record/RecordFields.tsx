@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import EmbedQuerydownEditor from "./EmbedQuerydownEditor";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel, { fieldAppearance } from "./FieldLabel";
@@ -31,6 +32,7 @@ import {
   selectDistinctCount,
   selectDistinctEdit,
   selectDistinctText,
+  selectEmbedEditorOpen,
   selectFieldModified,
   selectHasLinkedRecord,
   selectIsExpanded,
@@ -206,6 +208,7 @@ function FieldList(props: {
           <FieldRow
             model={model}
             recordId={recordId}
+            table={table}
             isNew={props.isNew}
             field={field}
             hiddenField={isFieldHidden(metadata, fieldRef(field))}
@@ -265,6 +268,8 @@ function fieldExpandable(
 function FieldRow(props: {
   model: RecordFormModel;
   recordId: string;
+  /** The table of the record this field belongs to. */
+  table: string;
   /** Whether the record this field belongs to is one the form is creating. */
   isNew: boolean;
   field: FormField;
@@ -345,6 +350,15 @@ function FieldRow(props: {
    * inside it. */
   const modified = useFormState(model, (s) =>
     selectFieldModified(s, recordId, field.key),
+  );
+
+  /** Whether the Querydown behind this field's embedded records is being edited,
+   * for the parts of it a field can have any. */
+  const displayOpen = useFormState(model, (s) =>
+    selectEmbedEditorOpen(s, recordId, field.key, "display"),
+  );
+  const sortingOpen = useFormState(model, (s) =>
+    selectEmbedEditorOpen(s, recordId, field.key, "sorting"),
   );
 
   /** Whether the open context menu is this field's own. */
@@ -587,6 +601,27 @@ function FieldRow(props: {
           />
         )}
       </div>
+
+      {/* Between the row and what it expands into, so the records being changed
+          are right below the text changing them. */}
+      {field.kind !== "primitive" && displayOpen && (
+        <EmbedQuerydownEditor
+          model={model}
+          recordId={recordId}
+          table={props.table}
+          field={field}
+          section="display"
+        />
+      )}
+      {field.kind !== "primitive" && sortingOpen && (
+        <EmbedQuerydownEditor
+          model={model}
+          recordId={recordId}
+          table={props.table}
+          field={field}
+          section="sorting"
+        />
+      )}
 
       {/* Expanded text: the same value, given the full width below the label —
           under the same tree line every other kind of expansion draws. */}

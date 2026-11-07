@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetOrderParams, MetadataFieldSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -99,6 +99,14 @@ export async function metadataFieldSetVisible(params: MetadataFieldSetVisiblePar
 
 export async function metadataFieldSetOrder(params: MetadataFieldSetOrderParams): Promise<null> {
   return (await rpcCall("metadata.field.set_order", params)) as null;
+}
+
+export async function metadataFieldSetDisplay(params: MetadataFieldSetDisplayParams): Promise<null> {
+  return (await rpcCall("metadata.field.set_display", params)) as null;
+}
+
+export async function metadataFieldSetSorting(params: MetadataFieldSetSortingParams): Promise<null> {
+  return (await rpcCall("metadata.field.set_sorting", params)) as null;
 }
 
 export async function collectionRescan(): Promise<null> {

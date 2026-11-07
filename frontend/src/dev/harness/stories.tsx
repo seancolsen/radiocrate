@@ -8,7 +8,11 @@ import {
   type RecordRef,
 } from "../../stores/app";
 import type { Stores } from "../../stores/createStores";
-import { fieldRefKey, type FieldMetadata } from "../../query/fieldMetadata";
+import {
+  defaultFieldMetadata,
+  fieldRefKey,
+  type FieldMetadata,
+} from "../../query/fieldMetadata";
 import type { FieldRef } from "api-client";
 import { SETTINGS } from "../../state/settings";
 import {
@@ -1620,14 +1624,25 @@ export const STORIES: Record<string, Story> = {
   // The user's own arrangement of `track`: `title` moved up to the top, and
   // `disc_number` and the credits hidden but on show, their labels dimmed.
   "record-editor/fields-customized": withFieldMetadata(recordEditor([1]), [
-    [{ columnName: "id" }, { visible: true, order: 2 }],
-    [{ columnName: "title" }, { visible: true, order: 1 }],
-    [{ columnName: "disc_number" }, { visible: false, order: null }],
+    [{ columnName: "id" }, { ...defaultFieldMetadata(), order: 2 }],
+    [{ columnName: "title" }, { ...defaultFieldMetadata(), order: 1 }],
+    [
+      { columnName: "disc_number" },
+      { ...defaultFieldMetadata(), visible: false },
+    ],
     [
       { multiLink: { relatedTableName: "credit", fkColumnName: "track" } },
-      { visible: false, order: null },
+      { ...defaultFieldMetadata(), visible: false },
     ],
   ]),
+  // The Querydown behind a scalar linked record's embedded record, being edited
+  // (the test opens the editor from the field's menu).
+  "record-editor/embed-display": recordEditor([1]),
+  // A multi-record field's display and sorting both being edited, above the
+  // records they're about.
+  "record-editor/embed-sorting": recordEditor([3]),
+  // A problem in that Querydown, which the editor says under it.
+  "record-editor/embed-problem": recordEditor([1]),
   // `title` being dragged (the test does the dragging): dimmed where it is, its
   // chip following the pointer, and the drop line in the gap it would land in.
   "record-editor/field-drag": recordEditor([1]),

@@ -9,6 +9,34 @@ import { SCHEMES, openStory, snapshot, valueEditor } from "./harness";
 const star = (panel: Locator, label: string) =>
   panel.locator(`[aria-label="${label} modified"]`);
 
+/** Raises a field's context menu and takes one of its entries. */
+async function openEmbedEditor(
+  page: Page,
+  stage: Locator,
+  field: string,
+  entry: "Display" | "Sorting",
+) {
+  await fieldLabelOf(stage, field).click({ button: "right" });
+  await page.getByRole("menuitem", { name: entry, exact: true }).click();
+}
+
+const fieldLabelOf = (stage: Locator, name: string) =>
+  stage
+    .locator("[data-form-item]")
+    .filter({ has: stage.page().getByText(name, { exact: true }) })
+    .first();
+
+/** The editable part of a field's Querydown editor, by its accessible name. */
+const embedEditor = (stage: Locator, name: string) =>
+  stage.getByRole("textbox", { name, exact: true });
+
+/** Replaces everything in the focused editor. */
+async function rewrite(page: Page, text: string) {
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await page.keyboard.type(text);
+}
+
 for (const colorScheme of SCHEMES) {
   // As the form lands: every field of `track`, values and counts loaded,
   // everything collapsed.
@@ -219,6 +247,53 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The two rows under a field whose embedded record is being customized.
+  test(`record-editor/embed-display - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/embed-display",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    await openEmbedEditor(page, stage, "file", "Display");
+    await expect(
+      embedEditor(stage, "Display of file").locator(".cm-line"),
+    ).not.toBeEmpty();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/embed-display", colorScheme),
+    );
+  });
+
+  test(`record-editor/embed-sorting - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/embed-sorting",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    await openEmbedEditor(page, stage, "credits", "Display");
+    await openEmbedEditor(page, stage, "credits", "Sorting");
+    await expect(stage.locator("[data-selectable]")).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/embed-sorting", colorScheme),
+    );
+  });
+
+  test(`record-editor/embed-problem - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/embed-problem",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, "$nope");
+    await expect(stage.getByRole("alert")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/embed-problem", colorScheme),
+    );
+  });
+
   // A field in hand: dimmed where it is, its chip by the pointer, and the drop
   // line in the gap it would land in.
   test(`record-editor/field-drag - ${colorScheme}`, async ({ page }) => {
@@ -291,6 +366,206 @@ async function loaded(page: Page): Promise<Locator> {
   ).toBeVisible();
   return stage;
 }
+
+test.describe("customizing embedded records", () => {
+  const calls = (page: Page, method: string) =>
+    page.evaluate(
+      (m) => (window.__rpcCalls ?? []).filter((call) => call.method === m),
+      method,
+    );
+
+  async function opened(page: Page, story = "record-editor/embed-display") {
+    const stage = await openStory(page, story, "light");
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    return stage;
+  }
+
+  const menuEntries = (page: Page) =>
+    page.getByRole("menuitem").allInnerTexts();
+
+  test("each kind of field offers what it can customize, in its place", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/embed-sorting");
+    await fieldLabelOf(stage, "file").click({ button: "right" });
+    expect(await menuEntries(page)).toEqual([
+      "Pick a record",
+      "Enter a new record",
+      "Display",
+      "Clear",
+      "Hide field",
+    ]);
+    await page.keyboard.press("Escape");
+
+    await fieldLabelOf(stage, "credits").click({ button: "right" });
+    expect(await menuEntries(page)).toEqual([
+      "New record",
+      "Display",
+      "Sorting",
+      "Delete all records",
+      "Hide field",
+    ]);
+    await page.keyboard.press("Escape");
+
+    await fieldLabelOf(stage, "title").click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Display" })).toHaveCount(
+      0,
+    );
+  });
+
+  test("the editor opens on the generated Querydown, with the caret in it", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    await openEmbedEditor(page, stage, "file", "Display");
+    const editor = embedEditor(stage, "Display of file");
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveText("$path");
+    expect(await calls(page, "metadata.field.set_display")).toEqual([]);
+  });
+
+  test("what's typed shows as it settles, and saves on leaving the editor", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    const widget = stage.locator(".rc-embedded").first();
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, "$id");
+    await expect(widget).toHaveText("file-1");
+    // Not written yet: that waits for the app to go quiet.
+    expect(await calls(page, "metadata.field.set_display")).toEqual([]);
+
+    await stage.getByRole("button", { name: "Close display editor" }).click();
+    await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "file")).toBeFocused();
+    await expect
+      .poll(() => calls(page, "metadata.field.set_display"))
+      .toEqual([
+        {
+          method: "metadata.field.set_display",
+          params: {
+            tableName: "track",
+            field: { columnName: "file" },
+            display: "$id",
+          },
+        },
+      ]);
+    await expect(widget).toHaveText("file-1");
+
+    // Opens on what the user wrote, this time.
+    await openEmbedEditor(page, stage, "file", "Display");
+    await expect(embedEditor(stage, "Display of file")).toHaveText("$id");
+  });
+
+  test("the save waits for the app to go quiet, without leaving the editor", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, "$id");
+    await expect
+      .poll(() => calls(page, "metadata.field.set_display"), { timeout: 8000 })
+      .toHaveLength(1);
+    await expect(embedEditor(stage, "Display of file")).toBeVisible();
+  });
+
+  test("Restore default goes back to what's generated, and closes", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    const widget = stage.locator(".rc-embedded").first();
+    const generated = await widget.innerText();
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, "$id");
+    await expect(widget).toHaveText("file-1");
+
+    await stage.getByRole("button", { name: "Restore default" }).click();
+    await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
+    await expect(widget).toHaveText(generated);
+    await expect
+      .poll(() => calls(page, "metadata.field.set_display"))
+      .toEqual([
+        {
+          method: "metadata.field.set_display",
+          params: {
+            tableName: "track",
+            field: { columnName: "file" },
+            display: null,
+          },
+        },
+      ]);
+  });
+
+  test("Escape closes the editor", async ({ page }) => {
+    const stage = await opened(page);
+    await openEmbedEditor(page, stage, "file", "Display");
+    await page.keyboard.press("Escape");
+    await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "file")).toBeFocused();
+  });
+
+  test("a multi-record field opens, re-displays and re-sorts under its editors", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/embed-sorting");
+    const rows = stage.locator("[data-selectable]");
+    await expect(rows).toHaveCount(0);
+
+    await openEmbedEditor(page, stage, "credits", "Display");
+    await expect(rows).toHaveCount(2);
+    await rewrite(page, "$order");
+    await expect(rows).toHaveText(["1", "2"]);
+
+    await openEmbedEditor(page, stage, "credits", "Sorting");
+    await expect(embedEditor(stage, "Sorting of credits")).toBeFocused();
+    await rewrite(page, "\\\\order \\d");
+    await expect(rows).toHaveText(["2", "1"]);
+
+    await stage.getByRole("button", { name: "Close sorting editor" }).click();
+    await expect
+      .poll(() => calls(page, "metadata.field.set_sorting"))
+      .toEqual([
+        {
+          method: "metadata.field.set_sorting",
+          params: {
+            tableName: "track",
+            field: {
+              multiLink: { relatedTableName: "credit", fkColumnName: "track" },
+            },
+            sorting: "\\\\order \\d",
+          },
+        },
+      ]);
+    await expect(embedEditor(stage, "Display of credits")).toBeVisible();
+  });
+
+  test("Querydown that won't compile says so, and the records stay as they were", async ({
+    page,
+  }) => {
+    const stage = await opened(page);
+    const widget = stage.locator(".rc-embedded").first();
+    const before = await widget.innerText();
+    await openEmbedEditor(page, stage, "file", "Display");
+    await rewrite(page, "$nope");
+    await expect(stage.getByRole("alert")).toContainText("nope");
+    await expect(widget).toHaveText(before);
+    // Nothing the database said, so no second message.
+    await expect(stage.locator("p.text-danger")).toHaveCount(1);
+  });
+
+  test("only asking for an editor moves the caret to it", async ({ page }) => {
+    const stage = await opened(page);
+    await openEmbedEditor(page, stage, "file", "Display");
+    const editor = embedEditor(stage, "Display of file");
+    await expect(editor).toBeFocused();
+
+    // Off somewhere else, and asked for again while it's still open.
+    await fieldLabelOf(stage, "title").click();
+    await expect(editor).not.toBeFocused();
+    await openEmbedEditor(page, stage, "file", "Display");
+    await expect(editor).toBeFocused();
+  });
+});
 
 test.describe("hiding fields", () => {
   test("the field goes away, and the actions menu can bring it back", async ({

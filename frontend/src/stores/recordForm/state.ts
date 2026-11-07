@@ -164,6 +164,16 @@ export interface FormState {
   menu: FormMenu | null;
   /** The field whose modal record picker is open, or null. */
   picker: PickerTarget | null;
+  /** The open Querydown editors for a field's embedded records, by
+   * `embedEditorId`. Absent reads as closed. */
+  embedEditors: Record<string, boolean>;
+  /** The editor just asked for, which takes the caret once it's there. Whichever
+   * other way one comes back on screen — a tab showing again, the form returned to
+   * — leaves the caret where the user has it. */
+  embedEditorFocus: string | null;
+  /** Field item id → why the database refused the embedded records it was last
+   * asked for, while the ones on screen are from before. */
+  embedErrors: Record<string, string>;
   /** Whether a save is in flight. */
   saving: boolean;
   /** Why the last save failed, or null. The form keeps the changes it couldn't
@@ -210,6 +220,9 @@ export function initialFormState(): FormState {
     selection: [],
     menu: null,
     picker: null,
+    embedEditors: {},
+    embedEditorFocus: null,
+    embedErrors: {},
     saving: false,
     saveError: null,
   };

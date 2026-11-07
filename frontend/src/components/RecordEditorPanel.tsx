@@ -284,6 +284,7 @@ function PanelForm(props: {
         table,
         keys: records.map((record) => record.key),
         schemaJson,
+        fieldMetadata: () => stores.app.store.getState().fieldMetadata.data,
         // The save is a write *from* result rows, so it goes through the
         // store: what it changed is read back into the rows the editor was
         // opened on (see `query/rowDml.ts`).

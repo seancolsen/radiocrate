@@ -12,8 +12,8 @@ import type { ScalarLinkField } from "../../query/recordForm";
 /** The record picker for whichever field has one open, or nothing. Rendered
  * once per form, beside its context menu. Adapts the generic `RecordPicker` to
  * the record editor: resolves the field the open picker belongs to, seeds it
- * from the form's own preview generator, and wires its callbacks back into the
- * form model. */
+ * with what the field's embedded record shows, so what's picked already reads as
+ * one, and wires its callbacks back into the form model. */
 export default function FieldRecordPicker(props: {
   model: RecordFormModel;
   schemaJson: string;
@@ -57,7 +57,7 @@ function PickerAdapter(props: {
   // One instance belongs to one field for its whole life (the key above
   // rebuilds it otherwise), so its subject is read once.
   const [itemId] = useState(() => fieldItemId(recordId, field.key));
-  const [spec] = useState(() => model.previewSpec(field.table));
+  const [spec] = useState(() => model.fieldSpec(recordId, field));
 
   /** Puts the user back on the field they came from, once the modal is gone.
    * Deferred a tick, since the field's row only regains its focusable label as

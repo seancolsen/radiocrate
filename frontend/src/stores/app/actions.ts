@@ -22,7 +22,9 @@ import {
   settingList,
   settingSet,
   metadataFieldList,
+  metadataFieldSetDisplay,
   metadataFieldSetOrder,
+  metadataFieldSetSorting,
   metadataFieldSetVisible,
   type FieldRef,
   type DmlOperation,
@@ -143,7 +145,9 @@ import {
   anyFieldHidden,
   fieldMoveOrders,
   fieldRefKey,
+  defaultFieldMetadata,
   groupFieldMetadata,
+  type EmbedSection,
 } from "../../query/fieldMetadata";
 import {
   analyzeColumnSources,
@@ -315,6 +319,23 @@ export interface AppActions {
     above: FieldRef | undefined,
     below: FieldRef | undefined,
   ) => boolean;
+  /** Sets the Querydown behind a part of a field's embedded records, for every
+   * record editor; null goes back to what the form generates. Shows at once. The
+   * write waits for the app to go quiet, as a query's does — except null, which is
+   * the user finishing, not a keystroke, and goes straight out. */
+  setFieldQuerydown: (
+    table: string,
+    field: FieldRef,
+    section: EmbedSection,
+    text: string | null,
+  ) => void;
+  /** Sends a write `setFieldQuerydown` is holding back, the user having left its
+   * editor. */
+  flushFieldQuerydown: (
+    table: string,
+    field: FieldRef,
+    section: EmbedSection,
+  ) => void;
   /** Shows the hidden fields in every record editor, or hides them again. */
   setShowHiddenFields: (show: boolean) => void;
   /** Re-runs `loadSources` and `loadPresets` — the Explorer's manual refresh. */
@@ -2681,7 +2702,13 @@ export function createAppActions(
       console.error("field metadata write failed", err);
       return actions.loadFieldMetadata();
     });
+    return fieldMetadataWrites;
   };
+  const fieldQuerydownSaveKey = (
+    table: string,
+    field: FieldRef,
+    section: EmbedSection,
+  ) => `field-querydown\n${table}\n${fieldRefKey(field)}\n${section}`;
 
   const actions: AppActions = {
     loadSources: async () => {
@@ -2771,10 +2798,7 @@ export function createAppActions(
     setFieldHidden: (table, field, hidden) => {
       set((s) => {
         const fields = (s.fieldMetadata.data[table] ??= {});
-        const entry = (fields[fieldRefKey(field)] ??= {
-          visible: true,
-          order: null,
-        });
+        const entry = (fields[fieldRefKey(field)] ??= defaultFieldMetadata());
         entry.visible = !hidden;
         // With nothing left to show, the next field hidden should go away rather
         // than stay up, dimmed, under a toggle the user has no reason to recall.
@@ -2797,10 +2821,7 @@ export function createAppActions(
       set((s) => {
         const fields = (s.fieldMetadata.data[table] ??= {});
         for (const { field: moved, order } of orders) {
-          (fields[fieldRefKey(moved)] ??= {
-            visible: true,
-            order: null,
-          }).order = order;
+          (fields[fieldRefKey(moved)] ??= defaultFieldMetadata()).order = order;
         }
       });
       writeFieldMetadata(() =>
@@ -2808,6 +2829,31 @@ export function createAppActions(
       );
       return true;
     },
+    setFieldQuerydown: (table, field, section, text) => {
+      set((s) => {
+        const fields = (s.fieldMetadata.data[table] ??= {});
+        (fields[fieldRefKey(field)] ??= defaultFieldMetadata())[section] = text;
+      });
+      const key = fieldQuerydownSaveKey(table, field, section);
+      saves.defer(key, () =>
+        writeFieldMetadata(() =>
+          section === "display"
+            ? metadataFieldSetDisplay({
+                tableName: table,
+                field,
+                display: text,
+              })
+            : metadataFieldSetSorting({
+                tableName: table,
+                field,
+                sorting: text,
+              }),
+        ),
+      );
+      if (text === null) saves.flush(key);
+    },
+    flushFieldQuerydown: (table, field, section) =>
+      saves.flush(fieldQuerydownSaveKey(table, field, section)),
     setShowHiddenFields: (show) =>
       set((s) => {
         s.showHiddenFields = show;

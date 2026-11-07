@@ -3,6 +3,8 @@ import type { FieldRef } from "api-client";
 import {
   anyFieldHidden,
   arrangeFields,
+  defaultFieldMetadata,
+  embedChanges,
   fieldMoveOrders,
   fieldRefKey,
   groupFieldMetadata,
@@ -11,6 +13,12 @@ import {
   type TableMetadata,
 } from "./fieldMetadata";
 import { fieldRef, type FormField } from "./recordForm";
+
+const fieldMeta = (visible: boolean, order: number | null) => ({
+  ...defaultFieldMetadata(),
+  visible,
+  order,
+});
 
 const column = (columnName: string): FieldRef => ({ columnName });
 const link = (relatedTableName: string, fkColumnName: string): FieldRef => ({
@@ -37,9 +45,7 @@ const metadataOf = (entries: Record<string, FieldMetadata>): TableMetadata =>
   );
 const ordered = (...keys: string[]): TableMetadata =>
   metadataOf(
-    Object.fromEntries(
-      keys.map((key, i) => [key, { visible: true, order: i + 1 }]),
-    ),
+    Object.fromEntries(keys.map((key, i) => [key, fieldMeta(true, i + 1)])),
   );
 const placed = (name: string, order: number) => ({
   field: column(name),
@@ -90,6 +96,44 @@ describe("fieldRef", () => {
   });
 });
 
+describe("embedChanges", () => {
+  const TITLE = fieldRefKey(column("title"));
+  const CREDITS = fieldRefKey(link("credit", "track"));
+  const custom = (display: string | null, sorting: string | null = null) => ({
+    ...defaultFieldMetadata(),
+    display,
+    sorting,
+  });
+
+  it("names the fields whose display or sorting changed", () => {
+    expect(
+      embedChanges(
+        { track: { [TITLE]: custom("$a"), [CREDITS]: custom(null, "\\\\a") } },
+        { track: { [TITLE]: custom("$a"), [CREDITS]: custom(null, "\\\\b") } },
+      ),
+    ).toEqual([{ table: "track", fieldKey: CREDITS }]);
+  });
+
+  it("takes a field appearing or going as a change only if it says anything", () => {
+    expect(embedChanges({}, { track: { [TITLE]: custom("$a") } })).toEqual([
+      { table: "track", fieldKey: TITLE },
+    ]);
+    expect(embedChanges({ track: { [TITLE]: custom("$a") } }, {})).toEqual([
+      { table: "track", fieldKey: TITLE },
+    ]);
+    expect(embedChanges({}, { track: { [TITLE]: custom(null) } })).toEqual([]);
+  });
+
+  it("has nothing to say about hiding or moving a field", () => {
+    expect(
+      embedChanges(
+        { track: { [TITLE]: fieldMeta(true, 1) } },
+        { track: { [TITLE]: fieldMeta(false, 2) } },
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("groupFieldMetadata", () => {
   it("keys rows by table and field", () => {
     expect(
@@ -99,26 +143,38 @@ describe("groupFieldMetadata", () => {
           field: column("title"),
           visible: false,
           order: null,
+          display: "$a",
+          sorting: null,
         },
         {
           tableName: "track",
           field: link("credit", "track"),
           visible: true,
           order: 2,
+          display: null,
+          sorting: "\\\\a",
         },
         {
           tableName: "album",
           field: column("title"),
           visible: true,
           order: 1,
+          display: null,
+          sorting: null,
         },
       ]),
     ).toEqual({
       track: {
-        [fieldRefKey(column("title"))]: { visible: false, order: null },
-        [fieldRefKey(link("credit", "track"))]: { visible: true, order: 2 },
+        [fieldRefKey(column("title"))]: {
+          ...fieldMeta(false, null),
+          display: "$a",
+        },
+        [fieldRefKey(link("credit", "track"))]: {
+          ...fieldMeta(true, 2),
+          sorting: "\\\\a",
+        },
       },
-      album: { [fieldRefKey(column("title"))]: { visible: true, order: 1 } },
+      album: { [fieldRefKey(column("title"))]: fieldMeta(true, 1) },
     });
   });
 });
@@ -130,7 +186,7 @@ describe("anyFieldHidden", () => {
     expect(
       anyFieldHidden({
         track: ordered("a"),
-        album: metadataOf({ b: { visible: false, order: null } }),
+        album: metadataOf({ b: fieldMeta(false, null) }),
       }),
     ).toBe(true);
   });
@@ -151,9 +207,9 @@ describe("orderFields", () => {
         orderFields(
           fields("a", "b", "c", "d"),
           metadataOf({
-            c: { visible: true, order: 2 },
-            d: { visible: true, order: 1 },
-            b: { visible: false, order: null },
+            c: fieldMeta(true, 2),
+            d: fieldMeta(true, 1),
+            b: fieldMeta(false, null),
           }),
         ),
       ),
@@ -162,15 +218,15 @@ describe("orderFields", () => {
 
   it("ignores a row for a field the table no longer has", () => {
     expect(
-      keysOf(orderFields(fields("a"), { gone: { visible: true, order: 1 } })),
+      keysOf(orderFields(fields("a"), { gone: fieldMeta(true, 1) })),
     ).toEqual(["a"]);
   });
 });
 
 describe("arrangeFields", () => {
   const metadata = metadataOf({
-    a: { visible: false, order: 2 },
-    b: { visible: true, order: 1 },
+    a: fieldMeta(false, 2),
+    b: fieldMeta(true, 1),
   });
 
   it("leaves hidden fields out", () => {
@@ -216,9 +272,9 @@ describe("fieldMoveOrders", () => {
 
   it("skips fields already at their place when resequencing", () => {
     const metadata = metadataOf({
-      a: { visible: true, order: 1 },
-      b: { visible: true, order: 2 },
-      d: { visible: false, order: null },
+      a: fieldMeta(true, 1),
+      b: fieldMeta(true, 2),
+      d: fieldMeta(false, null),
     });
     expect(move(KEYS, metadata, "d", "b", "c")).toEqual([
       placed("d", 3),
@@ -240,9 +296,9 @@ describe("fieldMoveOrders", () => {
 
   it("resequences when two sort keys leave no room between them", () => {
     const metadata = metadataOf({
-      a: { visible: true, order: 1 },
-      b: { visible: true, order: 1 + Number.EPSILON },
-      c: { visible: true, order: 5 },
+      a: fieldMeta(true, 1),
+      b: fieldMeta(true, 1 + Number.EPSILON),
+      c: fieldMeta(true, 5),
     });
     expect(move(["a", "b", "c"], metadata, "c", "a", "b")).toEqual([
       placed("c", 2),
@@ -252,9 +308,9 @@ describe("fieldMoveOrders", () => {
 
   it("resequences when two fields tie", () => {
     const metadata = metadataOf({
-      a: { visible: true, order: 1 },
-      b: { visible: true, order: 1 },
-      c: { visible: true, order: 5 },
+      a: fieldMeta(true, 1),
+      b: fieldMeta(true, 1),
+      c: fieldMeta(true, 5),
     });
     expect(move(["a", "b", "c"], metadata, "c", "a", "b")).toEqual([
       placed("c", 2),

@@ -11,6 +11,7 @@ import {
 } from "./forms";
 import { createMenusStore, type MenusStoreBundle } from "./menus";
 import { createUpdateStore, type UpdateStoreBundle } from "./update";
+import { embedChanges } from "../query/fieldMetadata";
 
 export interface Stores {
   app: AppStoreBundle;
@@ -100,6 +101,19 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     { equalityFn: sameRetention, fireImmediately: true },
   );
 
+  // What a field's embedded records show is customized once, for every form on
+  // the table, so each form is told when it changes, whichever one was edited.
+  const unsubscribeEmbeds = app.store.subscribe(
+    (s) => s.fieldMetadata.data,
+    (next, previous) => {
+      const changes = embedChanges(previous, next);
+      if (changes.length === 0) return;
+      for (const entry of forms.store.getState().entries) {
+        entry.model.refreshEmbeds(changes);
+      }
+    },
+  );
+
   // "Dynamic updates": keep every open record editor pointed at its tab's
   // current selection. `resyncRecordEditors` reads the editor targets
   // through `get()` rather than taking them as a subscription input, so the
@@ -147,6 +161,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
 
   function dispose() {
     unsubscribeRetain();
+    unsubscribeEmbeds();
     unsubscribeResync();
     unsubscribeRpcFailures();
     unsubscribeRequests();

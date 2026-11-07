@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 use api_schema::{
     AppVersion, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams,
-    Keybinding, KeybindingDeleteParams, MetadataFieldSetOrderParams, MetadataFieldSetVisibleParams,
-    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
-    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
-    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
+    Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams,
+    MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MultiLink, Placement, Preset,
+    PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams,
+    Source, SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams,
+    SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -262,6 +263,20 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             let p: MetadataFieldSetOrderParams = from_params(params)?;
             state.write_mut(|conn| {
                 set_field_order(conn, &p.table_name, &p.orders).map(|()| Value::Null)
+            })
+        }
+        "metadata.field.set_display" => {
+            let p: MetadataFieldSetDisplayParams = from_params(params)?;
+            state.write(|conn| {
+                upsert_field_metadata(conn, &p.table_name, &p.field, "display", &p.display)?;
+                Ok(Value::Null)
+            })
+        }
+        "metadata.field.set_sorting" => {
+            let p: MetadataFieldSetSortingParams = from_params(params)?;
+            state.write(|conn| {
+                upsert_field_metadata(conn, &p.table_name, &p.field, "sorting", &p.sorting)?;
+                Ok(Value::Null)
             })
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
@@ -636,7 +651,8 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
         .prepare(
             "SELECT table_name, union_extract(field, 'column_name'), \
              union_extract(field, 'multi_link').related_table_name, \
-             union_extract(field, 'multi_link').fk_column_name, visible, \"order\" \
+             union_extract(field, 'multi_link').fk_column_name, visible, \"order\", display, \
+             sorting \
              FROM metadata.field \
              ORDER BY table_name, union_tag(field)::text, field::text",
         )
@@ -656,6 +672,8 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
                 field,
                 visible: row.get(4)?,
                 order: row.get(5)?,
+                display: row.get(6)?,
+                sorting: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1161,6 +1179,8 @@ mod tests {
             field,
             visible,
             order,
+            display: None,
+            sorting: None,
         }
     }
 
@@ -1208,6 +1228,37 @@ mod tests {
                 field_row("track", column("genre"), true, Some(1.0)),
                 field_row("track", column("title"), true, Some(0.5)),
             ],
+        );
+    }
+
+    #[test]
+    fn a_fields_querydown_leaves_the_rest_of_its_row_alone() {
+        let conn = setup();
+        let credits = multi_link("credit", "track");
+        let set = |column, value: Option<&str>| {
+            upsert_field_metadata(&conn, "track", &credits, column, &value).unwrap();
+        };
+        set_field_visible(&conn, "track", &credits, false).unwrap();
+
+        set("display", Some("$artist.name $role"));
+        set("sorting", Some("\\\\role"));
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![FieldMetadataRow {
+                display: Some("$artist.name $role".to_string()),
+                sorting: Some("\\\\role".to_string()),
+                ..field_row("track", credits.clone(), false, None)
+            }],
+        );
+
+        // Restoring one goes back to null, and takes nothing else with it.
+        set("display", None);
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![FieldMetadataRow {
+                sorting: Some("\\\\role".to_string()),
+                ..field_row("track", credits.clone(), false, None)
+            }],
         );
     }
 
@@ -1291,6 +1342,8 @@ mod tests {
                 "field": { "multiLink": { "relatedTableName": "b", "fkColumnName": "c" } },
                 "visible": true,
                 "order": null,
+                "display": null,
+                "sorting": null,
             }),
         );
     }

@@ -6,7 +6,7 @@
 // spirit of the store's `setResults`, letting the seeded harness render a form
 // with canned data and no backend.
 
-import { compile_sections } from "querydown-js";
+import { compile_sections, is_querydown_error } from "querydown-js";
 import { runSql, stringifyArrowValue } from "../api/query";
 import { querydownReady } from "./querydown";
 import type { RecordQuery } from "./recordForm";
@@ -57,6 +57,11 @@ export function runRecordQuery(
   schemaJson: string,
 ): Promise<RecordRows> {
   return runner(query, schemaJson);
+}
+
+/** Whether a failed query never reached the database, its Querydown not compiling. */
+export function isCompileError(err: unknown): boolean {
+  return is_querydown_error(err);
 }
 
 /** Replaces the runner (dev/test seam — see the module note). */

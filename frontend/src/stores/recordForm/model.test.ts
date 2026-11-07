@@ -1,12 +1,24 @@
 import type { FieldRef } from "api-client";
-import { fieldRefKey } from "../../query/fieldMetadata";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  defaultFieldMetadata,
+  fieldRefKey,
+  type MetadataByTable,
+} from "../../query/fieldMetadata";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DmlOperation, DmlResult } from "api-client";
 import type { RecordRows } from "../../query/recordData";
 import type { SchemaTable } from "../../query/schema";
-import type { FormField, MultiRecordField } from "../../query/recordForm";
+import type {
+  FormField,
+  MultiRecordField,
+  ScalarLinkField,
+} from "../../query/recordForm";
 
-vi.mock("../../query/recordData", () => ({ runRecordQuery: vi.fn() }));
+vi.mock("../../query/recordData", () => ({
+  runRecordQuery: vi.fn(),
+  isCompileError: (err: unknown) =>
+    err instanceof Error && err.message.startsWith("compile:"),
+}));
 
 import { runRecordQuery } from "../../query/recordData";
 import {
@@ -25,6 +37,8 @@ import {
   selectCountMin,
   distinctValues,
   selectDistinctCount,
+  selectEmbedEditorFocusAsked,
+  selectEmbedEditorOpen,
   selectFieldModified,
   selectAnyExpanded,
   selectFormModified,
@@ -102,6 +116,12 @@ const TABLES: SchemaTable[] = [
   },
 ];
 
+const fieldMeta = (visible: boolean, order: number | null) => ({
+  ...defaultFieldMetadata(),
+  visible,
+  order,
+});
+
 const runner = vi.mocked(runRecordQuery);
 
 const trackKey = (id: string) => [{ column: "id", value: id }];
@@ -168,10 +188,12 @@ function serve(rows: {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /** Lets every settled load's continuation run. */
@@ -218,7 +240,7 @@ describe("selectHiddenFieldCount", () => {
     Object.fromEntries(
       fields.map((field) => [
         fieldRefKey(typeof field === "string" ? { columnName: field } : field),
-        { visible: false, order: null },
+        fieldMeta(false, null),
       ]),
     );
   const CREDITS_LINK: FieldRef = {
@@ -235,7 +257,7 @@ describe("selectHiddenFieldCount", () => {
       selectHiddenFieldCount(s, {
         track: {
           ...hide("title", CREDITS_LINK),
-          [fieldRefKey({ columnName: "genre" })]: { visible: true, order: 1 },
+          [fieldRefKey({ columnName: "genre" })]: fieldMeta(true, 1),
         },
       }),
     ).toBe(2);
@@ -332,6 +354,414 @@ describe("loading", () => {
     expect(selectSharedValue(model.store.getState(), ROOT_ID, "title")).toBe(
       "Newer",
     );
+  });
+});
+
+describe("customizing a field's embedded records", () => {
+  const CREDITS_REF = fieldRefKey({
+    multiLink: { relatedTableName: "credit", fkColumnName: "track" },
+  });
+  const ALBUM_REF = fieldRefKey({ columnName: "album" });
+  /** A row of the credit list: the key, the given preview, then every column. */
+  const listRow = (
+    id: string,
+    role: string | null,
+    preview: readonly (string | null)[],
+  ) => [id, ...preview, id, "t1", role];
+  /** The settling `refreshEmbeds` waits for, and what lands after it. */
+  const settle = () => vi.advanceTimersByTimeAsync(300);
+
+  /** A form whose field metadata is `metadata.current` at the moment it's read. */
+  function customizable(initial: MetadataByTable = {}) {
+    const metadata = { current: initial };
+    const model = form([trackKey("t1")], {
+      fieldMetadata: () => metadata.current,
+    });
+    return { model, metadata };
+  }
+  const creditsCustom = (
+    display: string | null,
+    sorting: string | null = null,
+  ) => ({
+    track: { [CREDITS_REF]: { ...defaultFieldMetadata(), display, sorting } },
+  });
+  const albumCustom = (display: string | null) => ({
+    track: { [ALBUM_REF]: { ...defaultFieldMetadata(), display } },
+  });
+  /** A form with its credits listed, in that order. */
+  async function listed(
+    rows: RecordRows,
+    initial: MetadataByTable = creditsCustom("$role"),
+  ) {
+    serve({
+      track: [trackRow("t1", "Formation", "Pop", rows.length)],
+      credit: rows,
+    });
+    const built = customizable(initial);
+    built.model.start();
+    await settle();
+    built.model.toggleField(ROOT_ID, credits(built.model), true);
+    await settle();
+    return built;
+  }
+  const cellsOf = (model: RecordFormModel, id: string) =>
+    model.store.getState().embeds[id]?.cells;
+  const childAt = (index: number) => `${CREDITS_LIST}[${index}]`;
+  const childIds = (model: RecordFormModel) =>
+    model.store.getState().lists[CREDITS_LIST]?.childIds;
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("lists a multi-record field by what the user wrote, however many columns it asks for", async () => {
+    const { model } = await listed(
+      [listRow("c1", "Vocals", ["Vocals", "One", "Two"])],
+      creditsCustom("$role $a $b // note", "\\\\role \\d"),
+    );
+    const query = runner.mock.calls.at(-1)?.[0];
+    expect(query?.display).toBe("$id $role $a $b // note\n$id $track $role");
+    expect(query?.sort).toBe("\\\\role \\d");
+    expect(cellsOf(model, childAt(0))).toEqual(["Vocals", "One", "Two"]);
+  });
+
+  it("previews a scalar linked record by what the user wrote", async () => {
+    serve({
+      track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")],
+      albums: { a1: "Lemonade" },
+    });
+    const { model } = customizable(albumCustom("$title $id"));
+    model.start();
+    await settle();
+    expect(runner.mock.calls.at(-1)?.[0].display).toBe("$title $id");
+  });
+
+  it("shows the key for a display left blank, with no query to run", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")] });
+    const { model } = customizable(albumCustom("  "));
+    model.start();
+    await settle();
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(cellsOf(model, scalarChildId(ROOT_ID, "album"))).toEqual(["a1"]);
+  });
+
+  it("falls back to the generated query when a stored one won't run, on first listing", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    serve({ track: [trackRow("t1", "Formation", "Pop", 1)] });
+    const { model } = customizable(creditsCustom("$gone"));
+    model.start();
+    await settle();
+    runner
+      .mockRejectedValueOnce(new Error("compile: no column gone"))
+      .mockResolvedValueOnce([["c1", "c1", "Vocals", "c1", "t1", "Vocals"]]);
+    model.toggleField(ROOT_ID, credits(model), true);
+    await settle();
+    expect(model.store.getState().lists[CREDITS_LIST]?.status).toBe("loaded");
+    expect(cellsOf(model, childAt(0))).toEqual(["c1", "Vocals"]);
+    error.mockRestore();
+  });
+
+  it("re-fetches once the text has settled, not on every change", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+    ]);
+    runner.mockClear();
+    const change = [{ table: "track", fieldKey: CREDITS_REF }];
+    metadata.current = creditsCustom("$id");
+    model.refreshEmbeds(change);
+    await vi.advanceTimersByTimeAsync(299);
+    metadata.current = creditsCustom("$id $role");
+    model.refreshEmbeds(change);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(runner).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(runner.mock.calls[0]?.[0].display).toContain("$id $id $role\n");
+  });
+
+  it("leaves another field's records alone", async () => {
+    const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
+    runner.mockClear();
+    model.refreshEmbeds([{ table: "track", fieldKey: ALBUM_REF }]);
+    model.refreshEmbeds([{ table: "album", fieldKey: CREDITS_REF }]);
+    await settle();
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("re-sorts a list in place, its rows keeping their ids, edits and expansion", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+      listRow("c2", "Bass", ["Bass"]),
+    ]);
+    const [first, second] = [childAt(0), childAt(1)];
+    model.toggleChild(first, true);
+    await settle();
+    model.editValue(second, "role", "Edited");
+    model.clickEmbedded(second, { shift: false, ctrl: false });
+
+    metadata.current = creditsCustom("$role $id", "\\\\role");
+    runner.mockResolvedValueOnce([
+      listRow("c2", "Bass", ["Bass", "c2"]),
+      listRow("c1", "Vocals", ["Vocals", "c1"]),
+    ]);
+    model.refreshEmbeds([{ table: "track", fieldKey: CREDITS_REF }]);
+    await settle();
+
+    const s = model.store.getState();
+    expect(childIds(model)).toEqual([second, first]);
+    expect(cellsOf(model, first)).toEqual(["Vocals", "c1"]);
+    expect(s.expanded[first]).toBe(true);
+    expect(s.records[second]?.values["role"]).toEqual(["Edited"]);
+    expect(s.selection).toEqual([second]);
+    expect(s.lists[CREDITS_LIST]?.status).toBe("loaded");
+  });
+
+  it("keeps a list's own changes through a refresh", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+      listRow("c2", "Bass", ["Bass"]),
+      listRow("c3", "Keys", ["Keys"]),
+    ]);
+    const field = credits(model);
+    model.removeChild(ROOT_ID, field, childAt(0));
+    model.addChild(ROOT_ID, field);
+    const created = childIds(model)?.[0];
+
+    metadata.current = creditsCustom("$role $id");
+    runner.mockResolvedValueOnce([
+      listRow("c1", "Vocals", ["Vocals", "c1"]),
+      // The list hasn't heard of this one.
+      listRow("c9", "Drums", ["Drums", "c9"]),
+      // c3 isn't there any more, and c2 is.
+      listRow("c2", "Bass", ["Bass", "c2"]),
+    ]);
+    model.refreshEmbeds([{ table: "track", fieldKey: CREDITS_REF }]);
+    await settle();
+
+    const ids = childIds(model) ?? [];
+    expect(ids[0]).toBe(created);
+    const newcomer = ids[1];
+    expect(cellsOf(model, newcomer ?? "")).toEqual(["Drums", "c9"]);
+    expect(ids.slice(2)).toEqual([childAt(1), childAt(2)]);
+    expect(ids).not.toContain(childAt(0));
+    expect(model.store.getState().records[childAt(0)]).toBeDefined(); // still on its way out, for the save
+  });
+
+  it("keeps what's on screen while a refresh runs, and when the database refuses it", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+    ]);
+    const itemId = fieldItemId(ROOT_ID, "#credit");
+    const change = [{ table: "track", fieldKey: CREDITS_REF }];
+
+    const pending = deferred<RecordRows>();
+    metadata.current = creditsCustom("$id");
+    runner.mockReturnValueOnce(pending.promise);
+    model.refreshEmbeds(change);
+    await settle();
+    expect(cellsOf(model, childAt(0))).toEqual(["Vocals"]);
+    pending.reject(new Error("Binder Error: nope"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cellsOf(model, childAt(0))).toEqual(["Vocals"]);
+    expect(model.store.getState().embedErrors[itemId]).toBe(
+      "Binder Error: nope",
+    );
+
+    runner.mockResolvedValueOnce([listRow("c1", "Vocals", ["c1"])]);
+    model.refreshEmbeds(change);
+    await settle();
+    expect(cellsOf(model, childAt(0))).toEqual(["c1"]);
+    expect(model.store.getState().embedErrors[itemId]).toBeUndefined();
+  });
+
+  it("leaves Querydown that won't compile to the editor's own check", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+    ]);
+    metadata.current = creditsCustom("$");
+    runner.mockRejectedValueOnce(new Error("compile: expected a column"));
+    model.refreshEmbeds([{ table: "track", fieldKey: CREDITS_REF }]);
+    await settle();
+    expect(model.store.getState().embedErrors).toEqual({});
+    expect(cellsOf(model, childAt(0))).toEqual(["Vocals"]);
+  });
+
+  it("only ever lets the newest refresh land", async () => {
+    const { model, metadata } = await listed([
+      listRow("c1", "Vocals", ["Vocals"]),
+    ]);
+    const change = [{ table: "track", fieldKey: CREDITS_REF }];
+    const stale = deferred<RecordRows>();
+    metadata.current = creditsCustom("$id");
+    runner.mockReturnValueOnce(stale.promise);
+    model.refreshEmbeds(change);
+    await settle();
+    runner.mockResolvedValueOnce([listRow("c1", "Vocals", ["newest"])]);
+    model.refreshEmbeds(change);
+    await settle();
+    stale.resolve([listRow("c1", "Vocals", ["stale"])]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cellsOf(model, childAt(0))).toEqual(["newest"]);
+  });
+
+  it("refreshes a scalar linked record's embedded record in place", async () => {
+    serve({
+      track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")],
+      albums: { a1: "Lemonade" },
+    });
+    const { model, metadata } = customizable();
+    model.start();
+    await settle();
+    const id = scalarChildId(ROOT_ID, "album");
+    expect(cellsOf(model, id)).toEqual(["Lemonade"]);
+
+    metadata.current = albumCustom("$title $id");
+    const pending = deferred<RecordRows>();
+    runner.mockReturnValueOnce(pending.promise);
+    model.refreshEmbeds([{ table: "track", fieldKey: ALBUM_REF }]);
+    await settle();
+    expect(cellsOf(model, id)).toEqual(["Lemonade"]);
+    expect(model.store.getState().embeds[id]?.status).toBe("loaded");
+    pending.resolve([["Lemonade", "a1"]]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cellsOf(model, id)).toEqual(["Lemonade", "a1"]);
+    expect(runner.mock.calls.at(-1)?.[0].display).toBe("$title $id");
+  });
+
+  it("refreshes each value's embedded record when the records disagree", async () => {
+    serve({
+      track: [
+        trackRow("t1", "A", "Pop", 0, 0, "a1"),
+        trackRow("t2", "B", "Pop", 0, 0, "a2"),
+      ],
+      albums: { a1: "One", a2: "Two" },
+    });
+    const metadata: { current: MetadataByTable } = { current: {} };
+    const model = form([trackKey("t1"), trackKey("t2")], {
+      fieldMetadata: () => metadata.current,
+    });
+    model.start();
+    await settle();
+    model.toggleField(
+      ROOT_ID,
+      fieldOf(model, ROOT_ID, "album") as ScalarLinkField,
+      true,
+    );
+    await settle();
+    metadata.current = albumCustom("$id");
+    runner.mockClear();
+    runner.mockImplementation(async (query) => [
+      [`cell of ${/id:="([^"]*)"/.exec(query.filter)?.[1]}`],
+    ]);
+    model.refreshEmbeds([{ table: "track", fieldKey: ALBUM_REF }]);
+    await settle();
+    expect(runner).toHaveBeenCalledTimes(2);
+    expect(cellsOf(model, variedChildId(ROOT_ID, "album", "a2"))).toEqual([
+      "cell of a2",
+    ]);
+  });
+
+  it("opens the same query in a new tab as the field lists", async () => {
+    const openRecords = vi.fn();
+    serve({ track: [trackRow("t1", "Formation", "Pop", 2)] });
+    const model = form([trackKey("t1")], {
+      openRecords,
+      fieldMetadata: () => creditsCustom("$role", "\\\\role"),
+    });
+    model.start();
+    await settle();
+    model.openChildRecords(ROOT_ID, credits(model));
+    expect(openRecords.mock.calls[0]?.[0]).toMatchObject({
+      display: "$role",
+      sort: "\\\\role",
+    });
+  });
+
+  it("seeds the record picker with what the field shows", async () => {
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const { model } = customizable(albumCustom("$id $title"));
+    model.start();
+    await settle();
+    const field = fieldOf(model, ROOT_ID, "album") as ScalarLinkField;
+    expect(model.fieldSpec(ROOT_ID, field).display).toEqual(["$id $title"]);
+  });
+
+  it("previews a newly saved record the way its siblings are", async () => {
+    const runDml = vi.fn(async () => ({
+      op0: { id: "c9", track: "t1", role: "Drums" },
+    }));
+    const saved = form([trackKey("t1")], {
+      runDml,
+      fieldMetadata: () => creditsCustom("$role"),
+    });
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    saved.start();
+    await settle();
+    saved.addChild(ROOT_ID, credits(saved));
+    await settle();
+    const created =
+      saved.store.getState().lists[CREDITS_LIST]?.childIds[0] ?? "";
+    saved.editValue(created, "role", "Drums");
+    runner.mockClear();
+    runner.mockResolvedValue([["Drums"]]);
+    await saved.save();
+    await settle();
+    expect(runner.mock.calls.at(-1)?.[0].display).toBe("$role");
+  });
+
+  it("opens an editor, and a multi-record field with it so its records show", async () => {
+    const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
+    const field = credits(model);
+    model.toggleField(ROOT_ID, field, false);
+    model.openEmbedEditor(ROOT_ID, field, "sorting");
+    const s = model.store.getState();
+    expect(selectEmbedEditorOpen(s, ROOT_ID, field.key, "sorting")).toBe(true);
+    expect(selectEmbedEditorOpen(s, ROOT_ID, field.key, "display")).toBe(false);
+    expect(s.expanded[fieldItemId(ROOT_ID, field.key)]).toBe(true);
+
+    model.closeEmbedEditor(ROOT_ID, field.key, "sorting");
+    expect(
+      selectEmbedEditorOpen(
+        model.store.getState(),
+        ROOT_ID,
+        field.key,
+        "sorting",
+      ),
+    ).toBe(false);
+  });
+
+  it("asks for the caret when an editor is opened, until it has it", async () => {
+    const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
+    const field = credits(model);
+    model.openEmbedEditor(ROOT_ID, field, "display");
+    const asked = () =>
+      selectEmbedEditorFocusAsked(
+        model.store.getState(),
+        ROOT_ID,
+        field.key,
+        "display",
+      );
+    expect(asked()).toBe(true);
+    model.noteEmbedEditorFocused();
+    expect(asked()).toBe(false);
+  });
+
+  it("doesn't open a field with no records to show", async () => {
+    const { model } = await listed([]);
+    const field = credits(model);
+    model.toggleField(ROOT_ID, field, false);
+    model.openEmbedEditor(ROOT_ID, field, "display");
+    expect(
+      model.store.getState().expanded[fieldItemId(ROOT_ID, field.key)],
+    ).toBe(false);
+  });
+
+  it("drops a pending refresh when it's disposed", async () => {
+    const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
+    runner.mockClear();
+    model.refreshEmbeds([{ table: "track", fieldKey: CREDITS_REF }]);
+    model.dispose();
+    await settle();
+    expect(runner).not.toHaveBeenCalled();
   });
 });
 

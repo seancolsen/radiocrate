@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { groupChildRows, type ChildRowLayout } from "./childGroups";
+import {
+  groupChildRows,
+  previewWidthOf,
+  type ChildRowLayout,
+} from "./childGroups";
 
 // The credits of one or more tracks, as `childRecordsQuery` returns them: the
 // key columns `(track, artist)`, then one preview column (`artist.name`), then
@@ -20,6 +24,18 @@ const credit = (
   order: string | null,
   role: string | null,
 ) => [track, artist, name, track, artist, order, role];
+
+describe("previewWidthOf", () => {
+  it("is what's left of a row after the keys and the columns", () => {
+    const row = ["k", "p1", "p2", "p3", "a", "b"];
+    expect(previewWidthOf(row, ["k"], ["a", "b"])).toBe(3);
+    expect(previewWidthOf(["k", "a", "b"], ["k"], ["a", "b"])).toBe(0);
+  });
+
+  it("is nothing with no row to read it off", () => {
+    expect(previewWidthOf(undefined, ["k"], ["a", "b"])).toBe(0);
+  });
+});
 
 describe("groupChildRows", () => {
   it("collapses records that differ only in the base record they hang off", () => {

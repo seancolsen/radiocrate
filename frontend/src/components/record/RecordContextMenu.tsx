@@ -23,8 +23,9 @@ import { fieldRef, type FormField } from "../../query/recordForm";
 // what its *kind* can do, an embedded record offers what can be done to the
 // record it previews. Every action here is ephemeral, like every other form
 // modification — nothing reaches the database until the form is saved. The one
-// exception is hiding a field, which is about the form and not about any record's
-// data: it applies at once, for every record of the table.
+// exceptions are hiding a field and writing Querydown for its embedded records,
+// which are about the form and not about any record's data: they apply at once,
+// for every record of the table.
 //
 // An entry the form can't carry out across several records at once is shown
 // grayed rather than dropped, so the menu says the same things wherever it's
@@ -92,6 +93,20 @@ function menuEntries(
         disabled: blocked,
         run: () => model.addChild(recordId, field),
       },
+      // A table with no record identity has its records counted, not listed, so
+      // there's no embedded record to customize.
+      {
+        icon: Icons.Display,
+        label: "Display",
+        disabled: field.keyColumns.length === 0,
+        run: () => model.openEmbedEditor(recordId, field, "display"),
+      },
+      {
+        icon: Icons.Sort,
+        label: "Sorting",
+        disabled: field.keyColumns.length === 0,
+        run: () => model.openEmbedEditor(recordId, field, "sorting"),
+      },
       {
         icon: Icons.Delete,
         danger: true,
@@ -114,6 +129,11 @@ function menuEntries(
         label: "Enter a new record",
         disabled: blocked,
         run: () => model.addLinkedRecord(recordId, field),
+      },
+      {
+        icon: Icons.Display,
+        label: "Display",
+        run: () => model.openEmbedEditor(recordId, field, "display"),
       },
       clear,
     ];

@@ -1580,6 +1580,8 @@ test("a multi-record field's menu adds and deletes records", async ({
   await rightClick(formItem(editor, "r:#credit"));
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "New record",
+    "Display",
+    "Sorting",
     "Delete all records",
     "Hide field",
   ]);
@@ -1608,6 +1610,7 @@ test("a scalar linked record field's menu enters a new record", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Pick a record",
     "Enter a new record",
+    "Display",
     "Clear",
     "Hide field",
   ]);

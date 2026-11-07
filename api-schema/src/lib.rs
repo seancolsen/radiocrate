@@ -278,7 +278,7 @@ pub struct MultiLink {
 
 /// One row of `metadata.field`: what the user has customized about one field of a
 /// table's record editor form. A field with no row is simply visible, in its
-/// default place.
+/// default place, with its embedded records as the form generates them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldMetadataRow {
@@ -286,6 +286,11 @@ pub struct FieldMetadataRow {
     pub field: FieldRef,
     pub visible: bool,
     pub order: Option<f64>,
+    /// Querydown for the display section of the query behind the field's embedded
+    /// records. `None` goes by what the form generates.
+    pub display: Option<String>,
+    /// Querydown for the sorting section of that query, likewise.
+    pub sorting: Option<String>,
 }
 
 /// Params for `metadata.field.set_visible`.
@@ -312,6 +317,26 @@ pub struct FieldOrder {
 pub struct MetadataFieldSetOrderParams {
     pub table_name: String,
     pub orders: Vec<FieldOrder>,
+}
+
+/// Params for `metadata.field.set_display`. `None` goes back to what the form
+/// generates.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataFieldSetDisplayParams {
+    pub table_name: String,
+    pub field: FieldRef,
+    pub display: Option<String>,
+}
+
+/// Params for `metadata.field.set_sorting`. `None` goes back to what the form
+/// generates.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataFieldSetSortingParams {
+    pub table_name: String,
+    pub field: FieldRef,
+    pub sorting: Option<String>,
 }
 
 /// One method in the RPC surface, as consumed by the client generator.
@@ -479,6 +504,18 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "metadata.field.set_display",
+        func: "metadataFieldSetDisplay",
+        params: Some("MetadataFieldSetDisplayParams"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.field.set_sorting",
+        func: "metadataFieldSetSorting",
+        params: Some("MetadataFieldSetSortingParams"),
+        result: "null",
+    },
+    Method {
         wire: "collection.rescan",
         func: "collectionRescan",
         params: None,
@@ -536,5 +573,7 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", MetadataFieldSetVisibleParams::decl(&cfg)),
         format!("export {}", FieldOrder::decl(&cfg)),
         format!("export {}", MetadataFieldSetOrderParams::decl(&cfg)),
+        format!("export {}", MetadataFieldSetDisplayParams::decl(&cfg)),
+        format!("export {}", MetadataFieldSetSortingParams::decl(&cfg)),
     ]
 }

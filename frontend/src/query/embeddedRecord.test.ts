@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  customizedSpec,
+  defaultEmbedSections,
   childRecordsQuery,
   childRecordsTabQuery,
   embeddedRecordQuery,
@@ -45,6 +47,50 @@ const TABLES: SchemaTable[] = [
     uniqueConstraints: [["id"]],
   },
 ];
+
+describe("customizedSpec", () => {
+  const spec = { display: ["$name", "$year"], sort: "\\\\name" };
+
+  it("is the spec itself when nothing is customized", () => {
+    expect(customizedSpec(spec, undefined)).toBe(spec);
+    expect(customizedSpec(spec, { display: null, sorting: null })).toBe(spec);
+  });
+
+  it("replaces only the sections the user wrote", () => {
+    expect(customizedSpec(spec, { display: "$a $b", sorting: null })).toEqual({
+      display: ["$a $b"],
+      sort: "\\\\name",
+    });
+    expect(customizedSpec(spec, { display: null, sorting: "\\\\a" })).toEqual({
+      display: ["$name", "$year"],
+      sort: "\\\\a",
+    });
+  });
+
+  it("takes blank text at its word, which is the key's to fill", () => {
+    expect(customizedSpec(spec, { display: "  ", sorting: "" })).toEqual({
+      display: [],
+      sort: "",
+    });
+  });
+});
+
+describe("defaultEmbedSections", () => {
+  it("is what the query runs when nothing is customized", () => {
+    expect(
+      defaultEmbedSections({ display: ["$a", "$b"], sort: "\\\\a" }, ["id"]),
+    ).toEqual({ display: "$a $b", sorting: "\\\\a" });
+  });
+
+  it("is the key when there's nothing generated to go by", () => {
+    expect(
+      defaultEmbedSections({ display: [], sort: "" }, ["track", "artist"]),
+    ).toEqual({
+      display: "$track $artist",
+      sorting: "\\\\track \\\\artist",
+    });
+  });
+});
 
 describe("embedSpec", () => {
   it("displays the top-scoring column, reaching through a foreign key for it", () => {
@@ -144,8 +190,19 @@ describe("preview queries", () => {
       // The identifying columns first — that's how each child is addressed —
       // then the preview, then every column: what decides which of the records
       // are the same record but for the parent they hang off.
-      display: "$track $artist $artist.name $track $artist $order $role",
+      display: "$track $artist $artist.name\n$track $artist $order $role",
     });
+  });
+
+  it("keeps a comment ending a user's display from swallowing the columns", () => {
+    expect(
+      childRecordsQuery(
+        creditField(),
+        ["t1"],
+        { display: ["$role // who did what"], sort: "" },
+        columnsOf("credit"),
+      ).display,
+    ).toBe("$track $artist $role // who did what\n$track $artist $order $role");
   });
 
   it("lists the records of every record the form is on, in one query", () => {
@@ -173,7 +230,7 @@ describe("preview queries", () => {
       base: "credit",
       filter: `track:="t1"`,
       sort: "\\\\track \\\\artist",
-      display: "$track $artist $track $artist $order $role",
+      display: "$track $artist\n$track $artist $order $role",
     });
   });
 

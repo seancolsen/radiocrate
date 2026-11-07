@@ -38,7 +38,7 @@
 // writes the DML request that puts it in the database, and what comes back
 // becomes the new baseline (`applySave`).
 
-import { castDraft } from "immer";
+import { castDraft, type Draft } from "immer";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
@@ -50,6 +50,7 @@ import {
 } from "../../query/schema";
 import {
   buildFormFields,
+  fieldRef,
   keySignature,
   recordDataQuery,
   type FormField,
@@ -63,13 +64,28 @@ import { isShared, VARIED, type ColumnValues } from "../../record/formValues";
 import {
   childRecordsQuery,
   childRecordsTabQuery,
+  customizedSpec,
   embeddedRecordQuery,
   embedSpec,
   type EmbedSpec,
 } from "../../query/embeddedRecord";
-import { runRecordQuery } from "../../query/recordData";
+import {
+  fieldRefKey,
+  type EmbedChange,
+  type EmbedSection,
+  type MetadataByTable,
+} from "../../query/fieldMetadata";
+import {
+  isCompileError,
+  runRecordQuery,
+  type RecordRows,
+} from "../../query/recordData";
 import { childRecordsTabName, recordDescriptor } from "../../query/tabNames";
-import { groupChildRows } from "../../record/childGroups";
+import {
+  groupChildRows,
+  previewWidthOf,
+  type ChildGroup,
+} from "../../record/childGroups";
 import {
   focusAdjacentItem,
   focusItem,
@@ -79,6 +95,7 @@ import {
   childId,
   deletedChildId,
   distinctItemId,
+  embedEditorId,
   fieldItemId,
   listId,
   newChildId,
@@ -92,6 +109,7 @@ import type { RecordFormSummary } from "../forms";
 import {
   distinctValues,
   selectBeyondBulk,
+  selectCountMax,
   selectFieldOf,
   selectFormSummary,
   selectSharedValue,
@@ -130,6 +148,10 @@ export interface RecordFormOptions {
    * page opens them in a new query tab. Without it, a multi-record field has
    * nowhere to open its records. */
   openRecords?: (query: RecordQuery, name: string) => void;
+  /** What the user has customized about each table's fields, as it stands now —
+   * read whenever embedded records are fetched, and absent to go by what the form
+   * generates. A change reaches the form through `refreshEmbeds`. */
+  fieldMetadata?: () => MetadataByTable;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -140,9 +162,35 @@ export interface RecordFormActions {
    * in place. */
   clearSaveError: () => void;
 
-  /** The preview columns (and their ordering) generated for one table — what the
-   * record picker's display and sort builders open pre-filled with. */
+  /** The preview columns (and their ordering) generated for one table, whatever
+   * has been customized — what a field's Querydown editors open with. */
   previewSpec: (table: string, contextColumn?: string) => EmbedSpec;
+  /** What a field's embedded records show and how they're sorted, its
+   * customization included — what the record picker's display and sort builders
+   * open pre-filled with. */
+  fieldSpec: (
+    recordId: string,
+    field: ScalarLinkField | MultiRecordField,
+  ) => EmbedSpec;
+  /** Re-fetches the embedded records of these fields wherever the form shows them,
+   * once they've stopped changing. What's on screen stays until the answer lands,
+   * and the form's edits, expansion and selection are left as they are. */
+  refreshEmbeds: (changes: readonly EmbedChange[]) => void;
+  /** Opens the editor for the Querydown behind a part of a field's embedded
+   * records, under the field's row. A multi-record field opens too, so its records
+   * are there to watch change. */
+  openEmbedEditor: (
+    recordId: string,
+    field: ScalarLinkField | MultiRecordField,
+    section: EmbedSection,
+  ) => void;
+  closeEmbedEditor: (
+    recordId: string,
+    fieldKey: string,
+    section: EmbedSection,
+  ) => void;
+  /** The editor that was asked for has the caret now. */
+  noteEmbedEditorFocused: () => void;
 
   /** The form's root element, set once it's rendered — how the model reaches the
    * DOM to move focus. */
@@ -349,6 +397,32 @@ export interface RecordFormModel extends RecordFormActions {
   dispose: () => void;
 }
 
+/** How long the Querydown behind a field's embedded records settles before they're
+ * re-fetched: what the query page gives its own builder text. */
+const EMBED_REFRESH_DEBOUNCE_MS = 300;
+
+/** Where the parts of a `childRecordsQuery` row are, read off what came back. */
+function childRowLayout(
+  field: MultiRecordField,
+  rows: RecordRows,
+  columns: readonly string[],
+) {
+  return {
+    keyColumns: field.keyColumns,
+    previewWidth: previewWidthOf(rows[0], field.keyColumns, columns),
+    columns,
+    linkColumn: field.column,
+  };
+}
+
+/** What a row of a multi-record field shows. With no preview columns to be had,
+ * the key stands in for them. */
+function previewCells(group: ChildGroup): readonly (string | null)[] {
+  return group.cells.length > 0
+    ? group.cells
+    : (group.keys[0] ?? []).map((p) => p.value);
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -438,6 +512,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   /** Where a Shift+Click range starts. */
   let anchor: string | null = null;
 
+  /** The pending `refreshEmbeds` of each field being edited. */
+  const embedRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+
   /** The preview columns for a table are the same every time, so the (pure)
    * generation runs once per table + contextual filter. */
   const specs = new Map<string, EmbedSpec>();
@@ -450,6 +527,29 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
     return spec;
   };
+
+  /** A field's spec as generated: a multi-record field's records all point at the
+   * one record, which is the context they're previewed in. */
+  const generatedSpec = (
+    field: ScalarLinkField | MultiRecordField,
+  ): EmbedSpec =>
+    specFor(
+      field.table,
+      field.kind === "multiRecord" ? field.column : undefined,
+    );
+
+  /** A field's spec as the user has customized it. Customization belongs to the
+   * table the field is on, so every form on that table agrees. */
+  const fieldSpec = (
+    recordId: string,
+    field: ScalarLinkField | MultiRecordField,
+  ): EmbedSpec =>
+    customizedSpec(
+      generatedSpec(field),
+      opts.fieldMetadata?.()[get().records[recordId]?.table ?? ""]?.[
+        fieldRefKey(fieldRef(field))
+      ],
+    );
 
   // ── Writes ─────────────────────────────────────────────────────────────────
   //
@@ -719,9 +819,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
    * field's children come with their previews already attached), and for a
    * record that has just been saved into either.
    *
-   * `contextColumn` is the column a multi-record field filters its children on,
-   * which the preview leaves out — passing it keeps a freshly saved record
-   * looking like the siblings it sits among.
+   * `spec` is that of the field the record is in — which is what keeps a freshly
+   * saved record looking like the siblings it sits among.
    *
    * With no preview columns to be had, the key stands in for them rather than
    * leaving the widget blank. */
@@ -729,10 +828,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     id: string,
     table: string,
     key: RecordKey,
-    contextColumn?: string,
+    spec: EmbedSpec,
   ) => {
     const keyCells = key.map((p) => p.value);
-    const spec = specFor(table, contextColumn);
     if (spec.display.length === 0) {
       setEmbed(id, { status: "loaded", cells: keyCells });
       return;
@@ -768,7 +866,12 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       if (!isShared(value) || value == null || value === "") continue;
       const id = scalarChildId(recordId, field.key);
       if (s.embeds[id]) continue;
-      void loadEmbed(id, field.table, [{ column: field.keyColumn, value }]);
+      void loadEmbed(
+        id,
+        field.table,
+        [{ column: field.keyColumn, value }],
+        fieldSpec(recordId, field),
+      );
     }
   };
 
@@ -837,6 +940,57 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
   };
 
+  /** The rows behind a multi-record field. Those of a field whose customization
+   * won't run — the schema has moved on, or it was saved half-written — are fetched
+   * as generated instead, since the list is the only way to its records: the
+   * editor it was written in is where that shows. */
+  const fetchChildRows = async (
+    field: MultiRecordField,
+    parents: readonly string[],
+    spec: EmbedSpec,
+    columns: readonly string[],
+  ): Promise<RecordRows> => {
+    const run = (s: EmbedSpec) =>
+      runRecordQuery(
+        childRecordsQuery(field, parents, s, columns),
+        opts.schemaJson,
+      );
+    try {
+      return await run(spec);
+    } catch (err) {
+      const generated = generatedSpec(field);
+      if (spec === generated) throw err;
+      console.error("customized child records failed", errorMessage(err));
+      return run(generated);
+    }
+  };
+
+  /** Makes the node and preview of one row of a multi-record field, within a
+   * write. The column tying each of the row's records to its own base record is
+   * hidden inside the child's own form (spec: "Progressive expansion"), so nothing
+   * will ever load it — and the row needs it, to say how many records each base
+   * record has. It's seeded from the load instead. */
+  const writeChild = (
+    s: Draft<FormState>,
+    child: string,
+    field: MultiRecordField,
+    group: ChildGroup,
+  ) => {
+    const node = recordNode(
+      field.table,
+      group.keys,
+      [field.column],
+      "unloaded",
+    );
+    node.values[field.column] = [...group.links];
+    node.original[field.column] = [...group.links];
+    s.records[child] = castDraft(node);
+    s.embeds[child] = castDraft({
+      status: "loaded",
+      cells: previewCells(group),
+    });
+  };
+
   /** Loads the records behind a multi-record field: one query for all of them,
    * across every base record the form is on, carrying each record's key, the
    * preview its embedded record shows and every column of its table — so the
@@ -855,44 +1009,21 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     tokens.set(id, token);
     patchList(id, { status: "loading", error: null });
     try {
-      const spec = specFor(field.table, field.column);
       const columns = columnsOf(field.table);
-      const rows = await runRecordQuery(
-        childRecordsQuery(field, parents, spec, columns),
-        opts.schemaJson,
+      const rows = await fetchChildRows(
+        field,
+        parents,
+        fieldSpec(recordId, field),
+        columns,
       );
       if (tokens.get(id) !== token) return;
-      const groups = groupChildRows(rows, {
-        keyColumns: field.keyColumns,
-        previewWidth: spec.display.length,
-        columns,
-        linkColumn: field.column,
-      });
+      const groups = groupChildRows(rows, childRowLayout(field, rows, columns));
       // One write for the whole list, rather than one per row.
       set((s) => {
         const childIds: string[] = [];
         groups.forEach((group, index) => {
           const child = childId(id, index);
-          // The column tying each of a row's records to its own base record is
-          // hidden inside the child's own form (spec: "Progressive expansion"),
-          // so nothing will ever load it — and the row needs it, to say how many
-          // records each base record has. It's seeded from the load instead.
-          const node = recordNode(
-            field.table,
-            group.keys,
-            [field.column],
-            "unloaded",
-          );
-          node.values[field.column] = [...group.links];
-          node.original[field.column] = [...group.links];
-          s.records[child] = castDraft(node);
-          s.embeds[child] = castDraft({
-            status: "loaded",
-            cells:
-              group.cells.length > 0
-                ? group.cells
-                : (group.keys[0] ?? []).map((p) => p.value),
-          });
+          writeChild(s, child, field, group);
           childIds.push(child);
         });
         const list = s.lists[id];
@@ -913,6 +1044,172 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       if (tokens.get(id) !== token) return;
       patchList(id, { status: "error", error: errorMessage(err) });
     }
+  };
+
+  /** Applies a change to what a multi-record field's records show, or the order
+   * they show in, to a list already on screen. Those rows may be holding edits, an
+   * expansion or a selection, and all of that is keyed on their ids, so the rows
+   * keep their ids and take on their new previews and places: a reload would hand
+   * them out afresh, by position.
+   *
+   * A record the user has removed stays removed, and one they're creating stays at
+   * the top. One the query didn't find, deleted elsewhere since it was listed, stays
+   * at the bottom, in case it's holding edits. One the list hadn't heard of takes a
+   * new row. */
+  const refreshChildren = async (
+    recordId: string,
+    field: MultiRecordField,
+    parents: readonly string[],
+  ) => {
+    const id = listId(recordId, field.key);
+    const token = ++tokenSeq;
+    tokens.set(id, token);
+    const columns = columnsOf(field.table);
+    const rows = await runRecordQuery(
+      childRecordsQuery(field, parents, fieldSpec(recordId, field), columns),
+      opts.schemaJson,
+    );
+    if (tokens.get(id) !== token) return;
+    const groups = groupChildRows(rows, childRowLayout(field, rows, columns));
+    set((s) => {
+      const list = s.lists[id];
+      if (!list) return;
+      const signatureOf = (key: RecordKey | undefined) =>
+        keySignature((key ?? []).map((part) => part.value));
+      const held = new Map<string, string>();
+      for (const child of list.childIds) {
+        for (const key of s.records[child]?.keys ?? []) {
+          held.set(signatureOf(key), child);
+        }
+      }
+      const removed = new Set(
+        list.removed.flatMap((child) =>
+          (s.records[child]?.keys ?? []).map((key) => signatureOf(key)),
+        ),
+      );
+      let next = list.childIds.length;
+      const placed: string[] = [];
+      for (const group of groups) {
+        const signature = signatureOf(group.keys[0]);
+        if (removed.has(signature)) continue;
+        let child = held.get(signature);
+        if (child !== undefined) {
+          s.embeds[child] = castDraft({
+            status: "loaded",
+            cells: previewCells(group),
+          });
+        } else {
+          while (s.records[childId(id, next)]) next++;
+          child = childId(id, next);
+          writeChild(s, child, field, group);
+        }
+        placed.push(child);
+      }
+      list.childIds = [
+        ...list.childIds.filter((child) => s.records[child]?.isNew),
+        ...placed,
+        ...list.childIds.filter(
+          (child) => !s.records[child]?.isNew && !placed.includes(child),
+        ),
+      ];
+    });
+    recountField(recordId, field);
+  };
+
+  /** Applies a change to what a scalar linked record field shows: to the embedded
+   * record it has, or, when its records disagree, the one each value has. */
+  const refreshScalarEmbeds = async (
+    recordId: string,
+    field: ScalarLinkField,
+  ) => {
+    const s = get();
+    const shared = selectSharedValue(s, recordId, field.column);
+    const values = isShared(shared)
+      ? [shared]
+      : distinctValues(s.records[recordId]?.values[field.column]).map(
+          ({ value }) => value,
+        );
+    const spec = fieldSpec(recordId, field);
+    await Promise.all(
+      values.flatMap((value) => {
+        if (value == null || value === "") return [];
+        const id = isShared(shared)
+          ? scalarChildId(recordId, field.key)
+          : variedChildId(recordId, field.key, value);
+        // A record being created has no values to preview, nor any to fetch.
+        if (!s.embeds[id] || s.records[id]?.isNew) return [];
+        return [refreshEmbed(id, field.table, field.keyColumn, value, spec)];
+      }),
+    );
+  };
+
+  /** Re-fetches one embedded record, leaving what it shows in place until the
+   * answer lands. A failure is left for the caller to report, and what's there
+   * stays on screen — unless nothing is, when the key stands in. */
+  const refreshEmbed = async (
+    id: string,
+    table: string,
+    keyColumn: string,
+    value: string,
+    spec: EmbedSpec,
+  ) => {
+    const token = ++tokenSeq;
+    tokens.set(id, token);
+    const key = [{ column: keyColumn, value }];
+    if (spec.display.length === 0) {
+      setEmbed(id, { status: "loaded", cells: [value] });
+      return;
+    }
+    try {
+      const rows = await runRecordQuery(
+        embeddedRecordQuery(table, key, spec),
+        opts.schemaJson,
+      );
+      if (tokens.get(id) !== token) return;
+      setEmbed(id, { status: "loaded", cells: rows[0] ?? [value] });
+    } catch (err) {
+      if (tokens.get(id) !== token) return;
+      if (get().embeds[id]?.status !== "loaded") {
+        setEmbed(id, { status: "error", cells: [value] });
+      }
+      throw err;
+    }
+  };
+
+  /** Brings one field's embedded records into line with its customization, noting
+   * whether the database took it. Querydown that won't compile is no news: the
+   * editor it's being written in is already saying so. */
+  const refreshField = async (
+    recordId: string,
+    field: ScalarLinkField | MultiRecordField,
+  ) => {
+    const itemId = fieldItemId(recordId, field.key);
+    const token = ++tokenSeq;
+    tokens.set(itemId, token);
+    let error: string | null = null;
+    try {
+      if (field.kind === "scalarLink") {
+        await refreshScalarEmbeds(recordId, field);
+      } else {
+        const list = get().lists[listId(recordId, field.key)];
+        const parents = parentValues(recordId);
+        if (list && parents.length > 0) {
+          // A list with nothing on screen yet has nothing to keep.
+          if (list.status === "loaded") {
+            await refreshChildren(recordId, field, parents);
+          } else {
+            await loadChildren(recordId, field, parents);
+          }
+        }
+      }
+    } catch (err) {
+      if (!isCompileError(err)) error = errorMessage(err);
+    }
+    if (tokens.get(itemId) !== token) return;
+    set((s) => {
+      if (error === null) delete s.embedErrors[itemId];
+      else s.embedErrors[itemId] = error;
+    });
   };
 
   /** Creates and loads the record behind a scalar linked record field, once. The
@@ -951,7 +1248,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       if (!get().records[id]) {
         addRecord(id, field.table, [key], [], "unloaded");
       }
-      if (!get().embeds[id]) void loadEmbed(id, field.table, key);
+      if (!get().embeds[id]) {
+        void loadEmbed(id, field.table, key, fieldSpec(recordId, field));
+      }
     }
   };
 
@@ -1140,6 +1439,23 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       }
     });
 
+  /** The spec of the field a record sits in: the scalar linked record field that
+   * points at it, or the multi-record field that lists it. */
+  const specOfRecord = (id: string, node: RecordNode): EmbedSpec => {
+    const s = get();
+    for (const [parentId, parent] of Object.entries(s.records)) {
+      for (const field of parent.fields) {
+        if (field.kind === "primitive") continue;
+        const holds =
+          field.kind === "scalarLink"
+            ? scalarChildId(parentId, field.key) === id
+            : s.lists[listId(parentId, field.key)]?.childIds.includes(id);
+        if (holds) return fieldSpec(parentId, field);
+      }
+    }
+    return specFor(node.table, node.hidden[0]);
+  };
+
   const applySave = (plan: SavePlan, result: DmlResult) => {
     for (const [opId, target] of plan.saved) {
       applyRow(target.recordId, target.index, result[opId]);
@@ -1161,7 +1477,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const node = get().records[recordId];
       const key = node?.keys[0];
       if (node && key && key.length > 0) {
-        void loadEmbed(recordId, node.table, key, node.hidden[0]);
+        void loadEmbed(recordId, node.table, key, specOfRecord(recordId, node));
       }
     }
     set((s) => {
@@ -1313,6 +1629,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     },
     getSummary: () => selectFormSummary(get()),
     dispose: () => {
+      for (const timer of embedRefreshes.values()) clearTimeout(timer);
+      embedRefreshes.clear();
       tokens.clear();
       items.clear();
       root = undefined;
@@ -1324,6 +1642,53 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       }),
 
     previewSpec: specFor,
+    fieldSpec,
+
+    refreshEmbeds: (changes) => {
+      for (const { table, fieldKey } of changes) {
+        const key = `${table}\n${fieldKey}`;
+        clearTimeout(embedRefreshes.get(key));
+        embedRefreshes.set(
+          key,
+          setTimeout(() => {
+            embedRefreshes.delete(key);
+            for (const [recordId, node] of Object.entries(get().records)) {
+              if (node.table !== table) continue;
+              for (const field of node.fields) {
+                if (
+                  field.kind !== "primitive" &&
+                  fieldRefKey(fieldRef(field)) === fieldKey
+                ) {
+                  void refreshField(recordId, field);
+                }
+              }
+            }
+          }, EMBED_REFRESH_DEBOUNCE_MS),
+        );
+      }
+    },
+
+    openEmbedEditor: (recordId, field, section) => {
+      const id = embedEditorId(recordId, field.key, section);
+      set((s) => {
+        s.embedEditors[id] = true;
+        s.embedEditorFocus = id;
+      });
+      if (
+        field.kind === "multiRecord" &&
+        (selectCountMax(get(), recordId, field.key) ?? 0) > 0
+      ) {
+        model.toggleField(recordId, field, true);
+      }
+    },
+    closeEmbedEditor: (recordId, fieldKey, section) =>
+      set((s) => {
+        delete s.embedEditors[embedEditorId(recordId, fieldKey, section)];
+      }),
+    noteEmbedEditorFocused: () =>
+      set((s) => {
+        s.embedEditorFocus = null;
+      }),
 
     setRoot: (el) => {
       root = el;
@@ -1597,11 +1962,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
             )
           : undefined;
       opts.openRecords?.(
-        childRecordsTabQuery(
-          field,
-          parents,
-          specFor(field.table, field.column),
-        ),
+        childRecordsTabQuery(field, parents, fieldSpec(recordId, field)),
         childRecordsTabName(field.table, descriptor),
       );
     },

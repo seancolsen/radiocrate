@@ -31,6 +31,8 @@ vi.mock("api-client", async (importOriginal) => {
     metadataFieldList: vi.fn(() => Promise.resolve([])),
     metadataFieldSetVisible: vi.fn(() => Promise.resolve(null)),
     metadataFieldSetOrder: vi.fn(() => Promise.resolve(null)),
+    metadataFieldSetDisplay: vi.fn(() => Promise.resolve(null)),
+    metadataFieldSetSorting: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
     folderAdd: vi.fn(() => Promise.resolve(null)),
@@ -107,6 +109,8 @@ import {
   collectionRescan,
   metadataFieldList,
   metadataFieldSetOrder,
+  metadataFieldSetDisplay,
+  metadataFieldSetSorting,
   metadataFieldSetVisible,
   type FieldRef,
   dml,
@@ -140,7 +144,7 @@ import { analyzeColumnSources, recordKeyColumns } from "../../query/lineage";
 import { buildResultFromArrow } from "../../query/result";
 import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
-import { fieldRefKey } from "../../query/fieldMetadata";
+import { defaultFieldMetadata, fieldRefKey } from "../../query/fieldMetadata";
 import { buildFormFields, fieldRef } from "../../query/recordForm";
 import {
   selectCanConvertToPlaylist,
@@ -155,6 +159,7 @@ import {
   selectQueryTab,
   selectRowContext,
   selectSortApplied,
+  selectFieldQuerydown,
   selectTableMetadata,
 } from "./selectors";
 
@@ -4135,12 +4140,19 @@ describe("field metadata", () => {
     vi.mocked(metadataFieldList).mockClear();
     vi.mocked(metadataFieldSetVisible).mockClear();
     vi.mocked(metadataFieldSetOrder).mockClear();
+    vi.mocked(metadataFieldSetDisplay).mockClear();
+    vi.mocked(metadataFieldSetSorting).mockClear();
     bundle = createAppStore(fakeEnv());
     bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
   });
   afterEach(() => bundle.dispose());
   const state = () => bundle.store.getState();
   const metadata = (table: string) => selectTableMetadata(state(), table);
+  const fieldMeta = (visible: boolean, order: number | null) => ({
+    ...defaultFieldMetadata(),
+    visible,
+    order,
+  });
   const TITLE: FieldRef = { columnName: "title" };
   const entry = (table: string, field: FieldRef) =>
     metadata(table)[fieldRefKey(field)];
@@ -4151,12 +4163,96 @@ describe("field metadata", () => {
 
   it("loads rows by table and field", async () => {
     vi.mocked(metadataFieldList).mockResolvedValueOnce([
-      { tableName: "track", field: TITLE, visible: false, order: 2 },
+      {
+        tableName: "track",
+        field: TITLE,
+        visible: false,
+        order: 2,
+        display: "$a",
+        sorting: null,
+      },
     ]);
     await bundle.actions.loadFieldMetadata();
     expect(state().fieldMetadata.status).toBe("ready");
     expect(metadata("track")).toEqual({
-      [fieldRefKey(TITLE)]: { visible: false, order: 2 },
+      [fieldRefKey(TITLE)]: { ...fieldMeta(false, 2), display: "$a" },
+    });
+  });
+
+  describe("the Querydown behind a field's embedded records", () => {
+    const IDLE = 5000;
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("shows at once, and writes the last of a burst once the app goes quiet", async () => {
+      const { setFieldQuerydown } = bundle.actions;
+      setFieldQuerydown("track", TITLE, "display", "$a");
+      setFieldQuerydown("track", TITLE, "display", "$a $b");
+      expect(selectFieldQuerydown(state(), "track", TITLE, "display")).toBe(
+        "$a $b",
+      );
+      await vi.advanceTimersByTimeAsync(IDLE - 1);
+      expect(metadataFieldSetDisplay).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledWith({
+        tableName: "track",
+        field: TITLE,
+        display: "$a $b",
+      });
+    });
+
+    it("keeps a field's display and sorting apart, and the rest of its row", async () => {
+      bundle.actions.setFieldHidden("track", TITLE, true);
+      bundle.actions.setFieldQuerydown("track", TITLE, "display", "$a");
+      bundle.actions.setFieldQuerydown("track", TITLE, "sorting", "\\\\a");
+      expect(entry("track", TITLE)).toEqual({
+        ...fieldMeta(false, null),
+        display: "$a",
+        sorting: "\\\\a",
+      });
+      await vi.advanceTimersByTimeAsync(IDLE);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
+      expect(metadataFieldSetSorting).toHaveBeenCalledWith({
+        tableName: "track",
+        field: TITLE,
+        sorting: "\\\\a",
+      });
+    });
+
+    it("sends what's held back when the user leaves the editor", async () => {
+      bundle.actions.setFieldQuerydown("track", TITLE, "display", "$a");
+      bundle.actions.flushFieldQuerydown("track", TITLE, "display");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
+    });
+
+    it("restores the default straight away, ahead of any edit held back", async () => {
+      bundle.actions.setFieldQuerydown("track", TITLE, "display", "$a");
+      bundle.actions.setFieldQuerydown("track", TITLE, "display", null);
+      expect(
+        selectFieldQuerydown(state(), "track", TITLE, "display"),
+      ).toBeNull();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
+      expect(metadataFieldSetDisplay).toHaveBeenCalledWith({
+        tableName: "track",
+        field: TITLE,
+        display: null,
+      });
+    });
+
+    it("puts back what's stored when a write fails", async () => {
+      vi.mocked(metadataFieldSetDisplay).mockRejectedValueOnce(new Error("no"));
+      vi.mocked(metadataFieldList).mockResolvedValueOnce([]);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      bundle.actions.setFieldQuerydown("track", TITLE, "display", "$a");
+      bundle.actions.flushFieldQuerydown("track", TITLE, "display");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        selectFieldQuerydown(state(), "track", TITLE, "display"),
+      ).toBeNull();
+      error.mockRestore();
     });
   });
 
@@ -4171,7 +4267,7 @@ describe("field metadata", () => {
 
   it("hides and un-hides a field at once, then writes it", async () => {
     bundle.actions.setFieldHidden("track", TITLE, true);
-    expect(entry("track", TITLE)).toEqual({ visible: false, order: null });
+    expect(entry("track", TITLE)).toEqual(fieldMeta(false, null));
     await settle();
     expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
       tableName: "track",
@@ -4180,7 +4276,7 @@ describe("field metadata", () => {
     });
 
     bundle.actions.setFieldHidden("track", TITLE, false);
-    expect(entry("track", TITLE)).toEqual({ visible: true, order: null });
+    expect(entry("track", TITLE)).toEqual(fieldMeta(true, null));
     await settle();
     expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
       tableName: "track",
@@ -4225,7 +4321,7 @@ describe("field metadata", () => {
     );
     const expected = [second, first, ...refs.slice(2)];
     expected.forEach((field, i) =>
-      expect(entry("album", field)).toEqual({ visible: true, order: i + 1 }),
+      expect(entry("album", field)).toEqual(fieldMeta(true, i + 1)),
     );
     await settle();
     expect(metadataFieldSetOrder).toHaveBeenLastCalledWith({
@@ -4257,7 +4353,7 @@ describe("field metadata", () => {
     const [first, second] = albumFields();
     bundle.actions.setFieldHidden("album", second, true);
     bundle.actions.moveField("album", second, undefined, first);
-    expect(entry("album", second)).toEqual({ visible: false, order: 1 });
+    expect(entry("album", second)).toEqual(fieldMeta(false, 1));
   });
 
   it("writes nothing for a move that goes nowhere", async () => {

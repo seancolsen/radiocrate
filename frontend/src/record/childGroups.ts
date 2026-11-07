@@ -37,6 +37,17 @@ export interface ChildRowLayout {
   linkColumn: string;
 }
 
+/** How many preview columns a `childRecordsQuery` row holds: what's left of it
+ * after the keys and the columns. Read off the row, because only the compiler
+ * knows how many columns the Querydown a user wrote asks for. */
+export function previewWidthOf(
+  row: readonly unknown[] | undefined,
+  keyColumns: readonly string[],
+  columns: readonly string[],
+): number {
+  return Math.max(0, (row?.length ?? 0) - keyColumns.length - columns.length);
+}
+
 /** One row of a multi-record field: the records it stands for, what it shows,
  * and which base record each of those records belongs to. */
 export interface ChildGroup {

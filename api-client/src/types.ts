@@ -85,10 +85,23 @@ export type FieldRef = { "columnName": string } | { "multiLink": MultiLink };
 
 export type MultiLink = { relatedTableName: string, fkColumnName: string, };
 
-export type FieldMetadataRow = { tableName: string, field: FieldRef, visible: boolean, order: number | null, };
+export type FieldMetadataRow = { tableName: string, field: FieldRef, visible: boolean, order: number | null, 
+/**
+ * Querydown for the display section of the query behind the field's embedded
+ * records. `None` goes by what the form generates.
+ */
+display: string | null, 
+/**
+ * Querydown for the sorting section of that query, likewise.
+ */
+sorting: string | null, };
 
 export type MetadataFieldSetVisibleParams = { tableName: string, field: FieldRef, visible: boolean, };
 
 export type FieldOrder = { field: FieldRef, order: number, };
 
 export type MetadataFieldSetOrderParams = { tableName: string, orders: Array<FieldOrder>, };
+
+export type MetadataFieldSetDisplayParams = { tableName: string, field: FieldRef, display: string | null, };
+
+export type MetadataFieldSetSortingParams = { tableName: string, field: FieldRef, sorting: string | null, };

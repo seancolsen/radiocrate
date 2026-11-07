@@ -7,13 +7,18 @@
 // `selectFormSummary`, which builds a fresh object (state management rule 2) —
 // the forms store compares it shallowly, and nothing renders from it directly.
 
-import { isFieldHidden, type MetadataByTable } from "../../query/fieldMetadata";
+import {
+  isFieldHidden,
+  type EmbedSection,
+  type MetadataByTable,
+} from "../../query/fieldMetadata";
 import {
   fieldRef,
   type FormField,
   type ScalarLinkField,
 } from "../../query/recordForm";
 import {
+  embedEditorId,
   fieldItemId,
   listId,
   ROOT_ID,
@@ -45,6 +50,24 @@ export const selectRecord = (
 /** A child list by id, likewise. */
 export const selectList = (s: FormState, id: string): ListNode | undefined =>
   s.lists[id];
+
+/** Whether a field's Querydown editor for `section` is open. */
+export const selectEmbedEditorOpen = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+  section: EmbedSection,
+): boolean =>
+  s.embedEditors[embedEditorId(recordId, fieldKey, section)] === true;
+
+/** Whether a field's Querydown editor for `section` has been asked to take the
+ * caret. */
+export const selectEmbedEditorFocusAsked = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+  section: EmbedSection,
+): boolean => s.embedEditorFocus === embedEditorId(recordId, fieldKey, section);
 
 /** An embedded record's preview by id, likewise. */
 export const selectEmbed = (s: FormState, id: string): EmbedNode | undefined =>

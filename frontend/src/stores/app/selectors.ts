@@ -1,4 +1,4 @@
-import type { Preset, Source, SourceKind } from "api-client";
+import type { FieldRef, Preset, Source, SourceKind } from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
 import {
   defsEqual,
@@ -15,6 +15,8 @@ import {
 import { resultToCsv } from "../../query/exportCsv";
 import {
   NO_TABLE_METADATA,
+  fieldRefKey,
+  type EmbedSection,
   type TableMetadata,
 } from "../../query/fieldMetadata";
 import { rowEntry } from "../../query/playlistEntries";
@@ -405,6 +407,16 @@ export function selectRecordGroupsForRows(
     rows,
   );
 }
+
+/** The Querydown the user has written for a part of a field's embedded records,
+ * or null when it goes by what the form generates. */
+export const selectFieldQuerydown = (
+  s: AppState,
+  table: string,
+  field: FieldRef,
+  section: EmbedSection,
+): string | null =>
+  s.fieldMetadata.data[table]?.[fieldRefKey(field)]?.[section] ?? null;
 
 /** The customized fields of `table`, or a shared empty object for a table with
  * none. */

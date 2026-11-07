@@ -3,8 +3,9 @@
 // rest of `query/`: the app store holds this, and the form renders through it.
 //
 // A field with no row behaves as it does in a database that has never been
-// customized: visible, and in its default place. A row can also name a field that
-// no longer exists, which nothing here ever asks about.
+// customized: visible, in its default place, with its embedded records as the form
+// generates them. A row can also name a field that no longer exists, which nothing
+// here ever asks about.
 
 import type { FieldMetadataRow, FieldOrder, FieldRef } from "api-client";
 import { dropPositions } from "./playlistEntries";
@@ -15,6 +16,19 @@ export interface FieldMetadata {
   visible: boolean;
   /** The field's sort key, or null until its table's fields are rearranged. */
   order: number | null;
+  /** Querydown for the display section of the query behind the field's embedded
+   * records, or null to go by what the form generates. */
+  display: string | null;
+  /** Querydown for that query's sorting section, likewise. */
+  sorting: string | null;
+}
+
+/** The two parts of a field's embedded records the user can write Querydown for. */
+export type EmbedSection = "display" | "sorting";
+
+/** A field nothing has been customized about yet. */
+export function defaultFieldMetadata(): FieldMetadata {
+  return { visible: true, order: null, display: null, sorting: null };
 }
 
 /** A table's customized fields, by {@link fieldRefKey}. */
@@ -43,10 +57,47 @@ export function groupFieldMetadata(
   rows: readonly FieldMetadataRow[],
 ): MetadataByTable {
   const tables: Record<string, Record<string, FieldMetadata>> = {};
-  for (const { tableName, field, visible, order } of rows) {
-    (tables[tableName] ??= {})[fieldRefKey(field)] = { visible, order };
+  for (const { tableName, field, ...metadata } of rows) {
+    (tables[tableName] ??= {})[fieldRefKey(field)] = metadata;
   }
   return tables;
+}
+
+/** One field whose embedded records no longer say what they said. */
+export interface EmbedChange {
+  table: string;
+  /** The field, by {@link fieldRefKey}. */
+  fieldKey: string;
+}
+
+/** The fields whose display or sorting differs between `previous` and `next`. A
+ * table holding the same reference is passed over, which is nearly all of them,
+ * since a write replaces only its own path. */
+export function embedChanges(
+  previous: MetadataByTable,
+  next: MetadataByTable,
+): EmbedChange[] {
+  const changes: EmbedChange[] = [];
+  for (const table of new Set([
+    ...Object.keys(previous),
+    ...Object.keys(next),
+  ])) {
+    const [before, after] = [previous[table], next[table]];
+    if (before === after) continue;
+    for (const fieldKey of new Set([
+      ...Object.keys(before ?? {}),
+      ...Object.keys(after ?? {}),
+    ])) {
+      const [a, b] = [before?.[fieldKey], after?.[fieldKey]];
+      if (
+        (a?.display ?? null) !== (b?.display ?? null) ||
+        (a?.sorting ?? null) !== (b?.sorting ?? null)
+      ) {
+        changes.push({ table, fieldKey });
+      }
+    }
+  }
+  return changes;
 }
 
 export function isFieldHidden(
