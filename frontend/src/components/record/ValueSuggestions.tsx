@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
+import Pager from "../ui/Pager";
 import LoadingRegion from "../ui/LoadingRegion";
 import { MENU_PANEL_CLASS } from "../ui/Menu";
 import { cx } from "../ui/cx";
@@ -19,7 +20,6 @@ import { usePlacement } from "../ui/useMenu";
 import {
   movePage,
   moveHighlight,
-  pageCount,
   START_CURSOR,
   SUGGESTIONS_PER_PAGE,
   type SuggestionCursor,
@@ -196,7 +196,6 @@ export function ValueSuggestionsPanel(props: {
 
   const first = cursor.page * SUGGESTIONS_PER_PAGE;
   const rows = values.slice(first, first + SUGGESTIONS_PER_PAGE);
-  const pages = pageCount(values.length);
 
   // A new page starts from its top, unless the highlight is further down it.
   useLayoutEffect(() => {
@@ -262,29 +261,16 @@ export function ValueSuggestionsPanel(props: {
           ))}
         </ul>
       </LoadingRegion>
-      {pages > 1 && (
-        <div className="text-ink-weak flex shrink-0 items-center justify-end gap-1 pt-0.5 text-xs">
-          <IconButton
-            icon={Icons.PagePrevious}
-            label="Previous page"
-            size="sm"
-            tabIndex={-1}
-            disabled={cursor.page === 0}
-            onClick={() => setCursor(movePage(cursor, -1, values.length))}
-          />
-          <span className="tabular-nums">
-            {first + 1}–{first + rows.length} of {values.length}
-          </span>
-          <IconButton
-            icon={Icons.PageNext}
-            label="Next page"
-            size="sm"
-            tabIndex={-1}
-            disabled={cursor.page === pages - 1}
-            onClick={() => setCursor(movePage(cursor, 1, values.length))}
-          />
-        </div>
-      )}
+      <Pager
+        page={cursor.page}
+        pageSize={SUGGESTIONS_PER_PAGE}
+        total={values.length}
+        onPage={(page) =>
+          setCursor(
+            movePage(cursor, page > cursor.page ? 1 : -1, values.length),
+          )
+        }
+      />
     </div>,
     document.body,
   );

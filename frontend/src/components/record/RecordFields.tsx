@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import EmbedQuerydownEditor from "./EmbedQuerydownEditor";
+import Pager from "../ui/Pager";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel, { fieldAppearance } from "./FieldLabel";
@@ -1008,6 +1009,12 @@ function DistinctText(props: {
   );
 }
 
+/** How many of a multi-record field's records are drawn at once. */
+const CHILDREN_PER_PAGE = 30;
+
+const pageCount = (total: number): number =>
+  Math.ceil(total / CHILDREN_PER_PAGE);
+
 /** The records behind an expanded multi-record field. While they load, the
  * count the parent already reported is drawn as that many empty embedded
  * records, so the list has its real shape under the loading wash before any of
@@ -1024,7 +1031,15 @@ function ChildList(props: {
   const expected = useFormState(model, (s) => s.lists[id]?.expected ?? 0);
   const childIds = useFormState(model, (s) => s.lists[id]?.childIds);
   const error = useFormState(model, (s) => s.lists[id]?.error ?? null);
+  const [requested, setPage] = useState(0);
   if (!exists) return null;
+  const total = childIds?.length ?? 0;
+  // Records can leave the list under the page being shown: stay on the last.
+  const page = Math.min(requested, Math.max(0, pageCount(total) - 1));
+  const shown = childIds?.slice(
+    page * CHILDREN_PER_PAGE,
+    (page + 1) * CHILDREN_PER_PAGE,
+  );
   const loading = status === "unloaded" || status === "loading";
   return (
     <LoadingRegion loading={loading}>
@@ -1039,7 +1054,7 @@ function ChildList(props: {
               <EmbeddedRecord cells={NO_CELLS} />
             </div>
           ))
-        : childIds?.map((childId) => (
+        : shown?.map((childId) => (
             <ChildRow
               key={childId}
               model={model}
@@ -1049,6 +1064,14 @@ function ChildList(props: {
               recordId={childId}
             />
           ))}
+      {!loading && (
+        <Pager
+          page={page}
+          pageSize={CHILDREN_PER_PAGE}
+          total={total}
+          onPage={setPage}
+        />
+      )}
       {status === "error" && (
         <p className="text-danger px-1 py-0.5 text-xs">{error}</p>
       )}
