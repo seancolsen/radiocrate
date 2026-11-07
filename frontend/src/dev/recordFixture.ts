@@ -17,6 +17,8 @@
 // new shape, this learns it too.
 
 import { addInferredLinks } from "../query/schema";
+import { compile_sections } from "querydown-js";
+import { querydownReady } from "../query/querydown";
 import { setRecordQueryRunner } from "../query/recordData";
 import type { RecordQuery } from "../query/recordForm";
 
@@ -93,6 +95,8 @@ export const FIXTURE_SCHEMA_JSON = addInferredLinks(
         [
           ["id", "UUID"],
           ["value", "FLOAT"],
+          ["symbol", "VARCHAR", true],
+          ["description", "VARCHAR", true],
         ],
         [["id"], ["value"]],
       ),
@@ -348,12 +352,22 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
 /** Points the record editor at the fixture instead of the backend. `delayMs`
  * holds every answer back by that long, so the loading states (the wash over the
  * form, the placeholder rows under a multi-record field) can be seen and
- * asserted. */
+ * asserted. Each query is compiled first, for real, so one that wouldn't compile
+ * fails here as it would there; the fixture only stands in for the database. */
 export function installRecordFixture(delayMs: number): void {
-  setRecordQueryRunner(
-    (q) =>
-      new Promise((resolve) =>
-        setTimeout(() => resolve(fixtureQuery(q)), delayMs),
-      ),
-  );
+  setRecordQueryRunner(async (q, schemaJson) => {
+    await querydownReady();
+    compile_sections(
+      schemaJson,
+      "duckdb",
+      q.base,
+      "",
+      q.filter,
+      q.sort,
+      q.display,
+    );
+    return new Promise((resolve) =>
+      setTimeout(() => resolve(fixtureQuery(q)), delayMs),
+    );
+  });
 }
