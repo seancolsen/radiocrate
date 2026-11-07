@@ -44,6 +44,26 @@ describe("columnMetadataFromAnnotation", () => {
     expect(m.suffix).toBe(" kg");
   });
 
+  it("suffix can be a singular and a plural", () => {
+    expect(
+      columnMetadataFromAnnotation(obj({ suffix: [" play", " plays"] })).suffix,
+    ).toEqual([" play", " plays"]);
+    // As the compiler hands it over: inside a `Map`.
+    expect(
+      columnMetadataFromAnnotation(
+        new Map([
+          ["suffix", [" play", " plays"]],
+        ]) as unknown as AnnotationValue,
+      ).suffix,
+    ).toEqual([" play", " plays"]);
+  });
+
+  it("any other suffix is none", () => {
+    for (const suffix of [[" play"], ["a", "b", "c"], ["a", 1], 3]) {
+      expect(columnMetadataFromAnnotation(obj({ suffix })).suffix).toBe("");
+    }
+  });
+
   it("hide only 'yes' hides", () => {
     expect(columnMetadataFromAnnotation(obj({ hide: "no" })).hide).toBe(false);
   });

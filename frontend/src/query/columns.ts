@@ -21,6 +21,9 @@ export type FontColor = "default" | "light";
 export type FontSize = "normal" | "small";
 /** Horizontal alignment of a column's text within its cell. */
 export type TextAlign = "left" | "right" | "center";
+/** Text after a column's values: the same for all of them, or `[singular,
+ * plural]`, chosen by the value (see `displayText`). */
+export type Suffix = string | readonly [string, string];
 
 /** Fully-resolved display metadata for a single result column. Every field has a
  * concrete value (defaults already applied), so rendering can use it directly. */
@@ -32,7 +35,7 @@ export interface ColumnMetadata {
   font_size: FontSize;
   text_align: TextAlign;
   prefix: string;
-  suffix: string;
+  suffix: Suffix;
   formatter: Formatter | undefined;
 }
 
@@ -113,6 +116,19 @@ function resolveWidth(spec: AnnotationValue | undefined): [number, number] {
   return [min, max];
 }
 
+/** Resolves the `suffix` spec: a string, or a list of exactly two strings (the
+ * singular and the plural). Anything else is no suffix at all. */
+function resolveSuffix(spec: AnnotationValue | undefined): Suffix {
+  if (typeof spec === "string") return spec;
+  if (Array.isArray(spec) && spec.length === 2) {
+    const [singular, plural] = spec;
+    if (typeof singular === "string" && typeof plural === "string") {
+      return [singular, plural];
+    }
+  }
+  return "";
+}
+
 function resolveFontColor(v: string | undefined): FontColor {
   return v === "light" ? "light" : "default";
 }
@@ -152,7 +168,7 @@ export function columnMetadataFromAnnotation(
     font_size: resolveFontSize(asString(raw.size)),
     text_align: resolveTextAlign(asString(raw.align)),
     prefix: asString(raw.prefix) ?? "",
-    suffix: asString(raw.suffix) ?? "",
+    suffix: resolveSuffix(raw.suffix),
     formatter: parseFormatter(raw.formatter),
   };
 }
@@ -189,11 +205,12 @@ export const ANNOTATION_SCHEMA: AnnotationSchema = {
     },
     prefix: {
       type: "string",
-      description: "Text shown before each value.",
+      description: "Text shown before each value that isn't null.",
     },
     suffix: {
-      type: "string",
-      description: "Text shown after each value.",
+      anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+      description:
+        "Text shown after each value that isn't null: `[singular plural]` picks by the value, so `[' play' ' plays']` reads `1 play` and `2 plays`.",
     },
     formatter: {
       type: "object",

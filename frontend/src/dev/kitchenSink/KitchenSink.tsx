@@ -562,6 +562,9 @@ function Surfaces(): JSX.Element {
           <Specimen caption="drop line">
             <div className="bg-accent h-0.5 w-24 rounded-full" />
           </Specimen>
+          <Specimen caption="row swipe band">
+            <div className="bg-accent text-panel px-4 py-2 text-sm">Edit</div>
+          </Specimen>
         </Row>
         <Row>
           <div className="w-56">

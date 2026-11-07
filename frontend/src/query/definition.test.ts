@@ -4,6 +4,7 @@ import {
   appendCustom,
   definitionForBase,
   emptyDefinition,
+  fullQueryBase,
   presetSectionIn,
   rebasedDefinition,
   toFullQuery,
@@ -192,5 +193,25 @@ describe("appendCustom", () => {
 
   it("adds nothing for blank text", () => {
     expect(appendCustom("year:1999", " ")).toBe("year:1999");
+  });
+});
+
+describe("fullQueryBase", () => {
+  it("reads the table a full query starts from", () => {
+    expect(fullQueryBase("#album\n$title")).toBe("album");
+    expect(fullQueryBase("  #album year:2000")).toBe("album");
+  });
+
+  it("looks past comments and definitions", () => {
+    expect(
+      fullQueryBase(
+        "// #artist\n#album.decade = year\n#track.plays=#play\n\n#album\n$title",
+      ),
+    ).toBe("album");
+  });
+
+  it("is empty when no line names one", () => {
+    expect(fullQueryBase("")).toBe("");
+    expect(fullQueryBase("$title #album")).toBe("");
   });
 });

@@ -27,7 +27,6 @@ import {
   selectIsUnsaved,
   selectPageTab,
   selectResultCount,
-  selectRowRecords,
   selectRowSelection,
 } from "./app";
 import type { FormsState, FormsStoreBundle } from "./forms";
@@ -457,28 +456,9 @@ export function createCommandsStore(
       case "record.autocomplete":
         selectAutocompleteForm(forms.store.getState())?.toggleAutocomplete();
         break;
-      case "results.edit_selected": {
-        if (!tabId) break;
-        // Same table for every row in the selection: the first selected
-        // row's first record picks it (context-menu order — the row's
-        // "primary" table), then the rest of the selection is filtered down
-        // to records of that same table, mirroring the "Dynamic updates"
-        // resync in `stores/app/actions.ts`.
-        const state = app.store.getState();
-        const indices = [...selectRowSelection(state, tabId)].sort(
-          (a, b) => a - b,
-        );
-        const table = selectRowRecords(state, tabId, indices[0] ?? -1)[0]
-          ?.table;
-        if (table === undefined) break;
-        const records = indices.flatMap((index) =>
-          selectRowRecords(state, tabId, index).filter(
-            (r) => r.table === table,
-          ),
-        );
-        app.actions.setRecordEditorRecords(tabId, table, records);
+      case "results.edit_selected":
+        if (tabId) app.actions.editSelectedRows(tabId);
         break;
-      }
       case "selection.expand_nested":
         form?.expandSelection(true);
         break;

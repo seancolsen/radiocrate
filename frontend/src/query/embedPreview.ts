@@ -42,7 +42,7 @@ export function visibleCells(
  * words. Empty when none of it has any. */
 export function embedText(preview: EmbedPreview): string {
   return visibleCells(preview)
-    .map(({ value, meta }) => displayText(meta, value ?? ""))
+    .map(({ value, meta }) => displayText(meta, value))
     .filter(Boolean)
     .join(" ");
 }

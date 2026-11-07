@@ -16,7 +16,7 @@
 //     near month boundaries. `whole_app.png` only needs number/duration fidelity.
 
 import type { AnnotationValue } from "querydown-js";
-import type { ColumnMetadata } from "./columns";
+import type { ColumnMetadata, Suffix } from "./columns";
 
 /** A unit available to the `relativeTime` formatter. */
 export type RelativeUnit =
@@ -108,17 +108,28 @@ export function formatValue(
   }
 }
 
-/** Applies the column's formatter and prefix/suffix to one raw cell value. */
+/** Applies the column's formatter and prefix/suffix to one raw cell value. A
+ * null value has nothing to dress, so it reads as nothing at all. */
 export function displayText(
   meta: ColumnMetadata,
-  value: string,
+  value: string | null,
   nowMs?: number,
 ): string {
+  if (value === null) return "";
   const formatted = meta.formatter
     ? (formatValue(meta.formatter, value, nowMs) ?? value)
     : value;
-  if (meta.prefix === "" && meta.suffix === "") return formatted;
-  return `${meta.prefix}${formatted}${meta.suffix}`;
+  return `${meta.prefix}${formatted}${suffixFor(meta.suffix, formatted)}`;
+}
+
+/** The text to follow `formatted`, a value as it reads on screen. Of a singular
+ * and a plural, the singular is for a value that reads as exactly one: `1.00`
+ * and `0` both take the plural, as they do in English, and so does text that
+ * isn't a number at all. */
+function suffixFor(suffix: Suffix, formatted: string): string {
+  if (typeof suffix === "string") return suffix;
+  const [singular, plural] = suffix;
+  return /^[+-]?1$/.test(formatted.trim()) ? singular : plural;
 }
 
 /** Resolves a {@link DecimalPlaces} spec into a `[min, max]` pair, swapping if

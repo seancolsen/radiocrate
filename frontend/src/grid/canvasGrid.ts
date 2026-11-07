@@ -37,6 +37,16 @@
 // and scrolls itself while the drag sits near its top or bottom edge, as the
 // explorer's tree does; `gapAt` says which gap between rows a point is over.
 //
+// A touch that hasn't rested starts out undecided, and its first few px say
+// what it is. Up or down, it pans; pulled down past the top, it takes the rows
+// with it, and letting go far enough along asks the owner to refresh them
+// (`onPullRefresh`), while a spinner in the gap waits on `setRefreshing`. Left
+// along a row the owner says can be edited (`onRowSwipeStart`), it takes that
+// row with it, along with the rest of the selection if the row is part of it,
+// over a band naming the action, and letting go far enough along asks the owner
+// to edit them (`onRowSwipe`). Neither answers to a mouse, which has the wheel,
+// Refresh and the context menu.
+//
 // The owner can also freeze the grid (`setFrozen`) while a menu it opened is up:
 // scrolling, hovering and clicking all stop, so the rows under an open context
 // menu hold still. The DOM overlay above the canvas already swallows the events
@@ -44,6 +54,11 @@
 // pointer that was mid-gesture when the menu opened).
 
 import { edgeScrollDelta, swallowReleaseClick } from "../gestures/press";
+import {
+  releaseVelocity,
+  swipeAxis,
+  type SwipeSample,
+} from "../gestures/swipe";
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
 import {
@@ -55,6 +70,15 @@ import {
   SMALL_LINE_H,
   TEXT_PAD_X,
 } from "../query/rowGeometry";
+import {
+  fingerForPull,
+  PULL_HOLD,
+  PULL_TRIGGER,
+  pullDistance,
+  ROW_SWIPE_DISTANCE,
+  rowSwipeCommits,
+  settle,
+} from "./rowGestures";
 import { RowPress, type PressPoint } from "./rowPress";
 
 // ── Geometry (logical px == CSS px). The row metrics are shared with the record
@@ -108,6 +132,19 @@ const FLING_TAU = 325;
 /** A pause longer than this before release cancels the fling (finger held). */
 const FLING_RELEASE_TIMEOUT = 80;
 
+// The spinner in the gap above rows being pulled: an arc that grows as the pull
+// nears its trigger, and turns while a refresh is under way.
+const PULL_SPINNER_RADIUS = 9;
+const PULL_SPINNER_W = 2;
+/** How much of a circle the arc covers at its fullest (radians). */
+const PULL_SPINNER_SWEEP = 1.5 * Math.PI;
+/** How fast the arc turns (radians per ms). */
+const PULL_SPINNER_SPEED = 0.006;
+
+/** How far in from the right edge the swipe band's label sits. */
+const SWIPE_LABEL_INSET = 16;
+const SWIPE_LABEL = "Edit";
+
 /** Theme colors read from CSS custom properties, so canvas paint tracks the
  * live light/dark theme just like the DOM did. Re-read on theme change. */
 interface Theme {
@@ -157,6 +194,14 @@ export interface GridInteraction {
    * cancelled pointer, the grid freezing or going away). Returns whether the
    * release dropped the rows somewhere. */
   onRowDragEnd?: (x: number, y: number, drop: boolean) => boolean;
+  /** A touch began swiping row `index` left. Returns whether the row can be
+   * edited: `false` (or leaving this out) leaves it where it is, and the touch
+   * goes on as a pan. */
+  onRowSwipeStart?: (index: number) => boolean;
+  /** A swipe on row `index` went far enough to act on. */
+  onRowSwipe?: (index: number) => void;
+  /** A pull past the top went far enough to refresh the rows. */
+  onPullRefresh?: () => void;
 }
 
 /** The width-dependent layout, recomputed only on resize or a new result (not
@@ -242,6 +287,23 @@ export class CanvasGrid {
   /** Where the pointer dragging rows is, in viewport coordinates. */
   private dragPoint: { x: number; y: number } | undefined;
 
+  /** How far (px) the rows sit below where the scroll puts them: under a pull,
+   * waiting on a refresh, or going home from either. */
+  private pull = 0;
+  /** The finger travel behind {@link pull}, while a pan has hold of it. */
+  private pullFinger = 0;
+  /** Whether the rows wait where they are for a refresh a pull began. */
+  private pullHeld = false;
+  /** Whether a refresh is under way, whatever began it (`setRefreshing`). */
+  private refreshing = false;
+  /** The spinner's turn, in radians. */
+  private pullSpin = 0;
+
+  /** The row a swipe took hold of, until it has gone home. */
+  private swipeRow: number | undefined;
+  /** How far it has come, in px from home: negative, or zero. */
+  private swipeOffset = 0;
+
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
   private dirty = false;
@@ -250,10 +312,19 @@ export class CanvasGrid {
   private velocity = 0; // logical px per ms
   private lastFrameT = 0;
 
-  // Active pointer gesture (touch pan or scrollbar drag). A press on a row is
-  // tracked alongside it (`press`): a touch pans and may also pick the row up.
+  // Active pointer gesture (a touch not yet decided, a pan, a swipe along a row,
+  // or a scrollbar drag). A press on a row is tracked alongside it (`press`): a
+  // touch pans and may also pick the row up.
   private gesture:
+    | {
+        kind: "touch";
+        id: number;
+        startX: number;
+        startY: number;
+        row: number | undefined;
+      }
     | { kind: "pan"; id: number; lastY: number; lastT: number }
+    | { kind: "swipe"; id: number; originX: number; samples: SwipeSample[] }
     | { kind: "scrollbar"; id: number; grabOffset: number }
     | undefined;
   private rect: DOMRect | undefined;
@@ -266,7 +337,9 @@ export class CanvasGrid {
     onPickUp: () => {
       // The finger now holds the rows; it no longer scrolls them.
       this.gesture = undefined;
+      this.pullFinger = 0;
       this.stopFling();
+      this.requestDraw();
       navigator.vibrate?.(10);
     },
     onDragStart: (row, x, y) => {
@@ -367,6 +440,9 @@ export class CanvasGrid {
     // A press that hasn't picked its row up yet was on a row of the old rows.
     // One that has holds what it picked up, whatever the rows are now.
     if (!this.press.pickedUp) this.press.cancel();
+    // Likewise a touch on one of them: it can still pan, but a swipe is over.
+    if (this.gesture?.kind === "swipe") this.gesture = undefined;
+    else if (this.gesture?.kind === "touch") this.gesture.row = undefined;
     this.result = result;
     if (!preserveScroll) this.scrollTop = 0;
     this.flinging = false;
@@ -427,12 +503,20 @@ export class CanvasGrid {
     if (!frozen) return;
     this.stopFling();
     this.gesture = undefined;
+    this.pullFinger = 0;
     this.press.cancel();
     this.lastMouseY = undefined;
-    if (this.hoverRow !== undefined) {
-      this.hoverRow = undefined;
-      this.requestDraw();
-    }
+    this.hoverRow = undefined;
+    this.requestDraw();
+  }
+
+  /** Says whether a refresh of these rows is under way. Rows a pull left waiting
+   * go home when it ends; otherwise there's nothing to show for it here. */
+  setRefreshing(refreshing: boolean): void {
+    this.refreshing = refreshing;
+    if (refreshing) return;
+    this.pullHeld = false;
+    this.requestDraw();
   }
 
   /** Pushes in the owner's current row selection for painting. Cheap to call on
@@ -466,7 +550,7 @@ export class CanvasGrid {
     const rect = this.canvas.getBoundingClientRect();
     if (x < rect.left || x > rect.right) return undefined;
     const local = Math.max(0, Math.min(this.vh, y - rect.top));
-    const gap = Math.round((local + this.scrollTop) / layout.rowH);
+    const gap = Math.round((local + this.viewTop) / layout.rowH);
     return Math.max(0, Math.min(count, gap));
   }
 
@@ -572,6 +656,11 @@ export class CanvasGrid {
     this.theme = this.readTheme();
     this.metrics.clear(); // font family is re-read in readTheme and may change
     this.requestDraw();
+  }
+
+  /** Where the top of the view is over the rows, a pull included. */
+  private get viewTop(): number {
+    return this.scrollTop - this.pull;
   }
 
   private get totalHeight(): number {
@@ -741,15 +830,17 @@ export class CanvasGrid {
       return;
     }
 
-    // Touch anywhere else pans the content (a mouse scrolls by wheel or the
-    // scrollbar instead) — and, on a row, may also pick it up.
-    if (e.pointerType === "touch" && this.scrollRange > 0) {
+    // Touch anywhere else pans the content or swipes a row, as its first few px
+    // will say (a mouse scrolls by wheel or the scrollbar instead) — and, on a
+    // row, may also pick it up. Even with nothing to scroll: it can still pull.
+    if (e.pointerType === "touch") {
       this.stopFling();
       this.gesture = {
-        kind: "pan",
+        kind: "touch",
         id: e.pointerId,
-        lastY: y,
-        lastT: e.timeStamp,
+        startX: x,
+        startY: y,
+        row: this.rowAt(y),
       };
       this.velocity = 0;
       this.canvas.setPointerCapture(e.pointerId);
@@ -781,7 +872,22 @@ export class CanvasGrid {
       return;
     }
     if (e.pointerId !== g.id) return;
-    const { y } = this.localPoint(e);
+    const { x, y } = this.localPoint(e);
+
+    if (g.kind === "touch") {
+      this.decideTouch(g, x, y, e.timeStamp);
+      e.preventDefault();
+      return;
+    }
+
+    if (g.kind === "swipe") {
+      this.swipeOffset = Math.max(-this.vw, Math.min(0, x - g.originX));
+      g.samples.push({ x, t: e.timeStamp });
+      if (g.samples.length > 32) g.samples.shift();
+      this.requestDraw();
+      e.preventDefault();
+      return;
+    }
 
     if (g.kind === "scrollbar") {
       const range = this.vh - (this.thumb?.h ?? 0);
@@ -797,8 +903,16 @@ export class CanvasGrid {
     }
 
     // Pan: finger up (y decreasing) scrolls content down.
-    const dy = g.lastY - y;
+    let dy = g.lastY - y;
     const dt = e.timeStamp - g.lastT;
+    // Down past the top, the finger pulls the rows instead, and back up it has
+    // to undo that before what's left of the move scrolls them.
+    if (this.pullFinger > 0 || (dy < 0 && this.scrollTop <= this.minScroll)) {
+      const finger = this.pullFinger - dy;
+      this.pull = pullDistance(finger);
+      this.pullFinger = fingerForPull(this.pull);
+      dy = Math.max(0, -finger);
+    }
     this.scrollBy(dy);
     if (dt > 0) {
       const inst = dy / dt;
@@ -811,18 +925,66 @@ export class CanvasGrid {
     e.preventDefault();
   };
 
+  /** A touch has moved: if it has gone far enough to say what it is, it becomes
+   * that from here, so nothing jumps by the distance that decided it. */
+  private decideTouch(
+    g: { id: number; startX: number; startY: number; row: number | undefined },
+    x: number,
+    y: number,
+    t: number,
+  ): void {
+    const axis = swipeAxis(x - g.startX, y - g.startY);
+    if (axis === null) return;
+    const swipes =
+      axis === "horizontal" &&
+      x < g.startX &&
+      g.row !== undefined &&
+      (this.interaction?.onRowSwipeStart?.(g.row) ?? false);
+    if (swipes) {
+      this.gesture = { kind: "swipe", id: g.id, originX: x, samples: [] };
+      this.swipeRow = g.row;
+      this.swipeOffset = 0;
+      return;
+    }
+    this.gesture = { kind: "pan", id: g.id, lastY: y, lastT: t };
+    // Rows already pulled (waiting on a refresh, say) are the finger's now.
+    this.pullFinger = fingerForPull(this.pull);
+  }
+
   private onPointerUp = (e: PointerEvent): void => {
     // A press that picked its rows up owns the click this release produces.
     if (e.pointerId === this.press.pointerId) {
       if (this.press.up(CanvasGrid.pressPoint(e))) swallowReleaseClick();
     }
+    this.endGesture(e, true);
+  };
+
+  /** Ends the pointer's gesture, if it has one. `release` says the finger let go
+   * rather than being called off, which is what lets a swipe or a pull act. */
+  private endGesture(e: PointerEvent, release: boolean): void {
     const g = this.gesture;
     if (!g || e.pointerId !== g.id) return;
     if (this.canvas.hasPointerCapture(e.pointerId)) {
       this.canvas.releasePointerCapture(e.pointerId);
     }
     this.gesture = undefined;
+    if (g.kind === "swipe") {
+      this.endSwipe(g.samples, e.timeStamp, release);
+      return;
+    }
     if (g.kind !== "pan") return;
+
+    if (this.pullFinger > 0) {
+      this.pullFinger = 0;
+      this.velocity = 0;
+      if (release && this.pull >= PULL_TRIGGER) {
+        this.interaction?.onPullRefresh?.();
+        // The owner has answered by now: a refresh that began is under way.
+        this.pullHeld = this.refreshing;
+      }
+      this.requestDraw();
+      return;
+    }
 
     // Fling only on a quick release with real velocity (a held finger stops).
     const idle = e.timeStamp - g.lastT;
@@ -836,11 +998,31 @@ export class CanvasGrid {
     } else {
       this.velocity = 0;
     }
-  };
+  }
+
+  /** A swipe let go: acts on its row, if it came far enough, and the row goes
+   * home either way. A flick can be too short for the browser to count it as
+   * having moved, and the click that makes isn't a click on the row. */
+  private endSwipe(
+    samples: readonly SwipeSample[],
+    now: number,
+    release: boolean,
+  ): void {
+    this.requestDraw();
+    if (!release) return;
+    swallowReleaseClick();
+    const velocity = releaseVelocity(samples, now);
+    if (
+      this.swipeRow !== undefined &&
+      rowSwipeCommits(this.swipeOffset, velocity)
+    ) {
+      this.interaction?.onRowSwipe?.(this.swipeRow);
+    }
+  }
 
   private onPointerCancel = (e: PointerEvent): void => {
     if (e.pointerId === this.press.pointerId) this.press.cancel();
-    this.onPointerUp(e);
+    this.endGesture(e, false);
   };
 
   /** Escape, while the rows are being dragged, puts them down where they were. */
@@ -933,7 +1115,7 @@ export class CanvasGrid {
   private rowAt(y: number): number | undefined {
     const layout = this.layout;
     if (!this.result || !layout || this.result.rowCount === 0) return undefined;
-    const idx = Math.floor((y + this.scrollTop) / layout.rowH);
+    const idx = Math.floor((y + this.viewTop) / layout.rowH);
     return idx >= 0 && idx < this.result.rowCount ? idx : undefined;
   }
 
@@ -969,20 +1151,51 @@ export class CanvasGrid {
 
   private frame = (t: number): void => {
     this.raf = 0;
-    if (this.flinging) {
-      const dt = this.lastFrameT ? Math.min(64, t - this.lastFrameT) : 16;
-      this.lastFrameT = t;
-      this.stepFling(dt);
-    }
+    const dt = this.lastFrameT ? Math.min(64, t - this.lastFrameT) : 16;
+    this.lastFrameT = t;
+    if (this.flinging) this.stepFling(dt);
     const edgeScrolling = this.stepEdgeScroll();
+    const settling = this.stepSettle(dt);
     if (this.dirty) {
       this.draw();
       this.dirty = false;
     }
-    if (this.flinging || edgeScrolling) {
+    if (this.flinging || edgeScrolling || settling) {
       this.raf = requestAnimationFrame(this.frame);
+    } else {
+      this.lastFrameT = 0;
     }
   };
+
+  /** One frame of whatever no finger has hold of going where it goes: a swiped
+   * row home, pulled rows home or to where they wait for a refresh, and the
+   * spinner around. Returns whether there's more to come. */
+  private stepSettle(dt: number): boolean {
+    let moving = false;
+    if (this.swipeRow !== undefined && this.gesture?.kind !== "swipe") {
+      this.swipeOffset = settle(this.swipeOffset, 0, dt);
+      if (this.swipeOffset === 0) this.swipeRow = undefined;
+      else moving = true;
+      this.dirty = true;
+    }
+    if (this.gesture?.kind !== "pan" || this.pullFinger === 0) {
+      const waits = this.pullHeld && this.scrollTop <= this.minScroll;
+      const target = waits ? PULL_HOLD : 0;
+      if (this.pull !== target) {
+        this.pull = settle(this.pull, target, dt);
+        if (this.pull !== target) moving = true;
+        this.dirty = true;
+      }
+    }
+    if (this.pullHeld && this.pull > 0) {
+      this.pullSpin += dt * PULL_SPINNER_SPEED;
+      this.dirty = true;
+      moving = true;
+    } else if (this.pull === 0) {
+      this.pullSpin = 0;
+    }
+    return moving;
+  }
 
   /** One frame of scrolling under a drag held near the top or bottom edge,
    * while the rows in hand can drop among these rows. A scroll moves the rows
@@ -1017,6 +1230,7 @@ export class CanvasGrid {
 
     ctx.fillStyle = this.theme.panel;
     ctx.fillRect(0, 0, vw, vh);
+    if (this.pull > 0) this.drawPullSpinner();
 
     const result = this.result;
     const layout = this.layout;
@@ -1028,14 +1242,18 @@ export class CanvasGrid {
     this.layoutScrollbar();
 
     const { rowH } = layout;
-    const first = Math.max(0, Math.floor(this.scrollTop / rowH));
-    const last = Math.min(
-      result.rowCount - 1,
-      Math.floor((this.scrollTop + vh) / rowH),
-    );
+    const top = this.viewTop;
+    const first = Math.max(0, Math.floor(top / rowH));
+    const last = Math.min(result.rowCount - 1, Math.floor((top + vh) / rowH));
 
     for (let r = first; r <= last; r++) {
-      const screenY = r * rowH - this.scrollTop;
+      const screenY = r * rowH - top;
+      const slide = this.rowSlide(r);
+      if (slide !== 0) {
+        this.drawSwipeBand(screenY, rowH, slide);
+        ctx.save();
+        ctx.translate(slide, 0);
+      }
       this.drawRowBackground(
         screenY,
         rowH,
@@ -1048,15 +1266,74 @@ export class CanvasGrid {
       }
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
       if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH);
+      if (slide !== 0) ctx.restore();
     }
     if (typeof this.dropGap === "number") {
-      this.drawDropLine(this.dropGap * rowH - this.scrollTop);
+      this.drawDropLine(this.dropGap * rowH - top);
     }
 
     this.drawScrollbar();
     // Readiness signal for tests: the grid has painted a non-empty result. (Row
     // text lives in canvas pixels, not the DOM, so there's nothing to query.)
     this.canvas.dataset.rows = String(result.rowCount);
+  }
+
+  /** How far (px, device-snapped) row `r` is drawn from its place: a swipe takes
+   * its row, and when that row is part of the selection, all of it, since that's
+   * what the swipe will act on. */
+  private rowSlide(r: number): number {
+    const row = this.swipeRow;
+    if (row === undefined) return 0;
+    const moves =
+      r === row || (this.selection.has(row) && this.selection.has(r));
+    return moves ? this.snap(this.swipeOffset) : 0;
+  }
+
+  /** What a swiped row uncovers, in the `-slide` px it has left bare at the right
+   * edge: the accent, and the action's name, coming in as the row nears the
+   * distance that commits it. */
+  private drawSwipeBand(screenY: number, rowH: number, slide: number): void {
+    const ctx = this.ctx;
+    const left = this.vw + slide;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, screenY, -slide, rowH);
+    ctx.clip();
+    ctx.fillStyle = this.theme.accent;
+    ctx.fillRect(left, screenY, -slide, rowH);
+    ctx.globalAlpha = Math.min(1, -slide / ROW_SWIPE_DISTANCE);
+    ctx.fillStyle = this.theme.panel;
+    ctx.font = `${BODY_FONT}px ${this.fontFamily}`;
+    ctx.textAlign = "right";
+    ctx.fillText(
+      SWIPE_LABEL,
+      this.snap(this.vw - SWIPE_LABEL_INSET),
+      this.centeredBaseline(screenY + rowH / 2),
+    );
+    ctx.restore();
+  }
+
+  /** The spinner, centered in the gap a pull opens above the first row. Strong
+   * once letting go would refresh, or a refresh is under way. */
+  private drawPullSpinner(): void {
+    const ctx = this.ctx;
+    const armed = this.pullHeld || this.pull >= PULL_TRIGGER;
+    const reach = armed ? 1 : this.pull / PULL_TRIGGER;
+    const start = this.pullSpin - Math.PI / 2;
+    ctx.save();
+    ctx.strokeStyle = armed ? this.theme.ink : this.theme.inkWeak;
+    ctx.lineWidth = PULL_SPINNER_W;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(
+      this.vw / 2,
+      this.topInset + this.pull / 2,
+      PULL_SPINNER_RADIUS,
+      start,
+      start + reach * PULL_SPINNER_SWEEP,
+    );
+    ctx.stroke();
+    ctx.restore();
   }
 
   private drawEmpty(): void {

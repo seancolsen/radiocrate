@@ -1434,6 +1434,139 @@ describe("showChildRecords", () => {
   });
 });
 
+describe("doubleClickRow", () => {
+  const col = (name: string, type: string) => ({
+    name,
+    type,
+    nullable: false,
+  });
+
+  /** A query of `base`, whose one row carries `table`'s key. */
+  function withRow(base: string, table: string, full?: string) {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.store.setState((s) => {
+      const tab = s.tabs[0];
+      if (tab.kind === "query") {
+        tab.live.base = base;
+        tab.live.full = full ?? null;
+      }
+      s.schema.tables = [
+        {
+          name: "album",
+          columns: [col("id", "UUID"), col("title", "VARCHAR")],
+          uniqueConstraints: [["id"]],
+        },
+        {
+          name: "track",
+          columns: [
+            col("id", "UUID"),
+            col("album", "UUID"),
+            col("title", "VARCHAR"),
+          ],
+          uniqueConstraints: [["id"]],
+        },
+      ];
+    });
+    bundle.actions.setResults("a", buildResultFromStringRows([["x"]]), {
+      records: [{ table, keyColumns: ["id"], keyIndices: [0] }],
+    });
+    return bundle;
+  }
+
+  const newTab = (bundle: AppStoreBundle) => {
+    const tab = bundle.store.getState().tabs[1];
+    return tab?.kind === "query" ? tab : undefined;
+  };
+
+  it("opens an album's tracks", () => {
+    const bundle = withRow("album", "album");
+    bundle.actions.doubleClickRow("a", 0);
+    const tab = newTab(bundle);
+    expect(tab?.live.base).toBe("track");
+    expect(tab?.live.filter.custom).toBe(`album:="x"`);
+    expect(bundle.store.getState().activeTabId).toBe(tab?.id);
+  });
+
+  it("opens an artist's albums", () => {
+    const bundle = withRow("artist", "artist");
+    bundle.actions.doubleClickRow("a", 0);
+    const tab = newTab(bundle);
+    expect(tab?.live.base).toBe("album");
+    expect(tab?.live.filter.custom).toContain('"x"');
+  });
+
+  it("goes by the base a full query's text names", () => {
+    const bundle = withRow("track", "album", "#album\n$id");
+    bundle.actions.doubleClickRow("a", 0);
+    expect(newTab(bundle)?.live.base).toBe("track");
+    expect(newTab(bundle)?.live.filter.custom).toContain('"x"');
+  });
+
+  it("opens nothing for a row that only carries some other table's record", () => {
+    const bundle = withRow("track", "album");
+    bundle.actions.doubleClickRow("a", 0);
+    expect(newTab(bundle)).toBeUndefined();
+  });
+
+  it("opens nothing for an album it can't identify", () => {
+    const bundle = withRow("album", "track");
+    bundle.actions.doubleClickRow("a", 0);
+    expect(newTab(bundle)).toBeUndefined();
+  });
+});
+
+describe("editSelectedRows", () => {
+  /** Rows carrying a track, and all but the first an album too. */
+  function withRows() {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults(
+      "a",
+      buildResultFromStringRows([
+        ["t1", null],
+        ["t2", "x"],
+        ["t3", "x"],
+      ]),
+      {
+        records: [
+          { table: "album", keyColumns: ["id"], keyIndices: [1] },
+          { table: "track", keyColumns: ["id"], keyIndices: [0] },
+        ],
+      },
+    );
+    return bundle;
+  }
+  const editor = (bundle: AppStoreBundle) =>
+    bundle.store.getState().pages.a?.recordEditor;
+
+  it("edits the selected rows' records, of the first one's first table", () => {
+    const bundle = withRows();
+    bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: true });
+    bundle.actions.editSelectedRows("a");
+    expect(editor(bundle)).toEqual({
+      table: "album",
+      records: [{ table: "album", key: [{ column: "id", value: "x" }] }],
+    });
+  });
+
+  it("goes by the first row that has a record of any table", () => {
+    const bundle = withRows();
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: true });
+    bundle.actions.editSelectedRows("a");
+    expect(editor(bundle)?.table).toBe("track");
+    expect(editor(bundle)?.records).toHaveLength(2);
+  });
+
+  it("does nothing with no selection", () => {
+    const bundle = withRows();
+    bundle.actions.editSelectedRows("a");
+    expect(editor(bundle)).toBeFalsy();
+  });
+});
+
 describe("showArtistRecords", () => {
   const artist = (id: string) => ({
     table: "artist",

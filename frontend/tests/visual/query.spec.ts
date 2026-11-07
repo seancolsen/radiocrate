@@ -518,6 +518,48 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A swipe left under way on a row of a two-row selection: both rows come away
+  // together, over the accent band naming what letting go will do.
+  test(`results/row-swipe - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/row-swipe", colorScheme);
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toBeVisible();
+    const box = (await canvas.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    const y = box.y + 54;
+    const touch = (type: "touchStart" | "touchMove", x: number) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: [{ x: box.x + x, y }],
+      });
+    await touch("touchStart", 700);
+    for (const x of [680, 640, 600]) await touch("touchMove", x);
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/row-swipe", colorScheme),
+    );
+  });
+
+  // Rows pulled down past the top, far enough that letting go would refresh
+  // them: the spinner's arc at its fullest, in the gap above the first row.
+  test(`results/pull-refresh - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/pull-refresh", colorScheme);
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toBeVisible();
+    const box = (await canvas.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    const x = box.x + 400;
+    const touch = (type: "touchStart" | "touchMove", y: number) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: [{ x, y: box.y + y }],
+      });
+    await touch("touchStart", 20);
+    for (const y of [40, 80, 120, 160, 200]) await touch("touchMove", y);
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/pull-refresh", colorScheme),
+    );
+  });
+
   // Multi-select mode: the floating toolbar over the rows, counting the two
   // selected ones. Its actions menu is the row menu's body over the whole
   // selection, minus the "Select multiple" entry that put the mode on.

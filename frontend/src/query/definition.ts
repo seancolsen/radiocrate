@@ -77,6 +77,17 @@ export interface QueryDefinition {
   full?: string | null;
 }
 
+/** The base table a full query's text starts from: the first line that opens
+ * with a bare `#table`, past any comments, and any definitions ahead of it
+ * (`#track.year = …`). `""` when no line does. */
+export function fullQueryBase(text: string): string {
+  for (const line of text.split("\n")) {
+    const match = /^\s*#(\w+)(?![\w.]|\s*=)/.exec(line);
+    if (match) return match[1];
+  }
+  return "";
+}
+
 /** The three query sections with builder UIs and saveable presets. */
 export type Section = "filter" | "sort" | "display";
 

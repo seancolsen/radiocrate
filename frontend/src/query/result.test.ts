@@ -111,6 +111,22 @@ describe("buildResultFromArrow with a Timestamp column", () => {
     expect(result.text(0, result.visible[0])).toMatch(/^[01] days? ago$/);
   });
 
+  it("shows a null cell without its prefix or suffix, and the rest with theirs", () => {
+    const plays = new arrow.Table({
+      plays: arrow.vectorFromArray([1, 2, null], new arrow.Int32()),
+    });
+    const result = buildResultFromArrow(plays, [
+      mapAnno([
+        ["prefix", "#"],
+        ["suffix", [" play", " plays"]],
+      ]),
+    ]);
+    const col = result.visible[0];
+    expect(result.text(0, col)).toBe("#1 play");
+    expect(result.text(1, col)).toBe("#2 plays");
+    expect(result.text(2, col)).toBe("");
+  });
+
   it("re-derives a relativeTime cell on every read, not just at decode time", () => {
     // The whole point of deriving at paint time: the same stored value reads
     // differently once the clock has moved on, with no re-decode in between —

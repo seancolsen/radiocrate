@@ -1550,6 +1550,35 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={PLAYLIST_SOURCE.id} />,
   },
+  // Two selected rows of five, all identifying a track, for a test to swipe:
+  // both come away together, over the band that names what letting go will do.
+  "results/row-swipe": {
+    width: 800,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const recordKeys = { track: ["t1", "t2", "t3", "t4", "t5"] };
+      const { result, lineage } = lemonadeGridResult({ recordKeys });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.clickRow(id, 1, { shift: false, ctrl: false });
+      stores.app.actions.clickRow(id, 2, { shift: false, ctrl: true });
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
+  // The rows for a test to pull down from the top, opening the gap the spinner
+  // sits in.
+  "results/pull-refresh": {
+    width: 800,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult();
+      stores.app.actions.setResults(id, result, lineage);
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // A row's context menu: one entry per table whose primary key the row
   // carries, the submenus leading on to related records, and the entry that
   // turns multi-select mode on.

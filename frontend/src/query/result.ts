@@ -114,7 +114,7 @@ export class QueryResult {
     const raw = this.value(row, column.index);
     return displayText(
       column.meta,
-      stringifyArrowValue(raw, this.types[column.index]),
+      raw == null ? null : stringifyArrowValue(raw, this.types[column.index]),
     );
   }
 
@@ -123,7 +123,7 @@ export class QueryResult {
     const raw = this.value(row, column.index);
     if (raw == null) return [];
     return Array.from(raw as Iterable<unknown>, (e) =>
-      displayText(column.meta, stringifyArrowValue(e)),
+      displayText(column.meta, e == null ? null : stringifyArrowValue(e)),
     );
   }
 

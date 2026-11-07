@@ -5,6 +5,7 @@ import {
   definitionFromStored,
   usesPreset,
   type Section,
+  fullQueryBase,
 } from "../../query/definition";
 import {
   pageDefsEqual,
@@ -85,6 +86,13 @@ export const selectPageBase = (s: AppState, tabId: string): string => {
   const t = selectPageTab(s, tabId);
   if (!t) return "";
   return t.kind === "playlist" ? PLAYLIST_BASE : t.live.base.trim();
+};
+
+/** The table `tabId`'s rows are drawn from: {@link selectPageBase}, or for a
+ * full query, whose `base` field goes unused, the one its text names. */
+export const selectResultBase = (s: AppState, tabId: string): string => {
+  const full = selectQueryTab(s, tabId)?.live.full;
+  return full != null ? fullQueryBase(full) : selectPageBase(s, tabId);
 };
 
 /** Whether a tab has changes the backend doesn't: an unsaved query always, and

@@ -155,11 +155,13 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     beginRowDrag,
     clickRow,
     doubleClickRow,
+    editSelectedRows,
     endRowDrag,
     hoverRowDrag,
     loadRatings,
     removeRows,
     requestAddToPlaylist,
+    runQuery,
     setMultiSelect,
     setResultsScroll,
   } = useAppActions();
@@ -245,23 +247,27 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     const tabId = props.tabId;
     const store = stores.app.store;
 
+    // Puts the selection where a gesture aimed at row `index` means it: an
+    // existing multi-row selection the row belongs to is left as-is, and so is
+    // the selection in multi-select mode (where collapsing it would throw away
+    // what the user is assembling — an unselected row is added to it instead).
+    // Any other gesture selects its row alone, so its target is visible.
+    const aimAtRow = (index: number) => {
+      const state = store.getState();
+      const selection = selectRowSelection(state, tabId);
+      const keep = selectMultiSelect(state, tabId)
+        ? selection.has(index)
+        : selection.size > 1 && selection.has(index);
+      if (!keep) clickRow(tabId, index, { shift: false, ctrl: false });
+    };
+
     grid.setInteraction({
       onRowClick: (index, mods) => clickRow(tabId, index, mods),
       onRowDoubleClick: (index) => doubleClickRow(tabId, index),
       onRowContextMenu: (index, x, y) => {
-        // The menu acts on the selection, so the selection is put where the
-        // right-click means it: an existing multi-row selection the clicked row
-        // belongs to is left as-is, and so is the selection in multi-select
-        // mode (where collapsing it would throw away what the user is
-        // assembling — an unselected row is added to it instead). Any other
-        // right-click selects its row alone, so the menu's target is visible.
-        const state = store.getState();
-        const selection = selectRowSelection(state, tabId);
-        const multiMode = selectMultiSelect(state, tabId);
-        const keep = multiMode
-          ? selection.has(index)
-          : selection.size > 1 && selection.has(index);
-        if (!keep) clickRow(tabId, index, { shift: false, ctrl: false });
+        // The menu acts on the selection.
+        aimAtRow(index);
+        const multiMode = selectMultiSelect(store.getState(), tabId);
         const rows = [...selectRowSelection(store.getState(), tabId)];
         const groups = selectRecordGroupsForRows(store.getState(), tabId, rows);
         // Nothing editable in the targeted rows leaves the menu with only
@@ -286,6 +292,15 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         if (drop) hoverRowDrag(sourceAt(x, y), grid.gapAt(x, y) ?? null);
         return endRowDrag(drop);
       },
+      // A row that identifies no record has nothing to edit, so it doesn't
+      // offer to, and the touch goes on being a pan.
+      onRowSwipeStart: (index) =>
+        selectRowRecords(store.getState(), tabId, index).length > 0,
+      onRowSwipe: (index) => {
+        aimAtRow(index);
+        editSelectedRows(tabId);
+      },
+      onPullRefresh: () => runQuery(tabId),
     });
 
     // A 60 s ticker so a `relativeTime` cell ("3 minutes ago") keeps advancing
@@ -331,6 +346,13 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
           );
           syncTicker();
         },
+        { fireImmediately: true },
+      ),
+      // Whether the rows are being re-run: rows a pull left waiting go home once
+      // they're back.
+      store.subscribe(
+        (s) => s.pages[tabId]?.running ?? false,
+        (running) => grid.setRefreshing(running),
         { fireImmediately: true },
       ),
       // The tab's selection, for painting. A new `Set` reference per change.
@@ -411,9 +433,11 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     beginRowDrag,
     clickRow,
     doubleClickRow,
+    editSelectedRows,
     endRowDrag,
     hoverRowDrag,
     loadRatings,
+    runQuery,
     setResultsScroll,
   ]);
 

@@ -9,7 +9,7 @@
 const AXIS_LOCK_DISTANCE = 6;
 /** The release speed (px/s) that decides the outcome on its own, whichever way
  * it's going and however far the panel has come. */
-const FLICK_VELOCITY = 300;
+export const FLICK_VELOCITY = 300;
 /** How much of the panel's width a slow drag has to cover to close it. */
 const CLOSE_FRACTION = 0.4;
 /** How far back (ms) a release looks to judge its speed: long enough to smooth

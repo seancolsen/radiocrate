@@ -204,6 +204,7 @@ import {
   selectRowSelection,
   selectSortApplied,
   selectTab,
+  selectResultBase,
   selectTableMetadata,
   selectTrackIdAt,
   sameRecord,
@@ -474,8 +475,10 @@ export interface AppActions {
     index: number,
     mods: { shift: boolean; ctrl: boolean },
   ) => void;
-  /** Handle a double-click on result row `index`: if the query's rows are tracks,
-   * plays that row's track (queuing the rows after it). */
+  /** Handle a double-click on result row `index`. On a query of albums, opens
+   * the row's album's tracks in a new tab, and on a query of artists, the row's
+   * artist's albums. Otherwise, if the query's rows are tracks, plays that row's
+   * track (queuing the rows after it). */
   doubleClickRow: (tabId: string, index: number) => void;
   /** Move the result-row selection one row down (`forward`) or up. With
    * `extend`, grow the selection from the anchor to the new row (Shift+Arrow);
@@ -494,6 +497,12 @@ export interface AppActions {
     table: string,
     records: readonly RecordRef[],
   ) => void;
+  /** Puts `tabId`'s record-editor sidebar on the selected rows' records: the
+   * first of them picks the table (context-menu order — a row's "primary"
+   * table), and the rest of the selection is filtered down to records of that
+   * same table, mirroring the "Dynamic updates" resync. Does nothing when the
+   * selection identifies no record. */
+  editSelectedRows: (tabId: string) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
   /** The "Dynamic updates" cross-store wiring, installed once by
@@ -3218,8 +3227,21 @@ export function createAppActions(
         pageDraft(s, tabId).selection = next;
       });
     },
-    // Only track-based rows carry an id; on any other row this does nothing.
-    doubleClickRow: (tabId, index) => playRow(tabId, index),
+    doubleClickRow: (tabId, index) => {
+      const state = get();
+      const base = selectResultBase(state, tabId);
+      const record = selectRowRecords(state, tabId, index).find(
+        (r) => r.table === base,
+      );
+      if (record && base === "album") {
+        actions.showChildRecords(tabId, "album", [record], "track");
+      } else if (record && base === "artist") {
+        actions.showArtistRecords(tabId, [record], "album");
+      } else {
+        // Only track-based rows carry an id; on any other row this does nothing.
+        playRow(tabId, index);
+      }
+    },
     moveRowSelection: (tabId, forward, extend) => {
       const len = get().pages[tabId]?.result?.rowCount ?? 0;
       if (len === 0) return;
@@ -3269,6 +3291,20 @@ export function createAppActions(
     },
 
     setRecordEditorRecords,
+    editSelectedRows: (tabId) => {
+      const state = get();
+      const rows = [...selectRowSelection(state, tabId)].sort((a, b) => a - b);
+      const records = rows.flatMap((row) =>
+        selectRowRecords(state, tabId, row),
+      );
+      const table = records[0]?.table;
+      if (table === undefined) return;
+      setRecordEditorRecords(
+        tabId,
+        table,
+        records.filter((record) => record.table === table),
+      );
+    },
     closeRecordEditor: (tabId) =>
       set((s) => {
         const page = s.pages[tabId];

@@ -137,7 +137,7 @@ export default function EmbeddedRecord(props: {
               textAlign: meta.text_align,
             }}
           >
-            {displayText(meta, value ?? "", now)}
+            {displayText(meta, value, now)}
           </span>
         );
       })}

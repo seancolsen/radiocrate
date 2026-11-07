@@ -7,7 +7,7 @@ import {
   relativeBetween,
   type Formatter,
 } from "./format";
-import { defaultColumnMetadata } from "./columns";
+import { defaultColumnMetadata, type ColumnMetadata } from "./columns";
 
 // The relative-time cases use the exported `relativeBetween` with explicit
 // instants (the public `formatValue` uses `Date.now()`).
@@ -188,5 +188,62 @@ describe("displayText", () => {
 
   it("passes the raw value through when there is no formatter", () => {
     expect(displayText(defaultColumnMetadata(), "Lemonade")).toBe("Lemonade");
+  });
+});
+
+describe("displayText's prefix and suffix", () => {
+  const meta = (over: Partial<ColumnMetadata>): ColumnMetadata => ({
+    ...defaultColumnMetadata(),
+    ...over,
+  });
+
+  it("surrounds a value", () => {
+    expect(displayText(meta({ prefix: "#", suffix: " kg" }), "3")).toBe(
+      "#3 kg",
+    );
+  });
+
+  it("leaves a null value with nothing at all", () => {
+    expect(displayText(meta({ prefix: "#", suffix: " kg" }), null)).toBe("");
+    expect(
+      displayText(
+        meta({ formatter: { type: "number", decimalPlaces: 2 } }),
+        null,
+      ),
+    ).toBe("");
+  });
+
+  it("still surrounds an empty string, which isn't null", () => {
+    expect(displayText(meta({ prefix: "#", suffix: " kg" }), "")).toBe("# kg");
+  });
+
+  describe("given a singular and a plural", () => {
+    const plays = meta({ suffix: [" play", " plays"] });
+
+    it("picks by the value", () => {
+      expect(displayText(plays, "1")).toBe("1 play");
+      expect(displayText(plays, "2")).toBe("2 plays");
+      expect(displayText(plays, "0")).toBe("0 plays");
+      expect(displayText(plays, "11")).toBe("11 plays");
+      expect(displayText(plays, "-1")).toBe("-1 play");
+    });
+
+    it("picks by the value as it reads, formatter applied", () => {
+      const rounded = (decimalPlaces: number) =>
+        meta({
+          suffix: [" play", " plays"],
+          formatter: { type: "number", decimalPlaces },
+        });
+      expect(displayText(rounded(0), "1.2")).toBe("1 play");
+      expect(displayText(rounded(2), "1")).toBe("1.00 plays");
+    });
+
+    it("takes the plural for text that isn't a number", () => {
+      expect(displayText(plays, "many")).toBe("many plays");
+    });
+
+    it("shows nothing for a null value", () => {
+      expect(displayText(plays, null)).toBe("");
+    });
   });
 });
