@@ -368,8 +368,10 @@ function FieldRow(props: {
   );
 
   /** Whether the embedded record's preview is still on its way. A record the
-   * form is *creating* has no preview to wait for — it renders as "New". */
-  const embedLoading = embedIsNew !== true && embedStatus !== "loaded";
+   * form is *creating* has no preview to wait for — it renders as "New" — and one
+   * that failed to load has stopped waiting, its key standing in. */
+  const embedLoading =
+    embedIsNew !== true && embedStatus !== "loaded" && embedStatus !== "error";
 
   /** An expanded *text* field moves its value below the label, where it has the
    * width to wrap; an expanded link/record field grows a subtree instead. A
@@ -770,7 +772,10 @@ function DistinctValueRow(props: {
   );
   const loading = useFormState(
     model,
-    (s) => childId !== undefined && s.embeds[childId]?.status !== "loaded",
+    (s) =>
+      childId !== undefined &&
+      s.embeds[childId]?.status !== "loaded" &&
+      s.embeds[childId]?.status !== "error",
   );
 
   // Whether the value is cut off on its one line — reported up from the line
