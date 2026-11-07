@@ -2,9 +2,9 @@
 // to rest before it picks something up, how far a pointer travels before a
 // press becomes a drag, how a drag scrolls the list it's in near that list's
 // edges, and how the click a drag's release produces is kept from also counting
-// as a click. The explorer's tree (`useTreeDrag`) and the results grid
-// (`grid/rowPress.ts`, `grid/canvasGrid.ts`) both press this way, so the two
-// feel the same under a finger.
+// as a click. Every list that rearranges by dragging (`usePressDrag`) and the
+// results grid (`grid/rowPress.ts`, `grid/canvasGrid.ts`) press this way, so they
+// all feel the same under a finger.
 
 /** How far (px) a touch may travel after picking something up and still count
  * as a long press — when its drop has done nothing — rather than a drag that

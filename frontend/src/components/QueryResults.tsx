@@ -30,6 +30,7 @@ import { ContextMenu } from "./ui/ContextMenu";
 import MultiSelectToolbar, { MULTI_SELECT_INSET } from "./MultiSelectToolbar";
 import RowActionsMenu from "./RowActionsMenu";
 import RowDragChip from "./RowDragChip";
+import { dragChipTransform } from "./ui/DragChip";
 
 // The results pane, rendered to a <canvas> (DOM-UI experiment, canvas variant).
 // This component is a thin React shell: it owns the canvas element's lifecycle
@@ -135,7 +136,7 @@ function subscribeModifiedRows(
 /** Puts the drag chip just below and right of viewport point (x, y), clear of
  * what the pointer is over. */
 function placeChip(el: HTMLElement | null, x: number, y: number): void {
-  if (el) el.style.transform = `translate(${x + 12}px, ${y + 12}px)`;
+  if (el) el.style.transform = dragChipTransform(x, y);
 }
 
 /** The source whose explorer row is at viewport point (x, y), or `null`. Tree
