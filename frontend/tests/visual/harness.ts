@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 // The component harness's side of the visual tests. Every snapshot below the
 // app level goes through here: `openStory` puts one component on screen at
@@ -35,4 +35,11 @@ export async function openStory(
  * `snapshotPathTemplate` roots under `__screenshots__/`. */
 export function snapshot(story: string, colorScheme: ColorScheme): string[] {
   return [colorScheme, ...`${story}.png`.split("/")];
+}
+
+/** The record editor's field value in edit mode. Every editable value is a text
+ * box whether it's being edited or not; the one in edit mode is the one that
+ * isn't read-only. */
+export function valueEditor(form: Locator): Locator {
+  return form.locator("textarea:not([readonly])");
 }

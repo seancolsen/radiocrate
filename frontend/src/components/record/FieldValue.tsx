@@ -18,14 +18,24 @@ import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
  * user clicked elsewhere, and that's where they want to be). */
 export type EditExit = "self" | "next" | "previous" | "none";
 
-/** The activated field value: a focused, auto-growing text box. Mounted only
- * while the field is in edit mode, so every activation starts from the current
- * value and lands the caret at its end (or, Tabbed in from another field's
- * editor, selects it whole — see `selectAll`).
+/** An editable value, in view mode and edit mode alike: one text box for the
+ * field's whole life, so a selection the user drags out as they click into it
+ * survives entering edit mode, rather than dying with an element being swapped
+ * for another.
  *
- * It grows to fit its content rather than scrolling — collapsed, that's the
- * "full height necessary to fit the content with soft wrapping"; expanded, it
- * keeps the same shape as the text it replaced.
+ * Focus and edit mode go together. In view mode it's `readOnly` and out of the
+ * tab order (`tabIndex={-1}` — the field's *label* is what Tab and the arrow keys
+ * stop on), but a click still focuses it, which begins the edit right on the
+ * mouse press — before the browser places the caret and the drag extends it.
+ * Coming the other way, an edit begun from anywhere else (Enter on the label, a
+ * Tab from another field's editor) pulls focus in, landing the caret at the end
+ * or, Tabbed in, selecting the value whole — see `selectAll`.
+ *
+ * In edit mode, and when expanded, it grows to fit its content rather than
+ * scrolling. Collapsed, it holds one line that never wraps: line breaks read as
+ * spaces — one for one, so an offset into what it shows is an offset into the
+ * value — and, since a textarea has no `text-overflow`, a value cut off wears an
+ * ellipsis drawn over its end.
  *
  * Keys: Esc leaves edit mode and goes back to the label. Tab and Shift+Tab do
  * the same, but also begin editing the next or previous field (see
@@ -37,44 +47,65 @@ export type EditExit = "self" | "next" | "previous" | "none";
  * them keeps what was typed — the form holds it until the user saves.
  *
  * The form doesn't wait for any of them, though: `onInput` writes each keystroke
- * through to the form as it happens, so the value (and the star marking it
+ * through to the form as it happens, so `text` (and the star marking the value
  * modified) tracks the typing. */
 export function ValueInput(props: {
-  initial: string;
+  /** The value, as the form holds it right now. */
+  text: string;
+  /** The field's name, which is what the box is announced as. */
+  label: string;
+  editing: boolean;
+  expanded: boolean;
   /** Whether Enter inserts a newline rather than ending the edit, when the
    * value already has one — see `onKeyDown`. */
   multiline: boolean;
-  /** Whether the value should be selected whole as the input mounts, rather
-   * than have the caret placed at its end — set when edit mode was entered by
-   * Tabbing in from another field's editor. */
+  /** Whether an edit that pulls focus in should select the value whole, rather
+   * than place the caret at its end — set when edit mode was entered by Tabbing
+   * in from another field's editor. */
   selectAll: boolean;
+  /** The text's color and font, for a value that doesn't read as prose. */
+  tone?: string;
+  onBeginEdit: () => void;
   onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
+  onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
+  onOverflow?: (overflowing: boolean) => void;
 }): JSX.Element {
-  // What this instance was mounted with is fixed for its life — a new
-  // activation mounts a new input — so both are read once.
-  const [text, setText] = useState(props.initial);
-  const [selectAll] = useState(props.selectAll);
+  const { text, editing, selectAll, onOverflow } = props;
+  const tone = props.tone ?? "text-ink";
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [cutOff, setCutOff] = useState(false);
+  /** Whether the box is showing all of the value, rather than its one line. */
+  const whole = editing || props.expanded;
 
-  const grow = () => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  };
+  // Runs again whenever the text or the mode changes, as well as with the width.
+  // What's measured of the one line stands while the box is showing all of it,
+  // when there's no line to measure.
+  useResizeObserver(ref, (el) => {
+    if (whole) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+      return;
+    }
+    el.style.height = "";
+    el.scrollLeft = 0;
+    el.scrollTop = 0;
+    const overflowing = el.scrollWidth > el.clientWidth + 1;
+    setCutOff(overflowing);
+    onOverflow?.(overflowing || /\r?\n/.test(text));
+  });
+
   // A layout effect, not a passive one: the form's blur and `relatedTarget`
-  // handling depends on focus having moved here as the input is inserted,
-  // before anything else runs.
+  // handling depends on focus having moved here as edit mode begins, before
+  // anything else runs. Already focused means the user clicked in, and the
+  // caret is theirs to place.
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    if (!el || !editing || document.activeElement === el) return;
     el.focus();
     if (selectAll) el.select();
     else el.setSelectionRange(el.value.length, el.value.length);
-  }, [selectAll]);
+  }, [editing, selectAll]);
 
   /** Escape and Tab always end the edit — Tab keeps moving through the form's
    * editors (see `RecordFields.tsx`'s `commit`). Enter's behavior depends on
@@ -84,6 +115,7 @@ export function ValueInput(props: {
    * still one line — treats Enter as "done" the way every other field kind
    * does, and Shift+Enter is what starts a new line from there. */
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!editing) return;
     const exit: EditExit | undefined =
       e.key === "Escape"
         ? "self"
@@ -103,22 +135,48 @@ export function ValueInput(props: {
   };
 
   return (
-    <textarea
-      ref={ref}
-      rows={1}
-      spellCheck={false}
-      className="control border-accent bg-panel text-ink w-full resize-none overflow-hidden rounded outline-none"
-      value={text}
-      onChange={(e) => {
-        setText(e.currentTarget.value);
-        props.onInput(e.currentTarget.value);
-        grow();
-      }}
-      onKeyDown={onKeyDown}
-      // Clicking outside the box (or tabbing away) puts the field back into view
-      // mode, keeping what was typed.
-      onBlur={() => props.onCommit(text, "none")}
-    />
+    <div className="relative min-w-0 flex-1">
+      <textarea
+        ref={ref}
+        rows={1}
+        tabIndex={-1}
+        readOnly={!editing}
+        spellCheck={false}
+        aria-label={props.label}
+        className={cx(
+          `control block w-full resize-none overflow-hidden rounded outline-none ${tone}`,
+          { "border-accent bg-panel": editing, "whitespace-nowrap": !whole },
+        )}
+        value={
+          whole ? text : text.replace(/\r?\n/g, (n) => " ".repeat(n.length))
+        }
+        onChange={(e) => props.onInput(e.currentTarget.value)}
+        onKeyDown={onKeyDown}
+        // Only the primary button is a way in. Any other press would take focus
+        // and so begin an edit on its way to, say, the context menu.
+        onMouseDown={(e) => {
+          if (!editing && e.button !== 0) e.preventDefault();
+        }}
+        onFocus={() => {
+          if (!editing) props.onBeginEdit();
+        }}
+        // Clicking outside the box (or tabbing away) puts the field back into view
+        // mode, keeping what was typed. An edit that has already ended is what
+        // moved focus away, and there's nothing left to do.
+        onBlur={() => {
+          if (editing) props.onCommit(text, "none");
+        }}
+        onContextMenu={editing ? undefined : props.onContextMenu}
+      />
+      {!whole && cutOff && (
+        <span
+          aria-hidden
+          className={`bg-panel pointer-events-none absolute top-[3px] right-px pr-1 pl-0.5 text-sm/5 ${tone}`}
+        >
+          …
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -130,13 +188,14 @@ export function ValueInput(props: {
  * stands or taken for every record. */
 export function VariedValue(props: { distinct: number }): JSX.Element {
   return (
-    <span className="text-ink-weak cursor-default text-sm/5 italic">
+    <span className="control text-ink-weak cursor-default italic">
       {props.distinct} distinct {props.distinct === 1 ? "value" : "values"}
     </span>
   );
 }
 
-/** The collapsed rendering of a filled value: one line, truncated.
+/** The collapsed rendering of a filled value that can't be edited: one line,
+ * truncated.
  *
  * Watches itself for truncation, in both directions: the text can change under
  * a fixed width (a load, an edit) and the width can change under fixed text
@@ -146,7 +205,6 @@ export function VariedValue(props: { distinct: number }): JSX.Element {
 export function OneLineValue(props: {
   text: string;
   className: string;
-  onClick: () => void;
   onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
 }): JSX.Element {
@@ -160,7 +218,6 @@ export function OneLineValue(props: {
     <span
       ref={ref}
       className={props.className}
-      onClick={() => props.onClick()}
       onContextMenu={(e) => props.onContextMenu?.(e)}
     >
       {text.replace(/\s*\r?\n\s*/g, " ")}
@@ -180,7 +237,8 @@ export function OneLineValue(props: {
  *    button activates an empty input instead.
  *  - **filled** — the value, on one line (newlines become spaces, overflow
  *    ellipsizes) unless it's expanded text, which wraps and keeps its linebreaks.
- *    Clicking it activates the input.
+ *    Always in its text box, {@link ValueInput} — clicking into it is what
+ *    activates it — unless it's a primary key, which is only ever text to read.
  *
  * `onOverflow` reports whether the collapsed single line is actually cut off —
  * what decides whether the row gets an expansion toggle at all. */
@@ -191,7 +249,7 @@ export default function FieldValue(props: {
   value: SharedValue;
   editing: boolean;
   /** Whether entering edit mode should select the value whole — see
-   * `ValueInput`. Only meaningful while `editing` is true. */
+   * `ValueInput`. */
   editingSelectAll: boolean;
   expanded: boolean;
   onBeginEdit: () => void;
@@ -222,19 +280,30 @@ export default function FieldValue(props: {
   const isUuid =
     props.field.kind === "primitive" && props.field.valueType === "uuid";
 
-  if (props.editing) {
+  const tone = isUuid ? "text-ink-weak font-mono text-xs/5" : "text-ink";
+  if (readOnly) {
+    if (empty) return null;
+    if (props.expanded) {
+      return (
+        <span
+          className={`control block w-full cursor-default break-words whitespace-pre-wrap ${tone}`}
+          onContextMenu={(e) => props.onContextMenu(e)}
+        >
+          {text}
+        </span>
+      );
+    }
     return (
-      <ValueInput
-        initial={text}
-        multiline={multiline}
-        selectAll={props.editingSelectAll}
-        onInput={(text) => props.onInput(text)}
-        onCommit={(text, exit) => props.onCommit(text, exit)}
+      <OneLineValue
+        text={text}
+        className={`control block min-w-0 flex-1 cursor-default truncate ${tone}`}
+        onContextMenu={props.onContextMenu}
+        onOverflow={props.onOverflow}
       />
     );
   }
-  if (empty) {
-    if (readOnly) return null;
+  // Emptied mid-edit, the box stays up; there's only a pencil once the edit ends.
+  if (empty && !props.editing) {
     return (
       <IconButton
         icon={Icons.Edit}
@@ -245,33 +314,18 @@ export default function FieldValue(props: {
       />
     );
   }
-  const tone = {
-    "text-ink text-sm/5": !isUuid,
-    "text-ink-weak font-mono text-xs": isUuid,
-  };
-  const cursor = readOnly ? "cursor-default" : "cursor-text";
-  const onClick = () => {
-    if (!readOnly) props.onBeginEdit();
-  };
-  if (props.expanded) {
-    return (
-      <span
-        className={cx(
-          `block w-full break-words whitespace-pre-wrap ${cursor}`,
-          tone,
-        )}
-        onClick={onClick}
-        onContextMenu={(e) => props.onContextMenu(e)}
-      >
-        {text}
-      </span>
-    );
-  }
   return (
-    <OneLineValue
+    <ValueInput
       text={text}
-      className={cx(`block min-w-0 flex-1 truncate ${cursor}`, tone)}
-      onClick={onClick}
+      label={props.field.label}
+      editing={props.editing}
+      expanded={props.expanded}
+      multiline={multiline}
+      selectAll={props.editingSelectAll}
+      tone={tone}
+      onBeginEdit={() => props.onBeginEdit()}
+      onInput={(text) => props.onInput(text)}
+      onCommit={(text, exit) => props.onCommit(text, exit)}
       onContextMenu={props.onContextMenu}
       onOverflow={props.onOverflow}
     />

@@ -28,6 +28,7 @@ import {
   selectCountMin,
   selectDistinctCount,
   selectDistinctEdit,
+  selectDistinctText,
   selectFieldModified,
   selectHasLinkedRecord,
   selectIsExpanded,
@@ -650,6 +651,10 @@ function DistinctValueRow(props: {
   const expandId = childId ?? itemId;
   const expanded = useFormState(model, (s) => selectIsExpanded(s, expandId));
   const editing = useFormState(model, (s) => s.editing === itemId);
+  /** What its text box holds: the value, or what it's been edited to so far. */
+  const inputText = useFormState(model, (s) =>
+    selectDistinctText(s, itemId, value),
+  );
   const cells = useFormState(
     model,
     (s) => (childId && s.embeds[childId]?.cells) || NO_CELLS,
@@ -704,13 +709,22 @@ function DistinctValueRow(props: {
     });
   };
 
+  /** Whether the value sits in its text box: always, if it has any text to
+   * select and it's the user's to edit. A value with no text says what it is
+   * instead, until it's clicked. */
+  const inBox = editing || (!readOnly && value != null && value !== "");
   const input = (
     <ValueInput
-      initial={value ?? ""}
+      text={inputText}
+      label={field.label}
+      editing={editing}
+      expanded={textBelow}
       multiline={field.kind === "primitive" && field.valueType === "text"}
       selectAll={false}
+      onBeginEdit={beginEdit}
       onInput={(input) => model.editDistinct(input)}
       onCommit={commit}
+      onOverflow={setOverflowing}
     />
   );
 
@@ -735,8 +749,8 @@ function DistinctValueRow(props: {
           </LoadingRegion>
         ) : textBelow ? (
           <span className="flex-1" />
-        ) : editing ? (
-          <div className="min-w-0 flex-1">{input}</div>
+        ) : inBox ? (
+          input
         ) : (
           <DistinctText
             value={value}
@@ -774,16 +788,10 @@ function DistinctValueRow(props: {
       {textBelow && (
         <Subtree>
           <div className="pr-1 pb-1">
-            {editing ? (
+            {inBox ? (
               input
             ) : (
-              <span
-                className={cx(
-                  "text-ink block w-full text-sm/5 break-words whitespace-pre-wrap",
-                  readOnly ? "cursor-default" : "cursor-text",
-                )}
-                onClick={beginEdit}
-              >
+              <span className="control text-ink block w-full cursor-default break-words whitespace-pre-wrap">
                 {value}
               </span>
             )}
@@ -799,22 +807,22 @@ function DistinctValueRow(props: {
   );
 }
 
-/** One distinct value as text, on one line: what it says, or what it is when
- * it says nothing — the two empties a column can hold are named rather than
- * drawn as a blank line, since a list of values has to distinguish them. */
+/** One distinct value out of its text box, on one line: a primary key's text,
+ * or what it is when it says nothing — the two empties a column can hold are
+ * named rather than drawn as a blank line, since a list of values has to
+ * distinguish them. */
 function DistinctText(props: {
   value: string | null;
   editable: boolean;
   onClick: () => void;
   onOverflow: (overflowing: boolean) => void;
 }): JSX.Element {
-  const cursor = props.editable ? "cursor-text" : "cursor-default";
   if (props.value === null || props.value === "") {
     return (
       <span
         className={cx(
-          "text-ink-weak min-w-0 flex-1 truncate text-sm/5 italic",
-          cursor,
+          "control text-ink-weak min-w-0 flex-1 truncate italic",
+          props.editable ? "cursor-text" : "cursor-default",
         )}
         onClick={() => props.onClick()}
       >
@@ -825,8 +833,7 @@ function DistinctText(props: {
   return (
     <OneLineValue
       text={props.value}
-      className={cx("text-ink block min-w-0 flex-1 truncate text-sm/5", cursor)}
-      onClick={props.onClick}
+      className="control text-ink block min-w-0 flex-1 cursor-default truncate"
       onOverflow={props.onOverflow}
     />
   );

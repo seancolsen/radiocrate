@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from "@playwright/test";
-import { SCHEMES, openStory, snapshot } from "./harness";
+import { SCHEMES, openStory, snapshot, valueEditor } from "./harness";
 
 // The record editor, on its own: the panel as its form lands and opened out,
 // mid-edit and after a refused save; the modal picker it opens; and the
@@ -54,11 +54,11 @@ for (const colorScheme of SCHEMES) {
   test(`record-editor/modified - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "record-editor/modified", colorScheme);
     await stage.getByText("6 Inch", { exact: true }).click();
-    await stage.getByRole("textbox").fill("6 Inch (Live)");
+    await valueEditor(stage).fill("6 Inch (Live)");
     await page.keyboard.press("Escape");
     await stage.getByRole("button", { name: "Add credit" }).click();
     await expect(stage.locator("[data-selectable]").first()).toHaveText("New");
-    await expect(stage.getByRole("textbox")).toBeFocused();
+    await expect(valueEditor(stage)).toBeFocused();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/modified", colorScheme),
     );
@@ -73,7 +73,7 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await stage.getByText("Pray You Catch Me", { exact: true }).click();
-    await stage.getByRole("textbox").fill("Sorry");
+    await valueEditor(stage).fill("Sorry");
     await page.keyboard.press("Escape");
     await expect(star(stage, "title")).toBeVisible();
     await stage.getByRole("button", { name: "Save" }).click();
@@ -163,7 +163,7 @@ for (const colorScheme of SCHEMES) {
       .getByRole("button", { name: /^Expand Don't Hurt Yourself/ })
       .click();
     await stage.getByText("Hold Up", { exact: true }).click();
-    await expect(stage.getByRole("textbox")).toBeFocused();
+    await expect(valueEditor(stage)).toBeFocused();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/varied-editing", colorScheme),
     );

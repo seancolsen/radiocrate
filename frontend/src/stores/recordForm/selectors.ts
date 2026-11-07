@@ -142,6 +142,20 @@ export function selectDistinctEdit(
     : null;
 }
 
+/** The text of one distinct value's box: the value itself, or, while it's the
+ * one being edited, what the records it's writing to hold by now. */
+export function selectDistinctText(
+  s: FormState,
+  itemId: string,
+  value: string | null,
+): string {
+  const edit = s.editing === itemId ? s.distinctEdit : null;
+  const current = edit
+    ? s.records[edit.recordId]?.values[edit.column]?.[edit.indices[0]]
+    : value;
+  return current ?? "";
+}
+
 /** A column's values as its list of distinct values shows them: as they are,
  * except that the records an edit in progress is writing to still read as the
  * value they held when it began. So the list holds still while the user types —

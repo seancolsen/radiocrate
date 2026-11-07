@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
+import { valueEditor } from "./harness";
 
 // The record-editor entry path and everything the form does, behaviorally:
 // right-click a result row → a DOM context menu offering one "Edit {table}" per
@@ -470,7 +471,7 @@ test("widening the selection puts the editor on every record it covers", async (
   await expect(formItem(editor, "r:title")).toBeVisible();
   await expect(editor.getByText("2 distinct values").first()).toBeVisible();
   await formItem(editor, "r:title").dblclick();
-  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(valueEditor(editor)).toBeHidden();
   await expect(editor.getByText("Pray You Catch Me")).toBeVisible();
 
   // A multi-record field keeps every way into it: its records group into rows
@@ -503,7 +504,7 @@ test("editing a field the records share writes every one of them", async ({
   // Both tracks are on disc 1, so that field has a value to edit — and the
   // edit is made to both of them.
   await editor.getByText("1", { exact: true }).first().click();
-  await editor.getByRole("textbox").fill("2");
+  await valueEditor(editor).fill("2");
   await page.keyboard.press("Escape");
   await expect(star(editor, "disc_number")).toBeVisible();
 
@@ -579,7 +580,7 @@ test("taking one of those values edits it, and saves it to every record", async 
     .click();
   // The field is an ordinary one now: one value, in an open editor — which is
   // where the taken value can be adjusted rather than only accepted.
-  const input = editor.getByRole("textbox");
+  const input = valueEditor(editor);
   await expect(input).toHaveValue(/Live at the Superdome/);
   await input.fill("Both of them");
   await page.keyboard.press("Escape");
@@ -660,7 +661,7 @@ test("a value the records disagree on expands, and edits the records holding it"
 
   // Clicking a value edits it where it stands.
   await editor.getByText("Hold Up", { exact: true }).click();
-  const input = editor.getByRole("textbox");
+  const input = valueEditor(editor);
   await expect(input).toHaveValue("Hold Up");
   await input.fill("Hold On");
   await page.keyboard.press("Escape");
@@ -760,7 +761,7 @@ test("editing inside a grouped row writes every record it stands for", async ({
   // for them. Enter on a focused label is the field's "do the thing" key.
   await formItem(editor, "r##credit[0]:order").click();
   await page.keyboard.press("Enter");
-  await editor.getByRole("textbox").fill("9");
+  await valueEditor(editor).fill("9");
   await page.keyboard.press("Escape");
   await expect(star(editor, "order")).toBeVisible();
 
@@ -830,7 +831,7 @@ test("the + on a multi-record field files one record under each record", async (
   // One row, standing for a credit on each of the three tracks.
   await expect(selectableRecords(editor).first()).toHaveText("New");
   await expect(editor.getByLabel("3 records", { exact: true })).toBeVisible();
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
   await page.keyboard.type("3");
   await page.keyboard.press("Escape");
 
@@ -870,7 +871,7 @@ test("a NULL field offers a pencil, which activates an empty input", async ({
   const pencil = editor.getByRole("button", { name: "Edit track_number" });
   await expect(pencil).toBeVisible();
   await pencil.click();
-  const input = editor.getByRole("textbox");
+  const input = valueEditor(editor);
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("");
 });
@@ -883,13 +884,116 @@ test("clicking a value edits it; clicking away puts it back into view mode", asy
   const editor = editorPanel(page);
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  const input = editor.getByRole("textbox");
+  const input = valueEditor(editor);
   await expect(input).toBeFocused();
   await input.fill("Pray You Catch Me (Live)");
   // Clicking outside the box leaves edit mode, keeping what was typed.
   await editor.getByRole("heading").click();
-  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(valueEditor(editor)).toBeHidden();
   await expect(editor.getByText("Pray You Catch Me (Live)")).toBeVisible();
+});
+
+test("a selection dragged out while clicking into a value survives", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  const box = editor.getByRole("textbox", { name: "title", exact: true });
+  await expect(box).toHaveValue("Pray You Catch Me");
+  await expect(valueEditor(editor)).toBeHidden();
+  const bounds = (await box.boundingBox())!;
+  const y = bounds.y + bounds.height / 2;
+  // A marker on the element, to tell it's still the same one afterwards.
+  await box.evaluate((el) => el.setAttribute("data-same", ""));
+  await page.mouse.move(bounds.x + 40, y);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 90, y, { steps: 5 });
+  await page.mouse.up();
+
+  await expect(box).toBeFocused();
+  await expect(box).toHaveAttribute("data-same", "");
+  await expect(valueEditor(editor)).toHaveCount(1);
+  const [start, end] = await box.evaluate((el: HTMLTextAreaElement) => [
+    el.selectionStart,
+    el.selectionEnd,
+  ]);
+  expect(start).toBeGreaterThan(0);
+  expect(end).toBeGreaterThan(start);
+
+  // And it's a live selection: typing replaces it.
+  await page.keyboard.type("X");
+  const typed = "Pray You Catch Me";
+  await expect(box).toHaveValue(typed.slice(0, start) + "X" + typed.slice(end));
+});
+
+test("Tab moves between labels, passing over the values between them", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await expect(
+    editor.getByRole("textbox", { name: "title", exact: true }),
+  ).toHaveValue("Pray You Catch Me");
+
+  await formItem(editor, "r:title").click();
+  await page.keyboard.press("Tab");
+  await expect(formItem(editor, "r:title")).not.toBeFocused();
+  const focused = page.locator(":focus");
+  await expect(focused).toHaveAttribute("data-form-item", "");
+  await expect(valueEditor(editor)).toBeHidden();
+
+  // Enter is what goes into a value, with the caret at its end.
+  await formItem(editor, "r:title").focus();
+  await page.keyboard.press("Enter");
+  const box = valueEditor(editor);
+  await expect(box).toBeFocused();
+  const length = "Pray You Catch Me".length;
+  expect(
+    await box.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]),
+  ).toEqual([length, length]);
+});
+
+test("right-clicking a value raises the field's menu without editing it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  const box = editor.getByRole("textbox", { name: "title", exact: true });
+  await expect(box).toHaveValue("Pray You Catch Me");
+  await box.click({ button: "right" });
+  await expect(page.getByRole("menu")).toBeVisible();
+  await expect(valueEditor(editor)).toBeHidden();
+});
+
+test("a value holding line breaks reads as one line, and edits as several", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  const box = editor.getByRole("textbox", { name: "title", exact: true });
+  await expect(box).toHaveValue("Pray You Catch Me");
+  await box.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("second line");
+  await page.keyboard.press("Escape");
+  await expect(box).toHaveValue("Pray You Catch Me second line");
+  const height = (await box.boundingBox())!.height;
+  expect(height).toBe(26);
+
+  await box.click();
+  await expect(box).toHaveValue("Pray You Catch Me\nsecond line");
+  expect((await box.boundingBox())!.height).toBe(46);
 });
 
 test("a text field too long for its line expands below its label", async ({
@@ -1063,7 +1167,7 @@ test("Enter activates the focused label: edit, pick, or add, by field kind", asy
   // A primitive field: its input, focused.
   await formItem(editor, "r:title").click();
   await page.keyboard.press("Enter");
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
   await page.keyboard.press("Escape");
 
   // A scalar linked record field: the picker.
@@ -1077,7 +1181,7 @@ test("Enter activates the focused label: edit, pick, or add, by field kind", asy
   await formItem(editor, "r:#credit").click();
   await page.keyboard.press("Enter");
   await expect(selectableRecords(editor).first()).toHaveText("New");
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
 });
 
 test("the X on a scalar linked record field's embedded record clears it", async ({
@@ -1163,10 +1267,10 @@ test("Escape and Tab leave an activated field for a label", async ({
   const editor = editorPanel(page);
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   // The edit is kept in the form, and focus lands back on the field's label.
-  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(valueEditor(editor)).toBeHidden();
   await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
   await expect(formItem(editor, "r:title")).toBeFocused();
 
@@ -1198,7 +1302,7 @@ test("typing into a field marks it modified as it's typed", async ({
   // The star is there before the edit is committed — the form takes each
   // keystroke as it happens.
   await expect(star(editor, "title")).toBeVisible();
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
 
   // Typing it back to what it was is no longer a modification.
   for (let i = 0; i < " (Live)".length; i++)
@@ -1220,7 +1324,7 @@ test("a change deep in the tree stars the collapsed field above it", async ({
   // text box. Enter on a focused label is the field's "do the thing" key.
   await formItem(editor, "r##credit[1]:order").click();
   await page.keyboard.press("Enter");
-  await editor.getByRole("textbox").fill("42");
+  await valueEditor(editor).fill("42");
   await page.keyboard.press("Escape");
 
   // The edited record wears a star, and so does the field holding it.
@@ -1246,7 +1350,7 @@ test("unsaved changes stay with the record when another is edited", async ({
   const editor = editorPanel(page);
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
 
   // Off to another record, and back: the form picks up where it was left.
@@ -1278,7 +1382,7 @@ test("a record with unsaved changes is marked in the results", async ({
   const clean = await gutter();
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   await expect.poll(gutter).not.toBe(clean);
 });
@@ -1296,7 +1400,7 @@ test("the + button scaffolds a new record, open and ready to type into", async (
   // It goes in at the top, previews as "New" (it has no values to preview yet),
   // and the caret is already in its first editable field.
   await expect(credits.first()).toHaveText("New");
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
   await page.keyboard.type("3");
 
   // Its own form is open below it, and the field it was added to is starred and
@@ -1384,7 +1488,7 @@ test("a primitive field's menu edits, clears and copies it", async ({
 
   // The value itself carries the same menu as the label.
   await pencil.click();
-  await editor.getByRole("textbox").fill("Retitled");
+  await valueEditor(editor).fill("Retitled");
   await page.keyboard.press("Escape");
   await rightClick(editor.getByText("Retitled", { exact: true }));
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
@@ -1393,7 +1497,7 @@ test("a primitive field's menu edits, clears and copies it", async ({
     "Copy",
   ]);
   await page.getByRole("menuitem", { name: "Edit" }).click();
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
 });
 
 test("a field menu traps focus and Up/Down/Enter drive it, not the form underneath", async ({
@@ -1458,9 +1562,9 @@ test("a primary key's menu only offers to copy it, never to edit or clear it", a
   // Nor does clicking the value itself, or double-clicking its label, open an
   // editor for it — unlike an ordinary field.
   await editor.getByText("track-1", { exact: true }).click();
-  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(valueEditor(editor)).toBeHidden();
   await formItem(editor, "r:id").dblclick();
-  await expect(editor.getByRole("textbox")).toBeHidden();
+  await expect(valueEditor(editor)).toBeHidden();
 });
 
 test("a multi-record field's menu adds and deletes records", async ({
@@ -1508,7 +1612,7 @@ test("a scalar linked record field's menu enters a new record", async ({
   // form is open below with the caret in the first field the user fills in.
   await expect(embeddedRecords(editor).nth(1)).toHaveText("New");
   await expect(editor.getByText("year", { exact: true })).toBeVisible();
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
   await expect(star(editor, "album")).toBeVisible();
 });
 
@@ -1714,7 +1818,7 @@ test("the picker's New record button scaffolds one, seeded with the search", asy
   // The field points at a record being created, its form open below with the
   // search text already in the first text field and the caret after it.
   await expect(embeddedRecords(editor).nth(1)).toHaveText("New");
-  const input = editor.getByRole("textbox");
+  const input = valueEditor(editor);
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("Renaissance");
   await expect(star(editor, "album")).toBeVisible();
@@ -1783,7 +1887,7 @@ test("Save writes the form's changes, and the form stops being modified", async 
   // Nothing to save until something has changed.
   await expect(saveButton(editor)).toBeHidden();
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   await expect(saveButton(editor)).toBeEnabled();
 
@@ -1817,7 +1921,7 @@ test("Reset discards unsaved changes and reloads the record", async ({
   // Live only alongside Save — nothing to reset until something has changed.
   await expect(resetButton()).toBeHidden();
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   await expect(resetButton()).toBeVisible();
 
@@ -1841,7 +1945,7 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
   await selectableRecords(editor).first().click(); // Beyoncé
   await page.keyboard.press("Delete");
   await editor.getByRole("button", { name: "Add credit" }).click();
-  await expect(editor.getByRole("textbox")).toBeFocused();
+  await expect(valueEditor(editor)).toBeFocused();
   await page.keyboard.type("3");
   await page.keyboard.press("Escape");
 
@@ -1905,7 +2009,7 @@ test("a failed save says why, and keeps the changes", async ({ page }) => {
   const editor = editorPanel(page);
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   await saveButton(editor).click();
 
@@ -1928,7 +2032,7 @@ test("the X on a failed save's error dismisses it, keeping the changes", async (
   const editor = editorPanel(page);
 
   await editor.getByText("Pray You Catch Me", { exact: true }).click();
-  await editor.getByRole("textbox").fill("Renamed");
+  await valueEditor(editor).fill("Renamed");
   await page.keyboard.press("Escape");
   await saveButton(editor).click();
   await expect(editor.getByRole("alert")).toBeVisible();
