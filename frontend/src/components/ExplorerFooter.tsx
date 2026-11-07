@@ -22,7 +22,7 @@ function PaletteButton(): JSX.Element {
       <button
         type="button"
         {...tip.triggerProps}
-        className="text-ink-weak hover:bg-edge/40 hover:text-ink flex h-[30px] w-10 shrink-0 items-center justify-center"
+        className="text-ink-weak hover:text-ink flex h-[30px] w-10 shrink-0 items-center justify-center"
         onClick={() => {
           togglePalette();
           if (!persistent) setSidebarOpen(false);

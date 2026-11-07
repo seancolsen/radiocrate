@@ -2,17 +2,17 @@ import { forwardRef, type MouseEvent } from "react";
 import type { CommandId } from "../../commands/registry";
 import type { IconComponent } from "../../icons";
 import { useTooltip } from "./Tooltip";
-import { NESTED_BUTTON_CLASS, cx } from "./cx";
+import { NESTED_FOCUS_CLASS, cx } from "./cx";
 
 /** A frameless icon button — 26px square by default, or a 20px `size="sm"` for
  * controls set inline within a tighter row (the record editor's field-row
- * buttons). The hover affordance is color, never a border: a `bg-hover` fill, and
- * the icon darkening to full ink. This is the app's one
+ * buttons). The hover affordance is color, never a border: the icon
+ * shifting to full ink (a danger icon brightens); the background is left
+ * alone, since only a button with a text label fills on hover. This is the app's one
  * button style — every icon-only control uses it, so hovering reads the same
  * everywhere. Content is the icon gray by default; `danger` tints it red and a
  * disabled button dims and stops responding. `nested` is for a button set
- * inside a standard-height control (a preset's actions), which takes color in
- * place of the ring (see `NESTED_BUTTON_CLASS`).
+ * inside a standard-height control (a preset's actions), which takes an inside outline for focus (see `NESTED_FOCUS_CLASS`).
  *
  * `tabIndex={-1}` marks a control *on* another focusable item (like the
  * expansion toggle beside it) rather than an item of its own: it takes clicks
@@ -70,14 +70,14 @@ const IconButton = forwardRef<
         tabIndex={props.tabIndex}
         className={cx(
           "flex shrink-0 items-center justify-center rounded",
-          props.nested && NESTED_BUTTON_CLASS,
+          props.nested && NESTED_FOCUS_CLASS,
           {
             "size-5": props.size === "sm",
             "size-[26px]": props.size !== "sm",
             "text-ink-weak": !props.disabled && !props.danger,
             "text-danger": !props.disabled && props.danger,
-            "hover:bg-hover": !props.disabled && !props.nested,
-            "hover:text-ink": !props.disabled && !props.danger && !props.nested,
+            "hover:text-ink": !props.disabled && !props.danger,
+            "hover:brightness-125": !props.disabled && props.danger,
             "text-ink-weak/40": props.disabled,
             "bg-hover": props.active && !props.nested,
             "bg-ink/10": props.active && props.nested,

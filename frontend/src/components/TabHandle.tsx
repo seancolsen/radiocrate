@@ -143,7 +143,7 @@ export default function TabHandle(props: {
       <button
         type="button"
         {...closeTip.triggerProps}
-        className="hover:bg-hover flex size-[18px] shrink-0 items-center justify-center rounded"
+        className="text-ink-weak hover:text-ink flex size-[18px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();
           props.onClose();

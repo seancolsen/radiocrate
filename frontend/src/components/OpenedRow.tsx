@@ -59,7 +59,7 @@ export default function OpenedRow(props: {
       <button
         type="button"
         {...closeTip.triggerProps}
-        className="text-ink-weak hover:bg-hover hover:text-ink ml-1 flex size-[22px] shrink-0 items-center justify-center rounded"
+        className="text-ink-weak hover:text-ink ml-1 flex size-[22px] shrink-0 items-center justify-center rounded"
         onClick={(e) => {
           e.stopPropagation();
           props.onClose();

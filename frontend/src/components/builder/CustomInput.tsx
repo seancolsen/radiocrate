@@ -4,7 +4,7 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QuerydownContext } from "../../editor/querydownEditor";
 import { Menu, MenuItem } from "../ui/Menu";
 import { useTooltip } from "../ui/Tooltip";
-import { NESTED_BUTTON_CLASS, cx } from "../ui/cx";
+import { NESTED_FOCUS_CLASS, cx } from "../ui/cx";
 import QuerydownEditor from "./QuerydownEditor";
 
 /** An auto-growing monospace Querydown editor — the toolbar's builder
@@ -65,7 +65,7 @@ const CustomInput = forwardRef<
                 {...menuTip.triggerProps}
                 className={cx(
                   "text-ink-weak hover:text-ink flex size-[22px] items-center justify-center rounded",
-                  NESTED_BUTTON_CLASS,
+                  NESTED_FOCUS_CLASS,
                 )}
                 onClick={() => api.toggle()}
               >

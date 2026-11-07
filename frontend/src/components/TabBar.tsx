@@ -62,7 +62,7 @@ function ExplorerToggle(): JSX.Element {
       <button
         type="button"
         {...tip.triggerProps}
-        className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
+        className="text-ink-weak hover:text-ink flex w-9 shrink-0 items-center justify-center"
         onClick={() => actions.toggleSidebar()}
       >
         {sidebarOpen ? (
@@ -126,7 +126,7 @@ export default function TabBar(): JSX.Element {
       <button
         type="button"
         {...newQueryTip.triggerProps}
-        className="text-ink-weak hover:bg-hover hover:text-ink flex w-9 shrink-0 items-center justify-center"
+        className="text-ink-weak hover:text-ink flex w-9 shrink-0 items-center justify-center"
         onClick={() => actions.newQueryTab()}
       >
         <Icons.Query className="size-5" />
