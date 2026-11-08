@@ -14,10 +14,13 @@ import {
 import type { RecordRows } from "../../query/recordData";
 import type { SchemaTable } from "../../query/schema";
 import type {
+  ContextQueryField,
   FormField,
   MultiRecordField,
   ScalarLinkField,
 } from "../../query/recordForm";
+import type { ContextualQuery } from "../../query/contextualQuery";
+import { emptyDefinition, type QueryDefinition } from "../../query/definition";
 
 /** What the next display queries' annotations say, positionally. */
 const annotated = vi.hoisted(() => ({
@@ -51,8 +54,12 @@ import {
   listId,
   ROOT_ID,
   scalarChildId,
+  selectContextCount,
   selectCountMax,
   selectCountMin,
+  selectFieldExpandable,
+  selectQueryEditor,
+  selectRunsContextQuery,
   distinctValues,
   selectDistinctCount,
   selectEmbedEditorFocusAsked,
@@ -245,7 +252,9 @@ const fieldOf = (model: RecordFormModel, recordId: string, key: string) => {
  * that take one value across every record the form is on are about. */
 const scalarField = (model: RecordFormModel, recordId: string, key: string) => {
   const field = fieldOf(model, recordId, key);
-  if (field.kind === "multiRecord") throw new Error(`${key} is not scalar`);
+  if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+    throw new Error(`${key} is not scalar`);
+  }
   return field;
 };
 
@@ -1912,5 +1921,332 @@ describe("autocomplete", () => {
     expect(selectCanAutocomplete(state(model))).toBe(false);
     model.commitDistinct("Sorry");
     expect(selectIsAutocompleting(state(model), itemId)).toBe(false);
+  });
+});
+
+describe("contextual queries", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const settle = () => vi.advanceTimersByTimeAsync(300);
+
+  /** The credits of the track the form is on — a query of the `credit` table,
+   * shown on tracks. */
+  const definition = (filter = "track:=@id"): QueryDefinition => ({
+    ...emptyDefinition(),
+    base: "credit",
+    filter: { custom: filter, presets: [] },
+    display: { custom: "$role" },
+  });
+  const QUERY = "@q1";
+  const QUERY_ID = fieldItemId(ROOT_ID, QUERY);
+  const QUERY_LIST = listId(ROOT_ID, QUERY);
+
+  /** A form whose tracks have one contextual query, `queries` standing in for
+   * the app's list — reassign an entry and call `syncContextualQueries`, as the
+   * app does, to change it. */
+  function queried(
+    keys = [trackKey("t1")],
+    filter?: string,
+    extra: Partial<RecordFormOptions> = {},
+  ) {
+    const queries: ContextualQuery[] = [
+      {
+        id: "q1",
+        tableName: "track",
+        name: "credits",
+        definition: definition(filter),
+      },
+    ];
+    const model = form(keys, {
+      contextualQueries: {
+        list: () => queries,
+        presets: () => [],
+        prelude: () => "#track.year = album.year",
+      },
+      ...extra,
+    });
+    return { model, queries };
+  }
+
+  /** Answers the track's own data, the contextual query (the record's key, then
+   * `$role`) and a credit's own data. */
+  function serveQueried(found: [string, string][]) {
+    runner.mockImplementation(async (query) => {
+      if (query.base === "track")
+        return [trackRow("t1", "Formation", "Pop", 0)];
+      if (query.definitions !== undefined) return found;
+      const id = /id:="([^"]*)"/.exec(query.filter)?.[1] ?? "";
+      const role = found.find(([key]) => key === id)?.[1] ?? null;
+      return [creditRow(id, role)];
+    });
+  }
+
+  const contextCalls = () =>
+    runner.mock.calls.filter(([query]) => query.definitions !== undefined);
+
+  const queryField = (model: RecordFormModel) =>
+    fieldOf(model, ROOT_ID, QUERY) as ContextQueryField;
+
+  it("adds a field for the query after the record's own", async () => {
+    const { model } = queried();
+    serveQueried([]);
+    model.start();
+    await settle();
+    const fields = model.store.getState().records[ROOT_ID]?.fields ?? [];
+    expect(fields.at(-1)).toEqual({
+      kind: "contextQuery",
+      key: QUERY,
+      label: "credits",
+      queryId: "q1",
+      table: "credit",
+      keyColumns: ["id"],
+    });
+    // Nothing of the record's own data asks about it.
+    expect(runner.mock.calls[0]?.[0].display).not.toContain("@");
+  });
+
+  it("runs only once expanded, with @id the record's key", async () => {
+    const { model } = queried();
+    serveQueried([
+      ["c1", "Vocals"],
+      ["c2", "Drums"],
+    ]);
+    model.start();
+    await settle();
+    expect(contextCalls()).toHaveLength(0);
+    expect(
+      selectContextCount(model.store.getState(), ROOT_ID, QUERY),
+    ).toBeUndefined();
+
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    expect(contextCalls().map(([query]) => query)).toEqual([
+      {
+        base: "credit",
+        filter: "track:=@id",
+        sort: "",
+        display: "$id\n$role",
+        definitions: "#track.year = album.year\n@id = 't1'",
+      },
+    ]);
+    const s = model.store.getState();
+    expect(selectContextCount(s, ROOT_ID, QUERY)).toBe(2);
+    const [first] = s.lists[QUERY_LIST]?.childIds ?? [];
+    expect(s.embeds[first ?? ""]?.cells).toEqual(["Vocals"]);
+    expect(s.records[first ?? ""]?.keys).toEqual([
+      [{ column: "id", value: "c1" }],
+    ]);
+  });
+
+  it("doesn't run without a filter", async () => {
+    const { model } = queried([trackKey("t1")], "  ");
+    serveQueried([["c1", "Vocals"]]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    expect(contextCalls()).toHaveLength(0);
+    expect(
+      selectContextCount(model.store.getState(), ROOT_ID, QUERY),
+    ).toBeUndefined();
+  });
+
+  it("runs on one record only", async () => {
+    const { model } = queried([trackKey("t1"), trackKey("t2")]);
+    const field = queryField(model);
+    const s = model.store.getState();
+    expect(selectRunsContextQuery(s, ROOT_ID)).toBe(false);
+    expect(selectFieldExpandable(s, ROOT_ID, field, false)).toBe(false);
+    model.toggleField(ROOT_ID, field);
+    expect(model.store.getState().expanded[QUERY_ID]).toBeUndefined();
+  });
+
+  it("runs again as the query changes, keeping the rows still found", async () => {
+    const { model, queries } = queried();
+    serveQueried([
+      ["c1", "Vocals"],
+      ["c2", "Drums"],
+    ]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    const [, second] = model.store.getState().lists[QUERY_LIST]?.childIds ?? [];
+
+    serveQueried([
+      ["c2", "Drums"],
+      ["c3", "Bass"],
+    ]);
+    queries[0] = {
+      ...queries[0],
+      definition: definition("track:=@id\nrole:a"),
+    };
+    model.syncContextualQueries();
+    await vi.advanceTimersByTimeAsync(299);
+    expect(contextCalls()).toHaveLength(1);
+    await settle();
+    expect(contextCalls()).toHaveLength(2);
+    const ids = model.store.getState().lists[QUERY_LIST]?.childIds ?? [];
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(second);
+    expect(ids[1]).not.toBe(second);
+  });
+
+  it("runs a changed query afresh on opening, where it was closed", async () => {
+    const { model, queries } = queried();
+    serveQueried([["c1", "Vocals"]]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), false);
+
+    queries[0] = {
+      ...queries[0],
+      definition: definition("track:=@id\nrole:a"),
+    };
+    model.syncContextualQueries();
+    await settle();
+    expect(contextCalls()).toHaveLength(1);
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    expect(contextCalls()).toHaveLength(2);
+  });
+
+  it("relabels a renamed query, and drops a removed one", async () => {
+    const { model, queries } = queried();
+    serveQueried([["c1", "Vocals"]]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    model.openQueryEditor(ROOT_ID, queryField(model));
+    await settle();
+
+    queries[0] = { ...queries[0], name: "Credits" };
+    model.syncContextualQueries();
+    expect(queryField(model).label).toBe("Credits");
+
+    queries.length = 0;
+    model.syncContextualQueries();
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.fields.some((f) => f.key === QUERY)).toBe(false);
+    expect(s.lists[QUERY_LIST]).toBeUndefined();
+    expect(selectQueryEditor(s, ROOT_ID, QUERY)).toBeNull();
+  });
+
+  it("opens its editor on the filter, with the field open beneath it", async () => {
+    const { model } = queried();
+    serveQueried([]);
+    model.start();
+    await settle();
+    model.openQueryEditor(ROOT_ID, queryField(model));
+    let s = model.store.getState();
+    expect(selectQueryEditor(s, ROOT_ID, QUERY)).toBe("filter");
+    expect(s.expanded[QUERY_ID]).toBe(true);
+
+    model.openQueryEditor(ROOT_ID, queryField(model), "display");
+    expect(selectQueryEditor(model.store.getState(), ROOT_ID, QUERY)).toBe(
+      "display",
+    );
+    model.closeQueryEditor(ROOT_ID, QUERY);
+    s = model.store.getState();
+    expect(selectQueryEditor(s, ROOT_ID, QUERY)).toBeNull();
+  });
+
+  it("saves an edit to a record the query found", async () => {
+    const runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(
+      async () => ({ op1: { id: "c1", role: "Lead vocals" } }),
+    );
+    const { model: saved } = queried([trackKey("t1")], undefined, { runDml });
+    serveQueried([["c1", "Vocals"]]);
+    saved.start();
+    await settle();
+    saved.toggleField(ROOT_ID, queryField(saved), true);
+    await settle();
+    const [child = ""] =
+      saved.store.getState().lists[QUERY_LIST]?.childIds ?? [];
+    saved.toggleChild(child, true);
+    await settle();
+    saved.editValue(child, "role", "Lead vocals");
+    expect(selectFieldModified(saved.store.getState(), ROOT_ID, QUERY)).toBe(
+      true,
+    );
+    await saved.save();
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "credit",
+        where: { id: "c1" },
+        values: { role: "Lead vocals" },
+      },
+    ]);
+  });
+
+  it("reopens a query the user left expanded, running it", async () => {
+    const items = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+    };
+    const expansion = createExpansionMemory({ storage });
+    const queries: ContextualQuery[] = [
+      {
+        id: "q1",
+        tableName: "track",
+        name: "credits",
+        definition: definition(),
+      },
+    ];
+    const open = () =>
+      form([trackKey("t1")], {
+        expansion,
+        contextualQueries: {
+          list: () => queries,
+          presets: () => [],
+          prelude: () => "",
+        },
+      });
+    serveQueried([["c1", "Vocals"]]);
+    const first = open();
+    first.start();
+    await settle();
+    first.toggleField(ROOT_ID, queryField(first), true);
+    await settle();
+    expect(contextCalls()).toHaveLength(1);
+
+    const second = open();
+    second.start();
+    await settle();
+    expect(contextCalls()).toHaveLength(2);
+    expect(second.store.getState().expanded[QUERY_ID]).toBe(true);
+  });
+
+  it("adds a query by way of a provisional field", async () => {
+    const { model, queries } = queried();
+    serveQueried([]);
+    model.start();
+    await settle();
+    model.addProvisional();
+    expect(model.store.getState().provisional).toEqual({
+      recordId: ROOT_ID,
+      name: "query",
+      naming: true,
+    });
+    model.setProvisionalName("Bandmates");
+    model.setProvisionalNaming(false);
+
+    queries.push({
+      id: "q2",
+      tableName: "track",
+      name: "Bandmates",
+      definition: definition(""),
+    });
+    model.syncContextualQueries();
+    model.finishProvisional("q2");
+    const s = model.store.getState();
+    expect(s.provisional).toBeNull();
+    expect(selectQueryEditor(s, ROOT_ID, "@q2")).toBe("filter");
   });
 });

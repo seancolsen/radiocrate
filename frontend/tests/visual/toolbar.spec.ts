@@ -345,11 +345,16 @@ test("a new query has no name and a Save button until it's saved", async ({
 test("a new query waits, filter focused, until it's touched or asked to show all", async ({
   page,
 }) => {
-  // Query runs, not the schema introspection that goes the same way.
+  // Query runs, not the schema introspection or the contextual query list,
+  // which the app loads the same way as it starts.
   const runs: string[] = [];
   page.on("request", (r) => {
     const sql = r.postData() ?? "";
-    if (r.url().endsWith("/api/query") && !sql.includes("'tables'")) {
+    if (
+      r.url().endsWith("/api/query") &&
+      !sql.includes("'tables'") &&
+      !sql.includes("from contextual_query")
+    ) {
       runs.push(sql);
     }
   });

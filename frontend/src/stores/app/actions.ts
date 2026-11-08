@@ -142,7 +142,23 @@ import {
   type RecordQuery,
 } from "../../query/recordForm";
 import {
+  contextFields,
+  contextTabDefinition,
+  DEFAULT_CONTEXTUAL_QUERY_NAME,
+  seedDefinition,
+  withSectionText,
+  type ContextualQuery,
+} from "../../query/contextualQuery";
+import {
+  deleteContextualQuery,
+  fetchContextualQueries,
+  insertContextualQuery,
+  renameContextualQuery as writeContextualQueryName,
+  writeContextualQueryDefinition,
+} from "../../api/contextualQuery";
+import {
   anyFieldHidden,
+  appendFieldOrders,
   fieldMoveOrders,
   fieldRefKey,
   defaultFieldMetadata,
@@ -206,6 +222,7 @@ import {
   selectTab,
   selectResultBase,
   selectTableMetadata,
+  selectContextualQuery,
   selectTrackIdAt,
   sameRecord,
 } from "./selectors";
@@ -339,6 +356,36 @@ export interface AppActions {
   ) => void;
   /** Shows the hidden fields in every record editor, or hides them again. */
   setShowHiddenFields: (show: boolean) => void;
+
+  /** Loads every table's contextual queries. */
+  loadContextualQueries: () => Promise<void>;
+  /** Creates a contextual query named `name` on the records of `table`, listing
+   * the records of `base`, and returns its id. It goes at the end of the table's
+   * fields. Shows at once; the write follows. */
+  addContextualQuery: (table: string, name: string, base: string) => string;
+  /** Renames a contextual query — its field's label, in every record editor. A
+   * blank name is no name, and leaves it as it was. */
+  renameContextualQuery: (id: string, name: string) => void;
+  /** Sets one section of a contextual query's Querydown. Shows at once — every
+   * form showing its records runs it again — and is written once the app goes
+   * quiet, as a query's definition is. */
+  setContextualQuerySection: (
+    id: string,
+    section: Section,
+    text: string,
+  ) => void;
+  /** Sends a write `setContextualQuerySection` is holding back, the user having
+   * left the query's editor. */
+  flushContextualQuery: (id: string) => void;
+  /** Deletes a contextual query, its field going from every record editor. */
+  removeContextualQuery: (id: string) => void;
+  /** Opens the records contextual query `id` finds for the record whose key is
+   * `value` in a new query tab beside `besideTabId`, named after the query. */
+  openContextualQueryTab: (
+    besideTabId: string,
+    id: string,
+    value: string,
+  ) => void;
   /** Re-runs `loadSources` and `loadPresets` — the Explorer's manual refresh. */
   refetchSources: () => void;
 
@@ -2713,6 +2760,38 @@ export function createAppActions(
     });
     return fieldMetadataWrites;
   };
+  /** Every field of `table`'s form, by what metadata keys it on, in their
+   * default order: the schema's, then the table's contextual queries. */
+  const tableFieldRefs = (s: AppState, table: string): FieldRef[] =>
+    [
+      ...buildFormFields(s.schema.tables, table),
+      ...contextFields(s.schema.tables, table, s.contextualQueries.data),
+    ].map(fieldRef);
+
+  // Contextual query writes go out one at a time too, for the same reason.
+  let contextualQueryWrites: Promise<unknown> = Promise.resolve();
+  const writeContextualQuery = (write: () => Promise<unknown>) => {
+    contextualQueryWrites = contextualQueryWrites.then(write).catch((err) => {
+      // As a field metadata write's failure: what's stored goes back on
+      // screen.
+      console.error("contextual query write failed", err);
+      return actions.loadContextualQueries();
+    });
+    return contextualQueryWrites;
+  };
+  const contextualQuerySaveKey = (id: string) => `contextual-query\n${id}`;
+  const patchContextualQuery = (
+    id: string,
+    patch: (query: ContextualQuery) => ContextualQuery,
+  ) =>
+    set((s) => {
+      const at = s.contextualQueries.data.findIndex((q) => q.id === id);
+      if (at === -1) return;
+      const next = [...s.contextualQueries.data];
+      next[at] = patch(next[at]);
+      s.contextualQueries.data = next;
+    });
+
   const fieldQuerydownSaveKey = (
     table: string,
     field: FieldRef,
@@ -2820,7 +2899,7 @@ export function createAppActions(
     moveField: (table, field, above, below) => {
       const s0 = get();
       const orders = fieldMoveOrders(
-        buildFormFields(s0.schema.tables, table).map(fieldRef),
+        tableFieldRefs(s0, table),
         selectTableMetadata(s0, table),
         field,
         above,
@@ -2867,6 +2946,109 @@ export function createAppActions(
       set((s) => {
         s.showHiddenFields = show;
       }),
+
+    loadContextualQueries: async () => {
+      try {
+        const data = await fetchContextualQueries();
+        set((s) => {
+          // An edit still waiting to be written stays on screen.
+          const local = new Map(
+            s.contextualQueries.data.map((query) => [query.id, query]),
+          );
+          s.contextualQueries = {
+            status: "ready",
+            data: data.map((query) =>
+              saves.has(contextualQuerySaveKey(query.id))
+                ? (local.get(query.id) ?? query)
+                : query,
+            ),
+          };
+        });
+      } catch (err) {
+        // A database without the table yet shows none.
+        console.error("contextual query list failed", err);
+        set((s) => {
+          s.contextualQueries.status = "error";
+        });
+      }
+    },
+    addContextualQuery: (table, name, base) => {
+      const s0 = get();
+      const query: ContextualQuery = {
+        id: newUuid(),
+        tableName: table,
+        name: name.trim() || DEFAULT_CONTEXTUAL_QUERY_NAME,
+        definition: seedDefinition(s0.schema.tables, base),
+      };
+      set((s) => {
+        s.contextualQueries.data = [...s.contextualQueries.data, query];
+      });
+      const ref: FieldRef = { contextualQuery: query.id };
+      const orders = appendFieldOrders(
+        tableFieldRefs(get(), table),
+        selectTableMetadata(get(), table),
+        ref,
+      );
+      if (orders.length > 0) {
+        set((s) => {
+          const fields = (s.fieldMetadata.data[table] ??= {});
+          for (const { field, order } of orders) {
+            (fields[fieldRefKey(field)] ??= defaultFieldMetadata()).order =
+              order;
+          }
+        });
+      }
+      // The field's order refers to the query, so the query goes first.
+      void writeContextualQuery(() => insertContextualQuery(query)).then(() => {
+        if (orders.length === 0) return;
+        void writeFieldMetadata(() =>
+          metadataFieldSetOrder({ tableName: table, orders }),
+        );
+      });
+      return query.id;
+    },
+    renameContextualQuery: (id, name) => {
+      const trimmed = name.trim();
+      const query = selectContextualQuery(get(), id);
+      if (!query || trimmed === "" || trimmed === query.name) return;
+      patchContextualQuery(id, (q) => ({ ...q, name: trimmed }));
+      void writeContextualQuery(() => writeContextualQueryName(id, trimmed));
+    },
+    setContextualQuerySection: (id, section, text) => {
+      patchContextualQuery(id, (q) => ({
+        ...q,
+        definition: withSectionText(q.definition, section, text),
+      }));
+      saves.defer(contextualQuerySaveKey(id), () => {
+        const query = selectContextualQuery(get(), id);
+        return query
+          ? writeContextualQuery(() => writeContextualQueryDefinition(query))
+          : Promise.resolve();
+      });
+    },
+    flushContextualQuery: (id) => saves.flush(contextualQuerySaveKey(id)),
+    removeContextualQuery: (id) => {
+      saves.cancel(contextualQuerySaveKey(id));
+      set((s) => {
+        s.contextualQueries.data = s.contextualQueries.data.filter(
+          (query) => query.id !== id,
+        );
+      });
+      void writeContextualQuery(() => deleteContextualQuery(id));
+    },
+    openContextualQueryTab: (besideTabId, id, value) => {
+      const query = selectContextualQuery(get(), id);
+      if (!query) return;
+      const beside = get().tabs.findIndex((t) => t.id === besideTabId);
+      openUnsavedTab(
+        contextTabDefinition(
+          query.definition,
+          selectEffectivePresets(get()),
+          value,
+        ),
+        { index: beside === -1 ? undefined : beside + 1, name: query.name },
+      );
+    },
     loadRatings: () => {
       // Loaded once and kept: the table is a fixed vocabulary, not a query
       // result. "In flight" is indistinguishable from "hasn't started" in a

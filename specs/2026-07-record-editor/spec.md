@@ -406,3 +406,14 @@ Using the contextual filter, plus the sorting, plus the display, we can formulat
 - On success, we should keep the form open and update its state to reflect the saved values.
 - Updating the query result row with the new values is out of scope.
 
+
+## Contextual queries
+
+A contextual query is a query the user writes to run in the context of one record. It's stored in `contextual_query` (migration 0012): the table on whose records it shows (`table_name`), its label (`name`), and a `query.definition`-shaped JSON `query`, whose base is the table it lists.
+
+- **The field**: a contextual query shows as a field of every record of its table, after the table's own fields unless the user has arranged them otherwise. It looks like a multi-record field — expansion toggle, label, record count, "open in a new tab" button, records as children that expand into their own forms and can be edited in place — but with its own icon and color, and with no way to add or delete records.
+- **`@id`**: the query runs with `@id = '<the record's primary key>'` defined after the user's prelude. A table without a single-column primary key has no contextual queries. Neither does a record the form is creating, nor a form on several records: the field shows there, but can't be expanded.
+- **When it runs**: only when its field is expanded, and never while its filter is empty (the field says to write one instead). The count shows once it has run. An edit re-runs it where it's expanded and leaves it to run afresh on the next expansion where it isn't.
+- **Metadata**: `metadata.field`'s union has a `contextual_query` variant, so these fields are ordered and hidden like any other, and their expansion is remembered like any other.
+- **Editing**: the label's context menu offers Edit query, Rename (in place, in the label), Hide field, and Remove (after a confirmation). The editor opens below the label: a toolbar of icon-only Filter/Sort/Display toggles, a help "?" about `@id` and a close button, over the Querydown of the section shown. Edits apply at once and save once the app goes quiet, as a query's do.
+- **Adding**: "Add contextual query" in the record actions menu adds a provisional field at the bottom of the root record's fields, its name ("query") selected for typing over. Enter or Tab moves to its Base selector, which starts with no table chosen; choosing one creates the query, with a sort and display seeded the way a multi-record field's are and an empty filter, and opens its editor on the filter. Escape while naming it, or its ×, drops it.

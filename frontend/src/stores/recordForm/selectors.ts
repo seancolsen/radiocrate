@@ -7,6 +7,7 @@
 // `selectFormSummary`, which builds a fresh object (state management rule 2) —
 // the forms store compares it shallowly, and nothing renders from it directly.
 
+import type { Section } from "../../query/definition";
 import {
   isFieldHidden,
   type EmbedSection,
@@ -270,6 +271,7 @@ export function selectFieldExpandable(
   field: FormField,
   overflowing: boolean,
 ): boolean {
+  if (field.kind === "contextQuery") return selectRunsContextQuery(s, recordId);
   if (field.kind === "multiRecord") {
     // A field with no records anywhere has nothing to open — one base record
     // having some is enough — and one whose table has no record identity at all
@@ -286,6 +288,44 @@ export function selectFieldExpandable(
   }
   return field.valueType === "text" && overflowing;
 }
+
+/** Whether a record's contextual queries can run: it's one record, whose key is
+ * what `@id` stands for — not several, which would make `@id` several values, nor
+ * one the form is creating, which has no key yet. Until they run, there's no
+ * telling whether they find anything, so this is all that makes one expandable. */
+export function selectRunsContextQuery(
+  s: FormState,
+  recordId: string,
+): boolean {
+  const node = s.records[recordId];
+  return node !== undefined && !node.isNew && node.keys.length === 1;
+}
+
+/** How many records a contextual query found for a record, once it has run —
+ * `undefined` before, there being no telling. */
+export function selectContextCount(
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): number | undefined {
+  const list = s.lists[listId(recordId, fieldKey)];
+  return list?.status === "loaded" ? list.childIds.length : undefined;
+}
+
+/** Which section of a contextual query its editor is showing, or null while the
+ * editor is closed. */
+export const selectQueryEditor = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): Section | null => s.queryEditors[fieldItemId(recordId, fieldKey)] ?? null;
+
+/** Whether a contextual query's editor has been asked to take the caret. */
+export const selectQueryEditorFocusAsked = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): boolean => s.embedEditorFocus === embedEditorId(recordId, fieldKey, "query");
 
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>
@@ -322,7 +362,9 @@ export function selectBeyondBulk(
 ): boolean {
   const node = s.records[recordId];
   if (!node || node.keys.length <= 1) return false;
-  if (field.kind === "multiRecord") return false;
+  if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+    return false;
+  }
   return selectSharedValue(s, recordId, field.column) === VARIED;
 }
 
@@ -411,6 +453,12 @@ function fieldModified(
   const node = s.records[recordId];
   if (!node) {
     result = false;
+  } else if (field.kind === "contextQuery") {
+    // What the query found can't be added to or taken from, only edited.
+    result =
+      s.lists[listId(recordId, field.key)]?.childIds.some((child) =>
+        recordModified(s, memo, child),
+      ) ?? false;
   } else if (field.kind === "multiRecord") {
     const list = s.lists[listId(recordId, field.key)];
     result =

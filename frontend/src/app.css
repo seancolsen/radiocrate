@@ -128,6 +128,7 @@
   --color-field-link: var(--field-link);
   --color-field-records: var(--field-records);
   --color-field-other: var(--field-other);
+  --color-field-query: var(--field-query);
 }
 
 /* The app's standard control height, 26px: a 20px line of text-sm, 2px of
@@ -229,6 +230,9 @@
     --field-link: light-dark(#e4b2fd, #51186d);
     --field-records: light-dark(#abd2ff, #003c85);
     --field-other: light-dark(#c7c5d4, #585663);
+    /* A contextual query's field: teal, the one hue the other pills leave
+       open, so a query reads as neither a link nor a list of records. */
+    --field-query: light-dark(#93e4dc, #00544e);
   }
   :root[data-theme="light"] {
     color-scheme: light;

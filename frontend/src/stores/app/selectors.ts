@@ -20,6 +20,7 @@ import {
   type EmbedSection,
   type TableMetadata,
 } from "../../query/fieldMetadata";
+import type { ContextualQuery } from "../../query/contextualQuery";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import type { LineageMapping } from "../../query/lineage";
@@ -432,6 +433,13 @@ export const selectTableMetadata = (
   s: AppState,
   table: string,
 ): TableMetadata => s.fieldMetadata.data[table] ?? NO_TABLE_METADATA;
+
+/** One contextual query, by id — `undefined` once it's removed. */
+export const selectContextualQuery = (
+  s: AppState,
+  id: string,
+): ContextualQuery | undefined =>
+  s.contextualQueries.data.find((query) => query.id === id);
 
 export const selectRecordEditor = (
   s: AppState,

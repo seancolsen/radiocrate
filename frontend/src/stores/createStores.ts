@@ -89,6 +89,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   void app.actions.loadSchema();
   void app.actions.loadSettings();
   void app.actions.loadFieldMetadata();
+  void app.actions.loadContextualQueries();
   void commands.actions.loadKeymap();
 
   // Cross-store wiring (state→state rules): it enforces state consistency and
@@ -114,6 +115,17 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
       if (changes.length === 0) return;
       for (const entry of forms.store.getState().entries) {
         entry.model.refreshEmbeds(changes);
+      }
+    },
+  );
+
+  // A contextual query shows on every record of its table, so every form is told
+  // when one is added, renamed, edited or removed.
+  const unsubscribeContextualQueries = app.store.subscribe(
+    (s) => s.contextualQueries.data,
+    () => {
+      for (const entry of forms.store.getState().entries) {
+        entry.model.syncContextualQueries();
       }
     },
   );
@@ -166,6 +178,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   function dispose() {
     unsubscribeRetain();
     unsubscribeEmbeds();
+    unsubscribeContextualQueries();
     unsubscribeResync();
     unsubscribeRpcFailures();
     unsubscribeRequests();

@@ -43,8 +43,12 @@ export const NO_TABLE_METADATA: TableMetadata = {};
 
 /** A field's identity as one string, for looking it up in a {@link TableMetadata}.
  * Two different fields never share one, whatever their columns are named: the
- * length of the array tells a column from a link, and JSON keeps the parts apart. */
+ * length of the array tells a column from a link, a contextual query is an object
+ * rather than an array, and JSON keeps the parts apart. */
 export function fieldRefKey(field: FieldRef): string {
+  if ("contextualQuery" in field) {
+    return JSON.stringify({ contextualQuery: field.contextualQuery });
+  }
   return JSON.stringify(
     "columnName" in field
       ? [field.columnName]
@@ -151,6 +155,39 @@ export function arrangeFields<F extends FormField>(
       ? fields
       : fields.filter((field) => !isFieldHidden(metadata, fieldRef(field))),
     metadata,
+  );
+}
+
+/** The sort keys that put field `added` at the end of its table's fields, `refs`
+ * — where a field the user has just added belongs. It's given a key of its own
+ * even where the default order would put it last already: a contextual query's
+ * place by default follows its name, which the user can change.
+ *
+ * When every other field has a sort key, only `added` needs one, after the last
+ * of them. Otherwise every field is resequenced to 1…n with `added` last, leaving
+ * out those already holding their new key, as {@link fieldMoveOrders} does. */
+export function appendFieldOrders(
+  refs: readonly FieldRef[],
+  metadata: TableMetadata,
+  added: FieldRef,
+): FieldOrder[] {
+  const key = fieldRefKey(added);
+  const others = byOrder(
+    refs.filter((ref) => fieldRefKey(ref) !== key),
+    (ref) => ref,
+    metadata,
+  );
+  const orderOf = (ref: FieldRef) => metadata[fieldRefKey(ref)]?.order ?? null;
+  const orders = others.map(orderOf);
+  if (orders.every((order) => order !== null)) {
+    const last = Math.max(0, ...(orders as number[]));
+    const own = orderOf(added);
+    return own !== null && own > last
+      ? []
+      : [{ field: added, order: last + 1 }];
+  }
+  return [...others, added].flatMap((field, i) =>
+    orderOf(field) === i + 1 ? [] : [{ field, order: i + 1 }],
   );
 }
 

@@ -17,6 +17,7 @@
 // framework-free module, reads these node types.
 
 import type { ColumnMetadata } from "../../query/columns";
+import type { Section } from "../../query/definition";
 import type { FormField, RecordKey } from "../../query/recordForm";
 import type { ColumnValues } from "../../record/formValues";
 
@@ -57,7 +58,9 @@ export interface RecordNode {
   isNew: boolean;
 }
 
-/** The children of one expanded multi-record field. */
+/** The children of one expanded multi-record field — or of a contextual query's
+ * field, whose list is the records the query found: never added to or taken
+ * from, so neither `removed` nor `dirty` ever changes. */
 export interface ListNode {
   status: LoadStatus;
   error: string | null;
@@ -141,6 +144,17 @@ export interface DistinctEdit {
   indices: readonly number[];
 }
 
+/** A contextual query the user has begun adding, before it is one: a name, and
+ * — once they choose it — the table it lists, which is what makes it real (see
+ * `RecordFormActions.addProvisional`). */
+export interface ProvisionalQuery {
+  /** The record whose fields it's shown among: the root, whose table it's for. */
+  recordId: string;
+  name: string;
+  /** Whether its name is being typed. */
+  naming: boolean;
+}
+
 export interface FormState {
   records: Record<string, RecordNode>;
   lists: Record<string, ListNode>;
@@ -183,6 +197,16 @@ export interface FormState {
   /** Field item id → why the database refused the embedded records it was last
    * asked for, while the ones on screen are from before. */
   embedErrors: Record<string, string>;
+  /** The open editors of contextual queries, by field item id, each with the
+   * section of the query it's showing. Absent reads as closed. */
+  queryEditors: Record<string, Section>;
+  /** The field item id whose label is being renamed in place, or null. */
+  renaming: string | null;
+  /** The contextual query being added, or null. */
+  provisional: ProvisionalQuery | null;
+  /** The contextual query the user has asked to remove, awaiting their
+   * confirmation, or null. */
+  removing: string | null;
   /** Whether a save is in flight. */
   saving: boolean;
   /** Why the last save failed, or null. The form keeps the changes it couldn't
@@ -233,6 +257,10 @@ export function initialFormState(): FormState {
     embedEditors: {},
     embedEditorFocus: null,
     embedErrors: {},
+    queryEditors: {},
+    renaming: null,
+    provisional: null,
+    removing: null,
     saving: false,
     saveError: null,
   };

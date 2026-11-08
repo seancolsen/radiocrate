@@ -16,6 +16,7 @@ export const ENTITY_NAMES: Readonly<Record<string, readonly [string, string]>> =
   {
     album: ["album", "albums"],
     artist: ["artist", "artists"],
+    contextual_query: ["contextual query", "contextual queries"],
     credit: ["credit", "credits"],
     deletion: ["deletion", "deletions"],
     file: ["file", "files"],

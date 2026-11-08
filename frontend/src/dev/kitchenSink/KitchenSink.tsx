@@ -58,6 +58,7 @@ const TOKENS: readonly string[] = [
   "field-link",
   "field-records",
   "field-other",
+  "field-query",
 ];
 
 /** Re-reads on every hot update, so a swatch shows the value app.css holds
@@ -194,6 +195,17 @@ const FIELDS: readonly { caption: string; field: FormField }[] = [
       label: "credit",
       table: "credit",
       column: "track",
+      keyColumns: ["track", "artist"],
+    },
+  },
+  {
+    caption: "query",
+    field: {
+      kind: "contextQuery",
+      key: "@query",
+      label: "featured",
+      queryId: "query",
+      table: "credit",
       keyColumns: ["track", "artist"],
     },
   },

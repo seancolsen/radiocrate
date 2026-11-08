@@ -1130,3 +1130,158 @@ test("the record editor reopens a long text field, not a short one", async ({
     stage.getByRole("button", { name: /(Collapse|Expand) title/ }),
   ).toHaveCount(0);
 });
+
+for (const colorScheme of SCHEMES) {
+  // A contextual query opened out, with its editor showing: its label in its own
+  // color, the count of what it found, the editor's toolbar over its filter, and
+  // the record it found.
+  test(`record-editor/contextual-query - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/contextual-query",
+      colorScheme,
+    );
+    await stage.getByRole("button", { name: "Expand featured" }).click();
+    await expect(stage.getByText("Jack White", { exact: true })).toBeVisible();
+    await fieldLabelOf(stage, "featured").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Edit query" }).click();
+    await expect(embedEditor(stage, "Filter of featured")).toBeFocused();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/contextual-query", colorScheme),
+    );
+  });
+
+  // A contextual query being added: the new field at the bottom, its default
+  // name selected to be typed over, and the Base selector beside it.
+  test(`record-editor/provisional-query - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/provisional-query",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add contextual query" }).click();
+    await expect(
+      stage.getByRole("textbox", { name: "Name of the new query" }),
+    ).toBeFocused();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/provisional-query", colorScheme),
+    );
+  });
+}
+
+test.describe("contextual queries", () => {
+  /** The `dml` requests the page has sent, oldest first. */
+  const writes = (page: Page) =>
+    page.evaluate(() =>
+      (window.__rpcCalls ?? [])
+        .filter((call) => call.method === "dml")
+        .map((call) => call.params),
+    );
+
+  async function opened(page: Page, story: string) {
+    const stage = await openStory(page, story, "light");
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    return stage;
+  }
+
+  test("runs only once expanded", async ({ page }) => {
+    const stage = await opened(page, "record-editor/contextual-query");
+    await expect(fieldLabelOf(stage, "featured")).toBeVisible();
+    await expect(stage.getByText("Jack White", { exact: true })).toHaveCount(0);
+    await stage.getByRole("button", { name: "Expand featured" }).click();
+    await expect(stage.getByText("Jack White", { exact: true })).toBeVisible();
+    // What it found has no delete button: it isn't the field's to take away.
+    await expect(
+      stage.getByRole("button", { name: /^Delete Jack White/ }),
+    ).toHaveCount(0);
+  });
+
+  test("its menu edits, renames and removes it", async ({ page }) => {
+    const stage = await opened(page, "record-editor/contextual-query");
+    await fieldLabelOf(stage, "featured").click({ button: "right" });
+    expect(await page.getByRole("menuitem").allInnerTexts()).toEqual([
+      "Edit query",
+      "Rename",
+      "Hide field",
+      "Remove",
+    ]);
+
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const name = stage.getByRole("textbox", { name: "Name of featured" });
+    await expect(name).toBeFocused();
+    await page.keyboard.type("guests");
+    await page.keyboard.press("Enter");
+    await expect(fieldLabelOf(stage, "guests")).toBeFocused();
+    await expect
+      .poll(() => writes(page))
+      .toEqual([
+        {
+          operations: [
+            {
+              operation: "update",
+              id: "op1",
+              table: "contextual_query",
+              where: { id: "query-featured" },
+              values: { name: "guests" },
+            },
+          ],
+        },
+      ]);
+
+    await fieldLabelOf(stage, "guests").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Remove" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Remove “guests” from every track?");
+    await dialog.getByRole("button", { name: "Remove" }).click();
+    await expect(fieldLabelOf(stage, "guests")).toHaveCount(0);
+    await expect.poll(async () => (await writes(page)).length).toBe(2);
+  });
+
+  test("one being added takes a name, then a base, then a filter", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/provisional-query");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add contextual query" }).click();
+    await page.keyboard.type("credited");
+    await page.keyboard.press("Enter");
+    const base = stage.getByRole("combobox", { name: "Base" });
+    await expect(base).toBeFocused();
+    await expect(base).toHaveValue("");
+
+    await base.selectOption("credit");
+    await expect(stage.getByTestId("provisional-query")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "credited")).toBeVisible();
+    const filter = embedEditor(stage, "Filter of credited");
+    await expect(filter).toBeFocused();
+    // No filter, so nothing runs yet.
+    await expect(
+      stage.getByText("Write a filter to run this query."),
+    ).toBeVisible();
+
+    await page.keyboard.type("track:=@id");
+    await expect(stage.getByText("The Weeknd", { exact: true })).toBeVisible();
+    expect((await writes(page))[0]).toMatchObject({
+      operations: [
+        {
+          operation: "insert",
+          table: "contextual_query",
+          values: { table_name: "track", name: "credited" },
+        },
+      ],
+    });
+  });
+
+  test("Escape while it's being named drops a query being added", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/provisional-query");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add contextual query" }).click();
+    await expect(stage.getByTestId("provisional-query")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(stage.getByTestId("provisional-query")).toHaveCount(0);
+  });
+});

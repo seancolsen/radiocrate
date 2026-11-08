@@ -34,6 +34,10 @@
 // two are aligned: the nth record of the row belongs to the nth base record.
 // Everything above still holds, record by record.
 //
+// A contextual query's field lists records too, which the user can open and edit
+// in place but neither add to nor remove from: they're planned as records in their
+// own right, owing nothing to the record they were found for.
+//
 // One such node can hold *several* linked records under a single scalar linked
 // record field, though — one per distinct value, when its records point at
 // different ones and the user opened them to compare. Each is an ordinary
@@ -179,6 +183,11 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
         if (!list) continue;
         for (const child of list.removed) planDelete(child);
         for (const child of list.childIds) planRemovals(child);
+      } else if (field.kind === "contextQuery") {
+        for (const child of tree.list(listId(recordId, field.key))?.childIds ??
+          []) {
+          planRemovals(child);
+        }
       }
     }
   };
@@ -225,7 +234,9 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     const values = node.keys.map((_, index) => {
       const changed: Record<string, JsonValue> = {};
       for (const field of node.fields) {
-        if (field.kind === "multiRecord") continue;
+        if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+          continue;
+        }
         const current = node.values[field.column]?.[index] ?? null;
         const value = columnValue(field, current);
         if (node.isNew) {
@@ -282,6 +293,15 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     // composite — is what a child carries. One per record this node stands for,
     // since a new child row holds one record for each of them.
     for (const field of node.fields) {
+      // The records a contextual query found are records like any other, which
+      // the user may have edited in place — but nothing ties them to this one.
+      if (field.kind === "contextQuery") {
+        for (const child of tree.list(listId(recordId, field.key))?.childIds ??
+          []) {
+          planRecord(child);
+        }
+        continue;
+      }
       if (field.kind !== "multiRecord") continue;
       const list = tree.list(listId(recordId, field.key));
       if (!list) continue;

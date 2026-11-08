@@ -14,6 +14,7 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { PageDefinition, PlaylistDefinition } from "../../query/playlist";
 import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
+import type { ContextualQuery } from "../../query/contextualQuery";
 import type { MetadataByTable } from "../../query/fieldMetadata";
 import type { SchemaTable } from "../../query/schema";
 import { SETTINGS, type SettingOverrides } from "../../state/settings";
@@ -547,6 +548,10 @@ export interface AppState {
    * (loads via `metadata.field.list`; see `query/fieldMetadata.ts`). Applied as
    * the form renders, so one change reaches every open form on that table. */
   fieldMetadata: ResourceState<MetadataByTable>;
+  /** Every table's contextual queries (`query/contextualQuery.ts`), the live
+   * versions: an edit shows here at once and is written once the app goes quiet,
+   * as a query's is. Loaded once, as raw SQL. */
+  contextualQueries: ResourceState<readonly ContextualQuery[]>;
   /** Whether record editors show the fields the user has hidden. For the whole
    * app rather than for one form, since a form lasts only as long as the
    * selection stays on its records. */
@@ -692,6 +697,7 @@ export function initialState(env: AppEnv): AppState {
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
     fieldMetadata: { status: "loading", data: {} },
+    contextualQueries: { status: "loading", data: [] },
     showHiddenFields: false,
     audioQuality: storedAudioQuality(env),
     recordSidebarWidth: storedRecordSidebarWidth(env),

@@ -1,4 +1,12 @@
-import type { JSX, KeyboardEvent, MouseEvent, PointerEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type JSX,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { Icons, type IconComponent } from "../../icons";
 import type { FormField } from "../../query/recordForm";
 import { cx } from "../ui/cx";
@@ -17,6 +25,9 @@ export function fieldAppearance(field: FormField): {
   if (field.kind === "scalarLink") {
     return { icon: Icons.FieldLink, tint: "bg-field-link" };
   }
+  if (field.kind === "contextQuery") {
+    return { icon: Icons.FieldQuery, tint: "bg-field-query" };
+  }
   switch (field.valueType) {
     case "text":
       return { icon: Icons.FieldText, tint: "bg-field-text" };
@@ -31,6 +42,79 @@ export function fieldAppearance(field: FormField): {
     default:
       return { icon: Icons.FieldOther, tint: "bg-field-other" };
   }
+}
+
+/** How a rename that keeps what was typed came to an end: Enter, Tab, Shift+Tab,
+ * or focus going elsewhere. The caller decides where focus goes next. */
+export type RenameEnd = "enter" | "tab" | "backTab" | "blur";
+
+/** What a label being renamed does with the name: what the user types as they
+ * type it (optional), and the name they settle on — or that they backed out. */
+export interface LabelRename {
+  onInput?: (name: string) => void;
+  onCommit: (name: string, end: RenameEnd) => void;
+  onCancel: () => void;
+}
+
+/** A field's name, being typed in place in its label. Its own component, so the
+ * buffer is seeded from the name, and the field focused with all of it selected,
+ * once per rename — ready to be typed over. Escape abandons the edit.
+ *
+ * It stops the presses, clicks and keys it handles from reaching the label around
+ * it, which would otherwise take them as the label's own: focusing itself (and so
+ * ending the rename), picking the field up to drag it, or opening it. */
+export function LabelNameInput(props: {
+  label: string;
+  name: string;
+  rename: LabelRename;
+}): JSX.Element {
+  const [buffer, setBuffer] = useState(() => props.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // A key ends the edit; the blur that follows as the field goes away must not
+  // end it a second time.
+  const done = useRef(false);
+
+  useLayoutEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const finish = (end: RenameEnd | null) => {
+    if (done.current) return;
+    done.current = true;
+    if (end === null) props.rename.onCancel();
+    else props.rename.onCommit(buffer, end);
+  };
+
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      aria-label={props.label}
+      className="text-ink -my-px min-w-0 bg-transparent outline-none select-text [font:inherit]"
+      size={Math.max(buffer.length, 4)}
+      value={buffer}
+      onChange={(e) => {
+        setBuffer(e.currentTarget.value);
+        props.rename.onInput?.(e.currentTarget.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") finish("enter");
+        else if (e.key === "Tab") finish(e.shiftKey ? "backTab" : "tab");
+        else if (e.key === "Escape") finish(null);
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onBlur={() => finish("blur")}
+      onPointerDown={stop}
+      onMouseDown={stop}
+      onClick={stop}
+      onDoubleClick={stop}
+      onContextMenu={stop}
+    />
+  );
 }
 
 /** A field's label — and the field's handle: it's what the user clicks to select
@@ -61,6 +145,8 @@ export default function FieldLabel(props: {
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
   onContextMenu: (e: MouseEvent<HTMLElement>) => void;
   onPointerDown?: (e: PointerEvent<HTMLElement>) => void;
+  /** Set while the field's name is being typed in place of it. */
+  rename?: LabelRename;
 }): JSX.Element {
   const look = fieldAppearance(props.field);
   const Icon = look.icon;
@@ -91,7 +177,15 @@ export default function FieldLabel(props: {
       onPointerDown={props.onPointerDown}
     >
       <Icon className="size-3.5 shrink-0 opacity-70" />
-      <span className="max-w-40 truncate">{props.field.label}</span>
+      {props.rename ? (
+        <LabelNameInput
+          label={`Name of ${props.field.label}`}
+          name={props.field.label}
+          rename={props.rename}
+        />
+      ) : (
+        <span className="max-w-40 truncate">{props.field.label}</span>
+      )}
     </span>
   );
 }

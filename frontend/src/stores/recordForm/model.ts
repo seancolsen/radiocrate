@@ -42,7 +42,12 @@ import { castDraft, type Draft } from "immer";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import { dml, type DmlOperation, type DmlResult } from "api-client";
+import {
+  dml,
+  type DmlOperation,
+  type DmlResult,
+  type Preset,
+} from "api-client";
 import {
   identifyingColumns,
   primaryKey,
@@ -51,8 +56,10 @@ import {
 import {
   buildFormFields,
   fieldRef,
+  isDataField,
   keySignature,
   recordDataQuery,
+  type ContextQueryField,
   type FormField,
   type MultiRecordField,
   type PrimitiveField,
@@ -81,6 +88,16 @@ import {
   type MetadataByTable,
 } from "../../query/fieldMetadata";
 import type { ColumnMetadata } from "../../query/columns";
+import {
+  contextDefinitions,
+  contextFields,
+  contextKeyColumn,
+  contextRowsQuery,
+  DEFAULT_CONTEXTUAL_QUERY_NAME,
+  isRunnable,
+  type ContextualQuery,
+} from "../../query/contextualQuery";
+import type { QueryDefinition, Section } from "../../query/definition";
 import { embedPreview } from "../../query/embedPreview";
 import {
   isCompileError,
@@ -125,6 +142,7 @@ import {
   selectCanAutocomplete,
   selectFieldOf,
   selectFormSummary,
+  selectRunsContextQuery,
   selectSharedValue,
 } from "./selectors";
 import {
@@ -169,6 +187,23 @@ export interface RecordFormOptions {
    * same items open, and records what the user opens and closes in it. Absent,
    * everything starts closed and stays forgotten. */
   expansion?: ExpansionMemory;
+  /** The contextual queries written for each table, and what running one takes —
+   * read whenever a record's fields are built and whenever one runs. A change
+   * reaches the form through `syncContextualQueries`. Absent, records have none. */
+  contextualQueries?: ContextualQuerySource;
+  /** Shows the records contextual query `queryId` finds for the record whose key
+   * is `value` somewhere other than the form — the query page opens them in a new
+   * query tab. */
+  openContextualQuery?: (queryId: string, value: string) => void;
+}
+
+/** Where the form reads contextual queries from (see
+ * `RecordFormOptions.contextualQueries`): the queries, and the presets and prelude
+ * they're compiled with. */
+export interface ContextualQuerySource {
+  list: () => readonly ContextualQuery[];
+  presets: () => readonly Preset[];
+  prelude: () => string;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -208,6 +243,45 @@ export interface RecordFormActions {
   ) => void;
   /** The editor that was asked for has the caret now. */
   noteEmbedEditorFocused: () => void;
+
+  /** Brings every record's contextual query fields into line with the queries as
+   * they stand now: new ones appear, removed ones go, renamed ones relabel. A
+   * query whose Querydown has changed runs again where it's expanded, once it has
+   * stopped changing, and is left to run afresh next time where it isn't. */
+  syncContextualQueries: () => void;
+  /** Opens a contextual query's editor under its field, on `section` (the filter,
+   * unless said otherwise), with the caret in it. The field opens too, where it
+   * can, so the records it finds are there to watch change. */
+  openQueryEditor: (
+    recordId: string,
+    field: ContextQueryField,
+    section?: Section,
+  ) => void;
+  closeQueryEditor: (recordId: string, fieldKey: string) => void;
+  /** Hands a contextual query's records, for the record its field is on, to
+   * `openContextualQuery`. */
+  openContextRecords: (recordId: string, field: ContextQueryField) => void;
+  /** Puts a field's label into rename mode — a contextual query's, the one kind
+   * of field the user names — or takes it out of it. */
+  beginRename: (recordId: string, fieldKey: string) => void;
+  endRename: () => void;
+  /** Starts adding a contextual query to the root record's table: a field at the
+   * bottom of its fields, named {@link DEFAULT_CONTEXTUAL_QUERY_NAME} and with its
+   * name being typed, which becomes a contextual query once the user chooses the
+   * table it lists (`finishProvisional`). */
+  addProvisional: () => void;
+  setProvisionalName: (name: string) => void;
+  /** Puts the provisional field's name into rename mode, or takes it out. */
+  setProvisionalNaming: (naming: boolean) => void;
+  discardProvisional: () => void;
+  /** The provisional field became contextual query `queryId`: it gives way to
+   * that query's field, whose editor opens on the filter — the one thing the user
+   * has to write before it runs. */
+  finishProvisional: (queryId: string) => void;
+  /** Asks the user to confirm removing contextual query `queryId`, and drops the
+   * question (whether or not they did). */
+  requestRemove: (queryId: string) => void;
+  cancelRemove: () => void;
 
   /** The form's root element, set once it's rendered — how the model reaches the
    * DOM to move focus. */
@@ -519,6 +593,12 @@ function cellText(value: unknown): string | null {
 }
 
 export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
+  /** The contextual query fields of a record of `table` the database holds. */
+  const contextFieldsOf = (table: string): ContextQueryField[] =>
+    opts.contextualQueries
+      ? contextFields(opts.tables, table, opts.contextualQueries.list())
+      : [];
+
   /** A record node the form knows exists, before anything is loaded into it. */
   const recordNode = (
     table: string,
@@ -529,7 +609,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     table,
     keys,
     hidden,
-    fields: buildFormFields(opts.tables, table, hidden),
+    fields: [
+      ...buildFormFields(opts.tables, table, hidden),
+      ...contextFieldsOf(table),
+    ],
     status,
     error: null,
     values: seedValues(keys),
@@ -733,7 +816,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     text: string,
   ): string | null => {
     const field = get().records[recordId]?.fields.find(
-      (f) => f.kind !== "multiRecord" && f.column === column,
+      (f) =>
+        (f.kind === "primitive" || f.kind === "scalarLink") &&
+        f.column === column,
     );
     const nonNullableText =
       field?.kind === "primitive" &&
@@ -948,7 +1033,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   const loadRecord = async (id: string) => {
     const node = get().records[id];
     if (!node || node.status === "loading") return;
-    if (node.fields.length === 0) {
+    // A contextual query's field is no part of the record's own data.
+    const data = node.fields.filter(isDataField);
+    if (data.length === 0) {
       patchRecord(id, { status: "loaded" });
       return;
     }
@@ -959,7 +1046,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     patchRecord(id, { status: "loading", error: null });
     try {
       const rows = await runRecordQuery(
-        recordDataQuery(node.table, node.fields, keys),
+        recordDataQuery(node.table, data, keys),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
@@ -982,7 +1069,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set((s) => {
         const n = s.records[id];
         if (!n) return;
-        n.fields.forEach((field, i) => {
+        data.forEach((field, i) => {
           const cells = matched.map((row) => row?.[keyWidth + i] ?? null);
           if (field.kind === "multiRecord") {
             n.counts[field.key] = cells.map((c) => Number(c ?? 0) || 0);
@@ -1366,6 +1453,170 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     if (parents.length > 0) void loadChildren(recordId, field, parents);
   };
 
+  /** The contextual query behind a field, as it stands now. */
+  const contextQueryOf = (field: ContextQueryField) =>
+    opts.contextualQueries?.list().find((query) => query.id === field.queryId);
+
+  /** What `@id` is on a record: its primary key's value. Undefined for a node
+   * standing for several records, or one being created — neither of which has
+   * the one value (`selectRunsContextQuery`). */
+  const contextValue = (recordId: string): string | undefined => {
+    const node = get().records[recordId];
+    if (!node || !selectRunsContextQuery(get(), recordId)) return undefined;
+    const column = contextKeyColumn(opts.tables, node.table);
+    const value = column === undefined ? null : node.values[column]?.[0];
+    return value == null || value === "" ? undefined : value;
+  };
+
+  /** Runs a contextual query for one record, into its field's list: one row per
+   * record found, each the record's key and the preview the query displays.
+   *
+   * Running again — the query has been edited — keeps each row that's still found
+   * under its id, with whatever it holds (an edit, an expansion), as
+   * `refreshChildren` does; a row no longer found goes, a new one gets an id of its
+   * own. Querydown that won't compile leaves what's on screen, its editor already
+   * saying why; until there's anything on screen, it's what the list says.
+   *
+   * A query with no filter doesn't run (`isRunnable`): its list empties and waits
+   * for one. */
+  const loadContext = async (recordId: string, field: ContextQueryField) => {
+    const id = listId(recordId, field.key);
+    const query = contextQueryOf(field);
+    const value = contextValue(recordId);
+    const source = opts.contextualQueries;
+    if (!get().lists[id] || !query || value === undefined || !source) return;
+    const token = ++tokenSeq;
+    tokens.set(id, token);
+    if (!isRunnable(query.definition)) {
+      patchList(id, { status: "unloaded", error: null, childIds: [] });
+      return;
+    }
+    const shown = get().lists[id]?.status === "loaded";
+    if (!shown) patchList(id, { status: "loading", error: null });
+    try {
+      const width = field.keyColumns.length;
+      const result = await runDisplayQuery(
+        contextRowsQuery(
+          query.definition,
+          source.presets(),
+          field.keyColumns,
+          contextDefinitions(source.prelude(), value),
+          specFor(field.table).display.join(" "),
+        ),
+        opts.schemaJson,
+      );
+      if (tokens.get(id) !== token) return;
+      const columns = result.columns.slice(width);
+      set((s) => {
+        const list = s.lists[id];
+        if (!list) return;
+        const signatureOf = (key: RecordKey | undefined) =>
+          keySignature((key ?? []).map((part) => part.value));
+        const held = new Map(
+          list.childIds.map((child) => [
+            signatureOf(s.records[child]?.keys[0]),
+            child,
+          ]),
+        );
+        const placed: string[] = [];
+        const seen = new Set<string>();
+        let next = 0;
+        for (const row of result.rows) {
+          const key: RecordKey = field.keyColumns.map((column, i) => ({
+            column,
+            value: row[i] ?? "",
+          }));
+          const signature = signatureOf(key);
+          // A query whose display joins out to several rows per record lists
+          // the record once.
+          if (seen.has(signature)) continue;
+          seen.add(signature);
+          let child = held.get(signature);
+          if (child === undefined) {
+            while (s.records[childId(id, next)]) next++;
+            child = childId(id, next);
+            s.records[child] = castDraft(
+              recordNode(field.table, [key], [], "unloaded"),
+            );
+          }
+          s.embeds[child] = castDraft({
+            status: "loaded",
+            ...embedPreview(
+              row.slice(width),
+              columns,
+              key.map((part) => part.value),
+            ),
+          });
+          placed.push(child);
+        }
+        list.status = "loaded";
+        list.error = null;
+        list.expected = placed.length;
+        list.childIds = placed;
+      });
+      restoreChildren(id);
+    } catch (err) {
+      if (tokens.get(id) !== token) return;
+      if (shown && isCompileError(err)) return;
+      patchList(id, { status: "error", error: errorMessage(err) });
+    }
+  };
+
+  /** Creates a contextual query's list for one record and runs the query into it
+   * — the first time the field opens, or the first time since the query changed
+   * while the field was closed. */
+  const ensureContextList = (recordId: string, field: ContextQueryField) => {
+    const id = listId(recordId, field.key);
+    const list = get().lists[id];
+    if (list && list.status !== "unloaded") return;
+    if (!list) {
+      set((s) => {
+        s.lists[id] = {
+          status: "unloaded",
+          error: null,
+          // One placeholder: nothing says how many records there will be.
+          expected: 1,
+          childIds: [],
+          removed: [],
+          dirty: false,
+        };
+      });
+    }
+    void loadContext(recordId, field);
+  };
+
+  /** The definition of each contextual query as the form last ran it, which is
+   * how `syncContextualQueries` tells which ones have changed. */
+  const ranDefinitions = new Map<string, QueryDefinition>(
+    (opts.contextualQueries?.list() ?? []).map((query) => [
+      query.id,
+      query.definition,
+    ]),
+  );
+  /** The pending re-run of each contextual query being edited. */
+  const contextRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Runs a changed contextual query again wherever the form holds its records:
+   * now, where its field is open, and on opening it, where it isn't. */
+  const rerunContext = (queryId: string) => {
+    const s = get();
+    for (const [recordId, node] of Object.entries(s.records)) {
+      for (const field of node.fields) {
+        if (field.kind !== "contextQuery" || field.queryId !== queryId) {
+          continue;
+        }
+        const id = listId(recordId, field.key);
+        if (!s.lists[id]) continue;
+        if (s.expanded[fieldItemId(recordId, field.key)]) {
+          void loadContext(recordId, field);
+        } else {
+          tokens.set(id, ++tokenSeq);
+          patchList(id, { status: "unloaded" });
+        }
+      }
+    }
+  };
+
   /** Fetches the records a multi-record field holds *only so they can be
    * deleted*: clearing a field the user never opened still has to name every
    * record it stood for when the form is saved. Nothing here is rendered — the
@@ -1509,7 +1760,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     const s = get();
     for (const [parentId, parent] of Object.entries(s.records)) {
       for (const field of parent.fields) {
-        if (field.kind === "primitive") continue;
+        if (field.kind === "primitive" || field.kind === "contextQuery") {
+          continue;
+        }
         const holds =
           field.kind === "scalarLink"
             ? scalarChildId(parentId, field.key) === id
@@ -1537,6 +1790,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         if (!n) return;
         n.isNew = false;
         n.keys = castDraft(n.keys.map((_, index) => keyOf(n, index)));
+        // A record the database holds has its table's contextual queries.
+        n.fields = castDraft([...n.fields, ...contextFieldsOf(n.table)]);
       });
       const node = get().records[recordId];
       const key = node?.keys[0];
@@ -1632,6 +1887,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       else ensureScalarChild(recordId, field);
     } else if (field.kind === "multiRecord") {
       ensureList(recordId, field);
+    } else if (field.kind === "contextQuery") {
+      ensureContextList(recordId, field);
     }
   };
 
@@ -1749,6 +2006,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     dispose: () => {
       for (const timer of embedRefreshes.values()) clearTimeout(timer);
       embedRefreshes.clear();
+      for (const timer of contextRefreshes.values()) clearTimeout(timer);
+      contextRefreshes.clear();
       tokens.clear();
       items.clear();
       root = undefined;
@@ -1774,7 +2033,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
               if (node.table !== table) continue;
               for (const field of node.fields) {
                 if (
-                  field.kind !== "primitive" &&
+                  (field.kind === "scalarLink" ||
+                    field.kind === "multiRecord") &&
                   fieldRefKey(fieldRef(field)) === fieldKey
                 ) {
                   void refreshField(recordId, field);
@@ -1808,6 +2068,127 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         s.embedEditorFocus = null;
       }),
 
+    syncContextualQueries: () => {
+      const queries = opts.contextualQueries?.list() ?? [];
+      const live = new Set(queries.map((query) => query.id));
+      set((s) => {
+        for (const [recordId, node] of Object.entries(s.records)) {
+          if (node.isNew) continue;
+          const current = node.fields.filter((f) => f.kind === "contextQuery");
+          const next = contextFieldsOf(node.table);
+          if (JSON.stringify(current) === JSON.stringify(next)) continue;
+          for (const field of current) {
+            if (field.kind !== "contextQuery" || live.has(field.queryId)) {
+              continue;
+            }
+            const itemId = fieldItemId(recordId, field.key);
+            delete s.lists[listId(recordId, field.key)];
+            delete s.queryEditors[itemId];
+            if (s.renaming === itemId) s.renaming = null;
+          }
+          node.fields = castDraft([
+            ...node.fields.filter((f) => f.kind !== "contextQuery"),
+            ...next,
+          ]);
+        }
+      });
+      for (const id of ranDefinitions.keys()) {
+        if (live.has(id)) continue;
+        ranDefinitions.delete(id);
+        clearTimeout(contextRefreshes.get(id));
+        contextRefreshes.delete(id);
+      }
+      // What changed runs again once it stops changing, as embedded records do
+      // while their Querydown is typed.
+      for (const query of queries) {
+        const before = ranDefinitions.get(query.id);
+        ranDefinitions.set(query.id, query.definition);
+        if (before === undefined || before === query.definition) continue;
+        clearTimeout(contextRefreshes.get(query.id));
+        contextRefreshes.set(
+          query.id,
+          setTimeout(() => {
+            contextRefreshes.delete(query.id);
+            rerunContext(query.id);
+          }, EMBED_REFRESH_DEBOUNCE_MS),
+        );
+      }
+    },
+    openQueryEditor: (recordId, field, section = "filter") => {
+      const itemId = fieldItemId(recordId, field.key);
+      set((s) => {
+        s.menu = null;
+        s.queryEditors[itemId] = section;
+        s.embedEditorFocus = embedEditorId(recordId, field.key, "query");
+      });
+      if (
+        selectRunsContextQuery(get(), recordId) &&
+        get().expanded[itemId] !== true
+      ) {
+        openField(recordId, field);
+      }
+    },
+    closeQueryEditor: (recordId, fieldKey) =>
+      set((s) => {
+        delete s.queryEditors[fieldItemId(recordId, fieldKey)];
+      }),
+    openContextRecords: (recordId, field) => {
+      const value = contextValue(recordId);
+      if (value !== undefined) opts.openContextualQuery?.(field.queryId, value);
+    },
+    beginRename: (recordId, fieldKey) =>
+      set((s) => {
+        s.menu = null;
+        s.renaming = fieldItemId(recordId, fieldKey);
+      }),
+    endRename: () =>
+      set((s) => {
+        s.renaming = null;
+      }),
+    addProvisional: () =>
+      set((s) => {
+        s.renaming = null;
+        s.provisional = {
+          recordId: ROOT_ID,
+          name: DEFAULT_CONTEXTUAL_QUERY_NAME,
+          naming: true,
+        };
+      }),
+    setProvisionalName: (name) =>
+      set((s) => {
+        if (s.provisional) s.provisional.name = name;
+      }),
+    setProvisionalNaming: (naming) =>
+      set((s) => {
+        if (s.provisional) s.provisional.naming = naming;
+      }),
+    discardProvisional: () =>
+      set((s) => {
+        s.provisional = null;
+      }),
+    finishProvisional: (queryId) => {
+      const recordId = get().provisional?.recordId;
+      set((s) => {
+        s.provisional = null;
+      });
+      if (recordId === undefined) return;
+      const field = get().records[recordId]?.fields.find(
+        (f) => f.kind === "contextQuery" && f.queryId === queryId,
+      );
+      if (field?.kind === "contextQuery") {
+        model.openQueryEditor(recordId, field, "filter");
+      }
+    },
+    requestRemove: (queryId) =>
+      set((s) => {
+        s.menu = null;
+        s.removing = queryId;
+      }),
+    cancelRemove: () =>
+      set((s) => {
+        s.removing = null;
+      }),
+
     setRoot: (el) => {
       root = el;
     },
@@ -1817,6 +2198,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const expanded = get().expanded[itemId] === true;
       const next = open ?? !expanded;
       if (next === expanded) return;
+      // A contextual query has nothing to open into where it can't run.
+      if (
+        next &&
+        field.kind === "contextQuery" &&
+        !selectRunsContextQuery(get(), recordId)
+      ) {
+        return;
+      }
       rememberExpansion(itemId, next);
       if (next) openField(recordId, field);
       else setExpandedItem(itemId, false);
@@ -2016,6 +2405,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     },
 
     clearField: (recordId, field) => {
+      // What a contextual query found isn't the record's to clear.
+      if (field.kind === "contextQuery") return;
       const itemId = fieldItemId(recordId, field.key);
       // Clearing is a modification like any other, so a field the form can't
       // reach across the records it's on isn't cleared either.

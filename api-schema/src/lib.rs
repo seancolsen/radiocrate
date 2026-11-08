@@ -257,7 +257,7 @@ pub struct SettingDeleteParams {
 }
 
 /// Which field of a table's record editor form a [`FieldMetadataRow`] is about:
-/// the `field` union of `metadata.field`. See migration 0010.
+/// the `field` union of `metadata.field`. See migrations 0010 and 0012.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum FieldRef {
@@ -265,6 +265,8 @@ pub enum FieldRef {
     ColumnName(String),
     /// The field listing the records that reference this one.
     MultiLink(MultiLink),
+    /// The field showing the results of the `contextual_query` with this id.
+    ContextualQuery(String),
 }
 
 /// The records of `related_table_name` that reference a record through their

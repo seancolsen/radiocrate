@@ -269,6 +269,22 @@ function parseConditions(filter: string): Condition[] {
   return conditions;
 }
 
+/** `filter` with the `@name = '…'` variables `definitions` defines written in as
+ * the values they stand for — a contextual query's `@id`, which the compiler
+ * resolves the same way. */
+function substituteVariables(filter: string, definitions = ""): string {
+  let text = filter;
+  for (const [, name, value] of definitions.matchAll(
+    /^@(\w+) = '((?:[^'\\]|\\.)*)'$/gm,
+  )) {
+    text = text.replaceAll(
+      new RegExp(`@${name}\\b`, "g"),
+      `"${value.replace(/\\(.)/g, "$1")}"`,
+    );
+  }
+  return text;
+}
+
 /** A filter as alternatives, each a set of conditions AND-ed together: one
  * group for the ordinary filter, and one per `{…}` when `keyConditions` writes
  * out several records' keys inside `[…]`. A row satisfies the filter when it
@@ -325,7 +341,7 @@ function parseSort(sort: string): { path: string; descending: boolean }[] {
 /** Answers one record editor query out of the fixture rows — a mock of the
  * query API a story can hand a component directly, with no runner install. */
 export function fixtureQuery(q: RecordQuery): (string | null)[][] {
-  const groups = parseFilter(q.filter);
+  const groups = parseFilter(substituteVariables(q.filter, q.definitions));
   const rows = (TABLE_ROWS[q.base] ?? []).filter((row) =>
     groups.some((conditions) =>
       conditions.every((condition) => matches(q.base, row, condition)),
@@ -380,7 +396,7 @@ export function installRecordFixture(delayMs: number): void {
       schemaJson,
       "duckdb",
       q.base,
-      "",
+      q.definitions ?? "",
       q.filter,
       q.sort,
       q.display,

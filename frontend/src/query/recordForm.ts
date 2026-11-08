@@ -83,7 +83,32 @@ export interface MultiRecordField extends FieldBase {
   keyColumns: readonly string[];
 }
 
-export type FormField = PrimitiveField | ScalarLinkField | MultiRecordField;
+/** A field standing for a contextual query (`query/contextualQuery.ts`): the
+ * records a query the user wrote finds for this record, through `@id`. Not built
+ * from the schema like the others but from the queries written for the record's
+ * table, and it has no column behind it — the form adds it to a record's fields
+ * (see `contextFields`), and loading the record's own data passes it by. */
+export interface ContextQueryField extends FieldBase {
+  kind: "contextQuery";
+  /** The `contextual_query` row's id. */
+  queryId: string;
+  /** The table the query lists. */
+  table: string;
+  /** The columns identifying one of its records. */
+  keyColumns: readonly string[];
+}
+
+export type FormField =
+  PrimitiveField | ScalarLinkField | MultiRecordField | ContextQueryField;
+
+/** The fields holding a record's own data — every one but a contextual query,
+ * which the record's load knows nothing about. */
+export type DataField = Exclude<FormField, ContextQueryField>;
+
+/** Whether `field` holds the record's own data (see {@link DataField}). */
+export function isDataField(field: FormField): field is DataField {
+  return field.kind !== "contextQuery";
+}
 
 /** DuckDB type names, uppercased, grouped into {@link ValueType}s. Prefix
  * matching handles the parameterized spellings (`VARCHAR(20)`, `DECIMAL(4,2)`,
@@ -143,14 +168,14 @@ export function buildFormFields(
   tables: readonly SchemaTable[],
   tableName: string,
   hidden: readonly string[] = [],
-): FormField[] {
+): DataField[] {
   const table = tables.find((t) => t.name === tableName);
   if (!table) return [];
   const links = inferLinks(tables);
   const byName = new Map(tables.map((t) => [t.name, t]));
   const pk = primaryKey(table);
 
-  const fields: FormField[] = [];
+  const fields: DataField[] = [];
   for (const column of table.columns) {
     if (hidden.includes(column.name)) continue;
     const link = links.find(
@@ -205,23 +230,30 @@ export function buildFormFields(
  * it (`fieldMetadata.ts`). Unlike `key`, which only has to tell a form's fields
  * apart, this says what the field stands for. */
 export function fieldRef(field: FormField): FieldRef {
-  return field.kind === "multiRecord"
-    ? {
+  switch (field.kind) {
+    case "multiRecord":
+      return {
         multiLink: {
           relatedTableName: field.table,
           fkColumnName: field.column,
         },
-      }
-    : { columnName: field.column };
+      };
+    case "contextQuery":
+      return { contextualQuery: field.queryId };
+    default:
+      return { columnName: field.column };
+  }
 }
 
-/** A Querydown query in the four parts `compile_sections` takes (the record
- * editor writes no `definitions` — it queries real columns only). */
+/** A Querydown query in the four parts `compile_sections` takes. The record
+ * editor's own queries write no `definitions` — they query real columns only — but
+ * a contextual query runs under the user's prelude, with `@id` defined. */
 export interface RecordQuery {
   base: string;
   filter: string;
   sort: string;
   display: string;
+  definitions?: string;
 }
 
 /** A value as a Querydown string literal. Backslashes and quotes are escaped;
@@ -299,7 +331,7 @@ export function keySignature(values: readonly (string | null)[]): string {
 /** The display expression loading one field: the column's value, or — for a
  * referencing field — the count of related records, which is all the collapsed
  * form shows and all the initial load fetches. */
-function displayExpr(field: FormField): string {
+function displayExpr(field: DataField): string {
   return field.kind === "multiRecord" ? `$#${field.table}` : `$${field.column}`;
 }
 
@@ -317,7 +349,7 @@ function displayExpr(field: FormField): string {
  * of `fields`, in order. */
 export function recordDataQuery(
   table: string,
-  fields: readonly FormField[],
+  fields: readonly DataField[],
   keys: readonly RecordKey[],
 ): RecordQuery {
   const keyColumns = keys[0]?.map((p) => `$${p.column}`) ?? [];

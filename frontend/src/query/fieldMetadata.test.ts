@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FieldRef } from "api-client";
 import {
   anyFieldHidden,
+  appendFieldOrders,
   arrangeFields,
   defaultFieldMetadata,
   embedChanges,
@@ -64,6 +65,9 @@ describe("fieldRefKey", () => {
       link("track", "credit"),
       link('credit","track', ""),
       link("credit", 'track","'),
+      { contextualQuery: "q1" },
+      { contextualQuery: "q2" },
+      column('{"contextualQuery":"q1"}'),
     ];
     expect(new Set(refs.map(fieldRefKey)).size).toBe(refs.length);
   });
@@ -241,6 +245,38 @@ describe("arrangeFields", () => {
       "b",
       "a",
     ]);
+  });
+});
+
+describe("appendFieldOrders", () => {
+  const query: FieldRef = { contextualQuery: "q" };
+  const refs = [column("a"), column("b"), query];
+
+  it("puts a new field after the last sort key, when every field has one", () => {
+    expect(appendFieldOrders(refs, ordered("b", "a"), query)).toEqual([
+      { field: query, order: 3 },
+    ]);
+  });
+
+  it("resequences every field when any has no sort key", () => {
+    expect(appendFieldOrders(refs, {}, query)).toEqual([
+      placed("a", 1),
+      placed("b", 2),
+      { field: query, order: 3 },
+    ]);
+    // Those already holding their new key are left out.
+    expect(appendFieldOrders(refs, ordered("a"), query)).toEqual([
+      placed("b", 2),
+      { field: query, order: 3 },
+    ]);
+  });
+
+  it("leaves a field already last by its sort key", () => {
+    const metadata = {
+      ...ordered("a", "b"),
+      [fieldRefKey(query)]: fieldMeta(true, 7),
+    };
+    expect(appendFieldOrders(refs, metadata, query)).toEqual([]);
   });
 });
 

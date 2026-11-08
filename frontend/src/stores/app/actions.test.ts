@@ -4525,6 +4525,145 @@ describe("field metadata", () => {
   });
 });
 
+describe("contextual queries", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.mocked(dml).mockClear();
+    vi.mocked(metadataFieldSetOrder).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+  });
+  afterEach(() => bundle.dispose());
+  const state = () => bundle.store.getState();
+  const queries = () => state().contextualQueries.data;
+  /** Lets the queued writes reach the mocks. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
+  const operations = (call: number) =>
+    vi.mocked(dml).mock.calls[call]?.[0].operations;
+
+  it("adds one, seeded, and places its field last", async () => {
+    const id = bundle.actions.addContextualQuery(
+      "artist",
+      " Credits ",
+      "credit",
+    );
+    expect(queries()).toEqual([
+      {
+        id,
+        tableName: "artist",
+        name: "Credits",
+        definition: expect.objectContaining({
+          base: "credit",
+          filter: { custom: "", presets: [] },
+        }) as unknown,
+      },
+    ]);
+    const field: FieldRef = { contextualQuery: id };
+    const order = selectTableMetadata(state(), "artist")[fieldRefKey(field)]
+      ?.order;
+    const others = buildFormFields(state().schema.tables, "artist").length;
+    expect(order).toBe(others + 1);
+
+    await settle();
+    expect(operations(0)).toEqual([
+      expect.objectContaining({
+        operation: "insert",
+        table: "contextual_query",
+        values: expect.objectContaining({
+          id,
+          table_name: "artist",
+          name: "Credits",
+        }) as unknown,
+      }),
+    ]);
+    // The order goes out once the query it's about exists.
+    await settle();
+    expect(metadataFieldSetOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("names one left blank after the default", () => {
+    bundle.actions.addContextualQuery("artist", "  ", "credit");
+    expect(queries()[0]?.name).toBe("query");
+  });
+
+  it("renames one, leaving it be for a blank name", async () => {
+    const id = bundle.actions.addContextualQuery("artist", "a", "credit");
+    await settle();
+    bundle.actions.renameContextualQuery(id, "  ");
+    bundle.actions.renameContextualQuery(id, "b ");
+    expect(queries()[0]?.name).toBe("b");
+    await settle();
+    expect(vi.mocked(dml)).toHaveBeenCalledTimes(2);
+    expect(operations(1)).toEqual([
+      {
+        operation: "update",
+        id: "op1",
+        table: "contextual_query",
+        where: { id },
+        values: { name: "b" },
+      },
+    ]);
+  });
+
+  describe("an edit to its Querydown", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("shows at once, and is written once the app goes quiet", async () => {
+      const id = bundle.actions.addContextualQuery("artist", "a", "credit");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(dml).mockClear();
+      bundle.actions.setContextualQuerySection(id, "filter", "artist:=@id");
+      expect(queries()[0]?.definition.filter.custom).toBe("artist:=@id");
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(dml).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dml).toHaveBeenCalledTimes(1);
+      const values = operations(0)?.[0];
+      expect(values).toMatchObject({ operation: "update", where: { id } });
+    });
+
+    it("goes out as the user leaves the editor", async () => {
+      const id = bundle.actions.addContextualQuery("artist", "a", "credit");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(dml).mockClear();
+      bundle.actions.setContextualQuerySection(id, "sort", "\\\\role");
+      bundle.actions.flushContextualQuery(id);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dml).toHaveBeenCalledTimes(1);
+    });
+
+    it("is dropped with the query it was to", async () => {
+      const id = bundle.actions.addContextualQuery("artist", "a", "credit");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(dml).mockClear();
+      bundle.actions.setContextualQuerySection(id, "filter", "artist:=@id");
+      bundle.actions.removeContextualQuery(id);
+      expect(queries()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(dml).toHaveBeenCalledTimes(1);
+      expect(operations(0)).toEqual([
+        {
+          operation: "delete",
+          id: "op1",
+          table: "contextual_query",
+          where: { id },
+        },
+      ]);
+    });
+  });
+
+  it("opens one's records in a tab, with @id written in", () => {
+    const id = bundle.actions.addContextualQuery("artist", "Credits", "credit");
+    bundle.actions.setContextualQuerySection(id, "filter", "artist:=@id");
+    bundle.actions.openContextualQueryTab("nowhere", id, "a1");
+    const tab = state().tabs.find((t) => t.name === "Credits");
+    expect(tab?.kind).toBe("query");
+    const live = tab?.kind === "query" ? tab.live : undefined;
+    expect(live?.full).toMatch(/^@id = 'a1'\n#credit\nartist:=@id\n/);
+  });
+});
+
 describe("exporting results data", () => {
   let bundle: AppStoreBundle;
   let env: ReturnType<typeof fakeEnv>;

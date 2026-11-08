@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -11,11 +12,16 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import ContextQueryEditor from "./ContextQueryEditor";
 import EmbedQuerydownEditor from "./EmbedQuerydownEditor";
 import Pager from "../ui/Pager";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
-import FieldLabel, { fieldAppearance } from "./FieldLabel";
+import FieldLabel, {
+  fieldAppearance,
+  LabelNameInput,
+  type RenameEnd,
+} from "./FieldLabel";
 import FieldValue, {
   OneLineValue,
   ValueInput,
@@ -30,6 +36,7 @@ import {
   listedValues,
   listId,
   scalarChildId,
+  selectContextCount,
   selectCountMax,
   selectCountMin,
   selectDistinctCount,
@@ -44,8 +51,10 @@ import {
   selectIsExpanded,
   selectIsSelected,
   selectListsDistinct,
+  selectQueryEditor,
   selectRecordCount,
   selectRecordModified,
+  selectRunsContextQuery,
   selectSharedValue,
   VARIED,
   variedChildId,
@@ -53,19 +62,26 @@ import {
   type RecordFormModel,
   type SharedValue,
 } from "../../stores/recordForm";
-import { selectTableMetadata } from "../../stores/app";
+import { selectContextualQuery, selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
 import { embedText } from "../../query/embedPreview";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
+import {
+  contextKeyColumn,
+  isRunnable,
+  listableTables,
+} from "../../query/contextualQuery";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
 import {
   fieldRef,
+  type ContextQueryField,
+  type DataField,
   type FormField,
   type MultiRecordField,
   type PrimitiveField,
@@ -202,6 +218,10 @@ function FieldList(props: {
   });
   const drag = dnd.drag;
   const dragged = shown.find((field) => field.key === drag?.item);
+  const provisional = useFormState(
+    model,
+    (s) => s.provisional?.recordId === recordId,
+  );
 
   return (
     <div ref={listRef} className="relative">
@@ -211,18 +231,31 @@ function FieldList(props: {
           data-field-row
           className={cx({ "opacity-50": field.key === drag?.item })}
         >
-          <FieldRow
-            model={model}
-            recordId={recordId}
-            table={table}
-            isNew={props.isNew}
-            field={field}
-            hiddenField={isFieldHidden(metadata, fieldRef(field))}
-            onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
-            labelPressed={dnd.pressing}
-          />
+          {field.kind === "contextQuery" ? (
+            <ContextQueryRow
+              model={model}
+              recordId={recordId}
+              table={table}
+              field={field}
+              hiddenField={isFieldHidden(metadata, fieldRef(field))}
+              onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
+              labelPressed={dnd.pressing}
+            />
+          ) : (
+            <FieldRow
+              model={model}
+              recordId={recordId}
+              table={table}
+              isNew={props.isNew}
+              field={field}
+              hiddenField={isFieldHidden(metadata, fieldRef(field))}
+              onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
+              labelPressed={dnd.pressing}
+            />
+          )}
         </div>
       ))}
+      {provisional && <ProvisionalRow model={model} table={table} />}
       {drag?.target && (
         <div
           aria-hidden="true"
@@ -244,7 +277,8 @@ function FieldList(props: {
   );
 }
 
-/** One field: its row, plus whatever the row expands into. */
+/** One field: its row, plus whatever the row expands into. (A contextual query's
+ * field has a row of its own, `ContextQueryRow`.) */
 function FieldRow(props: {
   model: RecordFormModel;
   recordId: string;
@@ -252,7 +286,7 @@ function FieldRow(props: {
   table: string;
   /** Whether the record this field belongs to is one the form is creating. */
   isNew: boolean;
-  field: FormField;
+  field: DataField;
   /** Whether the user has hidden this field, and it's on show regardless. */
   hiddenField: boolean;
   /** A press on the field's label, which may be the start of a drag. */
@@ -657,6 +691,275 @@ function FieldRow(props: {
   );
 }
 
+/** The classes of a `<select>`, as every one in the app has them. */
+const SELECT =
+  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md py-0 outline-none";
+
+/** Where focus goes once a label's rename ends: back to the label, and on along
+ * the fields for a Tab. A rename ended by focus going elsewhere leaves it there. */
+function focusAfterRename(
+  model: RecordFormModel,
+  itemId: string,
+  end: RenameEnd | null,
+): void {
+  if (end === "blur") return;
+  queueMicrotask(() => {
+    model.focusItem(itemId);
+    if (end === "tab" || end === "backTab") model.focusAdjacent(end === "tab");
+  });
+}
+
+/** A contextual query's field: its label, the number of records the query found
+ * once it has run, and the way to open them in a query tab of their own — then,
+ * below, the query's editor while it's open, and once expanded, the records. A
+ * query doesn't run until the field is expanded, nor without a filter.
+ *
+ * Only a single record the database holds runs one: `@id` has no one value on
+ * several records, nor any on a record still being created, so on those the
+ * field shows, to be arranged and edited like any other, with nothing to open. */
+function ContextQueryRow(props: {
+  model: RecordFormModel;
+  recordId: string;
+  /** The table of the record this field belongs to. */
+  table: string;
+  field: ContextQueryField;
+  /** Whether the user has hidden this field, and it's on show regardless. */
+  hiddenField: boolean;
+  /** A press on the field's label, which may be the start of a drag. */
+  onLabelPointerDown: (e: PointerEvent<HTMLElement>) => void;
+  /** Whether a touch is resting on a label, on its way to picking it up. */
+  labelPressed: () => boolean;
+}): JSX.Element {
+  const { model, recordId, field } = props;
+  const itemId = fieldItemId(recordId, field.key);
+  const expanded = useFormState(model, (s) => selectIsExpanded(s, itemId));
+  const runs = useFormState(model, (s) => selectRunsContextQuery(s, recordId));
+  const count = useFormState(model, (s) =>
+    selectContextCount(s, recordId, field.key),
+  );
+  const modified = useFormState(model, (s) =>
+    selectFieldModified(s, recordId, field.key),
+  );
+  const menuOpen = useFormState(model, (s) => {
+    const target = s.menu?.target;
+    return (
+      target?.kind === "field" &&
+      target.recordId === recordId &&
+      target.fieldKey === field.key
+    );
+  });
+  const renaming = useFormState(model, (s) => s.renaming === itemId);
+  const section = useFormState(model, (s) =>
+    selectQueryEditor(s, recordId, field.key),
+  );
+  const runnable = useApp((s) => {
+    const query = selectContextualQuery(s, field.queryId);
+    return query !== undefined && isRunnable(query.definition);
+  });
+  const keyColumn = useApp((s) =>
+    contextKeyColumn(s.schema.tables, props.table),
+  );
+  /** What `@id` stands for here: the record's key. */
+  const idValue = useFormState(model, (s) =>
+    keyColumn === undefined
+      ? null
+      : (s.records[recordId]?.values[keyColumn]?.[0] ?? null),
+  );
+  const { renameContextualQuery } = useAppActions();
+
+  useEffect(() => {
+    model.registerItem(itemId, {
+      group: recordId,
+      expandable: () =>
+        selectRunsContextQuery(model.store.getState(), recordId),
+      setExpanded: (open) => model.toggleField(recordId, field, open),
+      // What a query found isn't the record's to delete.
+      remove: () => {},
+    });
+    return () => model.unregisterItem(itemId);
+  }, [model, itemId, recordId, field]);
+
+  const toggle = () => model.toggleField(recordId, field);
+
+  return (
+    <>
+      <div className="flex min-h-[30px] items-center gap-1 py-0.5">
+        <ExpansionToggle
+          expandable={runs}
+          expanded={expanded}
+          label={field.label}
+          onToggle={(siblings) =>
+            siblings ? model.toggleSiblings(itemId, !expanded) : toggle()
+          }
+        />
+        <div className="relative shrink-0">
+          <FieldLabel
+            field={field}
+            itemId={itemId}
+            menuOpen={menuOpen}
+            hiddenField={props.hiddenField}
+            onClick={() => model.focusItem(itemId)}
+            onDblClick={toggle}
+            onFocus={() => model.noteFocus(itemId)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              toggle();
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (props.labelPressed()) return;
+              model.openMenu({
+                target: { kind: "field", recordId, fieldKey: field.key },
+                x: e.clientX,
+                y: e.clientY,
+              });
+            }}
+            onPointerDown={props.onLabelPointerDown}
+            rename={
+              renaming
+                ? {
+                    onCommit: (name, end) => {
+                      renameContextualQuery(field.queryId, name);
+                      model.endRename();
+                      focusAfterRename(model, itemId, end);
+                    },
+                    onCancel: () => {
+                      model.endRename();
+                      focusAfterRename(model, itemId, null);
+                    },
+                  }
+                : undefined
+            }
+          />
+          {modified && <ModifiedStar label={field.label} />}
+        </div>
+        {count !== undefined && <CountBadge min={count} max={count} />}
+        {/* Off until the query has a filter: without one, the tab would list
+            every record of its table. */}
+        {runs && (
+          <IconButton
+            icon={Icons.OpenInTab}
+            label={`Open ${field.label} in new tab`}
+            size="sm"
+            tabIndex={-1}
+            disabled={!runnable}
+            onClick={() => model.openContextRecords(recordId, field)}
+          />
+        )}
+      </div>
+
+      {section !== null && (
+        <ContextQueryEditor
+          model={model}
+          recordId={recordId}
+          field={field}
+          section={section}
+          idValue={idValue}
+        />
+      )}
+
+      {expanded && runs && (
+        <Subtree>
+          {runnable ? (
+            <ChildList model={model} recordId={recordId} field={field} />
+          ) : (
+            <p className="text-ink-weak px-1 py-0.5 text-xs italic">
+              Write a filter to run this query.
+            </p>
+          )}
+        </Subtree>
+      )}
+    </>
+  );
+}
+
+/** A contextual query being added (`RecordFormActions.addProvisional`) — not a
+ * field yet, but what makes one: a name, being typed as it appears, and the table
+ * the query is to list, chosen from the Base selector beside it, which turns this
+ * into the query's field. Escape while it's being named, or the ×, drops it. */
+function ProvisionalRow(props: {
+  model: RecordFormModel;
+  /** The table of the record whose fields it's among. */
+  table: string;
+}): JSX.Element {
+  const { model } = props;
+  const name = useFormState(model, (s) => s.provisional?.name ?? "");
+  const naming = useFormState(model, (s) => s.provisional?.naming === true);
+  const tables = useApp((s) => s.schema.tables);
+  const { addContextualQuery } = useAppActions();
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const selectId = useId();
+
+  const choose = (base: string) => {
+    if (base === "") return;
+    model.finishProvisional(addContextualQuery(props.table, name, base));
+  };
+
+  return (
+    <div
+      className="flex min-h-[30px] items-center gap-1 py-0.5"
+      data-testid="provisional-query"
+    >
+      <span className="size-4 shrink-0" aria-hidden="true" />
+      <span
+        className="text-ink bg-field-query flex shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 py-px text-xs/5 select-none"
+        onDoubleClick={() => model.setProvisionalNaming(true)}
+      >
+        <Icons.FieldQuery className="size-3.5 shrink-0 opacity-70" />
+        {naming ? (
+          <LabelNameInput
+            label="Name of the new query"
+            name={name}
+            rename={{
+              onCommit: (next, end) => {
+                model.setProvisionalName(next.trim() || name);
+                model.setProvisionalNaming(false);
+                // Named, it wants a table to list next.
+                if (end === "enter" || end === "tab") {
+                  queueMicrotask(() => selectRef.current?.focus());
+                }
+              },
+              onCancel: () => model.discardProvisional(),
+            }}
+          />
+        ) : (
+          <span className="max-w-40 truncate">{name}</span>
+        )}
+      </span>
+      <label
+        htmlFor={selectId}
+        className="text-ink-weak flex shrink-0 items-center gap-0.5 pl-1 text-xs"
+      >
+        <Icons.Base className="size-4" />
+        Base
+      </label>
+      <select
+        ref={selectRef}
+        id={selectId}
+        className={cx(SELECT, "min-w-0 flex-1")}
+        value=""
+        onChange={(e) => choose(e.currentTarget.value)}
+      >
+        <option value="" disabled>
+          Choose a table…
+        </option>
+        {listableTables(tables).map((table) => (
+          <option key={table.name} value={table.name}>
+            {table.name}
+          </option>
+        ))}
+      </select>
+      <IconButton
+        icon={Icons.Close}
+        label="Discard new query"
+        size="sm"
+        onClick={() => model.discardProvisional()}
+      />
+    </div>
+  );
+}
+
 /** Indents a row's children and draws the tree line down their left edge. */
 function Subtree(props: { children: ReactNode }): JSX.Element {
   return <div className="border-edge ml-2 border-l pl-2">{props.children}</div>;
@@ -1018,11 +1321,15 @@ const pageCount = (total: number): number =>
 /** The records behind an expanded multi-record field. While they load, the
  * count the parent already reported is drawn as that many empty embedded
  * records, so the list has its real shape under the loading wash before any of
- * it arrives. */
+ * it arrives.
+ *
+ * Or the records a contextual query found, which have no count to go by until
+ * they've arrived: one placeholder stands in for them the first time, and as many
+ * as there were the next. */
 function ChildList(props: {
   model: RecordFormModel;
   recordId: string;
-  field: MultiRecordField;
+  field: MultiRecordField | ContextQueryField;
 }): JSX.Element | null {
   const { model } = props;
   const id = listId(props.recordId, props.field.key);
@@ -1082,12 +1389,15 @@ function ChildList(props: {
 /** One record within a multi-record field: an embedded record previewing it, and
  * — once expanded — that record's own form. This is the form's selectable item:
  * it can be clicked with the same range/toggle modifiers as a result row, so a
- * run of them can be deleted in one go. */
+ * run of them can be deleted in one go.
+ *
+ * Within a contextual query's field, the same row for a record the query found —
+ * selectable and editable all the same, but with nothing to delete it from. */
 function ChildRow(props: {
   model: RecordFormModel;
-  /** The record the multi-record field belongs to. */
+  /** The record the field belongs to. */
   parentId: string;
-  field: MultiRecordField;
+  field: MultiRecordField | ContextQueryField;
   listId: string;
   recordId: string;
 }): JSX.Element {
@@ -1142,6 +1452,9 @@ function ChildRow(props: {
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
+    // A record a query found has no menu: all its menu would offer is deleting
+    // it from the list, which a query's records can't be.
+    if (field.kind === "contextQuery") return;
     const targets = menuTargets();
     // Right-clicking outside the selection moves it here first, so the menu's
     // target is visible — the same courtesy the result rows extend.
@@ -1167,7 +1480,11 @@ function ChildRow(props: {
       group: props.listId,
       expandable: () => true,
       setExpanded: (open) => model.toggleChild(recordId, open),
-      remove: () => model.removeChild(parentId, field, recordId),
+      remove: () => {
+        if (field.kind === "multiRecord") {
+          model.removeChild(parentId, field, recordId);
+        }
+      },
     });
     return () => model.unregisterItem(recordId);
   }, [model, recordId, props.listId, parentId, field]);
@@ -1214,13 +1531,15 @@ function ChildRow(props: {
           onDblClick={() => model.toggleChild(recordId)}
           onFocus={() => model.noteFocus(recordId)}
         />
-        <IconButton
-          icon={Icons.Delete}
-          label={`Delete ${label}`}
-          size="sm"
-          tabIndex={-1}
-          onClick={() => model.removeChild(parentId, field, recordId)}
-        />
+        {field.kind === "multiRecord" && (
+          <IconButton
+            icon={Icons.Delete}
+            label={`Delete ${label}`}
+            size="sm"
+            tabIndex={-1}
+            onClick={() => model.removeChild(parentId, field, recordId)}
+          />
+        )}
       </div>
       {expanded && (
         <Subtree>

@@ -1,9 +1,12 @@
 import { useState, type JSX, type ReactNode } from "react";
 import {
+  selectEffectivePresets,
+  selectPrelude,
   selectRecordEditor,
   type RecordEditorTarget,
   type RecordRef,
 } from "../stores/app";
+import { contextKeyColumn } from "../query/contextualQuery";
 import { entityNames } from "../query/entityNames";
 import { recordIdentity } from "../stores/forms";
 import {
@@ -83,12 +86,19 @@ function ToolbarButton(props: {
 
 /** The form's actions menu (⋮): Collapse all, shown only while something is
  * expanded; Copy id, when the record has a UUID `id`; the way to show or hide again the fields the user has hidden, shown
- * only while the form has any; and Refresh, which reloads the record from the
+ * only while the form has any; Add contextual query, on a table whose records
+ * can have them; and Refresh, which reloads the record from the
  * database. Refresh is off while there are unsaved changes or a save is in
  * flight, since it would throw the changes away — Reset is the deliberate way to
  * do that. */
-function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
+function FormActionsMenu(props: {
+  model: RecordFormModel;
+  table: string;
+}): JSX.Element {
   const { model } = props;
+  const canQuery = useApp(
+    (s) => contextKeyColumn(s.schema.tables, props.table) !== undefined,
+  );
   const anyExpanded = useFormState(model, selectAnyExpanded);
   const modified = useFormState(model, selectFormModified);
   const saving = useFormState(model, (s) => s.saving);
@@ -133,6 +143,13 @@ function FormActionsMenu(props: { model: RecordFormModel }): JSX.Element {
             onClick={() => setShowHiddenFields(true)}
           />
         ))}
+      {canQuery && (
+        <MenuItem
+          icon={Icons.FieldQuery}
+          label="Add contextual query"
+          onClick={() => model.addProvisional()}
+        />
+      )}
       {rootIds !== undefined && (
         <MenuItem
           icon={Icons.Copy}
@@ -299,6 +316,13 @@ function PanelForm(props: {
         schemaJson,
         fieldMetadata: () => stores.app.store.getState().fieldMetadata.data,
         expansion: stores.recordExpansion,
+        contextualQueries: {
+          list: () => stores.app.store.getState().contextualQueries.data,
+          presets: () => selectEffectivePresets(stores.app.store.getState()),
+          prelude: () => selectPrelude(stores.app.store.getState()),
+        },
+        openContextualQuery: (queryId, value) =>
+          stores.app.actions.openContextualQueryTab(tabId, queryId, value),
         // The save is a write *from* result rows, so it goes through the
         // store: what it changed is read back into the rows the editor was
         // opened on (see `query/rowDml.ts`).
@@ -321,7 +345,7 @@ function PanelForm(props: {
       <PanelHeader
         heading={props.heading}
         onClose={props.onClose}
-        menu={<FormActionsMenu model={model} />}
+        menu={<FormActionsMenu model={model} table={props.table} />}
       >
         {modified && (
           <>

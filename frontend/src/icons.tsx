@@ -87,6 +87,7 @@ import FieldRecords from "~icons/material-symbols/table";
 import FieldTime from "~icons/material-symbols/schedule";
 import FieldBoolean from "~icons/material-symbols/check-box";
 import FieldOther from "~icons/material-symbols/data-object";
+import FieldQuery from "~icons/material-symbols/saved-search";
 import LightMode from "~icons/material-symbols/light-mode";
 import DarkMode from "~icons/material-symbols/dark-mode";
 import SystemTheme from "~icons/material-symbols/settings-brightness";
@@ -179,6 +180,7 @@ export const Icons = {
   FieldTime, // record editor: a date/time field's label
   FieldBoolean, // record editor: a boolean field's label
   FieldOther, // record editor: a field of any other type
+  FieldQuery, // record editor: a contextual query's field
   LightMode, // Settings footer: Light theme option
   DarkMode, // Settings footer: Dark theme option
   SystemTheme, // Settings footer: System theme option

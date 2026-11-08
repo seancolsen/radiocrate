@@ -85,6 +85,29 @@ function menuEntries(
   // to it is to stop pointing at it.
   if (open.target.kind === "scalarEmbed") return [clear];
 
+  // A contextual query's field is the query: what's offered is writing it,
+  // naming it and removing it — for every record of the table, at once.
+  if (field.kind === "contextQuery") {
+    return [
+      {
+        icon: Icons.Querydown,
+        label: "Edit query",
+        run: () => model.openQueryEditor(recordId, field),
+      },
+      {
+        icon: Icons.Rename,
+        label: "Rename",
+        run: () => model.beginRename(recordId, field.key),
+      },
+      {
+        icon: Icons.Delete,
+        danger: true,
+        label: "Remove",
+        run: () => model.requestRemove(field.queryId),
+      },
+    ];
+  }
+
   if (field.kind === "multiRecord") {
     return [
       {
@@ -190,7 +213,8 @@ export default function RecordContextMenu(props: {
     if (!s.menu) return undefined;
     const { recordId, fieldKey } = s.menu.target;
     const target = selectFieldOf(s, recordId, fieldKey);
-    return target && target.kind !== "multiRecord"
+    return target &&
+      (target.kind === "primitive" || target.kind === "scalarLink")
       ? selectSharedValue(s, recordId, target.column)
       : undefined;
   });
@@ -200,7 +224,11 @@ export default function RecordContextMenu(props: {
   if (open.target.kind === "field" && field && table !== undefined) {
     const ref = fieldRef(field);
     const hidden = isFieldHidden(metadata, ref);
-    entries.push(
+    // Below what the field offers — but above removing a contextual query,
+    // which is the one entry that's best kept last.
+    entries.splice(
+      field.kind === "contextQuery" ? entries.length - 1 : entries.length,
+      0,
       hidden
         ? {
             icon: Icons.Show,

@@ -50,7 +50,7 @@ async function runViaApi(
     schemaJson,
     "duckdb",
     query.base,
-    "", // no definitions: the form queries real columns only
+    query.definitions ?? "",
     query.filter,
     query.sort,
     query.display,

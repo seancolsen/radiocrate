@@ -652,7 +652,7 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
             "SELECT table_name, union_extract(field, 'column_name'), \
              union_extract(field, 'multi_link').related_table_name, \
              union_extract(field, 'multi_link').fk_column_name, visible, \"order\", display, \
-             sorting \
+             sorting, union_extract(field, 'contextual_query')::text \
              FROM metadata.field \
              ORDER BY table_name, union_tag(field)::text, field::text",
         )
@@ -660,9 +660,11 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
     let rows = stmt
         .query_map([], |row| {
             let column_name: Option<String> = row.get(1)?;
-            let field = match column_name {
-                Some(name) => FieldRef::ColumnName(name),
-                None => FieldRef::MultiLink(MultiLink {
+            let contextual_query: Option<String> = row.get(8)?;
+            let field = match (column_name, contextual_query) {
+                (Some(name), _) => FieldRef::ColumnName(name),
+                (None, Some(id)) => FieldRef::ContextualQuery(id),
+                (None, None) => FieldRef::MultiLink(MultiLink {
                     related_table_name: row.get(2)?,
                     fk_column_name: row.get(3)?,
                 }),
@@ -690,6 +692,9 @@ fn field_ref_sql(field: &FieldRef) -> (&'static str, Vec<&str>) {
             "union_value(multi_link := {'related_table_name': ?, 'fk_column_name': ?})",
             vec![&link.related_table_name, &link.fk_column_name],
         ),
+        FieldRef::ContextualQuery(id) => {
+            ("union_value(contextual_query := CAST(? AS UUID))", vec![id])
+        }
     }
 }
 
@@ -1168,6 +1173,10 @@ mod tests {
         })
     }
 
+    fn contextual_query(id: &str) -> FieldRef {
+        FieldRef::ContextualQuery(id.to_string())
+    }
+
     fn field_row(
         table_name: &str,
         field: FieldRef,
@@ -1276,6 +1285,26 @@ mod tests {
     }
 
     #[test]
+    fn a_contextual_query_field_round_trips_and_updates_in_place() {
+        let mut conn = setup();
+        let query = contextual_query(Q1);
+        set_field_order(
+            &mut conn,
+            "track",
+            &[order_of(column("title"), 1.0), order_of(query.clone(), 2.0)],
+        )
+        .unwrap();
+        set_field_visible(&conn, "track", &query, false).unwrap();
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                field_row("track", column("title"), true, Some(1.0)),
+                field_row("track", query, false, Some(2.0)),
+            ],
+        );
+    }
+
+    #[test]
     fn resequencing_can_write_a_field_more_than_once() {
         let mut conn = setup();
         let orders = |first: f64, second: f64| {
@@ -1306,6 +1335,10 @@ mod tests {
             ("track", column("credit")),
             ("track", multi_link("credit", "track")),
             ("track", multi_link("credit", "other_track")),
+            ("track", contextual_query(Q1)),
+            ("track", contextual_query(Q2)),
+            // Spells out how the first query above renders as text.
+            ("track", column(Q1)),
             // Spells out how the first link above renders as text.
             (
                 "track",
@@ -1314,7 +1347,7 @@ mod tests {
         ] {
             set_field_visible(&conn, table_name, &field, false).unwrap();
         }
-        assert_eq!(list_field_metadata(&conn).unwrap().len(), 6);
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 9);
     }
 
     #[test]
@@ -1329,11 +1362,13 @@ mod tests {
                     },
                     "order": 2.0
                 },
+                { "field": { "contextualQuery": Q1 }, "order": 3.0 },
             ],
         }))
         .unwrap();
         assert_eq!(params.orders[0].field, column("title"));
         assert_eq!(params.orders[1].field, multi_link("credit", "track"));
+        assert_eq!(params.orders[2].field, contextual_query(Q1));
 
         assert_eq!(
             serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
@@ -1349,11 +1384,56 @@ mod tests {
     }
 
     #[test]
+    fn migration_0012_keeps_field_metadata() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 11);
+        set_field_visible(&conn, "track", &column("title"), false).unwrap();
+        set_field_order(
+            &mut conn,
+            "track",
+            &[order_of(multi_link("credit", "track"), 2.0)],
+        )
+        .unwrap();
+        upsert_field_metadata(
+            &conn,
+            "track",
+            &multi_link("credit", "track"),
+            "display",
+            &Some("$role"),
+        )
+        .unwrap();
+        // Read as text: `list_field_metadata` asks for a kind of field this schema
+        // doesn't have yet.
+        let rows = |conn: &Connection| -> Vec<String> {
+            conn.prepare(
+                "SELECT concat_ws(' | ', table_name, field, visible, \"order\", display, sorting) \
+                 FROM metadata.field ORDER BY 1",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+        };
+        let before = rows(&conn);
+        assert_eq!(before.len(), 2);
+
+        crate::db::migrate_through(&mut conn, 12);
+
+        assert_eq!(rows(&conn), before);
+        // The rebuilt table still keeps one row per field.
+        set_field_visible(&conn, "track", &column("title"), true).unwrap();
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 2);
+        assert_eq!(count(&conn, "SELECT count(*) FROM contextual_query"), 0);
+    }
+
+    #[test]
     fn the_table_refuses_a_second_row_for_a_field() {
         let conn = setup();
         for field in [
             "union_value(column_name := 'title')",
             "union_value(multi_link := {'related_table_name': 'credit', 'fk_column_name': 'track'})",
+            "union_value(contextual_query := '00000000-0000-0000-0000-0000000000e1'::uuid)",
         ] {
             let insert =
                 format!("INSERT INTO metadata.field (table_name, field) VALUES ('a', {field})");

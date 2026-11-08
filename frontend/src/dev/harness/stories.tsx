@@ -36,6 +36,7 @@ import {
   emptyDefinition,
   type QueryDefinition,
 } from "../../query/definition";
+import type { ContextualQuery } from "../../query/contextualQuery";
 import type { AnnotationValue } from "querydown-js";
 import { columnMetadataFromAnnotation } from "../../query/columns";
 import type { QueryDiagnostic } from "../../query/diagnostics";
@@ -508,6 +509,37 @@ function withFieldMetadata(
     },
   };
 }
+
+/** `story`, with `queries` as the contextual queries the app has loaded. */
+function withContextualQueries(
+  story: Story,
+  queries: readonly ContextualQuery[],
+): Story {
+  return {
+    ...story,
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.contextualQueries = { status: "ready", data: castDraft(queries) };
+      });
+      story.setup?.(stores);
+    },
+  };
+}
+
+/** A contextual query of tracks: the credits of the track it's shown on that
+ * feature another artist. */
+const FEATURED_QUERY: ContextualQuery = {
+  id: "query-featured",
+  tableName: "track",
+  name: "featured",
+  definition: {
+    ...emptyDefinition(),
+    base: "credit",
+    filter: { custom: 'track:=@id\nrole:="role-featured"', presets: [] },
+    sort: { custom: "\\\\order" },
+    display: { custom: "$artist.name" },
+  },
+};
 
 /** The toolbar of whichever query tab is active — for a story about a tab whose
  * id is minted as it opens (a new query's). */
@@ -1712,6 +1744,19 @@ export const STORIES: Record<string, Story> = {
     frame: "flex items-start",
     render: () => <PagedAutocomplete />,
   },
+  // A contextual query on tracks, opened out with its editor showing (the test
+  // does the opening): the query's label in its own color, the count of what it
+  // found, the editor's toolbar over its filter, and the record it found.
+  "record-editor/contextual-query": withContextualQueries(recordEditor([3]), [
+    FEATURED_QUERY,
+  ]),
+  // A contextual query being added (the test does the adding): the new field at
+  // the bottom, its default name selected to be typed over, and the Base
+  // selector beside it with no table chosen.
+  "record-editor/provisional-query": withContextualQueries(
+    recordEditor([5]),
+    [],
+  ),
   // The user's own arrangement of `track`: `title` moved up to the top, and
   // `disc_number` and the credits hidden but on show, their labels dimmed.
   "record-editor/fields-customized": withFieldMetadata(recordEditor([1]), [

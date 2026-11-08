@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type JSX } from "react";
 import { ROOT_ID, type RecordFormModel } from "../../stores/recordForm";
 import { useFormsActions } from "../../stores/react";
+import ContextQueryRemoveModal from "./ContextQueryRemoveModal";
 import FieldRecordPicker from "./FieldRecordPicker";
 import RecordContextMenu from "./RecordContextMenu";
 import RecordNodeView from "./RecordFields";
@@ -50,6 +51,8 @@ export default function RecordForm(props: {
       model.noteBlur();
       model.closeMenu();
       model.closePicker();
+      model.cancelRemove();
+      model.endRename();
       // Last: letting go of the mount may be what lets the stash dispose a form
       // the editor has already moved off.
       forms.unmount(tabId, identities);
@@ -112,6 +115,7 @@ export default function RecordForm(props: {
       <RecordNodeView model={model} recordId={ROOT_ID} />
       <RecordContextMenu model={model} />
       <FieldRecordPicker model={model} schemaJson={props.schemaJson} />
+      <ContextQueryRemoveModal model={model} />
     </div>
   );
 }

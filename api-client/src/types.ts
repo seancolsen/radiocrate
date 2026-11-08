@@ -81,7 +81,7 @@ export type KeybindingDeleteParams = { commandId: string, };
 
 export type SettingDeleteParams = { key: string, };
 
-export type FieldRef = { "columnName": string } | { "multiLink": MultiLink };
+export type FieldRef = { "columnName": string } | { "multiLink": MultiLink } | { "contextualQuery": string };
 
 export type MultiLink = { relatedTableName: string, fkColumnName: string, };
 
