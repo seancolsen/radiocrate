@@ -54,7 +54,10 @@ export interface QueryDiagnostic {
   /** How to fix it, when the compiler has a suggestion. */
   hint: string | null;
   /** The editor whose text the problem is in; `null` when it can't be put
-   * down to one (most compile errors, which carry no location yet). */
+   * down to one: the compiler gave no location (a base table that doesn't
+   * exist), the location is in text the app wrote (a playlist's
+   * scaffolding), or the problem isn't the compiler's (a database's
+   * refusal). */
   origin: SourceOrigin | null;
   /** That editor's text, as it was compiled — what `range` and the notes'
    * ranges index into. Empty when there's no origin. */

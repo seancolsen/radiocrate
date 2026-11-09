@@ -39,7 +39,7 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 /// schema/PRELUDE the frontend expects. See
 /// `plans/2026-07-migrate-ui-to-dom/phase-03.md` §2.
 const QUERYDOWN_REPO: &str = "https://github.com/seancolsen/querydown";
-const QUERYDOWN_REV: &str = "f677f39";
+const QUERYDOWN_REV: &str = "12a5370";
 
 /// Builds Querydown's two JS packages from a pinned Querydown checkout and
 /// vendors them into `frontend/vendor/`, where `frontend/package.json`'s local

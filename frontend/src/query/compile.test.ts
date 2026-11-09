@@ -44,6 +44,7 @@ function preset(over: Partial<Preset> & { id: string }): Preset {
 const PRESETS = [
   preset({ id: "liked", definition: "title:x" }),
   preset({ id: "broken", definition: "\n  album.title:" }),
+  preset({ id: "unfit", definition: "nope:1" }),
 ];
 
 const PLAYLIST = "11111111-2222-3333-4444-555555555555";
@@ -179,10 +180,63 @@ describe("a query's problem", () => {
     });
   });
 
-  it("is put down to no editor when the compiler gives no location", () => {
+  it("is located when it doesn't fit the schema", () => {
     const d = failure(compileQuery(query({ sort: { custom: "\\\\nope" } })));
-    expect(d).toMatchObject({ kind: "compile", origin: null, range: null });
+    expect(d).toMatchObject({
+      kind: "compile",
+      origin: { kind: "custom", section: "sort" },
+      source: "\\\\nope",
+      range: { start: 2, end: 6 },
+    });
     expect(d.reason).toMatch(/nope/);
+  });
+
+  it("is traced to the filter preset that doesn't fit the schema", () => {
+    const d = failure(
+      compileQuery(
+        query({ filter: { custom: "title:x", presets: ["liked", "unfit"] } }),
+      ),
+    );
+    expect(d).toMatchObject({
+      kind: "compile",
+      origin: { kind: "preset", id: "unfit", section: "filter" },
+      source: "nope:1",
+      range: { start: 0, end: 4 },
+    });
+  });
+
+  it("is traced to the prelude definition that doesn't fit the schema", () => {
+    // Used in the filter, but wrong where it's defined.
+    const prelude = "@mine = album.nope:1";
+    const d = failure(
+      compileQuery(
+        query({ filter: { custom: "@mine", presets: [] } }),
+        prelude,
+      ),
+    );
+    expect(d).toMatchObject({
+      kind: "compile",
+      origin: { kind: "prelude" },
+      source: prelude,
+      range: { start: 14, end: 18 },
+    });
+  });
+
+  it("is located in a full query's own text when it doesn't fit the schema", () => {
+    const d = failure(compileQuery(query({ full: "#track $nope" })));
+    expect(d).toMatchObject({
+      kind: "compile",
+      origin: { kind: "full" },
+      source: "#track $nope",
+      range: { start: 8, end: 12 },
+    });
+  });
+
+  it("is put down to no editor when the compiler gives no location", () => {
+    // The base table is handed to the compiler apart from any section's text.
+    const d = failure(compileQuery(query({ base: "nope" })));
+    expect(d).toMatchObject({ kind: "compile", origin: null, range: null });
+    expect(d.reason).toBe("Base table `nope` does not exist.");
   });
 
   it("names a preset that's gone", () => {
@@ -254,6 +308,6 @@ describe("checkFragment", () => {
         "nope:1",
         origin,
       ),
-    ).toMatchObject({ kind: "compile", origin: null });
+    ).toMatchObject({ kind: "compile", origin, range: { start: 0, end: 4 } });
   });
 });

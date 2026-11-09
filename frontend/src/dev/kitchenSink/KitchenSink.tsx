@@ -382,13 +382,13 @@ const SELECT =
 const DISPLAY =
   "$title|upper -> name $album.year $#play @{align:right color:light} $file.added @{width:[120 300] formatter:{type:relativeTime units:[days weeks]}}";
 
-/** A Querydown problem over the editor's own text, so it's underlined. */
 /** An embedded record's columns when the second is annotated `color:"light"`. */
 const LIGHT_COLUMN: readonly ColumnMetadata[] = [
   defaultColumnMetadata(),
   { ...defaultColumnMetadata(), font_color: "light" },
 ];
 
+/** A Querydown problem over the editor's own text, so it's underlined. */
 const PROBLEM: QueryDiagnostic = {
   kind: "syntax",
   reason: "Unexpected end of input. Expected a value.",
@@ -402,7 +402,7 @@ const PROBLEM: QueryDiagnostic = {
 function Inputs(): JSX.Element {
   const [checked, setChecked] = useState(true);
   const [unchecked, setUnchecked] = useState(false);
-  const [query, setQuery] = useState("jazz playcount:<100");
+  const [query, setQuery] = useState('jazz title:"blue" playcount:<100');
   const [broken, setBroken] = useState(PROBLEM.source);
   const [display, setDisplay] = useState(DISPLAY);
   return (

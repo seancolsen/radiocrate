@@ -89,7 +89,7 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.getByTestId("query-diagnostic")).toContainText(
-      "not found within table",
+      "does not exist",
     );
     await expect(stage).toHaveScreenshot(
       snapshot("query-builder/compile-problem", colorScheme),

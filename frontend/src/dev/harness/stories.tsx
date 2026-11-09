@@ -1189,8 +1189,9 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
-  // A problem the compiler can't locate yet, with every builder closed: just
-  // the strip, saying what's wrong — no section to mark, nothing to show.
+  // A problem the compiler can't locate, with every builder closed: just the
+  // strip, saying what's wrong — no section to mark, nothing to show. The base
+  // table is the one thing it's handed apart from any section's text.
   "query-builder/compile-problem": {
     width: 1280,
     setup: (stores) => {
@@ -1198,7 +1199,7 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.setResults(id, emptyCountResult(12));
       showProblem(stores, id, {
         kind: "compile",
-        reason: "Column `nope` not found within table `track`.",
+        reason: "Base table `nope` does not exist.",
         origin: null,
         source: "",
         range: null,
