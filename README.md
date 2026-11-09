@@ -97,9 +97,10 @@ complete it, through two packages built from the Querydown revision pinned in
 [`xtask/src/main.rs`](xtask/src/main.rs) (`QUERYDOWN_REV`): `querydown-js`, the
 compiler as WASM (built with `wasm-pack`), and `querydown-codemirror`, the
 editors' CodeMirror support (built with Bun). This builds both into
-`frontend/vendor/` (gitignored), where `frontend/package.json` points. Run it
-after changing the pin, then `bun install` in `frontend/`. `build-release` runs
-it too.
+`frontend/vendor/` (gitignored), where `frontend/package.json` points, then
+reinstalls them into `frontend/node_modules` (Bun copies `file:` packages there
+and wouldn't otherwise pick up a rebuild) and clears Vite's pre-bundled deps.
+Run it after changing the pin. `build-release` runs it too.
 
 ### Clean the frontend build
 

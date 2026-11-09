@@ -132,7 +132,33 @@ fn build_querydown() -> Result<(), String> {
         &root.join("frontend/vendor/querydown-codemirror"),
         &["dist", "package.json", "README.md", "LICENSE"],
     )?;
-    Ok(())
+    reinstall_vendored(&root.join("frontend"))
+}
+
+/// Puts freshly vendored packages into `frontend/node_modules`.
+///
+/// Bun installs a `file:` dependency as a *copy*, and `bun install` doesn't
+/// re-copy one whose version is unchanged, which a re-vendored Querydown's
+/// always is. Left alone, the app, its tests and a release build would all go
+/// on using the old packages. So the installed copies are dropped, along with
+/// Vite's pre-bundled deps (which hold copies of their own), and reinstalled.
+/// Before the first `bun install` there's nothing installed to go stale.
+fn reinstall_vendored(frontend: &Path) -> Result<(), String> {
+    let modules = frontend.join("node_modules");
+    if !modules.exists() {
+        return Ok(());
+    }
+    for name in ["querydown-js", "querydown-codemirror", ".vite"] {
+        let path = modules.join(name);
+        if path.exists() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("removing {}: {e}", path.display()))?;
+        }
+    }
+    println!("==> bun install --frozen-lockfile (vendored packages)");
+    run(Command::new("bun")
+        .args(["install", "--frozen-lockfile"])
+        .current_dir(frontend))
 }
 
 /// Replaces `dest` with copies of `names` (files, or directories copied whole)
