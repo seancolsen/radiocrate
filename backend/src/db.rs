@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, info};
@@ -6,13 +7,18 @@ use tracing::{debug, info};
 /// its own dependency on `duckdb`.
 pub use duckdb::Connection;
 
+/// The database directory within a collection, unless the user names another.
+static DB_DIR_NAME: &str = ".radiocrate";
+
+/// The database file within the database directory. Not configurable: the user
+/// chooses the directory, never the file's name.
 static DB_FILE_NAME: &str = "radiocrate.db";
 
-/// The default location of the database file when the user does not supply a
-/// custom path: `radiocrate.db` within the collection root.
+/// The default database directory when the user does not supply one:
+/// `.radiocrate` within the collection root.
 #[must_use]
-pub fn default_db_path(collection_path: &Path) -> PathBuf {
-    collection_path.join(DB_FILE_NAME)
+pub fn default_db_dir(collection_path: &Path) -> PathBuf {
+    collection_path.join(DB_DIR_NAME)
 }
 
 struct Migration {
@@ -102,8 +108,17 @@ fn run_migration(conn: &mut Connection, migration: &Migration) -> Result<(), duc
     Ok(())
 }
 
-pub fn get_db(db_path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
-    let mut conn = Connection::open(db_path)?;
+/// Opens the database in `db_dir`, migrating it if needed. The directory is
+/// created (with any missing parents) if it doesn't exist yet.
+pub fn get_db(db_dir: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
+    fs::create_dir_all(db_dir).map_err(|e| {
+        format!(
+            "couldn't create the database directory '{}': {e}",
+            db_dir.display()
+        )
+    })?;
+    let db_path = db_dir.join(DB_FILE_NAME);
+    let mut conn = Connection::open(&db_path)?;
     init_db_version_metadata(&conn)?;
     let current_version = get_current_version(&conn)?;
     debug!(path = %db_path.display(), version = current_version, "opened database");
@@ -147,18 +162,38 @@ pub(crate) fn migrate_through(conn: &mut Connection, version: u32) {
 mod tests {
     use super::*;
 
+    /// A fresh scratch directory for one test, unique across the parallel
+    /// tests of this process.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("radiocrate-db-test-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
     fn migrating_leaves_no_wal_behind() {
-        let dir = std::env::temp_dir().join(format!("radiocrate-db-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("test.db");
-        let wal_path = dir.join("test.db.wal");
+        let dir = scratch_dir("wal");
+        let wal_path = dir.join(format!("{DB_FILE_NAME}.wal"));
 
-        let conn = get_db(&db_path).unwrap();
+        let conn = get_db(&dir).unwrap();
         let wal_exists = wal_path.exists();
         drop(conn);
-        std::fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
 
         assert!(!wal_exists, "migrations left a WAL file behind");
+    }
+
+    #[test]
+    fn creates_a_missing_db_dir() {
+        let root = scratch_dir("create");
+        let dir = root.join("nested").join(DB_DIR_NAME);
+
+        let conn = get_db(&dir).unwrap();
+        let db_exists = dir.join(DB_FILE_NAME).is_file();
+        drop(conn);
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(db_exists, "no database file in the new directory");
     }
 }

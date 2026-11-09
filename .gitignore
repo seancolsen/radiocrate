@@ -41,9 +41,9 @@ backend/target/
 __pycache__/
 *.pyc
 
-# The database the backend creates in whichever collection root it is pointed at,
-# including the sample collections under sample-data/.
-radiocrate.db
+# The database directory the backend creates in whichever collection root it is
+# pointed at, including the sample collections under sample-data/.
+.radiocrate/
 
 # Temporary files used for AI prompts
 /tmp

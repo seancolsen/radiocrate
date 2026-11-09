@@ -11,7 +11,7 @@
 # ]
 # ///
 """
-Build `radiocrate.db` for the realistic sample collection.
+Build the database for the realistic sample collection.
 
 The work comes in two halves. First, RadioCrate's own scanner is run over the
 generated FLAC files, so everything the app derives from a file — artists,
@@ -30,6 +30,7 @@ database the very thing that keeps the listening history looking current.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -47,7 +48,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFINITION = SCRIPT_DIR / "collection.yaml"
 COLLECTION_DIR = SCRIPT_DIR.parent / "collection"
 REPO_ROOT = SCRIPT_DIR.parents[2]
-DB_PATH = COLLECTION_DIR / "radiocrate.db"
+# The backend's default database directory, and the file it always keeps there.
+DB_DIR = COLLECTION_DIR / ".radiocrate"
+DB_PATH = DB_DIR / "radiocrate.db"
 
 # How long before its first play an album is taken to have been added. Without
 # this the scanner's `now()` would file every album as acquired seconds ago,
@@ -121,8 +124,8 @@ def run_scanner() -> None:
         "--",
         "scan",
         str(COLLECTION_DIR),
-        "--db-path",
-        str(DB_PATH),
+        "--db-dir",
+        str(DB_DIR),
     ]
     print(f"$ {' '.join(command)}\n")
     result = subprocess.run(command, cwd=REPO_ROOT, check=False)
@@ -276,10 +279,9 @@ def generate_database() -> None:
 
     # A stale database would leave the scanner reconciling against files it
     # already knows, and the import inserting a second copy of every play.
-    for path in (DB_PATH, DB_PATH.with_name(DB_PATH.name + ".wal")):
-        if path.exists():
-            print(f"Removing existing database at {path}")
-            path.unlink()
+    if DB_DIR.exists():
+        print(f"Removing existing database directory at {DB_DIR}")
+        shutil.rmtree(DB_DIR)
 
     backdate_files(definition, now)
     run_scanner()

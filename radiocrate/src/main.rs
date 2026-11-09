@@ -47,9 +47,10 @@ struct CollectionArgs {
     /// Path to the collection of audio files
     collection_path: String,
 
-    /// Path to the database file (defaults to `radiocrate.db` in the collection root)
+    /// Directory holding the database, created if missing (defaults to
+    /// `.radiocrate` in the collection root)
     #[arg(long)]
-    db_path: Option<PathBuf>,
+    db_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -88,11 +89,11 @@ fn open_collection(
     args: &CollectionArgs,
 ) -> Result<(&Path, db::Connection), Box<dyn std::error::Error>> {
     let collection_path = get_collection_path(&args.collection_path)?;
-    let db_path = args
-        .db_path
+    let db_dir = args
+        .db_dir
         .clone()
-        .unwrap_or_else(|| db::default_db_path(collection_path));
-    let conn = db::get_db(&db_path)?;
+        .unwrap_or_else(|| db::default_db_dir(collection_path));
+    let conn = db::get_db(&db_dir)?;
     Ok((collection_path, conn))
 }
 

@@ -33,7 +33,8 @@ because FLAC stores a long run of identical samples in almost no space at all.
 - `generator/layout.py` — the one rule for where a track's file goes, shared by
   the two generators so the import can find what the writer wrote.
 - `collection/` — the generated files. The FLACs are committed, so using them
-  needs no tooling at all; `radiocrate.db` is not (see below).
+  needs no tooling at all; the database in `collection/.radiocrate/` is not (see
+  below).
 
 ## Regenerating
 
@@ -68,7 +69,7 @@ file metadata; they're the user's own data, and only the database holds them.
 ./sample-data/realistic/generator/generate_database.py
 ```
 
-This builds `collection/radiocrate.db` in two steps. First it runs the real
+This builds `collection/.radiocrate/radiocrate.db` in two steps. First it runs the real
 scanner — `cargo run -p backend -- scan …`, so the first run compiles the
 backend — which means everything the app derives from a file arrives exactly as
 it would from a real collection, and a broken scanner shows up here. Then it
@@ -94,5 +95,5 @@ startup scan:
 cargo run -p backend -- serve sample-data/realistic/collection --no-scan
 ```
 
-Without `--db-path`, the server uses `collection/radiocrate.db` — exactly what
-the generator built.
+Without `--db-dir`, the server uses `collection/.radiocrate/` — exactly where
+the generator built the database.

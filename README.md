@@ -25,10 +25,12 @@ Options:
 
 - `--port <PORT>` (default `3000`)
 - `--no-scan` — skip the full collection scan on startup
-- `--db-path <PATH>` (default `radiocrate.db` in the collection root)
+- `--db-dir <DIR>` — the directory holding the database, `radiocrate.db`
+  (default `.radiocrate` in the collection root). It is created if it doesn't
+  exist yet.
 
 To scan a collection into its database without serving anything, use `scan` in
-place of `serve`. It takes the collection path and `--db-path`, and exits when
+place of `serve`. It takes the collection path and `--db-dir`, and exits when
 the scan finishes.
 
 ### Run the frontend (dev)
@@ -84,7 +86,7 @@ The resulting binary is at `target/release/radiocrate`.
 ```
 
 Subcommands and options match the dev API server (`serve` / `scan`, `--port`,
-`--no-scan`, `--db-path`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
+`--no-scan`, `--db-dir`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
 
 ### Build Querydown's JS packages
 
