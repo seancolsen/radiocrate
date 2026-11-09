@@ -131,6 +131,7 @@ import {
 } from "../../query/diagnostics";
 import { querydownLoaded, querydownReady } from "../../query/querydown";
 import { fetchRatings } from "../../query/ratings";
+import { nounFor } from "../../query/entityNames";
 import {
   artistAlbumsFilter,
   artistTracksFilter,
@@ -313,6 +314,10 @@ const UNREPORTED_METHODS: ReadonlySet<string> = new Set(["app.version"]);
 export interface PreparedStep {
   writes: EntryWrites;
   edit?: (def: Sections) => void;
+  /** Called once the writes have landed, before the page reloads: what the
+   * reload should know about them (a removal names the row to select after
+   * it). Not called for a step whose writes failed. */
+  landed?: () => void;
 }
 
 export interface AppActions {
@@ -447,8 +452,9 @@ export interface AppActions {
    * the top level of the tree). */
   addQuery: (parent: string | null) => void;
   /** Create an empty playlist, named for the current moment, at the top of
-   * folder `parent` (null: the top level of the tree), and open it in a new,
-   * active tab once it's saved — a playlist is never unsaved. */
+   * folder `parent` (null: the top level of the tree), and once it's saved (a
+   * playlist is never unsaved) start renaming it in the explorer. It isn't
+   * opened: there's nothing in it to see yet. */
   addPlaylist: (parent: string | null) => void;
   /** Start editing an explorer item's name in place. */
   beginTreeRename: (item: TreeItemRef) => void;
@@ -621,8 +627,9 @@ export interface AppActions {
   duplicatePlaylist: (id: string) => void;
   /** "Query: Convert to playlist": save a new playlist holding the tracks of
    * query tab `tabId`'s rows, in the order shown, at the top of the query's
-   * folder, and open it in a tab beside the query's. A no-op unless
-   * `selectCanConvertToPlaylist`. */
+   * folder, and open it in a tab beside the query's. A track playing from the
+   * query plays on from the playlist (its "Locate" row, and what plays next).
+   * A no-op unless `selectCanConvertToPlaylist`. */
   convertToPlaylist: (tabId: string) => void;
   /** Open a new unsaved query tab based on "track", seeded with that base's
    * default filter/sort/display presets, with its filter builder open and
@@ -655,7 +662,9 @@ export interface AppActions {
   ) => Promise<boolean>;
   /** "Playlist: Remove selected tracks" and "Remove from playlist": removes
    * the entries that rows `rows` of playlist page `tabId` list, as one step. A
-   * no-op on any other page, or for rows that list no entry. */
+   * no-op on any other page, or for rows that list no entry. Once the rows
+   * reload, the one that followed the last of them is selected (or, when none
+   * did, the last one before it that's still there). */
   removeRows: (tabId: string, rows: Iterable<number>) => void;
   /** "Remove these tracks": removes every entry playlist page `tabId`'s
    * filter matches (all its rows, not just the selected ones), then clears the
@@ -685,8 +694,9 @@ export interface AppActions {
   /** Adds `trackIds`, in that order, to the end of playlist source
    * `sourceId`, as one request through its write queue, then reloads its page
    * (as new rows) if it's open and has run. Not a step in that page's undo
-   * history, since it wasn't made from the page. Resolves once that's done, or
-   * once the write has failed, which the error bar reports. */
+   * history, since it wasn't made from the page. A toast confirms the add.
+   * Resolves once that's done, or once the write has failed, which the error
+   * bar reports. */
   addTracksToPlaylist: (
     sourceId: string,
     trackIds: readonly string[],
@@ -931,7 +941,12 @@ export interface AppActions {
   reportRpcFailure: (method: string, error: unknown) => void;
   /** Hide the error bar. */
   dismissRpcError: () => void;
+  /** Take the confirmation toast off the screen before its time is up. */
+  dismissToast: () => void;
 }
+
+/** How long a confirmation toast stays on screen. */
+export const TOAST_MS = 4000;
 
 /** The file "Export results data" offers to save. */
 const EXPORT_FILE_NAME = "RadioCrate-export.csv";
@@ -1031,11 +1046,38 @@ export function createAppActions(
   // renders from it.
   const lastRunSql = new Map<string, string>();
 
-  // The entries a rearrangement just moved, per playlist page, until the
-  // page's next run lands: that's the reload after the write, which brings back
-  // the rows the user is already looking at (see `rearrangeRows`).
-  // Non-reactive: the selection it leads to is what renders.
+  // The entries to select once a playlist page's next run lands, which is the
+  // reload after a write to its entries: the ones a rearrangement just moved
+  // (see `rearrangeRows`), or the one after the rows a removal took (see
+  // `removeRows`). That reload lands as a refresh, keeping the user's place in
+  // rows that are mostly the ones already on screen. Non-reactive: the
+  // selection it leads to is what renders.
   const rearranged = new Map<string, ReadonlySet<string>>();
+
+  // Where the playing track's row is expected among a tab's rows, once they
+  // land, when the track was just handed over to that tab: the row the
+  // track's own entry will be at, which a lookup by track id alone could miss
+  // when the track is listed more than once (see `handOverPlayback`).
+  // Consumed by `relocateCurrentTrack`. Non-reactive.
+  const locateHints = new Map<string, number>();
+
+  // The confirmation toast's pending dismissal, and the last one's `seq`.
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let toastSeq = 0;
+
+  /** Puts a confirmation on screen for {@link TOAST_MS}, replacing any already
+   * there. */
+  const showToast = (text: string) => {
+    clearTimeout(toastTimer);
+    set((s) => {
+      s.toast = { text, seq: ++toastSeq };
+    });
+    toastTimer = setTimeout(() => {
+      set((s) => {
+        s.toast = null;
+      });
+    }, TOAST_MS);
+  };
 
   // Tabs whose result-row selection was emptied by their rows being replaced
   // (a re-run), not by the user, and hasn't been added to since. The record
@@ -1343,7 +1385,16 @@ export function createAppActions(
   const relocateCurrentTrack = (tabId: string) => {
     const ct = get().currentTrack;
     if (ct?.sourceTabId !== tabId) return;
-    const rowIndex = selectLocateRow(get(), tabId, ct.id);
+    // A hint is good for the first rows that can be searched, and only while
+    // it still points at the playing track.
+    const hint = locateHints.get(tabId);
+    if (get().pages[tabId]?.lineage?.trackIdColumn !== undefined) {
+      locateHints.delete(tabId);
+    }
+    const rowIndex =
+      hint !== undefined && selectTrackIdAt(get(), tabId, hint) === ct.id
+        ? hint
+        : selectLocateRow(get(), tabId, ct.id);
     set((s) => {
       if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
     });
@@ -1351,6 +1402,19 @@ export function createAppActions(
       const { preceding, upcoming } = selectQueueAround(get(), tabId, rowIndex);
       audio?.updateQueue(preceding, upcoming);
     }
+  };
+
+  /** Moves the playing track over to tab `tabId`, where it's row `row` (or
+   * will be, once that tab's rows land): "Locate" finds it there from then
+   * on, and the play queue follows that tab's rows. */
+  const handOverPlayback = (tabId: string, row: number) => {
+    set((s) => {
+      if (!s.currentTrack) return;
+      s.currentTrack.sourceTabId = tabId;
+      s.currentTrack.rowIndex = null;
+    });
+    locateHints.set(tabId, row);
+    relocateCurrentTrack(tabId);
   };
 
   /** Records `tabId`'s working definition in its undo history: whatever it's
@@ -1911,6 +1975,7 @@ export function createAppActions(
     runTokens.delete(id);
     lastRunSql.delete(id);
     rearranged.delete(id);
+    locateHints.delete(id);
     sweptSelections.delete(id);
   };
 
@@ -2408,9 +2473,10 @@ export function createAppActions(
 
   /** Saves a new playlist — `name`, `definition`, and an entry for each of
    * `entries` (a track and its position) — at the top of `folder`, then lists
-   * it in the explorer and opens it in a new, active tab: beside tab
-   * `besideTabId` when that's open, or at the end of the tab bar. Resolves
-   * once that's done, or once the write has failed. */
+   * it in the explorer and, unless `open` is false, opens it in a new, active
+   * tab: beside tab `open.beside` when that's open, or at the end of the tab
+   * bar. Resolves to its source once that's done, or to `undefined` once the
+   * write has failed. */
   const createPlaylist = async (
     playlist: {
       name: string;
@@ -2418,8 +2484,8 @@ export function createAppActions(
       definition: PlaylistDefinition;
     },
     entries: readonly Omit<PlaylistEntry, "id">[],
-    besideTabId?: string,
-  ): Promise<void> => {
+    open: { beside?: string } | false = {},
+  ): Promise<Source | undefined> => {
     const now = nowEpoch();
     const { sources, folders } = get();
     const playlistId = newUuid();
@@ -2454,18 +2520,20 @@ export function createAppActions(
       );
     } catch (err) {
       console.error("playlist create failed", err);
-      return;
+      return undefined;
     }
     set((s) => {
       s.sources.data = [source, ...s.sources.data];
     });
     if (source.parent !== null) expandFolder(source.parent);
+    if (!open) return source;
     // Re-read after the await: the tabs may have moved meanwhile.
     const beside =
-      besideTabId === undefined
+      open.beside === undefined
         ? -1
-        : get().tabs.findIndex((t) => t.id === besideTabId);
+        : get().tabs.findIndex((t) => t.id === open.beside);
     openSource(source, beside === -1 ? undefined : beside + 1);
+    return source;
   };
 
   /** The `playlist` record source `id` wraps — read from its open tab, or from
@@ -2496,6 +2564,7 @@ export function createAppActions(
         if (!prepared) return false;
         if (prepared.writes.apply.length > 0)
           await sendPlaylistWrites(prepared.writes.apply);
+        prepared.landed?.();
       } catch (err) {
         console.error("playlist write failed", err);
         return false;
@@ -3218,14 +3287,28 @@ export function createAppActions(
     },
     addQuery: (parent) => openNewQuery(parent),
     addPlaylist: (parent) =>
-      void createPlaylist(
-        {
-          name: nowName(),
-          folder: parent,
-          definition: newPlaylistDefinition(get().presets),
-        },
-        [],
-      ),
+      void (async () => {
+        // Not opened: an empty playlist has nothing to show yet. It's filled
+        // from other pages, by dropping tracks on it in the explorer. Its name
+        // is up for editing there instead, as a new folder's is.
+        const source = await createPlaylist(
+          {
+            name: nowName(),
+            folder: parent,
+            definition: newPlaylistDefinition(get().presets),
+          },
+          [],
+          false,
+        );
+        if (!source) return;
+        // Put where it can be seen: a filter would hide the name about to be
+        // edited.
+        set((s) => {
+          s.sourceFilterOpen = false;
+          s.sourceFilter = "";
+          s.renamingTreeItem = { kind: "source", id: source.id };
+        });
+      })(),
     beginTreeRename: (item) =>
       set((s) => {
         s.renamingTreeItem = item;
@@ -3689,11 +3772,16 @@ export function createAppActions(
       const result = s.pages[tabId]?.result;
       if (!t || !result || !selectCanConvertToPlaylist(s, tabId)) return;
       // Every row that holds a track, in the order shown. (A row without one,
-      // from an outer join, has nothing to list.)
+      // from an outer join, has nothing to list.) `entryAt` is the entry each
+      // row becomes, which is also its row on the playlist's page.
       const tracks: string[] = [];
+      const entryAt: (number | undefined)[] = [];
       for (let row = 0; row < result.rowCount; row++) {
         const id = selectTrackIdAt(s, tabId, row);
-        if (id !== undefined) tracks.push(id);
+        if (id !== undefined) {
+          entryAt[row] = tracks.length;
+          tracks.push(id);
+        }
       }
       const positions = sequentialPositions(tracks.length);
       // An unsaved query has no name to give it, and no folder yet: it's named
@@ -3711,8 +3799,25 @@ export function createAppActions(
           ),
         },
         tracks.map((track, i) => ({ track, position: positions[i] })),
-        tabId,
-      );
+        { beside: tabId },
+      ).then((source) => {
+        // A track playing from the query goes on playing from the playlist:
+        // "Locate" finds it there, and what plays next follows the playlist.
+        // Re-read after the await: it may have moved on to another track.
+        const ct = get().currentTrack;
+        if (!source || ct?.sourceTabId !== tabId) return;
+        // Its own row's entry, while the rows on screen are the ones
+        // converted. Otherwise, the track's first entry, if it has one.
+        const own =
+          ct.rowIndex !== null && get().pages[tabId]?.result === result
+            ? entryAt[ct.rowIndex]
+            : undefined;
+        const entry =
+          own !== undefined && tracks[own] === ct.id
+            ? own
+            : tracks.indexOf(ct.id);
+        if (entry !== -1) handOverPlayback(source.id, entry);
+      });
     },
     newQueryTab: () => openNewQuery(null),
     openRecordsTab: (besideTabId, query, name) => {
@@ -4007,12 +4112,23 @@ export function createAppActions(
       const t = selectPageTab(s, tabId);
       const result = s.pages[tabId]?.result;
       if (t?.kind !== "playlist" || !result) return;
+      const removed = new Set(rows);
       const ids = new Set<string>();
-      for (const row of rows) {
+      for (const row of removed) {
         const entry = rowEntry(result, row);
         if (entry) ids.add(entry.id);
       }
       if (ids.size === 0) return;
+      // What's selected once they're gone: the row after the last of them, or
+      // when there's none, the last row before it that stays.
+      const last = Math.max(...removed);
+      const staying = (row: number) =>
+        removed.has(row) ? undefined : rowEntry(result, row)?.id;
+      let next: string | undefined;
+      for (let row = last + 1; row < result.rowCount && !next; row++) {
+        next = staying(row);
+      }
+      for (let row = last - 1; row >= 0 && !next; row--) next = staying(row);
       const { playlistId } = t;
       void writeStep(tabId, async () => {
         // Read inside the queue: a removal queued before this one may already
@@ -4021,7 +4137,15 @@ export function createAppActions(
           ids.has(e.id),
         );
         if (doomed.length === 0) return undefined;
-        return { writes: removeEntriesWrites(playlistId, doomed) };
+        return {
+          writes: removeEntriesWrites(playlistId, doomed),
+          // The reload keeps the user's place, and selects that row wherever
+          // it is now, as the reload after a rearrangement does. With nothing
+          // left to select, it's an ordinary reload.
+          landed: () => {
+            if (next !== undefined) rearranged.set(tabId, new Set([next]));
+          },
+        };
       });
     },
     removeMatching: (tabId) => pruneByFilter(tabId, false),
@@ -4083,6 +4207,18 @@ export function createAppActions(
           console.error("playlist add failed", err);
           return;
         }
+        // Said where the user is looking: the playlist itself may be out of
+        // sight (a closed drawer, a tab not shown), and a drop or a click in
+        // the dialog leaves nothing on screen that changed.
+        const name =
+          selectPageTab(get(), sourceId)?.name ??
+          get().sources.data.find((x) => x.id === sourceId)?.name;
+        const count = `${trackIds.length} ${nounFor("track", trackIds.length)}`;
+        showToast(
+          name === undefined
+            ? `Added ${count} to the playlist`
+            : `Added ${count} to “${name}”`,
+        );
         // Re-read after the awaits: the playlist's page may have opened or
         // closed meanwhile. One that hasn't run yet will see the new entries
         // when it does.
@@ -4582,6 +4718,12 @@ export function createAppActions(
       set((s) => {
         s.rpcError = null;
       }),
+    dismissToast: () => {
+      clearTimeout(toastTimer);
+      set((s) => {
+        s.toast = null;
+      });
+    },
     noteRequest: (settled) => saves.track(settled),
     flushSaves: () => saves.flushAll(),
   };
@@ -4600,6 +4742,7 @@ export function createAppActions(
     stopTrackingTabHistory();
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();
+    clearTimeout(toastTimer);
     saves.dispose();
   };
 

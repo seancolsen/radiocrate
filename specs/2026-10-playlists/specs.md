@@ -154,7 +154,7 @@ Scale:
 
 - In the explorer, add an "Add playlist" option to the section's dropdown menu and to the context menu for folders.
 - In the application tab bar, change the new tab button so that it opens a dropdown where the user chooses "New query" or "New playlist".
-- When the user creates a new playlist, it is saved immediately. Its name is the current timestamp, in the same `YYYY-MM-DD HH:MM` format used to name new queries. It is placed at the top of its folder: the folder whose context menu created it, or the top level of the sources tree otherwise. The playlist opens in a new tab, which becomes active.
+- When the user creates a new playlist, it is saved immediately. Its name is the current timestamp, in the same `YYYY-MM-DD HH:MM` format used to name new queries. It is placed at the top of its folder: the folder whose context menu created it, or the top level of the sources tree otherwise. It doesn't open, since there's nothing in it to see yet. Instead its name is up for editing in the explorer, as a new folder's is.
 - A new playlist has no filter conditions, sorting set to "Playlist order", and the default `track` display preset (the same display a new query of tracks starts with).
 
 ## Other CRUD on playlists from the explorer
@@ -173,6 +173,7 @@ As with queries, the user can rename, delete, and duplicate playlists from the e
 - The command creates a new playlist with the same name as the query, at the top of the query's folder (or the top level, for an unsaved query). It opens in a new tab next to the query's tab. The original query is left unchanged.
 - The new playlist gets one `playlist_track` record for each row of the query's current results, in the order they are displayed. Initialize the `position` values with sequential integers starting at 1. The column is a `double` so that rearranging entries later only requires changing the entries that move.
 - The new playlist has no filter conditions and its sorting is set to "Playlist order", since both of these are now baked into the track list. If the query's base is `track`, the playlist copies the query's display section. Otherwise it uses the default `track` display preset.
+- If a track is playing from the query, it plays on from the new playlist: "Locate" finds its row there (its own entry, when the track is listed more than once), and what plays next follows the playlist's rows.
 
 ## Adding tracks to a playlist
 
@@ -195,6 +196,8 @@ When adding tracks to a playlist, compute their `position` values as follows:
 1. The added tracks keep the order they had relative to one another in the results they were selected from.
 
 If the target playlist is open in a tab, that tab reloads its results afterwards. Adding tracks from outside a playlist's page doesn't add an entry to that page's undo stack.
+
+Once the tracks are written, a toast confirms it ("Added 3 tracks to “Road Trip”"), whether they were dropped or picked in the modal. It floats over the foot of the page for a few seconds and takes no pointer input. A failed add shows no toast; the error bar reports it.
 
 ## The playlist page
 
@@ -282,6 +285,8 @@ When one or more tracks are selected, the user can remove them from the playlist
 - A "Remove from playlist" entry in the result row context menu (with a `delete` icon).
 
 Removing tracks deletes the selected rows' `playlist_track` records (not the `track` records) in one request, and then reloads the results. A removal is a single undoable step.
+
+After the reload, the row that followed the last (bottom-most) removed row is selected, or, when none followed it, the last remaining row above it. The reload keeps the user's place in the rows, as the reload after a rearrangement does.
 
 ### Manually rearranging tracks in a playlist
 
@@ -922,6 +927,13 @@ Every check that needs a real server or a real device is collected here. The use
 - [ ] On a touch device: a hold picks the rows up, the drop line follows the finger, the grid scrolls at its edges, and the drop moves the rows.
 - [ ] With a track playing from the playlist, rearrange: "Locate" still finds its row, and the next track played follows the new order.
 - [ ] A playlist whose display leaves out the track's `$id` still rearranges, and its rows aren't taken by other playlists in the explorer.
+
+**Follow-up improvements** (after phase 9)
+
+- [ ] Play a track from a query (one listed twice, say), then convert the query. The now-playing bar's "Locate" goes to the track's row in the new playlist, and the next track played is the playlist's next row.
+- [ ] "Add playlist" from the explorer's section menu and a folder's menu: no tab opens, and the new playlist's name is up for editing in the tree.
+- [ ] Add tracks to a playlist by dropping them on it and through "Add to playlist…": a toast says how many went to which playlist, then goes. With the server stopped, no toast shows and the error bar reports it.
+- [ ] Remove tracks from a playlist (one row, scattered rows, the last rows): the row after the last one removed is selected, or the one above when none is left below, and the list doesn't jump.
 
 **Whole feature**
 

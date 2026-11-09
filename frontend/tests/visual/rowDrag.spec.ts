@@ -170,6 +170,10 @@ test("dropping the selected rows on a playlist adds their tracks to its end", as
   // playlist didn't open.
   expect(await selection(page)).toEqual([1, 2, 3]);
   await expect(page.getByRole("tab", { name: /Road Trip/ })).toHaveCount(0);
+  // Said, though, once it's written.
+  await expect(page.getByTestId("toast")).toHaveText(
+    "Added 3 tracks to “Road Trip”",
+  );
 });
 
 test("a row outside the selection is dragged alone", async ({ page }) => {

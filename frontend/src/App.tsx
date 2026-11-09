@@ -23,6 +23,7 @@ import CommandPalette from "./components/CommandPalette";
 import TabSwitcher from "./components/TabSwitcher";
 import RpcErrorBanner from "./components/RpcErrorBanner";
 import UpdateBanner from "./components/UpdateBanner";
+import ToastHost from "./components/Toast";
 import AboutModal from "./components/AboutModal";
 import AddToPlaylistModal from "./components/AddToPlaylistModal";
 import DeleteConfirmModal from "./components/DeleteConfirmModal";
@@ -206,15 +207,17 @@ function TabContent(): JSX.Element {
   );
 }
 
-/** The main column, right of the explorer: tab bar, the active tab's content,
- * the failed-RPC and client-update bars when there's one to show, and the
- * now-playing bar pinned to the bottom (which spans this column only — the
- * explorer keeps its own full height). */
+/** The main column, right of the explorer: tab bar, the active tab's content
+ * (with any confirmation toast floating over its foot), the failed-RPC and
+ * client-update bars when there's one to show, and the now-playing bar pinned
+ * to the bottom (which spans this column only — the explorer keeps its own
+ * full height). */
 function Main(): JSX.Element {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <TabBar />
       <TabContent />
+      <ToastHost />
       <RpcErrorBanner />
       <UpdateBanner />
       <NowPlaying />

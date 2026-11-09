@@ -24,6 +24,7 @@ import SplitButton from "../../components/ui/SplitButton";
 import { MenuItem, MenuToggleItem } from "../../components/ui/Menu";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
+import { ToastCard } from "../../components/Toast";
 import { cx } from "../../components/ui/cx";
 import { chordOf } from "../../commands/chord";
 import type { Theme } from "../themedPage";
@@ -642,6 +643,10 @@ function Messages(): JSX.Element {
           }}
           onDismiss={() => {}}
         />
+        {/* The confirmation toast (ToastHost), at its own width. */}
+        <div className="flex">
+          <ToastCard text="Added 3 tracks to “Road Trip”" />
+        </div>
         {/* The record editor's failed-save strip (RecordEditorPanel). */}
         <div className="text-danger border-edge bg-danger/10 flex items-center gap-1 border-y py-1.5 pr-1.5 pl-2 text-xs">
           <p className="min-w-0 flex-1">

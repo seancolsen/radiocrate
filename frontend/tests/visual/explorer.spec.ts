@@ -164,19 +164,22 @@ test.describe("the query tree", () => {
     expect(await treeRows(page)).toEqual(before);
   });
 
-  test("the actions menu adds a playlist at the top, saved and open", async ({
+  test("the actions menu adds a playlist at the top, saved and up for renaming", async ({
     page,
   }) => {
     await page.getByRole("button", { name: "Source list actions" }).click();
     await page.getByRole("menuitem", { name: "Add playlist" }).click();
-    // Saved as it's made: named for the moment, at the top of the tree, and
-    // open in a tab.
-    const name = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+    // Saved as it's made: named for the moment, at the top of the tree, with
+    // its name up for editing. It isn't opened, since it's empty.
+    const field = page.getByRole("textbox", { name: "Playlist name" });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    await field.fill("Road Trip 2");
+    await field.press("Enter");
     await expect
       .poll(async () => (await treeRows(page))[0])
-      .toMatch(/^0:\d{4}/);
-    expect((await treeRows(page))[0].slice(2)).toMatch(name);
-    await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
+      .toBe("0:Road Trip 2");
+    await expect(page.getByRole("heading", { name: "Opened" })).toBeHidden();
   });
 
   test("a folder's context menu opens a new, unsaved query", async ({

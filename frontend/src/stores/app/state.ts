@@ -341,6 +341,15 @@ export interface RpcErrorNotice {
   count: number;
 }
 
+/** A brief confirmation that something the user asked for has been done, out
+ * of sight of where they asked for it ("Added 3 tracks to “Road Trip”"). It
+ * goes by itself after a few seconds. `seq` tells one toast from the next with
+ * the same text, so a repeat restarts its time on screen. */
+export interface Toast {
+  text: string;
+  seq: number;
+}
+
 /** Everything a page tab's page holds beyond the tab itself: its results and
  * how the user is looking at them. */
 export interface QueryPageState {
@@ -523,6 +532,8 @@ export interface AppState {
   /** The failed RPC call the error bar shows (null when there's none, or it was
    * dismissed). */
   rpcError: RpcErrorNotice | null;
+  /** The confirmation on screen, if any (see {@link Toast}). */
+  toast: Toast | null;
   /** The track in the now-playing bar (null when nothing is loaded). */
   currentTrack: CurrentTrack | null;
   /** Transport state for that track. */
@@ -689,6 +700,7 @@ export function initialState(env: AppEnv): AppState {
     preludeDraft: null,
     rescanning: false,
     rpcError: null,
+    toast: null,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
     sources: { status: "loading", data: [] },

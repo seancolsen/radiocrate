@@ -14,6 +14,7 @@ import {
   type PreparedStep,
 } from "./index";
 import { fakeEnv } from "./testEnv";
+import { TOAST_MS } from "./actions";
 import { buildResultFromStringRows } from "../../query/result";
 import { presetTables } from "../../query/presetGroups";
 import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
@@ -3065,12 +3066,12 @@ describe("creating and managing playlists", () => {
   });
   afterEach(() => bundle.dispose());
 
-  it("adds an empty playlist at the top of its folder, and opens it once saved", async () => {
+  it("adds an empty playlist at the top of its folder, and names it there once saved", async () => {
     bundle.actions.addPlaylist(FOLDER);
-    // Nothing is listed or opened before the backend has it.
-    expect(bundle.store.getState().tabs).toHaveLength(0);
+    // Nothing is listed before the backend has it.
+    expect(bundle.store.getState().sources.data).toHaveLength(2);
     await vi.waitFor(() =>
-      expect(bundle.store.getState().tabs).toHaveLength(1),
+      expect(bundle.store.getState().sources.data).toHaveLength(3),
     );
     expect(sent()).toEqual([["insert:playlist", "insert:source"]]);
     const s = bundle.store.getState();
@@ -3102,13 +3103,9 @@ describe("creating and managing playlists", () => {
       sort: { builtin: { preset: "playlist_order" } },
       display: { custom: "" },
     });
-    expect(s.activeTabId).toBe(added.id);
-    expect(selectPageTab(s, added.id)).toMatchObject({
-      kind: "playlist",
-      playlistId: added.playlistId,
-      name: added.name,
-    });
-    expect(selectIsUnsaved(s, added.id)).toBe(false);
+    // Not opened: it's empty. Its name is up for editing in the explorer.
+    expect(s.tabs).toHaveLength(0);
+    expect(s.renamingTreeItem).toEqual({ kind: "source", id: added.id });
     expect(s.expandedFolders.has(FOLDER)).toBe(true);
   });
 
@@ -3320,6 +3317,94 @@ describe("creating and managing playlists", () => {
       );
       expect(can("p")).toBe(false);
     });
+
+    describe("with a track playing from the query", () => {
+      const ROWS = [["t2"], [""], ["t1"], ["t2"]];
+      const playing = (sourceTabId: string, id: string, rowIndex: number) =>
+        bundle.actions.seedNowPlaying(
+          { sourceTabId, id, rowIndex, title: null, artists: [] },
+          { playing: true, position: 0, duration: null, hasNext: true },
+        );
+      /** Converts "q" and runs the new playlist's page, whose rows are the
+       * converted tracks; resolves to its id. */
+      async function convertAndRun(): Promise<string> {
+        bundle.actions.convertToPlaylist("q");
+        await vi.waitFor(() =>
+          expect(bundle.store.getState().tabs).toHaveLength(2),
+        );
+        const added = bundle.store.getState().sources.data[0].id;
+        // The entry column, then the track.
+        vi.mocked(buildResultFromArrow).mockReturnValue(
+          buildResultFromStringRows([
+            ["e1", "t2"],
+            ["e2", "t1"],
+            ["e3", "t2"],
+          ]),
+        );
+        // `trackIdColumn` passes this through: column 1.
+        vi.mocked(analyzeColumnSources).mockResolvedValue(1 as never);
+        bundle.actions.runQuery(added);
+        return added;
+      }
+
+      beforeEach(() => bundle.actions.setSchemaJson("{}"));
+      afterEach(() => {
+        vi.mocked(analyzeColumnSources).mockReset();
+        vi.mocked(buildResultFromArrow).mockReset();
+        vi.mocked(buildResultFromArrow).mockReturnValue(
+          buildResultFromStringRows([["r"]]),
+        );
+      });
+
+      it("plays on from the playlist, at its own entry", async () => {
+        openQuery(ROWS);
+        // The second t2: past a trackless row, and not t2's first entry.
+        playing("q", "t2", 3);
+        const added = await convertAndRun();
+        // Handed over at once; found once the playlist's rows are in.
+        expect(bundle.store.getState().currentTrack?.sourceTabId).toBe(added);
+        await vi.waitFor(() =>
+          expect(bundle.store.getState().currentTrack?.rowIndex).toBe(2),
+        );
+      });
+
+      it("finds it by track when the query's rows have changed since", async () => {
+        openQuery(ROWS);
+        bundle.actions.convertToPlaylist("q");
+        // Re-run before the playlist lands: row 0 is a new set's.
+        bundle.actions.setResults(
+          "q",
+          buildResultFromStringRows([["t9"], ["t2"]]),
+          TRACKS,
+        );
+        playing("q", "t2", 1);
+        await vi.waitFor(() =>
+          expect(bundle.store.getState().tabs).toHaveLength(2),
+        );
+        const added = bundle.store.getState().sources.data[0].id;
+        expect(bundle.store.getState().currentTrack).toMatchObject({
+          sourceTabId: added,
+          rowIndex: null,
+        });
+      });
+
+      it("stays with a track the playlist doesn't hold, or another tab's", async () => {
+        openQuery(ROWS);
+        playing("q", "t7", 0);
+        await convertAndRun();
+        await vi.waitFor(() =>
+          expect(bundle.store.getState().sources.data).toHaveLength(3),
+        );
+        expect(bundle.store.getState().currentTrack?.sourceTabId).toBe("q");
+
+        playing("p", "t1", 0);
+        await convertAndRun();
+        await vi.waitFor(() =>
+          expect(bundle.store.getState().sources.data).toHaveLength(4),
+        );
+        expect(bundle.store.getState().currentTrack?.sourceTabId).toBe("p");
+      });
+    });
   });
 });
 
@@ -3432,11 +3517,14 @@ describe("removing tracks and committing conditions", () => {
       await open(PLAIN, ALL_ROWS);
       bundle.actions.clickRow(SOURCE, 1, { shift: false, ctrl: false });
       bundle.actions.clickRow(SOURCE, 3, { shift: false, ctrl: true });
+      // The reload shows what's left.
+      pageRows = ALL_ROWS.filter(([id]) => id !== "e2" && id !== "e4");
       bundle.actions.removeRows(SOURCE, [1, 3]);
       await settled();
       expect(sent()).toEqual([["delete:e2", "delete:e4"]]);
-      // Reloaded as new rows.
-      expect(page()?.selection).toBeUndefined();
+      // Nothing followed e4, so the row before it that stays (e3) is
+      // selected, where it is now.
+      expect(page()?.selection).toEqual(new Set([1]));
 
       bundle.actions.undo(SOURCE);
       await settled();
@@ -3446,6 +3534,43 @@ describe("removing tracks and committing conditions", () => {
         { id: "e2", playlist: PLAYLIST, track: "t2", position: 2 },
         { id: "e4", playlist: PLAYLIST, track: "t2", position: 4 },
       ]);
+    });
+
+    it("selects the row after the last one removed, keeping the place", async () => {
+      await open(PLAIN, ALL_ROWS);
+      bundle.actions.setResultsScroll(SOURCE, 40);
+      // Selected bottom-up: it's the last row shown that counts, not the last
+      // clicked.
+      bundle.actions.clickRow(SOURCE, 1, { shift: false, ctrl: false });
+      bundle.actions.clickRow(SOURCE, 0, { shift: false, ctrl: true });
+      pageRows = ALL_ROWS.slice(2);
+      bundle.actions.removeRows(SOURCE, [1, 0]);
+      await settled();
+      expect(sent()).toEqual([["delete:e1", "delete:e2"]]);
+      // e3, now the first row.
+      expect(page()?.selection).toEqual(new Set([0]));
+      expect(page()?.scrollOffset).toBe(40);
+    });
+
+    it("selects nothing when nothing is left", async () => {
+      await open(PLAIN, ALL_ROWS);
+      bundle.actions.clickRow(SOURCE, 0, { shift: false, ctrl: false });
+      bundle.actions.clickRow(SOURCE, 3, { shift: true, ctrl: false });
+      pageRows = [];
+      bundle.actions.removeRows(SOURCE, [0, 1, 2, 3]);
+      await settled();
+      expect(page()?.selection).toBeUndefined();
+    });
+
+    it("selects nothing new when the write fails", async () => {
+      await open(PLAIN, ALL_ROWS);
+      vi.mocked(dml).mockRejectedValueOnce(new Error("500 nope"));
+      bundle.actions.removeRows(SOURCE, [1]);
+      await settled();
+      // A later run is an ordinary one, and selects nothing.
+      bundle.actions.runQuery(SOURCE);
+      await settled();
+      expect(page()?.selection).toBeUndefined();
     });
 
     it("skips entries that are already gone", async () => {
@@ -3725,6 +3850,42 @@ describe("adding tracks to a playlist", () => {
     expect(sent()).toEqual([
       [`t2@6 in ${PLAYLIST}`, `t1@7 in ${PLAYLIST}`, `t2@8 in ${PLAYLIST}`],
     ]);
+    // Confirmed once it's written.
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().toast?.text).toBe(
+        "Added 3 tracks to “Road trip”",
+      ),
+    );
+  });
+
+  it("confirms an add with a toast that goes by itself", async () => {
+    vi.useFakeTimers();
+    try {
+      await bundle.actions.addTracksToPlaylist(SOURCE, ["t1"]);
+      expect(bundle.store.getState().toast?.text).toBe(
+        "Added 1 track to “Road trip”",
+      );
+      const first = bundle.store.getState().toast!.seq;
+      // A second add restarts the clock.
+      vi.advanceTimersByTime(TOAST_MS - 1);
+      await bundle.actions.addTracksToPlaylist(SOURCE, ["t1", "t2"]);
+      expect(bundle.store.getState().toast).toEqual({
+        text: "Added 2 tracks to “Road trip”",
+        seq: first + 1,
+      });
+      vi.advanceTimersByTime(TOAST_MS - 1);
+      expect(bundle.store.getState().toast).not.toBeNull();
+      vi.advanceTimersByTime(1);
+      expect(bundle.store.getState().toast).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("confirms nothing when the add fails", async () => {
+    vi.mocked(dml).mockRejectedValueOnce(new Error("500 nope"));
+    await bundle.actions.addTracksToPlaylist(SOURCE, ["t1"]);
+    expect(bundle.store.getState().toast).toBeNull();
   });
 
   it("raises no dialog for rows without tracks", () => {
