@@ -270,7 +270,9 @@ import {
 } from "./state";
 import {
   allRows,
+  clearedSelection,
   clickedSelection,
+  rangedSelection,
   singleRow,
   someRows,
   steppedSelection,
@@ -558,10 +560,14 @@ export interface AppActions {
    * the selection as it stands — the toolbar goes away, the selected rows
    * don't. */
   setMultiSelect: (tabId: string, on: boolean) => void;
+  /** Turn range mode on or off within `tabId`'s multi-select mode (see
+   * `QueryPageState.rangeSelect`). Does nothing while multi-select is off. */
+  setRangeSelect: (tabId: string, on: boolean) => void;
   /** Apply a click on result row `index`, updating the selection: Shift extends a
    * range from the anchor, Ctrl/Cmd — or any plain click while multi-select
    * mode is on — toggles the row, and a plain click otherwise selects it
-   * alone. */
+   * alone. A plain click in multi-select's range mode grows the range from
+   * its origin to the row instead (see `rangedSelection`). */
   clickRow: (
     tabId: string,
     index: number,
@@ -579,6 +585,9 @@ export interface AppActions {
   moveRowSelection: (tabId: string, forward: boolean, extend: boolean) => void;
   /** Select every result row of `tabId`. Backs `results.select_all`. */
   selectAllRows: (tabId: string) => void;
+  /** Select none of `tabId`'s result rows, keeping the place the arrow keys
+   * count from. Multi-select mode stays on, ready for the next tap. */
+  clearRowSelection: (tabId: string) => void;
 
   /** Replace `tabId`'s sidebar contents with these `records` of `table`, each
    * taken once; an empty list closes it. Used both to open on an arbitrary
@@ -1377,6 +1386,7 @@ export function createAppActions(
             // than leaving a toolbar counting rows that are gone.
             delete page.selection;
             page.multiSelect = false;
+            page.rangeSelect = false;
           }
         }
         return;
@@ -1387,6 +1397,7 @@ export function createAppActions(
       // toolbar counting rows that are gone.
       delete page.selection;
       page.multiSelect = false;
+      page.rangeSelect = false;
       delete page.lineage;
       // Nor is the place in the old rows a place in these ones.
       page.scrollOffset = 0;
@@ -2941,6 +2952,7 @@ export function createAppActions(
       else {
         delete page.selection;
         page.multiSelect = false;
+        page.rangeSelect = false;
       }
     });
   };
@@ -3714,16 +3726,31 @@ export function createAppActions(
       }),
     setMultiSelect: (tabId, on) =>
       set((s) => {
-        pageDraft(s, tabId).multiSelect = on;
+        const page = pageDraft(s, tabId);
+        page.multiSelect = on;
+        // Range mode belongs to the one multi-select session.
+        if (!on) page.rangeSelect = false;
+      }),
+    setRangeSelect: (tabId, on) =>
+      set((s) => {
+        const page = s.pages[tabId];
+        if (page?.multiSelect) page.rangeSelect = on;
       }),
     clickRow: (tabId, index, mods) => {
       const page = get().pages[tabId];
-      const next = clickedSelection(page?.selection, index, {
-        shift: mods.shift,
-        // Multi-select mode gives a plain click the Ctrl click's meaning,
-        // which is the whole point of it: a touch device has no Ctrl to hold.
-        toggle: mods.ctrl || (page?.multiSelect ?? false),
-      });
+      const next =
+        // Range mode gives a plain click a Shift click's meaning, except that
+        // the range adds to what was selected before it rather than replacing
+        // it, as Shift alone would.
+        page?.multiSelect && page.rangeSelect && !mods.shift && !mods.ctrl
+          ? rangedSelection(page.selection, index)
+          : clickedSelection(page?.selection, index, {
+              shift: mods.shift,
+              // Multi-select mode gives a plain click the Ctrl click's
+              // meaning, which is the whole point of it: a touch device has
+              // no Ctrl to hold.
+              toggle: mods.ctrl || (page?.multiSelect ?? false),
+            });
       set((s) => {
         pageDraft(s, tabId).selection = castDraft(next);
       });
@@ -3761,6 +3788,14 @@ export function createAppActions(
     selectAllRows: (tabId) => {
       const next = allRows(get().pages[tabId]?.result?.rowCount ?? 0);
       if (!next) return;
+      set((s) => {
+        pageDraft(s, tabId).selection = castDraft(next);
+      });
+    },
+    clearRowSelection: (tabId) => {
+      const prev = get().pages[tabId]?.selection;
+      if (!prev || prev.rows.size === 0) return;
+      const next = clearedSelection(prev);
       set((s) => {
         pageDraft(s, tabId).selection = castDraft(next);
       });

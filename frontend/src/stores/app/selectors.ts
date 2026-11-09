@@ -327,6 +327,26 @@ export const selectResultsScroll = (s: AppState, tabId: string): number =>
 export const selectMultiSelect = (s: AppState, tabId: string): boolean =>
   s.pages[tabId]?.multiSelect ?? false;
 
+/** Whether `tabId`'s multi-select mode is in its range mode (a tap grows a
+ * range from an origin, rather than toggling one row). */
+export const selectRangeSelect = (s: AppState, tabId: string): boolean =>
+  s.pages[tabId]?.rangeSelect ?? false;
+
+/** The row `tabId`'s range-mode taps grow the range from — the selection's
+ * anchor, while it's selected (see `rangedSelection`). `undefined` outside
+ * range mode, and while the next tap is the one that sets it. */
+export const selectRangeOrigin = (
+  s: AppState,
+  tabId: string,
+): number | undefined => {
+  const page = s.pages[tabId];
+  const selection = page?.selection;
+  if (!page?.rangeSelect || !selection?.rows.has(selection.anchor)) {
+    return undefined;
+  }
+  return selection.anchor;
+};
+
 /** The records result row `index` identifies — one per table whose primary key
  * the row carries in full, in result-column order. Empty when the lineage
  * analysis found none (or hasn't finished), which is what leaves the row's

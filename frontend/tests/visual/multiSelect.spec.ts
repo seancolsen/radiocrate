@@ -120,6 +120,56 @@ test("closing the toolbar keeps the selection but restores plain clicks", async 
   expect(await selection(page)).toEqual([0, 2]);
 });
 
+test("the checkbox selects every row, then clears them", async ({ page }) => {
+  await openGrid(page);
+  await enterMultiSelect(page, 1);
+
+  await toolbar(page).getByRole("button", { name: "Select all" }).click();
+  expect(await selection(page)).toEqual([0, 1, 2, 3, 4]);
+  await expect(toolbar(page)).toContainText("5 records");
+
+  // Once every row is, the same button clears them, staying in the mode.
+  await toolbar(page).getByRole("button", { name: "Clear selection" }).click();
+  expect(await selection(page)).toEqual([]);
+  await expect(toolbar(page)).toContainText("0 records");
+  await expect(
+    toolbar(page).getByRole("button", { name: "Selection actions" }),
+  ).toBeDisabled();
+
+  await clickRow(page, 3);
+  expect(await selection(page)).toEqual([3]);
+});
+
+test("range mode grows the selection from a fixed origin", async ({ page }) => {
+  await openGrid(page);
+  await enterMultiSelect(page, 1);
+  const range = toolbar(page).getByRole("button", { name: "Select a range" });
+  await expect(range).toHaveAttribute("aria-pressed", "false");
+  await range.click();
+  await expect(range).toHaveAttribute("aria-pressed", "true");
+
+  // Row 1, which the mode was entered from, is the origin.
+  await clickRow(page, 4);
+  expect(await selection(page)).toEqual([1, 2, 3, 4]);
+  // A tap on the other side swings the range there; the origin stays.
+  await clickRow(page, 0);
+  expect(await selection(page)).toEqual([0, 1]);
+  await clickRow(page, 3);
+  expect(await selection(page)).toEqual([1, 2, 3]);
+
+  // Out of range mode, taps toggle single rows again.
+  await range.click();
+  await clickRow(page, 2);
+  expect(await selection(page)).toEqual([1, 3]);
+
+  // Leaving multi-select leaves range mode with it.
+  await page.getByRole("button", { name: "Exit multi-select" }).click();
+  await enterMultiSelect(page, 0);
+  await expect(
+    toolbar(page).getByRole("button", { name: "Select a range" }),
+  ).toHaveAttribute("aria-pressed", "false");
+});
+
 test("the toolbar's actions menu acts on the whole selection", async ({
   page,
 }) => {

@@ -3,6 +3,8 @@ import { Icons } from "../icons";
 import {
   recordGroupsForRows,
   selectPageTab,
+  selectRangeSelect,
+  selectResultCount,
   selectRowSelection,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
@@ -22,7 +24,17 @@ function selectionLabel(n: number): string {
 }
 
 /** The floating multi-select toolbar: what's selected, what can be done with
- * it, and the way out of the mode.
+ * it, and the way out of the mode. Left to right:
+ *
+ * - a checkbox for the whole result set, beside the count: empty, partly
+ *   filled or checked as none, some or all of the rows are selected. A tap
+ *   selects them all, or, once they all are, clears the selection (which
+ *   keeps the mode on, ready for the next tap).
+ * - the range toggle. While it's on, a tap selects the rows from the range's
+ *   origin to the tapped row (a touch device's Shift+click), and the origin
+ *   stays put wherever the taps land (see `rangedSelection`). The grid marks
+ *   the origin with a bar down its left edge.
+ * - the actions menu, and the way out.
  *
  * It floats over the results rather than taking a line of its own, so entering
  * the mode doesn't shift every row underneath the finger that entered it; the
@@ -37,8 +49,15 @@ function selectionLabel(n: number): string {
  * to know how far above the first row to let the user scroll. */
 const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
   function MultiSelectToolbar(props, ref) {
-    const { loadRatings, removeRows, requestAddToPlaylist, setMultiSelect } =
-      useAppActions();
+    const {
+      clearRowSelection,
+      loadRatings,
+      removeRows,
+      requestAddToPlaylist,
+      selectAllRows,
+      setMultiSelect,
+      setRangeSelect,
+    } = useAppActions();
     // Three references already in state, combined here rather than through a
     // selector that would build a fresh array on every store write (state
     // management rule 2).
@@ -55,17 +74,42 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
     const playlist = useApp(
       (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
     );
+    const range = useApp((s) => selectRangeSelect(s, props.tabId));
+    const rowCount = useApp((s) => selectResultCount(s, props.tabId) ?? 0);
+    const all = rowCount > 0 && selection.size === rowCount;
 
     return (
       <div
         ref={ref}
         data-testid="multi-select-toolbar"
-        className="bg-panel border-edge absolute flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5 shadow-lg"
+        className="bg-panel border-edge absolute flex items-center gap-1 rounded-md border p-1 shadow-lg"
         style={{ top: MULTI_SELECT_INSET, right: MULTI_SELECT_INSET }}
       >
-        <span className="text-ink-weak text-xs whitespace-nowrap">
+        <IconButton
+          icon={
+            all
+              ? Icons.SelectAll
+              : selection.size > 0
+                ? Icons.SelectSome
+                : Icons.SelectNone
+          }
+          label={all ? "Clear selection" : "Select all"}
+          command={all ? undefined : "results.select_all"}
+          tooltipAlign="start"
+          disabled={rowCount === 0}
+          onClick={() =>
+            all ? clearRowSelection(props.tabId) : selectAllRows(props.tabId)
+          }
+        />
+        <span className="text-ink-weak mr-1 text-xs whitespace-nowrap">
           {selectionLabel(selection.size)}
         </span>
+        <IconButton
+          icon={Icons.SelectRange}
+          label="Select a range"
+          pressed={range}
+          onClick={() => setRangeSelect(props.tabId, !range)}
+        />
         <Menu
           align="end"
           width="190px"
@@ -74,7 +118,10 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
               icon={Icons.More}
               label="Selection actions"
               active={api.open}
-              disabled={groups.length === 0 && !tracks && !playlist}
+              disabled={
+                selection.size === 0 ||
+                (groups.length === 0 && !tracks && !playlist)
+              }
               onClick={() => {
                 // Same as the row context menu: the rating vocabulary is
                 // fetched as the menu that offers it opens.

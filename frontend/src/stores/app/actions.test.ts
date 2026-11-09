@@ -8,6 +8,7 @@ import {
   selectPreset,
   selectPresetsFor,
   selectPresetUnsaved,
+  selectRangeOrigin,
   PRELUDE_TAB_ID,
   PRESETS_TAB_ID,
   type AppStoreBundle,
@@ -430,6 +431,45 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.locateCurrentTrack();
     bundle.actions.moveRowSelection("a", true, true); // Shift+Down
     expect(rows().sort()).toEqual([1, 2]);
+  });
+
+  it("grows a range from a fixed origin in multi-select's range mode", () => {
+    const rows = () =>
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort();
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.setRangeSelect("a", true);
+    expect(selectRangeOrigin(bundle.store.getState(), "a")).toBe(1);
+    bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
+    expect(rows()).toEqual([1, 2, 3, 4]);
+    bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
+    expect(rows()).toEqual([1, 2]);
+    expect(selectRangeOrigin(bundle.store.getState(), "a")).toBe(1);
+
+    // Back out of range mode, a tap toggles again.
+    bundle.actions.setRangeSelect("a", false);
+    expect(selectRangeOrigin(bundle.store.getState(), "a")).toBeUndefined();
+    bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
+    expect(rows()).toEqual([1, 2, 4]);
+  });
+
+  it("leaves range mode with multi-select mode, and not without it", () => {
+    bundle.actions.setRangeSelect("a", true);
+    expect(bundle.store.getState().pages["a"]?.rangeSelect).toBeFalsy();
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.setRangeSelect("a", true);
+    bundle.actions.setMultiSelect("a", false);
+    expect(bundle.store.getState().pages["a"]?.rangeSelect).toBe(false);
+  });
+
+  it("clears the selection without leaving multi-select mode", () => {
+    bundle.actions.setMultiSelect("a", true);
+    bundle.actions.selectAllRows("a");
+    expect(bundle.store.getState().pages["a"]?.selection?.rows.size).toBe(5);
+    bundle.actions.clearRowSelection("a");
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.selection?.rows.size).toBe(0);
+    expect(page?.multiSelect).toBe(true);
   });
 
   it("keeps the selection when multi-select mode is turned off", () => {

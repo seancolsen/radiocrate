@@ -628,6 +628,21 @@ for (const colorScheme of SCHEMES) {
     ]);
   });
 
+  // Range mode: the toggle on, three rows selected from the origin (row 1,
+  // marked by the bar down its left edge) to row 3.
+  test(`results/multi-select-range - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "results/multi-select-range",
+      colorScheme,
+    );
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage.getByText("3 records")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/multi-select-range", colorScheme),
+    );
+  });
+
   // A row's context menu: one "Edit {table}" entry per table whose primary key
   // the row carries, "Show album tracks" for an album, "Rate track", "Queue
   // track" and "Add to playlist…" for a track, the track's "Artists" (but not

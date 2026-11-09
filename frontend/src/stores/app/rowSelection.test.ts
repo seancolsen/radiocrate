@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   allRows,
+  clearedSelection,
   clickedSelection,
+  rangedSelection,
   singleRow,
   someRows,
   steppedSelection,
@@ -53,6 +55,62 @@ describe("clickedSelection", () => {
       rows: [4],
       anchor: 1,
       lead: 1,
+    });
+  });
+});
+
+describe("rangedSelection", () => {
+  it("grows from the selected anchor, keeping it as the origin", () => {
+    const first = rangedSelection(singleRow(2), 5);
+    expect(view(first)).toEqual({ rows: [2, 3, 4, 5], anchor: 2, lead: 5 });
+    // A tap on the far side of the origin swings the range over…
+    const second = rangedSelection(first, 0);
+    expect(view(second)).toEqual({ rows: [0, 1, 2], anchor: 2, lead: 0 });
+    // …and a nearer one shrinks it, rather than starting another.
+    expect(view(rangedSelection(second, 1))).toEqual({
+      rows: [1, 2],
+      anchor: 2,
+      lead: 1,
+    });
+  });
+
+  it("keeps what was selected before the range began", () => {
+    // Rows 0 and 8 toggled on, 8 last: the range grows from 8.
+    const toggled = clickedSelection(someRows([0]), 8, toggle);
+    const first = rangedSelection(toggled, 5);
+    expect(view(first)?.rows).toEqual([0, 5, 6, 7, 8]);
+    // Shrinking the range lets its own rows go, but not row 0.
+    expect(view(rangedSelection(first, 7))?.rows).toEqual([0, 7, 8]);
+  });
+
+  it("sets the origin with the tap when the anchor isn't selected", () => {
+    // The last toggle took row 3 out, so 3 is no origin.
+    const toggled = clickedSelection(someRows([1, 3]), 3, toggle);
+    const first = rangedSelection(toggled, 6);
+    expect(view(first)).toEqual({ rows: [1, 6], anchor: 6, lead: 6 });
+    expect(view(rangedSelection(first, 4))?.rows).toEqual([1, 4, 5, 6]);
+    // Nothing selected at all: the tap starts from scratch.
+    expect(view(rangedSelection(undefined, 2))).toEqual({
+      rows: [2],
+      anchor: 2,
+      lead: 2,
+    });
+  });
+
+  it("starts afresh after any other change to the selection", () => {
+    const ranged = rangedSelection(singleRow(0), 2); // 0–2
+    const toggled = clickedSelection(ranged, 6, toggle); // + 6, anchored there
+    expect(view(rangedSelection(toggled, 8))?.rows).toEqual([0, 1, 2, 6, 7, 8]);
+  });
+});
+
+describe("clearedSelection", () => {
+  it("selects nothing but keeps both ends", () => {
+    const prev = { ...someRows([2, 5])!, lead: 5 };
+    expect(view(clearedSelection(prev))).toEqual({
+      rows: [],
+      anchor: 2,
+      lead: 5,
     });
   });
 });

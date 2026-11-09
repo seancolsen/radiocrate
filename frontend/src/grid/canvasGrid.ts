@@ -114,6 +114,10 @@ const QUEUE_BADGE_X = 6;
 
 /** The glyph marking a row whose record has unsaved edits in the record editor,
  * drawn large enough to read at a glance over the row's left padding. */
+/** The range origin's marker (see `setRangeOrigin`): a bar this wide down the
+ * row's left edge, inset this far from the row's top and bottom. */
+const RANGE_ORIGIN_W = 4;
+const RANGE_ORIGIN_INSET_Y = 4;
 const MODIFIED_MARKER = "✱";
 const MODIFIED_MARKER_FONT = 18;
 
@@ -308,6 +312,8 @@ export class CanvasGrid {
   private queuedRows: ReadonlyMap<number, number | null> = new Map();
   /** Rows whose record has unsaved changes in the record editor. */
   private modifiedRows: ReadonlySet<number> = new Set();
+  /** The row a multi-select range grows from, while range mode has one. */
+  private rangeOrigin: number | undefined;
   private hoverRow: number | undefined;
   private lastMouseY: number | undefined;
   private interaction: GridInteraction | undefined;
@@ -640,6 +646,15 @@ export class CanvasGrid {
   setCurrentRow(row: number | undefined): void {
     if (row === this.currentRow) return;
     this.currentRow = row;
+    this.requestDraw();
+  }
+
+  /** Marks the row a touch range grows from in multi-select's range mode
+   * (`undefined` for none), painted with an accent bar down its left edge, so
+   * the user can see which end of the range stays put. */
+  setRangeOrigin(row: number | undefined): void {
+    if (row === this.rangeOrigin) return;
+    this.rangeOrigin = row;
     this.requestDraw();
   }
 
@@ -1473,6 +1488,7 @@ export class CanvasGrid {
       }
       // Over the ring, whose left edge it straddles: unsaved changes are the
       // more urgent of the two to notice.
+      if (this.rangeOrigin === r) this.drawRangeOrigin(screenY, rowH);
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
       if (queued != null) this.drawQueueBadge(screenY, queued, r === 0);
       if (slide !== 0) ctx.restore();
@@ -1734,6 +1750,26 @@ export class CanvasGrid {
   /** The unsaved-changes ✱ for one row: the record editor is holding edits to
    * the record this row stands for, whether or not its form is open. Drawn in
    * the row's left padding, where no cell text reaches. */
+  /** The range origin's marker: a rounded accent bar down the row's left
+   * edge, inside the playing row's ring should the two meet. */
+  private drawRangeOrigin(screenY: number, rowH: number): void {
+    const ctx = this.ctx;
+    const h = rowH - 2 * RANGE_ORIGIN_INSET_Y;
+    if (h <= 0) return;
+    ctx.save();
+    ctx.fillStyle = this.theme.accent;
+    roundRectPath(
+      ctx,
+      this.snap(CURRENT_MARKER_INSET + CURRENT_MARKER_W),
+      this.snap(screenY + RANGE_ORIGIN_INSET_Y),
+      RANGE_ORIGIN_W,
+      h,
+      RANGE_ORIGIN_W / 2,
+    );
+    ctx.fill();
+    ctx.restore();
+  }
+
   private drawModifiedMarker(screenY: number, rowH: number): void {
     const ctx = this.ctx;
     ctx.save();

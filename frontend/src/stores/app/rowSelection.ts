@@ -21,6 +21,13 @@ export interface RowSelection {
   readonly anchor: number;
   /** The moving end: the row an arrow-key step counts from. */
   readonly lead: number;
+  /** Only on a selection grown by a tap in multi-select's range mode (see
+   * {@link rangedSelection}): the rows that were selected before the range
+   * began. They stay selected however the range from `anchor` to `lead` grows
+   * or shrinks. Every other transition builds a selection without it, which
+   * is what ends the range: the next range tap starts from what's selected
+   * then. */
+  readonly kept?: ReadonlySet<number>;
 }
 
 /** The rows from `a` to `b`, inclusive, in either order. */
@@ -68,6 +75,35 @@ export function clickedSelection(
     return { rows, anchor: row, lead: row };
   }
   return singleRow(row);
+}
+
+/** The selection after a tap on row `row` in multi-select's range mode: the
+ * rows from the range's origin to `row`, on top of whatever was selected
+ * before the range began.
+ *
+ * The origin is the anchor, provided it's selected — the row last tapped on,
+ * or the one multi-select mode was entered from — and it stays put wherever
+ * the taps land, so a later tap nearer to it shrinks the range rather than
+ * starting another. With no selected anchor (nothing selected, or the last
+ * tap took its row out), the tap sets the origin instead, selecting `row`. */
+export function rangedSelection(
+  prev: RowSelection | undefined,
+  row: number,
+): RowSelection {
+  if (!prev || !prev.rows.has(prev.anchor)) {
+    const kept = prev?.rows ?? new Set<number>();
+    return { rows: new Set([...kept, row]), anchor: row, lead: row, kept };
+  }
+  const kept = prev.kept ?? prev.rows;
+  const rows = span(prev.anchor, row);
+  for (const r of kept) rows.add(r);
+  return { rows, anchor: prev.anchor, lead: row, kept };
+}
+
+/** `prev` with nothing selected, keeping its place: the arrow keys and the
+ * next Shift+click still count from where it was. */
+export function clearedSelection(prev: RowSelection): RowSelection {
+  return { rows: new Set(), anchor: prev.anchor, lead: prev.lead };
 }
 
 /** The selection after an arrow-key step down (`forward`) or up among

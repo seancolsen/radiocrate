@@ -414,6 +414,12 @@ export interface QueryPageState {
    * Ctrl+click). Turning it off leaves the selection as it stands; a new result
    * set turns it off along with clearing the selection. */
   multiSelect: boolean;
+  /** Whether multi-select mode is in its range mode: a tap selects the rows
+   * from the range's origin to the tapped row, instead of toggling that row
+   * alone (what a touch device has instead of Shift+click; see
+   * `rangedSelection`). Only ever on while `multiSelect` is, and turned off
+   * with it. */
+  rangeSelect: boolean;
   /** The lineage mapping: which output column (if any) carries `track.id`
    * (drives double-click-to-play) and which tables the rows carry a full
    * primary key for (drives the results context menu's "Edit {table}"
@@ -465,6 +471,7 @@ export function emptyPage(): QueryPageState {
     resultIsRefresh: false,
     scrollOffset: 0,
     multiSelect: false,
+    rangeSelect: false,
     recordEditor: null,
     running: false,
     runFailed: false,

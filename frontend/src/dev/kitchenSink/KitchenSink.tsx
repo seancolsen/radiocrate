@@ -324,6 +324,13 @@ function Buttons(): JSX.Element {
           <Specimen caption="icon, active">
             <IconButton icon={Icons.SelectMultiple} label="Select" active />
           </Specimen>
+          <Specimen caption="icon, pressed">
+            <IconButton
+              icon={Icons.SelectRange}
+              label="Select a range"
+              pressed
+            />
+          </Specimen>
           <Specimen caption="icon, danger">
             <IconButton icon={Icons.Delete} label="Delete" danger />
           </Specimen>
@@ -589,6 +596,12 @@ function Surfaces(): JSX.Element {
           </Specimen>
           {/* The results grid paints these on its canvas; this is their DOM
               likeness, in the same tokens. */}
+          <Specimen caption="range origin row">
+            <div className="text-ink relative rounded-sm bg-[var(--row-selected)] py-1.5 pr-3 pl-4 text-sm">
+              <span className="bg-accent absolute top-1 bottom-1 left-1 w-1 rounded-full" />
+              Sorry
+            </div>
+          </Specimen>
           <Specimen caption="queued row">
             <div className="border-now-playing text-ink relative rounded-lg border-2 border-dashed px-3 py-1.5 text-sm">
               Formation

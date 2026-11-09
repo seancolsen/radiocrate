@@ -11,7 +11,8 @@ import { NESTED_FOCUS_CLASS, cx } from "./cx";
  * alone, since only a button with a text label fills on hover. This is the app's one
  * button style — every icon-only control uses it, so hovering reads the same
  * everywhere. Content is the icon gray by default; `danger` tints it red and a
- * disabled button dims and stops responding. `nested` is for a button set
+ * disabled button dims and stops responding. `pressed` makes it a toggle
+ * (`aria-pressed`), tinted like a toolbar toggle while it's on. `nested` is for a button set
  * inside a standard-height control (a preset's actions), which takes an inside outline for focus (see `NESTED_FOCUS_CLASS`).
  *
  * `tabIndex={-1}` marks a control *on* another focusable item (like the
@@ -48,6 +49,8 @@ const IconButton = forwardRef<
     disabled?: boolean;
     danger?: boolean;
     active?: boolean;
+    /** Makes the button a toggle, on (`true`) or off (`false`). */
+    pressed?: boolean;
     nested?: boolean;
     size?: "sm" | "md";
     tabIndex?: number;
@@ -67,6 +70,7 @@ const IconButton = forwardRef<
         type="button"
         {...triggerProps}
         disabled={props.disabled}
+        aria-pressed={props.pressed}
         tabIndex={props.tabIndex}
         className={cx(
           "flex shrink-0 items-center justify-center rounded",
@@ -74,11 +78,13 @@ const IconButton = forwardRef<
           {
             "size-5": props.size === "sm",
             "size-[26px]": props.size !== "sm",
-            "text-ink-weak": !props.disabled && !props.danger,
+            "text-ink-weak": !props.disabled && !props.danger && !props.pressed,
             "text-danger": !props.disabled && props.danger,
             "hover:text-ink": !props.disabled && !props.danger,
             "hover:brightness-125": !props.disabled && props.danger,
             "text-ink-weak/40": props.disabled,
+            "bg-split-active": props.pressed,
+            "text-ink": !props.disabled && props.pressed,
             "bg-hover": props.active && !props.nested,
             "bg-ink/10": props.active && props.nested,
           },

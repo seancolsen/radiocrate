@@ -1580,6 +1580,29 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // Multi-select's range mode: the toggle on, a range grown from row 1 (its
+  // origin, marked down its left edge) to row 3, and the select-all checkbox
+  // partly filled.
+  "results/multi-select-range": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        recordKeys: {
+          track: ["track-1", "track-2", "track-3", "track-4", "track-5"],
+          album: ["album-1", "album-1", "album-2", "album-2", "album-3"],
+        },
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.setMultiSelect(id, true);
+      stores.app.actions.clickRow(id, 1, { shift: false, ctrl: false });
+      stores.app.actions.setRangeSelect(id, true);
+      stores.app.actions.clickRow(id, 3, { shift: false, ctrl: false });
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // The playing row, ringed by its blue rectangle — seeded on row 1 so the rows
   // around it show the ring is a frame around one row, not a divider.
   "results/playing-row": {

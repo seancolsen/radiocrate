@@ -12,6 +12,7 @@ import { CanvasGrid } from "../grid/canvasGrid";
 import {
   queuedRowPositions,
   selectMultiSelect,
+  selectRangeOrigin,
   selectPageDiagnostic,
   selectPageTab,
   selectRecordGroupsForRows,
@@ -266,7 +267,8 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     // Puts the selection where a gesture aimed at row `index` means it: an
     // existing multi-row selection the row belongs to is left as-is, and so is
     // the selection in multi-select mode (where collapsing it would throw away
-    // what the user is assembling — an unselected row is added to it instead).
+    // what the user is assembling — an unselected row is added to it instead,
+    // as a tap would add it: alone, or in range mode, with the range to it).
     // Any other gesture selects its row alone, so its target is visible.
     const aimAtRow = (index: number) => {
       const state = store.getState();
@@ -412,6 +414,13 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       store.subscribe(
         (s) => selectRowSelection(s, tabId),
         (selection) => grid.setSelection(selection),
+        { fireImmediately: true },
+      ),
+      // Where a range-mode tap grows the range from, marked so the user can
+      // see which end stays put.
+      store.subscribe(
+        (s) => selectRangeOrigin(s, tabId),
+        (row) => grid.setRangeOrigin(row),
         { fireImmediately: true },
       ),
       // The playing track's row, when it lives in *this* tab's results — the

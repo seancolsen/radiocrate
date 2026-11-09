@@ -63,6 +63,10 @@ import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
 import Duplicate from "~icons/material-symbols/content-copy";
 import SelectMultiple from "~icons/material-symbols/select-check-box";
+import SelectNone from "~icons/material-symbols/check-box-outline-blank";
+import SelectSome from "~icons/material-symbols/indeterminate-check-box";
+import SelectAll from "~icons/material-symbols/check-box";
+import SelectRange from "~icons/material-symbols/height";
 import Rate from "~icons/material-symbols/star";
 import Album from "~icons/material-symbols/album";
 import Artists from "~icons/material-symbols/group";
@@ -161,6 +165,10 @@ export const Icons = {
   Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)
   SelectMultiple, // results row menu: enter multi-select mode
+  SelectNone, // multi-select toolbar: no rows selected ("Select all")
+  SelectSome, // multi-select toolbar: some rows selected ("Select all")
+  SelectAll, // multi-select toolbar: every row selected ("Clear selection")
+  SelectRange, // multi-select toolbar: the range-mode toggle
   Rate, // results row menu: the "Rate track" submenu
   Album, // results row menu: a track's "Album" submenu
   Artists, // results row menu: the "Artists" submenu (credited artists)
