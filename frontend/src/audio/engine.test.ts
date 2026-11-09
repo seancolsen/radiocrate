@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AudioEngine, silentWav, type AudioQualityPref } from "./engine";
+import {
+  AudioEngine,
+  silentWav,
+  streamRefusalMessage,
+  type AudioQualityPref,
+} from "./engine";
 
 /** Just enough of an `<audio>` element for the engine. Its transport state is
  * plain fields, which a test sets to stage what the browser would report. */
@@ -13,7 +18,8 @@ class FakeAudio extends EventTarget {
   muted = false;
   loop = false;
   volume = 1;
-  error = null;
+  seeking = false;
+  error: { code: number; message: string } | null = null;
   networkState = 0;
   preload = "";
   style = {};
@@ -34,6 +40,7 @@ class FakeAudio extends EventTarget {
   }
 
   load(): void {
+    this.error = null;
     this.currentTime = 0;
     this.duration = Number.NaN;
     this.readyState = 0;
@@ -103,6 +110,26 @@ function playTranscode(engine: AudioEngine): FakeAudio {
   return el;
 }
 
+/** Stages `el` as a browser reports a stream it couldn't load: the error, then
+ * the `error` event. */
+function failLoad(el: FakeAudio, code = 4): void {
+  el.error = { code, message: "" };
+  el.paused = true;
+  el.dispatchEvent(new Event("error"));
+}
+
+/** Has `fetch` answer every request with `response`, recording the requests. */
+function serve(response: () => Response) {
+  const fetch = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+    () => Promise.resolve(response()),
+  );
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+/** Lets pending promise callbacks run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 /** Stages `el` as a browser reports a finished download: network idle, then
  * `suspend`. */
 function finishDownload(el: FakeAudio): void {
@@ -115,6 +142,11 @@ beforeEach(() => {
   quality = "lower";
   vi.stubGlobal("Audio", FakeAudio);
   vi.stubGlobal("navigator", {});
+  // Asking the server why a stream failed: no answer, unless a test gives one.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise(() => {})),
+  );
   vi.stubGlobal("document", {
     body: { appendChild: () => {} },
     addEventListener: () => {},
@@ -356,6 +388,209 @@ describe("closing the current track", () => {
 
     expect(media.handlers.get("play")).toBeTypeOf("function");
     expect(media.handlers.get("nexttrack")).toBeTypeOf("function");
+  });
+});
+
+describe("downloads", () => {
+  it("are aborted when playback stops", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", ["t2"]);
+    const [active, standby] = created;
+    active!.networkState = NETWORK_IDLE;
+    active!.dispatchEvent(new Event("suspend")); // primes t2
+    active!.networkState = NETWORK_LOADING; // say a range request is out
+    expect(standby!.networkState).toBe(NETWORK_LOADING);
+
+    engine.stop();
+
+    // `load()` with no `src` is what aborts; removing the attribute alone
+    // leaves the fetch running.
+    expect(active!.networkState).toBe(0);
+    expect(standby!.networkState).toBe(0);
+  });
+
+  it("are replaced when another track starts", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    const active = created[0]!;
+    const load = vi.spyOn(active, "load");
+
+    engine.setQueue([], "t2", []);
+
+    expect(load).toHaveBeenCalled();
+    expect(active.src).toBe("/api/tracks/t2/stream?quality=opus128");
+  });
+});
+
+describe("loading", () => {
+  it("is on from the start of a track until it has data to play", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    expect(engine.loading).toBe(true);
+    created[0]!.readyState = 4;
+    expect(engine.loading).toBe(false);
+  });
+
+  it("is off while paused, though nothing has loaded", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    engine.pause();
+    expect(engine.loading).toBe(false);
+  });
+
+  it("is on during a seek", () => {
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.seeking = true;
+    expect(engine.loading).toBe(true);
+  });
+
+  it("is reported as it changes", () => {
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", []);
+    events.onTransport.mockClear();
+    created[0]!.dispatchEvent(new Event("playing"));
+    created[0]!.dispatchEvent(new Event("progress"));
+    expect(events.onTransport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the downloaded ranges", () => {
+  it("are the active element's, in seconds into the track", () => {
+    const { engine } = setup();
+    const el = playTranscode(engine);
+    expect(engine.buffered).toEqual([[0, 30]]);
+    engine.seek(60); // past the buffer: restarts the transcode at 60
+    el.bufferedRanges = [[0, 12]];
+    expect(engine.buffered).toEqual([[60, 72]]);
+  });
+
+  it("are empty with nothing loaded", () => {
+    const { engine } = setup();
+    expect(engine.buffered).toEqual([]);
+  });
+});
+
+describe("a track that fails to load", () => {
+  it("says the file is missing when the server says so", async () => {
+    const fetch = serve(
+      () =>
+        new Response("file not found on disk", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        }),
+    );
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", []);
+    failLoad(created[0]!);
+
+    // Still finding out why.
+    expect(engine.loading).toBe(true);
+    expect(engine.error).toBeNull();
+
+    await settle();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/tracks/t1/stream?quality=opus128",
+      expect.objectContaining({ headers: { Range: "bytes=0-0" } }),
+    );
+    expect(engine.error).toBe("File not found on disk");
+    expect(engine.loading).toBe(false);
+    expect(engine.isPlaying).toBe(false);
+    expect(events.onTransport).toHaveBeenCalled();
+  });
+
+  it("falls back on the element's error when the server hands the stream over", async () => {
+    serve(() => new Response("x", { status: 206 }));
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    failLoad(created[0]!, 3);
+    await settle();
+    expect(engine.error).toBe("The file couldn't be decoded");
+  });
+
+  it("says when the server can't be reached", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    failLoad(created[0]!, 2);
+    await settle();
+    expect(engine.error).toBe("Couldn't reach the server");
+  });
+
+  it("forgets the failure, and stops asking why, when another track starts", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise(() => {});
+      }),
+    );
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    failLoad(created[0]!);
+    expect(signal?.aborted).toBe(false);
+
+    engine.setQueue([], "t2", []);
+
+    expect(signal?.aborted).toBe(true);
+    expect(engine.error).toBeNull();
+  });
+
+  it("is loaded again on play", async () => {
+    serve(() => new Response("file not found on disk", { status: 404 }));
+    const { engine } = setup();
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    failLoad(el);
+    await settle();
+    const load = vi.spyOn(el, "load");
+
+    engine.play();
+
+    expect(load).toHaveBeenCalled();
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128");
+    expect(engine.error).toBeNull();
+    expect(engine.isPlaying).toBe(true);
+  });
+
+  it("isn't primed again and again while the current track plays", () => {
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", ["t2"]);
+    const [active, standby] = created;
+    finishDownload(active!);
+    expect(standby!.src).toContain("/t2/");
+    failLoad(standby!);
+    events.onStreamRequest.mockClear();
+
+    finishDownload(active!);
+
+    expect(events.onStreamRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refused stream's message", () => {
+  it("tells a missing track from a missing file", () => {
+    expect(streamRefusalMessage(404, "text/plain", "track not found")).toBe(
+      "Track not found in the library",
+    );
+    expect(
+      streamRefusalMessage(404, "text/plain", "file not found on disk"),
+    ).toBe("File not found on disk");
+  });
+
+  it("passes on the server's short reasons, but not a page of HTML", () => {
+    expect(streamRefusalMessage(500, "text/plain", "unsupported codec")).toBe(
+      "The server couldn't stream the track: unsupported codec",
+    );
+    expect(streamRefusalMessage(403, "text/html", "<html>…</html>")).toBe(
+      "The server couldn't stream the track (HTTP 403)",
+    );
   });
 });
 

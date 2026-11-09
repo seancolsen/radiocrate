@@ -49,7 +49,12 @@ import {
   playInsert,
   ratingUpdates,
 } from "../../api/track";
-import type { AudioQualityPref, Player, TrackStep } from "../../audio/engine";
+import type {
+  AudioQualityPref,
+  LoadedRange,
+  Player,
+  TrackStep,
+} from "../../audio/engine";
 import { PlaybackLog } from "../../audio/playbackLog";
 import {
   addInferredLinks,
@@ -298,6 +303,17 @@ function allDefined<T>(items: (T | undefined)[]): items is T[] {
 
 function newUuid(): string {
   return crypto.randomUUID();
+}
+
+/** Whether two lists of loaded ranges are the same. */
+function sameRanges(
+  a: readonly LoadedRange[],
+  b: readonly LoadedRange[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(([start, end], i) => start === b[i]![0] && end === b[i]![1])
+  );
 }
 
 function nowEpoch(): number {
@@ -2441,12 +2457,21 @@ export function createAppActions(
    * The engine stays the source of truth; this is a projection of it. */
   const syncTransport = () => {
     if (!audio) return;
+    const player = audio;
+    // The ranges as they were, while they are, so the timeline isn't handed a
+    // new array on every tick.
+    const was = get().playback.buffered;
+    const now = player.buffered;
+    const buffered = sameRanges(was, now) ? was : now;
     set((s) => {
       s.playback = {
-        playing: audio!.isPlaying,
-        position: audio!.position,
-        duration: audio!.duration,
-        hasNext: audio!.hasNext,
+        playing: player.isPlaying,
+        position: player.position,
+        duration: player.duration,
+        hasNext: player.hasNext,
+        loading: player.loading,
+        buffered: castDraft(buffered),
+        error: player.error,
       };
     });
   };
@@ -3992,7 +4017,7 @@ export function createAppActions(
     seedNowPlaying: (track, playback) =>
       set((s) => {
         s.currentTrack = track;
-        s.playback = playback;
+        s.playback = castDraft(playback);
       }),
 
     saveQuery: (tabId) => {

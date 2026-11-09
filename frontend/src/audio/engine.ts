@@ -253,9 +253,54 @@ interface AudioSessionNavigator {
  * browser (its tests run in plain Node). */
 const HAVE_METADATA = 1;
 
+/** `HTMLMediaElement.HAVE_FUTURE_DATA`: enough is buffered to play on from
+ * the current position. Below it, a playing element is waiting for data. */
+const HAVE_FUTURE_DATA = 3;
+
 /** `HTMLMediaElement.NETWORK_IDLE`: the element has a resource but isn't
  * fetching any of it right now. */
 const NETWORK_IDLE = 1;
+
+/** A stretch of the current track that has been downloaded, as `[start, end]`
+ * in seconds into the track. */
+export type LoadedRange = readonly [number, number];
+
+/** What a failed load says once the server has been asked for the stream
+ * itself and handed it over (see {@link AudioEngine.diagnose}): the trouble was
+ * in the browser's hands, and the element's error code is all there is to go
+ * on. Codes from `MediaError`. */
+export function mediaErrorMessage(code: number | undefined): string {
+  switch (code) {
+    case 2: // MEDIA_ERR_NETWORK
+      return "The connection dropped while loading";
+    case 3: // MEDIA_ERR_DECODE
+      return "The file couldn't be decoded";
+    case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+      return "This browser can't play the file's format";
+    default:
+      return "The track couldn't be loaded";
+  }
+}
+
+/** What a failed load says when the server refused the stream with `status`.
+ * The stream endpoint's own refusals are short plain-text reasons; anything
+ * else (a proxy's HTML login page, say) is described by its status alone. */
+export function streamRefusalMessage(
+  status: number,
+  contentType: string | null,
+  body: string,
+): string {
+  const reason = contentType?.startsWith("text/plain") ? body.trim() : "";
+  if (status === 404) {
+    return reason === "track not found"
+      ? "Track not found in the library"
+      : "File not found on disk";
+  }
+  if (reason !== "" && reason.length <= 120) {
+    return `The server couldn't stream the track: ${reason}`;
+  }
+  return `The server couldn't stream the track (HTTP ${status})`;
+}
 
 /** Ten milliseconds of silent WAV, for {@link AudioEngine.unlock} to play on a
  * standby element with nothing loaded yet. Inline, so it costs no fetch. */
@@ -320,6 +365,9 @@ export type Player = Pick<
   | "setMetadata"
   | "traceContext"
   | "isPlaying"
+  | "loading"
+  | "buffered"
+  | "error"
   | "position"
   | "duration"
   | "hasNext"
@@ -377,6 +425,15 @@ export class AudioEngine {
    * `Content-Length`, no range support — so its element reports an infinite
    * duration, and this is the only length it has. */
   private knownDuration: number | null = null;
+  /** Why the current track failed to load, as the bar says it; `null` while
+   * it hasn't. Set once {@link diagnose} has found out. */
+  private failure: string | null = null;
+  /** The request {@link diagnose} has out to find out why the current track
+   * failed, so a move to another track can abort it. */
+  private diagnosis: AbortController | undefined;
+  /** A track whose prime failed (its file is missing, say), so it isn't
+   * re-fetched on every `suspend` only to fail again. */
+  private primeFailed: string | undefined;
   /** Where to report what happens, if anywhere. */
   private readonly tracer: EngineTrace | undefined;
   /** The last heartbeat's wall-clock time and track position, so the next can
@@ -434,6 +491,38 @@ export class AudioEngine {
 
   get isPlaying(): boolean {
     return !this.audio.paused && !this.audio.ended;
+  }
+
+  /** Whether the current track is meant to be sounding but is waiting on data:
+   * a fresh load before its first note, a seek past what's buffered, a stall
+   * mid-track — or a failure still being looked into (see {@link diagnose}). */
+  get loading(): boolean {
+    if (this.current === undefined) return false;
+    if (this.diagnosis !== undefined) return true;
+    if (this.failure !== null) return false;
+    const el = this.audio;
+    return (
+      !el.paused &&
+      !el.ended &&
+      (el.readyState < HAVE_FUTURE_DATA || el.seeking)
+    );
+  }
+
+  /** The stretches of the current track downloaded so far, in seconds into
+   * the track. */
+  get buffered(): LoadedRange[] {
+    if (this.current === undefined) return [];
+    const ranges = this.audio.buffered;
+    const out: LoadedRange[] = [];
+    for (let i = 0; i < ranges.length; i++) {
+      out.push([this.offset + ranges.start(i), this.offset + ranges.end(i)]);
+    }
+    return out;
+  }
+
+  /** Why the current track couldn't be played, or `null`. */
+  get error(): string | null {
+    return this.failure;
   }
 
   get position(): number {
@@ -505,6 +594,13 @@ export class AudioEngine {
 
   play(): void {
     this.trace("cmd:play");
+    // A track that failed to load has nothing to resume: load it again.
+    const id = this.current;
+    if (id !== undefined && (this.failure !== null || this.audio.error)) {
+      this.load(id);
+      this.events.onTransport();
+      return;
+    }
     this.wantPlaying = true;
     void this.startPlaying(this.audio, "resume").catch(() => {});
     this.holdSession();
@@ -536,10 +632,14 @@ export class AudioEngine {
     for (const el of this.elements) {
       el.pause();
       el.removeAttribute("src");
+      // Without this, a download in flight runs on to the end of the file.
+      el.load();
     }
     this.releaseSession();
+    this.clearFailure();
     this.current = undefined;
     this.primed = undefined;
+    this.primeFailed = undefined;
     this.offset = 0;
     this.knownDuration = null;
     this.history = [];
@@ -619,6 +719,10 @@ export class AudioEngine {
     // metadata fetch already supplied.
     if (id !== this.current) this.knownDuration = null;
     this.offset = 0;
+    this.clearFailure();
+    // A prime that failed under the last track gets another chance under this
+    // one: it may have been a dropped connection rather than a missing file.
+    this.primeFailed = undefined;
     this.trace("load", () => `${shortId(id)} on ${this.name(this.audio)}`);
     this.activeQuality = streamQualityParam(this.getQuality());
     this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
@@ -678,6 +782,7 @@ export class AudioEngine {
       return;
     }
     if (this.primed === next && el.getAttribute("src")) return;
+    if (this.primeFailed === next) return;
     if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
     this.trace("prime", () => `${shortId(next)} on ${this.name(el)}`);
@@ -699,6 +804,8 @@ export class AudioEngine {
     this.activeQuality = this.primedQuality;
     this.offset = 0;
     this.knownDuration = null;
+    this.clearFailure();
+    this.primeFailed = undefined;
     this.current = id;
     this.wantPlaying = true;
     void this.startPlaying(this.audio, "handoff").catch(() =>
@@ -898,11 +1005,59 @@ export class AudioEngine {
     const el = this.audio;
     this.trace("restart", () => `${shortId(id)} at ${start}`);
     this.offset = start;
+    this.clearFailure();
     this.fetchStream(el, trackStreamUrl(id, this.activeQuality, start));
     this.yieldStandby();
     if (this.wantPlaying) void this.startPlaying(el, "restart").catch(() => {});
     this.updatePositionState();
     this.events.onTransport();
+  }
+
+  /** Finds out why `id`'s stream from `src` failed, and reports it as the
+   * track's {@link error}. A media element only says *that* a load failed, not
+   * what the server answered, so this asks the server again — for a single byte
+   * — and reads its refusal. A server that hands the stream over leaves the
+   * element's own error code to explain it. */
+  private async diagnose(
+    id: string,
+    src: string,
+    code: number | undefined,
+  ): Promise<void> {
+    this.diagnosis?.abort();
+    const controller = new AbortController();
+    this.diagnosis = controller;
+    let message: string;
+    try {
+      const response = await fetch(src, {
+        headers: { Range: "bytes=0-0" },
+        signal: controller.signal,
+      });
+      message = response.ok
+        ? mediaErrorMessage(code)
+        : streamRefusalMessage(
+            response.status,
+            response.headers.get("content-type"),
+            await response.text(),
+          );
+    } catch {
+      if (controller.signal.aborted) return; // moved on to another track
+      message = "Couldn't reach the server";
+    } finally {
+      // Drops whatever a stream that was handed over still had to send.
+      controller.abort();
+    }
+    if (this.diagnosis !== controller || this.current !== id) return;
+    this.diagnosis = undefined;
+    this.trace("failure", () => `${shortId(id)} ${message}`);
+    this.failure = message;
+    this.events.onTransport();
+  }
+
+  /** Forgets the current track's failure, and stops looking into it. */
+  private clearFailure(): void {
+    this.diagnosis?.abort();
+    this.diagnosis = undefined;
+    this.failure = null;
   }
 
   private seekBy(offset: number): void {
@@ -946,6 +1101,20 @@ export class AudioEngine {
         this.updatePositionState();
         transport();
       });
+      // What moves `loading` and `buffered`, for the bar's spinner and the
+      // timeline's loaded stretch.
+      for (const type of [
+        "waiting",
+        "playing",
+        "canplay",
+        "seeking",
+        "seeked",
+        "progress",
+      ]) {
+        el.addEventListener(type, () => {
+          if (active()) transport();
+        });
+      }
 
       // The active track's download has settled, so the connection is free to
       // prime the next one. `primeNext` checks the network really went idle.
@@ -968,21 +1137,27 @@ export class AudioEngine {
       });
 
       // A stream that fails to load (network drop, deleted file) leaves the
-      // track in the bar, paused, for the user to skip past — deliberately *not*
-      // auto-advancing, which would silently race through an entire queue on a
-      // dropped connection. The same failure on the *standby* element is not
+      // track in the bar, paused, saying why, for the user to retry or skip
+      // past — deliberately *not* auto-advancing, which would silently race
+      // through an entire queue on a dropped connection, or a collection whose
+      // drive is unplugged. The same failure on the *standby* element is not
       // user-visible at all: drop the prime and let the boundary fall back to a
-      // fresh load.
+      // fresh load, which will show the failure if it happens again.
       el.addEventListener("error", () => {
         if (!active()) {
+          this.primeFailed = this.primed;
           this.primed = undefined;
           return;
         }
-        if (this.current === undefined) return; // teardown, not a real failure
+        const id = this.current;
+        if (id === undefined) return; // teardown, not a real failure
+        const src = el.getAttribute("src");
+        if (!src) return;
         console.error("audio stream failed", el.error?.message ?? "");
         this.wantPlaying = false;
         this.releaseSession();
         this.setPlaybackState("paused");
+        void this.diagnose(id, src, el.error?.code);
         transport();
       });
     }

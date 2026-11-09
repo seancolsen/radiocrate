@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type JSX } from "react";
 import type { Theme } from "../themedPage";
 import type { Stores } from "../../stores/createStores";
+import { IDLE_PLAYBACK } from "../../stores/app";
 import { useApp, useStores } from "../../stores/react";
 import { FILTER_DEF, PLAYLIST_SOURCE, SOURCES_FIXTURE } from "../fixtures";
 import { lemonadeGridResult } from "../gridFixture";
@@ -52,7 +53,14 @@ function seed(stores: Stores): void {
       title: "Pray You Catch Me",
       artists: ["Beyoncé"],
     },
-    { playing: true, position: 74, duration: 196, hasNext: true },
+    {
+      ...IDLE_PLAYBACK,
+      playing: true,
+      position: 74,
+      duration: 196,
+      hasNext: true,
+      buffered: [[0, 150]],
+    },
   );
 }
 

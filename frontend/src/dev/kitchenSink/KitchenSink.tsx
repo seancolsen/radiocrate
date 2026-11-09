@@ -26,6 +26,12 @@ import {
   MenuItem,
   MenuToggleItem,
 } from "../../components/ui/Menu";
+import {
+  PLAY_BUTTON_CLASS,
+  PlayButtonFace,
+  PlaybackError,
+  TimelineTrack,
+} from "../../components/NowPlaying";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ToastCard } from "../../components/Toast";
@@ -56,6 +62,7 @@ const TOKENS: readonly string[] = [
   "row-selected-hover",
   "now-playing",
   "timeline-rest",
+  "timeline-loaded",
   "row-current",
   "field-text",
   "field-number",
@@ -661,6 +668,55 @@ function Surfaces(): JSX.Element {
   );
 }
 
+/** The now-playing bar's colored parts, in each of their states. */
+function NowPlayingParts(): JSX.Element {
+  return (
+    <Section title="Now playing">
+      <div className="flex flex-col gap-3">
+        <Row>
+          <Specimen caption="play">
+            <div className={PLAY_BUTTON_CLASS}>
+              <PlayButtonFace playing={false} loading={false} failed={false} />
+            </div>
+          </Specimen>
+          <Specimen caption="pause">
+            <div className={PLAY_BUTTON_CLASS}>
+              <PlayButtonFace playing loading={false} failed={false} />
+            </div>
+          </Specimen>
+          {/* Padded so the ring, which sits outside the disc, isn't clipped. */}
+          <Specimen caption="loading">
+            <div className="p-1">
+              <div className={PLAY_BUTTON_CLASS}>
+                <PlayButtonFace playing loading failed={false} />
+              </div>
+            </div>
+          </Specimen>
+          <Specimen caption="retry">
+            <div className={PLAY_BUTTON_CLASS}>
+              <PlayButtonFace playing={false} loading={false} failed />
+            </div>
+          </Specimen>
+        </Row>
+        <Row>
+          <div className="w-64">
+            <Specimen caption="timeline, part downloaded" stretch>
+              <div className="flex h-4 items-center">
+                <TimelineTrack progress={0.3} loaded={[[0, 0.65]]} />
+              </div>
+            </Specimen>
+          </div>
+          <div className="w-64">
+            <Specimen caption="failed track" stretch>
+              <PlaybackError message="File not found on disk" />
+            </Specimen>
+          </div>
+        </Row>
+      </div>
+    </Section>
+  );
+}
+
 function Messages(): JSX.Element {
   return (
     <Section title="Banners and messages">
@@ -737,6 +793,7 @@ export default function KitchenSink(props: { theme: Theme }): JSX.Element {
       <Inputs />
       <Menus />
       <Surfaces />
+      <NowPlayingParts />
       <Messages />
     </div>
   );

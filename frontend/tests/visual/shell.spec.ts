@@ -265,6 +265,26 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A track waiting on its first bytes: the spinner ring around the play
+  // button, and the downloaded stretch of the timeline.
+  test(`now-playing/loading - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "now-playing/loading", colorScheme);
+    await expect(page.getByTestId("now-playing")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("now-playing/loading", colorScheme),
+    );
+  });
+
+  // A track that couldn't be played: the reason in the timeline's place, and
+  // Retry on the play button.
+  test(`now-playing/error - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "now-playing/error", colorScheme);
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("now-playing/error", colorScheme),
+    );
+  });
+
   // Its overflow menu on its own — Next / Close / Locate, the last disabled
   // because the seeded track isn't located in any result set.
   test(`now-playing/menu - ${colorScheme}`, async ({ page }) => {

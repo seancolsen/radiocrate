@@ -6,7 +6,7 @@ import type {
   SourceFolder,
   SourceKind,
 } from "api-client";
-import type { AudioQualityPref } from "../../audio/engine";
+import type { AudioQualityPref, LoadedRange } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
@@ -276,7 +276,26 @@ export interface PlaybackState {
   duration: number | null;
   /** Whether anything is queued after the current track ("Next" enabled). */
   hasNext: boolean;
+  /** Whether the track is meant to be sounding but is waiting on data — before
+   * its first note, or after a seek or a stall. */
+  loading: boolean;
+  /** The stretches of the track downloaded so far, in seconds. */
+  buffered: readonly LoadedRange[];
+  /** Why the track couldn't be played, or `null`. */
+  error: string | null;
 }
+
+/** The transport with nothing loaded: what the bar starts from, and what a
+ * seeded bar fills in. */
+export const IDLE_PLAYBACK: PlaybackState = {
+  playing: false,
+  position: 0,
+  duration: null,
+  hasNext: false,
+  loading: false,
+  buffered: [],
+  error: null,
+};
 
 /** A request to bring a result row into view (the "Locate" action). Carried as a
  * seq-stamped state slot rather than a one-shot signal: it's an event, and
@@ -747,7 +766,7 @@ export function initialState(env: AppEnv): AppState {
     rpcError: null,
     toast: null,
     currentTrack: null,
-    playback: { playing: false, position: 0, duration: null, hasNext: false },
+    playback: IDLE_PLAYBACK,
     queuedTracks: [],
     sources: { status: "loading", data: [] },
     folders: { status: "loading", data: [] },

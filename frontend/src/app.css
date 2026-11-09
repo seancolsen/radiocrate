@@ -122,6 +122,7 @@
   --color-danger: var(--danger);
   --color-now-playing: var(--now-playing);
   --color-timeline-rest: var(--timeline-rest);
+  --color-timeline-loaded: var(--timeline-loaded);
   --color-field-text: var(--field-text);
   --color-field-number: var(--field-number);
   --color-field-uuid: var(--field-uuid);
@@ -197,9 +198,11 @@
     --danger: light-dark(#c0392b, #e06b5c); /* delete / unsaved-marker red */
     /* ACCENT_BLUE (lib.rs): the now-playing bar's play button, played timeline
        and knob, and the rectangle drawn around the playing row. Its translucent
-       companions are the timeline's remaining part and the wash over that row. */
+       companions are the timeline's remaining part (deeper where it has
+       downloaded) and the wash over that row. */
     --now-playing: rgb(46 124 246);
     --timeline-rest: rgb(46 124 246 / 0.275);
+    --timeline-loaded: rgb(46 124 246 / 0.5);
     --row-current: rgb(46 124 246 / 0.063);
     /* Results-grid row surface (results.rs §2): a subtle top-lit sheen, warm
        artist pills, and a softened hairline separator (--edge at ~0.5 alpha). */

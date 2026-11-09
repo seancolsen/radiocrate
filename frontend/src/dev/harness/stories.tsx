@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from "react";
 import { Icons } from "../../icons";
 import { castDraft } from "immer";
 import {
+  IDLE_PLAYBACK,
   selectTab,
   type CurrentTrack,
   type PlaybackState,
@@ -331,9 +332,13 @@ function showProblem(
 const BROKEN_PRELUDE = `${SETTINGS.querydown_prelude.default}\n#track.x = (`;
 
 /** Opens "Lemonade" and seeds a playing track — the now-playing bar's stories'
- * shared setup. `rowIndex: null` leaves the track deliberately unlocated in
- * the results, which is what disables "Locate" in `now-playing/menu`. */
-function seedPlayback(stores: Stores): void {
+ * shared setup — two-thirds downloaded, or with `playback` in place of that.
+ * `rowIndex: null` leaves the track deliberately unlocated in the results,
+ * which is what disables "Locate" in `now-playing/menu`. */
+function seedPlayback(
+  stores: Stores,
+  playback: Partial<PlaybackState> = {},
+): void {
   const id = openLemonade(stores);
   const track: CurrentTrack = {
     sourceTabId: id,
@@ -342,13 +347,15 @@ function seedPlayback(stores: Stores): void {
     title: "Uncatena",
     artists: ["Sylvan Esso", "Nick Sanborn"],
   };
-  const playback: PlaybackState = {
+  stores.app.actions.seedNowPlaying(track, {
+    ...IDLE_PLAYBACK,
     playing: true,
     position: 74,
     duration: 255,
     hasNext: true,
-  };
-  stores.app.actions.seedNowPlaying(track, playback);
+    buffered: [[0, 170]],
+    ...playback,
+  });
 }
 
 /** The track a record story edits: a row of the seeded grid, keyed as
@@ -981,6 +988,29 @@ export const STORIES: Record<string, Story> = {
     width: 1280,
     frame: "flex flex-col",
     setup: (stores) => seedPlayback(stores),
+    render: () => <NowPlaying />,
+  },
+  // A track just started, waiting on its first bytes: the play button's
+  // spinner ring, and the stretch of the timeline downloaded so far.
+  "now-playing/loading": {
+    width: 1280,
+    frame: "flex flex-col",
+    setup: (stores) =>
+      seedPlayback(stores, { position: 0, loading: true, buffered: [[0, 40]] }),
+    render: () => <NowPlaying />,
+  },
+  // A track whose file is missing: the reason in the timeline's place, and
+  // the play button offering to retry.
+  "now-playing/error": {
+    width: 1280,
+    frame: "flex flex-col",
+    setup: (stores) =>
+      seedPlayback(stores, {
+        playing: false,
+        position: 0,
+        buffered: [],
+        error: "File not found on disk",
+      }),
     render: () => <NowPlaying />,
   },
   // The same menu with tracks queued, which adds "Clear queue".
@@ -1621,7 +1651,13 @@ export const STORIES: Record<string, Story> = {
           title: "Uncatena",
           artists: ["Sylvan Esso", "Nick Sanborn"],
         },
-        { playing: true, position: 74, duration: 255, hasNext: true },
+        {
+          ...IDLE_PLAYBACK,
+          playing: true,
+          position: 74,
+          duration: 255,
+          hasNext: true,
+        },
       );
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
@@ -1645,7 +1681,13 @@ export const STORIES: Record<string, Story> = {
           title: "Uncatena",
           artists: ["Sylvan Esso", "Nick Sanborn"],
         },
-        { playing: true, position: 74, duration: 255, hasNext: true },
+        {
+          ...IDLE_PLAYBACK,
+          playing: true,
+          position: 74,
+          duration: 255,
+          hasNext: true,
+        },
       );
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
@@ -1672,7 +1714,13 @@ export const STORIES: Record<string, Story> = {
           title: "Uncatena",
           artists: ["Sylvan Esso", "Nick Sanborn"],
         },
-        { playing: true, position: 74, duration: 255, hasNext: true },
+        {
+          ...IDLE_PLAYBACK,
+          playing: true,
+          position: 74,
+          duration: 255,
+          hasNext: true,
+        },
       );
       stores.app.actions.queueRows(id, [3], "last");
       stores.app.actions.queueRows(id, [0], "last");

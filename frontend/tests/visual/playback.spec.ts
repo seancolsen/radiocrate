@@ -260,6 +260,67 @@ test("the bar's Close action dismisses playback", async ({ page }) => {
     .click();
   await page.getByRole("menuitem", { name: "Close" }).click();
   await expect(page.getByTestId("now-playing")).toBeHidden();
+  // And no stream is left downloading: an element only stops fetching when
+  // it's reloaded without a source, which leaves its network state empty.
+  const loading = await page.evaluate(() =>
+    [...document.querySelectorAll("audio")].filter(
+      (el) => el.networkState !== HTMLMediaElement.NETWORK_EMPTY,
+    ),
+  );
+  expect(loading).toHaveLength(0);
+});
+
+test("the play button spins until the track has data to play", async ({
+  page,
+}) => {
+  await mockBackend(page);
+  // Hold the first track's stream back until the test lets it through.
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/tracks/track-a/stream", async (route) => {
+    await released;
+    await route.fallback();
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
+  await expect(page.locator("canvas[data-rows]")).toBeVisible();
+  await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
+
+  const button = page
+    .getByTestId("now-playing")
+    .getByRole("button", { name: "Pause" });
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  release();
+  await expect(button).toHaveAttribute("aria-busy", "false");
+});
+
+test("a track whose file is missing says so, and Retry loads it again", async ({
+  page,
+}) => {
+  const streamed = await mockBackend(page);
+  // Answered as the server answers a track whose file has gone from disk.
+  await page.route("**/api/tracks/track-a/stream", (route) => {
+    streamed.push("track-a");
+    return route.fulfill({
+      status: 404,
+      contentType: "text/plain; charset=utf-8",
+      body: "file not found on disk",
+    });
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
+  await expect(page.locator("canvas[data-rows]")).toBeVisible();
+  await page.locator("canvas").dblclick({ position: { x: 200, y: 10 } });
+
+  const bar = page.getByTestId("now-playing");
+  await expect(bar.getByRole("alert")).toHaveText("File not found on disk");
+  const retry = bar.getByRole("button", { name: "Retry" });
+  await expect(retry).toHaveAttribute("aria-busy", "false");
+
+  const before = streamed.length;
+  await retry.click();
+  await expect.poll(() => streamed.length).toBeGreaterThan(before);
+  await expect(bar.getByRole("alert")).toHaveText("File not found on disk");
 });
 
 test("the bar's Next button skips to the next queued track", async ({

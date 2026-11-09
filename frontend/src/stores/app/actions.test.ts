@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAppStore,
+  IDLE_PLAYBACK,
   initialPresetManager,
   presetUsageLabel,
   presetUsers,
@@ -418,7 +419,7 @@ describe("clickRow / moveRowSelection", () => {
     ];
     bundle.actions.seedNowPlaying(
       { sourceTabId: "a", id: "t1", rowIndex: 1, title: null, artists: [] },
-      { playing: true, position: 0, duration: null, hasNext: false },
+      { ...IDLE_PLAYBACK, playing: true, hasNext: false },
     );
     bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
 
@@ -499,7 +500,7 @@ describe("setResults", () => {
     bundle.actions.setMultiSelect("a", true);
     bundle.actions.seedNowPlaying(
       { sourceTabId: "a", id: "t1", rowIndex: 1, title: null, artists: [] },
-      { playing: true, position: 0, duration: null, hasNext: false },
+      { ...IDLE_PLAYBACK, playing: true, hasNext: false },
     );
 
     bundle.actions.setResults(
@@ -3499,7 +3500,7 @@ describe("creating and managing playlists", () => {
       const playing = (sourceTabId: string, id: string, rowIndex: number) =>
         bundle.actions.seedNowPlaying(
           { sourceTabId, id, rowIndex, title: null, artists: [] },
-          { playing: true, position: 0, duration: null, hasNext: true },
+          { ...IDLE_PLAYBACK, playing: true, hasNext: true },
         );
       /** Converts "q" and runs the new playlist's page, whose rows are the
        * converted tracks; resolves to its id. */

@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { EngineEvents, Player } from "../../audio/engine";
+import type { EngineEvents, LoadedRange, Player } from "../../audio/engine";
 import type { AppEnv } from "../env";
 
 /** A stand-in for the audio engine that plays nothing: it keeps the play
@@ -15,6 +15,9 @@ export class FakePlayer implements Player {
   position = 0;
   duration: number | null = null;
   pastHalfway = false;
+  loading = false;
+  buffered: LoadedRange[] = [];
+  error: string | null = null;
 
   constructor(private readonly events: EngineEvents) {}
 

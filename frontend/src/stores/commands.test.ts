@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseChord } from "../commands/chord";
 import { commandDef } from "../commands/registry";
 import { buildResultFromStringRows } from "../query/result";
-import { createAppStore, type AppStoreBundle } from "./app";
+import { createAppStore, IDLE_PLAYBACK, type AppStoreBundle } from "./app";
 import { fakeEnv } from "./app/testEnv";
 import {
   createCommandsStore,
@@ -346,7 +346,13 @@ describe("commands store", () => {
           sourceTabId: null,
           rowIndex: null,
         },
-        { playing: true, position: 0, duration: 100, hasNext: true },
+        {
+          ...IDLE_PLAYBACK,
+          playing: true,
+          position: 0,
+          duration: 100,
+          hasNext: true,
+        },
       );
       press("ArrowLeft");
       press("ArrowRight");
