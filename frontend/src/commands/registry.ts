@@ -43,7 +43,14 @@ export type CommandId =
   | "results.extend_selection_down"
   | "results.extend_selection_up"
   | "results.edit_selected"
+  | "results.go_to_playing_track"
+  | "results.focus"
   | "results.select_all"
+  | "rating.playing_most_common"
+  | "rating.selected_most_common"
+  | "rating.playing_decrease"
+  | "rating.playing_increase"
+  | "record.focus"
   | "record.save"
   | "record.autocomplete"
   | "selection.expand_nested"
@@ -52,6 +59,7 @@ export type CommandId =
   | "tabs.save_active"
   | "tabs.save_all"
   | "tabs.close_active"
+  | "tabs.rename_active"
   | "tabs.next"
   | "tabs.previous"
   | "tabs.switch_next"
@@ -257,14 +265,67 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   },
   {
     // Opens the record editor on the current row selection — the keyboard/
-    // palette equivalent of a row's "Edit {table}" context-menu entry. `when`
-    // only requires *some* results (not a non-empty selection): the command
-    // simply does nothing if nothing's selected, same as the other row commands
-    // racing a tab close.
+    // palette equivalent of a row's "Edit {table}" context-menu entry — or
+    // closes it when it's already open. `when` only requires *some* results
+    // (not a non-empty selection): opening does nothing if nothing's selected,
+    // same as the other row commands racing a tab close.
+    //
+    // The id predates the toggle (it was "Results: Edit selected rows") and
+    // stays, since it's what a user's override is stored under.
     id: "results.edit_selected",
-    title: "Results: Edit selected rows",
+    title: "Record editor: Toggle record editor",
     when: "results",
     defaultChord: chordOf("mod+E"),
+  },
+  {
+    // Moves the rows' selection to the playing track and scrolls it into view,
+    // in the tab it was played from — the now-playing bar's "Locate".
+    id: "results.go_to_playing_track",
+    title: "Results: Go to the currently playing track",
+    when: "trackLoaded",
+    defaultChord: chordOf("mod+G"),
+  },
+  {
+    // Ships unbound. Hands the keyboard back to the rows (the arrow keys,
+    // Shift+arrows, select all) from a text field or the record editor form.
+    id: "results.focus",
+    title: "Results: Focus results",
+    when: "results",
+    defaultChord: null,
+  },
+  {
+    // Ships unbound. Opens the editor first when it's closed.
+    id: "record.focus",
+    title: "Record editor: Focus record editor",
+    when: "queryTab",
+    defaultChord: null,
+  },
+  // The rating commands ship unbound: they're for a user who wants to bind
+  // their own quick-rate keys. "The most common rating" is the rating the most
+  // tracks in the collection have.
+  {
+    id: "rating.playing_most_common",
+    title: "Rating: Give the currently playing track the most common rating",
+    when: "trackLoaded",
+    defaultChord: null,
+  },
+  {
+    id: "rating.selected_most_common",
+    title: "Rating: Give the selected tracks the most common rating",
+    when: "results",
+    defaultChord: null,
+  },
+  {
+    id: "rating.playing_decrease",
+    title: "Rating: Decrease the rating of the currently playing track",
+    when: "trackLoaded",
+    defaultChord: null,
+  },
+  {
+    id: "rating.playing_increase",
+    title: "Rating: Increase the rating of the currently playing track",
+    when: "trackLoaded",
+    defaultChord: null,
   },
   {
     // Stands down in a text field (its own select-all) and in the record form
@@ -333,6 +394,15 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Tabs: Close active tab",
     when: "activeTab",
     defaultChord: chordOf("mod+alt+W"),
+  },
+  {
+    // Renames the query or playlist behind the active tab. `queryTab` is
+    // exactly "the active tab is a renamable source": the settings-like tabs
+    // (shortcuts, presets, prelude) have a fixed name and no such object.
+    id: "tabs.rename_active",
+    title: "Tabs: Rename current tab",
+    when: "queryTab",
+    defaultChord: chordOf("F2"),
   },
   {
     id: "tabs.next",

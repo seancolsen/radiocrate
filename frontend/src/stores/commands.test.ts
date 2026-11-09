@@ -1,6 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseChord } from "../commands/chord";
+import { commandDef } from "../commands/registry";
 import { buildResultFromStringRows } from "../query/result";
 import { createAppStore, type AppStoreBundle } from "./app";
 import { fakeEnv } from "./app/testEnv";
@@ -92,6 +93,61 @@ describe("commands store", () => {
       const { tabs, activeTabId } = app.store.getState();
       expect(tabs.map((t) => t.kind)).toEqual(["query", "query"]);
       expect(activeTabId).toBe(tabs[1].id);
+    });
+  });
+
+  describe("tabs.rename_active", () => {
+    it("renames a query or playlist tab, and no other kind", () => {
+      app.actions.openTab({ id: "q", name: "Q", definition: "{}" });
+      app.actions.selectTab("q");
+      commands.actions.run("tabs.rename_active");
+      expect(app.store.getState().renaming).toMatchObject({
+        id: "q",
+        buffer: "Q",
+      });
+
+      app.actions.cancelRename();
+      app.actions.openShortcutsTab();
+      commands.actions.run("tabs.rename_active");
+      expect(app.store.getState().renaming).toBeNull();
+    });
+
+    it("is F2, and only offered where a tab can be renamed", () => {
+      expect(commandDef("tabs.rename_active").defaultChord).toEqual(
+        parseChord("F2"),
+      );
+      expect(commandDef("tabs.rename_active").when).toBe("queryTab");
+    });
+  });
+
+  describe("results.edit_selected", () => {
+    it("toggles the record editor", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      const edit = vi.spyOn(app.actions, "editSelectedRows");
+      const close = vi.spyOn(app.actions, "closeRecordEditor");
+
+      commands.actions.run("results.edit_selected");
+      expect(edit).toHaveBeenCalledWith("t");
+
+      app.actions.setRecordEditorRecords("t", "track", [
+        { table: "track", key: [{ column: "id", value: "x" }] },
+      ]);
+      commands.actions.run("results.edit_selected");
+      expect(close).toHaveBeenCalledWith("t");
+      expect(app.store.getState().pages.t?.recordEditor).toBeNull();
+    });
+  });
+
+  describe("results.focus", () => {
+    it("lets go of the focused record form", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      const model = mountFocusedForm(forms, "t");
+      (model as unknown as { noteBlur: () => void }).noteBlur = vi.fn();
+
+      commands.actions.run("results.focus");
+      expect(model.noteBlur).toHaveBeenCalledTimes(1);
     });
   });
 

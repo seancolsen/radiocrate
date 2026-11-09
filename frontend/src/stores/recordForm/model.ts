@@ -114,6 +114,7 @@ import {
 } from "../../record/childGroups";
 import {
   focusAdjacentItem,
+  focusFirstItem,
   focusItem,
   itemElement,
 } from "../../record/formNav";
@@ -357,6 +358,9 @@ export interface RecordFormActions {
   /** Move focus to one item, or one item along. */
   focusItem: (itemId: string) => void;
   focusAdjacent: (forward: boolean) => boolean;
+  /** Move focus to the first item (the `record.focus` command), whatever has
+   * focus now. False when the form has no items on screen yet. */
+  focusFirst: () => boolean;
 
   /** Click an embedded record, with the modifiers that make it a range or a
    * toggle — the result-row selection gestures, within one list. */
@@ -2347,6 +2351,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     },
     focusAdjacent: (forward) => {
       if (!root || !focusAdjacentItem(root, forward)) return false;
+      syncSelectionToFocus();
+      return true;
+    },
+    focusFirst: () => {
+      if (!root || !focusFirstItem(root)) return false;
       syncSelectionToFocus();
       return true;
     },

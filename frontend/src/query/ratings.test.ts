@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseRatings, ratingLabel, RATINGS_QUERY } from "./ratings";
+import {
+  mostCommonRatingId,
+  parseRatings,
+  ratingLabel,
+  RATINGS_QUERY,
+  stepRating,
+} from "./ratings";
 
 describe("RATINGS_QUERY", () => {
   it("asks for the whole rating table, lowest value first", () => {
@@ -60,5 +66,43 @@ describe("ratingLabel", () => {
     expect(ratingLabel({ ...rating, symbol: null, description: null })).toBe(
       "4",
     );
+  });
+});
+
+describe("mostCommonRatingId", () => {
+  it("picks the rating the most tracks hold, the lowest on a tie", () => {
+    expect(
+      mostCommonRatingId([
+        ["a", "3"],
+        ["b", "10"],
+        ["c", "10"],
+      ]),
+    ).toBe("b");
+  });
+
+  it("is undefined when no track is rated", () => {
+    expect(mostCommonRatingId([["a", "0"]])).toBeUndefined();
+    expect(mostCommonRatingId([])).toBeUndefined();
+  });
+});
+
+describe("stepRating", () => {
+  const ratings = ["a", "b", "c"].map((id) => ({
+    id,
+    value: id,
+    symbol: null,
+    description: null,
+  }));
+
+  it("steps along the vocabulary and stops at the ends", () => {
+    expect(stepRating(ratings, "b", 1)).toBe("c");
+    expect(stepRating(ratings, "b", -1)).toBe("a");
+    expect(stepRating(ratings, "c", 1)).toBeUndefined();
+    expect(stepRating(ratings, "a", -1)).toBeUndefined();
+  });
+
+  it("steps an unrated track up to the lowest rating, and not down", () => {
+    expect(stepRating(ratings, null, 1)).toBe("a");
+    expect(stepRating(ratings, null, -1)).toBeUndefined();
   });
 });

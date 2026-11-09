@@ -19,6 +19,7 @@ export default function PlaybackActionsMenu(): JSX.Element {
       <MenuItem
         icon={Icons.Locate}
         label="Locate"
+        command="results.go_to_playing_track"
         disabled={rowIndex == null}
         onClick={() => actions.locateCurrentTrack()}
       />

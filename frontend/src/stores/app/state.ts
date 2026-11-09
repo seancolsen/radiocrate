@@ -295,6 +295,15 @@ export interface BuilderFocus {
   seq: number;
 }
 
+/** A one-shot request to put the keyboard focus on the first item of a tab's
+ * record editor form — what the `record.focus` command does. The form that is
+ * mounted for the tab consumes it (it may not be mounted yet when the command
+ * has just opened the editor). */
+export interface RecordEditorFocus {
+  tabId: string;
+  seq: number;
+}
+
 /** One record identified by a result row: the table plus a fully-resolved key.
  * What the context menu offers and the record editor opens. */
 export interface RecordRef {
@@ -587,6 +596,9 @@ export interface AppState {
   /** The `query.focus_*` commands hand the open builder a "take the caret"
    * request through this slot; the builder clears it once applied. */
   builderFocus: BuilderFocus | undefined;
+  /** The `record.focus` command's request for the record editor form to take
+   * the keyboard; the form clears it once applied. */
+  recordEditorFocus: RecordEditorFocus | undefined;
 }
 
 /** Result rows picked up to be dragged: the tab they were picked up on, the
@@ -722,6 +734,7 @@ export function initialState(env: AppEnv): AppState {
     rowPatch: undefined,
     rowReveal: undefined,
     builderFocus: undefined,
+    recordEditorFocus: undefined,
   };
 }
 

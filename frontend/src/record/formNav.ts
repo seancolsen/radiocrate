@@ -28,6 +28,13 @@ export function focusItem(root: HTMLElement, itemId: string): boolean {
   return el !== undefined;
 }
 
+/** Focuses the first item. Returns whether there was one to focus. */
+export function focusFirstItem(root: HTMLElement): boolean {
+  const first = itemElements(root)[0];
+  first?.focus();
+  return first !== undefined;
+}
+
 /** Focuses the item below (`forward`) or above the focused one, stopping at
  * either end. With nothing in the form focused, focuses the first or last item.
  * Returns whether focus moved. */

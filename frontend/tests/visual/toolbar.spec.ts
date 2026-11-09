@@ -145,7 +145,7 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
     "Base",
     "View SQL",
     "Export results data",
-    "Rename",
+    "RenameF2",
     "Duplicate",
     "Delete",
   ]);

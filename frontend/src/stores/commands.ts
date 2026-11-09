@@ -129,6 +129,8 @@ function claimsKey(target: EventTarget | null, chord: Chord): boolean {
         "button, a[href], summary, [role=button], [role=menuitem], [role=checkbox], [role=switch], [role=tab], [role=treeitem]",
       ) !== null
     );
+  // The explorer's rows rename their own item on F2.
+  if (chord.key === "F2") return target.closest("[role=treeitem]") !== null;
   if (chord.key === "Left" || chord.key === "Right")
     return (
       target.closest("[role=slider], [role=tab], [role=treeitem]") !== null
@@ -363,6 +365,22 @@ export function createCommandsStore(
     app.actions.reorderTab(cur, forward ? idx + 1 : idx - 1);
   };
 
+  /** Hands the keyboard back to the result rows: lets go of whatever holds DOM
+   * focus (a text field, a record editor form item) and empties the form's
+   * selection, since a form with a focus or selection is what keeps the arrow
+   * keys from the rows (`recordFormFocused`). The rows are a canvas, so there
+   * is no element to focus: the global key pass reaches them once nothing else
+   * claims the keys. */
+  const focusResults = (form: ReturnType<typeof selectFocusedForm>) => {
+    if (
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+    ) {
+      document.activeElement.blur();
+    }
+    form?.noteBlur();
+  };
+
   const execute = (cmd: CommandId) => {
     const tabId = activeTab();
     // Query-page commands read this instead, so they stand down on a
@@ -457,7 +475,28 @@ export function createCommandsStore(
         selectAutocompleteForm(forms.store.getState())?.toggleAutocomplete();
         break;
       case "results.edit_selected":
-        if (tabId) app.actions.editSelectedRows(tabId);
+        if (tabId) app.actions.toggleRecordEditor(tabId);
+        break;
+      case "results.go_to_playing_track":
+        app.actions.locateCurrentTrack();
+        break;
+      case "results.focus":
+        focusResults(form);
+        break;
+      case "record.focus":
+        if (queryId) app.actions.focusRecordEditor(queryId);
+        break;
+      case "rating.playing_most_common":
+        app.actions.ratePlayingTrackMostCommon();
+        break;
+      case "rating.selected_most_common":
+        if (tabId) app.actions.rateSelectedTracksMostCommon(tabId);
+        break;
+      case "rating.playing_decrease":
+        app.actions.stepPlayingTrackRating(-1);
+        break;
+      case "rating.playing_increase":
+        app.actions.stepPlayingTrackRating(1);
         break;
       case "selection.expand_nested":
         form?.expandSelection(true);
@@ -485,6 +524,10 @@ export function createCommandsStore(
       }
       case "tabs.close_active":
         if (tabId) app.actions.closeTab(tabId);
+        break;
+      case "tabs.rename_active":
+        // `beginRename` itself stands down for a tab with no source to rename.
+        if (queryId) app.actions.beginRename(queryId);
         break;
       case "tabs.next":
         cycleTab(true);

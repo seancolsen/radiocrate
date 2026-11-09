@@ -43,7 +43,12 @@ import {
 } from "../../api/playlist";
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
-import { fetchTrackMetadata, playInsert, ratingUpdates } from "../../api/track";
+import {
+  fetchTrackMetadata,
+  fetchTrackRatingId,
+  playInsert,
+  ratingUpdates,
+} from "../../api/track";
 import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
 import { PlaybackLog } from "../../audio/playbackLog";
 import {
@@ -130,7 +135,12 @@ import {
   type QueryDiagnostic,
 } from "../../query/diagnostics";
 import { querydownLoaded, querydownReady } from "../../query/querydown";
-import { fetchRatings } from "../../query/ratings";
+import {
+  fetchMostCommonRatingId,
+  fetchRatings,
+  stepRating,
+  type Rating,
+} from "../../query/ratings";
 import { nounFor } from "../../query/entityNames";
 import {
   artistAlbumsFilter,
@@ -559,6 +569,15 @@ export interface AppActions {
   editSelectedRows: (tabId: string) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
+  /** Close `tabId`'s record editor if it's open, else open it on the current
+   * row selection (`editSelectedRows`) — the `results.edit_selected` command. */
+  toggleRecordEditor: (tabId: string) => void;
+  /** Ask `tabId`'s record editor form to take the keyboard focus, opening the
+   * editor on the row selection first when it's closed — the `record.focus`
+   * command. Nothing happens when there's no editor to open. */
+  focusRecordEditor: (tabId: string) => void;
+  /** Clear the pending record editor focus request once it has been applied. */
+  clearRecordEditorFocus: () => void;
   /** The "Dynamic updates" cross-store wiring, installed once by
    * `createStores()`'s subscription on every page's selection and lineage
    * (state management: "Cross-store wiring"). For every tab with an open record
@@ -611,6 +630,17 @@ export interface AppActions {
   /** Jump to the playing track's row: activate its source tab, select the row and
    * scroll it into view (the bar's "Locate"). */
   locateCurrentTrack: () => void;
+  /** Gives the tracks of `tabId`'s selected rows the most common rating — the
+   * rating the most tracks in the collection hold. Asks the database each time,
+   * since the answer moves as the collection is rated. The selected rows that
+   * aren't tracks are left alone. */
+  rateSelectedTracksMostCommon: (tabId: string) => void;
+  /** Gives the playing track the most common rating. */
+  ratePlayingTrackMostCommon: () => void;
+  /** Moves the playing track's rating one step along the rating vocabulary:
+   * `1` up, `-1` down. It stops at either end, and an unrated track can only go
+   * up (to the lowest rating). */
+  stepPlayingTrackRating: (direction: 1 | -1) => void;
   /** Seed the now-playing bar without touching the audio engine (dev/test seam —
    * lets the harness snapshot the bar with no backend or audio). */
   seedNowPlaying: (track: CurrentTrack, playback: AppState["playback"]) => void;
@@ -1181,6 +1211,7 @@ export function createAppActions(
   let rowPatchSeq = 0;
   let revealSeq = 0;
   let builderFocusSeq = 0;
+  let recordEditorFocusSeq = 0;
 
   /** Mutates a query tab in place through a mutator, a no-op when `tabId` isn't
    * an open query tab. Every write to a query tab's fields goes through here:
@@ -2289,6 +2320,58 @@ export function createAppActions(
       [playInsert(trackId)],
       source !== null && index !== null ? [{ tabId: source, index }] : [],
     ).catch((err) => console.error("play log failed", err));
+  };
+
+  /** The rating vocabulary, loading it first if it isn't yet; `undefined` when
+   * it can't be had (no schema yet, or the load failed). The commands that
+   * rate don't have a menu to have raised the load. */
+  const ensureRatings = async (): Promise<readonly Rating[] | undefined> => {
+    if (get().ratings.status !== "ready") {
+      const schemaJson = get().schema.json;
+      if (schemaJson === undefined) return undefined;
+      try {
+        const data = await fetchRatings(schemaJson);
+        set((draft) => {
+          draft.ratings = { status: "ready", data: castDraft(data) };
+        });
+      } catch (err) {
+        console.error("rating list failed", err);
+        return undefined;
+      }
+    }
+    return get().ratings.data;
+  };
+
+  /** Looks up the most common rating and hands it to `then`; a lookup that
+   * fails (or finds no rated track) is reported and does nothing. */
+  const withMostCommonRating = async (
+    then: (ratingId: string) => void,
+  ): Promise<void> => {
+    const schemaJson = get().schema.json;
+    if (schemaJson === undefined) return;
+    try {
+      const ratingId = await fetchMostCommonRatingId(schemaJson);
+      if (ratingId !== undefined) then(ratingId);
+    } catch (err) {
+      console.error("most common rating lookup failed", err);
+    }
+  };
+
+  /** Gives the playing track `ratingId`, against the row it's playing from when
+   * that row is still on screen, so the row shows the new rating. */
+  const ratePlayingTrack = (trackId: string, ratingId: string) => {
+    const ct = get().currentTrack;
+    const source = ct?.sourceTabId ?? null;
+    const index =
+      source === null
+        ? null
+        : ct?.id === trackId && ct.rowIndex !== null
+          ? ct.rowIndex
+          : selectLocateRow(get(), source, trackId);
+    void runDmlForRows(
+      ratingUpdates([[{ column: "id", value: trackId }]], ratingId),
+      source !== null && index !== null ? [{ tabId: source, index }] : [],
+    ).catch((err) => console.error("rating update failed", err));
   };
 
   /** Fetches the track's title/artists/duration, then fills them into the bar
@@ -3577,6 +3660,21 @@ export function createAppActions(
         const page = s.pages[tabId];
         if (page) page.recordEditor = null;
       }),
+    toggleRecordEditor: (tabId) => {
+      if (get().pages[tabId]?.recordEditor) actions.closeRecordEditor(tabId);
+      else actions.editSelectedRows(tabId);
+    },
+    focusRecordEditor: (tabId) => {
+      if (!get().pages[tabId]?.recordEditor) actions.editSelectedRows(tabId);
+      if (!get().pages[tabId]?.recordEditor) return;
+      set((s) => {
+        s.recordEditorFocus = { tabId, seq: ++recordEditorFocusSeq };
+      });
+    },
+    clearRecordEditorFocus: () =>
+      set((s) => {
+        s.recordEditorFocus = undefined;
+      }),
     resyncRecordEditors,
     runRecordDml: (tabId, records, operations) => {
       // One row per record the form was editing — the same row can stand for
@@ -3666,6 +3764,36 @@ export function createAppActions(
         pageDraft(s, source).selection = new Set([ct.rowIndex!]);
         s.rowReveal = { tabId: source, row: ct.rowIndex!, seq: ++revealSeq };
       });
+    },
+    rateSelectedTracksMostCommon: (tabId) => {
+      const state = get();
+      const tracks = [...selectRowSelection(state, tabId)]
+        .sort((a, b) => a - b)
+        .flatMap((row) => selectRowRecords(state, tabId, row))
+        .filter((record) => record.table === "track");
+      if (tracks.length === 0) return;
+      void withMostCommonRating((ratingId) =>
+        actions.rateTracks(tabId, tracks, ratingId),
+      );
+    },
+    ratePlayingTrackMostCommon: () => {
+      const id = get().currentTrack?.id;
+      if (id === undefined) return;
+      void withMostCommonRating((ratingId) => ratePlayingTrack(id, ratingId));
+    },
+    stepPlayingTrackRating: (direction) => {
+      const id = get().currentTrack?.id;
+      if (id === undefined) return;
+      void (async () => {
+        const [ratings, current] = await Promise.all([
+          ensureRatings(),
+          fetchTrackRatingId(id),
+        ]);
+        // No rating can be stepped from a track that couldn't be read.
+        if (ratings === undefined || current === undefined) return;
+        const next = stepRating(ratings, current, direction);
+        if (next !== undefined) ratePlayingTrack(id, next);
+      })();
     },
     seedNowPlaying: (track, playback) =>
       set((s) => {

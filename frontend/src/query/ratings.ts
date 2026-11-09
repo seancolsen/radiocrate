@@ -65,3 +65,55 @@ export function ratingLabel(rating: Rating): string {
     : rating.value;
   return rating.description ? `${head} (${rating.description})` : head;
 }
+
+/** Every rating with the number of tracks holding it, for finding the most
+ * common one. Its own query rather than a column of {@link RATINGS_QUERY}: the
+ * count is a grouped join over the whole `track` table, which the menu's
+ * vocabulary has no use for. */
+export const RATING_COUNTS_QUERY: RecordQuery = {
+  base: "rating",
+  filter: "",
+  sort: "\\\\value",
+  display: "$id $#track",
+};
+
+/** The id of the rating the most tracks hold, from the rows of
+ * {@link RATING_COUNTS_QUERY} (lowest value first). A tie goes to the lowest
+ * value, and `undefined` means no rating is held by any track. */
+export function mostCommonRatingId(rows: RecordRows): string | undefined {
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const row of rows) {
+    const id = row[0];
+    const count = Number(row[1]);
+    if (id == null || id === "" || !(count > bestCount)) continue;
+    best = id;
+    bestCount = count;
+  }
+  return best;
+}
+
+/** Asks the database for the most common rating. Throws whatever the runner
+ * throws. */
+export async function fetchMostCommonRatingId(
+  schemaJson: string,
+): Promise<string | undefined> {
+  return mostCommonRatingId(
+    await runRecordQuery(RATING_COUNTS_QUERY, schemaJson),
+  );
+}
+
+/** The rating one step from `currentId` along `ratings` (lowest value first):
+ * up or down, stopping at either end. A track with no rating steps up to the
+ * lowest rating, and has nowhere to step down to. `undefined` when there is no
+ * step to take. */
+export function stepRating(
+  ratings: readonly Rating[],
+  currentId: string | null,
+  direction: 1 | -1,
+): string | undefined {
+  const at =
+    currentId === null ? -1 : ratings.findIndex((r) => r.id === currentId);
+  if (at === -1) return direction === 1 ? ratings[0]?.id : undefined;
+  return ratings[at + direction]?.id;
+}

@@ -199,6 +199,24 @@ the name **once**; it becomes both the tooltip and the `aria-label`.
 
 ## UX standards
 
+### Menus show keyboard shortcuts
+
+Every menu row that does what a command (`commands/registry.ts`) does shows the
+shortcut the user has bound to it, right-aligned. Pass the command's id as
+`command` to `MenuItem` / `MenuToggleItem` (`components/ui/Menu.tsx`); the chord
+and `aria-keyshortcuts` follow from the user's current binding, and an unbound
+command shows nothing. To keep this true over time:
+
+- **When you add or change a menu row,** check `ALL_COMMANDS` for a command that
+  does the same thing and name it. Don't hand-write a chord into a label.
+- **When you add a command,** look for the menu rows (and icon buttons, via
+  `IconButton`'s `command`) that already do it, and name the command there.
+- Name the command only when the row and the command really do the same thing.
+  A row raised for an item other than the one the command acts on (the tab bar's
+  context menu on a tab that isn't active, say) names none, as a tab's close ×
+  names `tabs.close_active` only on the active tab.
+
+
 ### Drag to rearrange
 
 Anything the user rearranges by dragging works the same way, so a gesture learned

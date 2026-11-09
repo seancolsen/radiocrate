@@ -25,10 +25,18 @@ export default function SourceOptions(props: {
       (selectTab(s, props.id)?.kind ??
         s.sources.data.find((x) => x.id === props.id)?.kind) === "playlist",
   );
+  // Rename is the keyboard command's row only for the tab it acts on: the
+  // active one.
+  const isActive = useApp((s) => s.activeTabId === props.id);
   const { duplicatePlaylist, duplicateQuery, requestDelete } = useAppActions();
   return (
     <>
-      <MenuItem icon={Icons.Rename} label="Rename" onClick={props.onRename} />
+      <MenuItem
+        icon={Icons.Rename}
+        label="Rename"
+        command={isActive ? "tabs.rename_active" : undefined}
+        onClick={props.onRename}
+      />
       <MenuItem
         icon={Icons.Duplicate}
         label="Duplicate"

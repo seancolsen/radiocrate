@@ -64,6 +64,26 @@ export async function fetchTrackMetadata(
   }
 }
 
+/** The id of the rating `trackId` holds: `null` for an unrated track, and
+ * `undefined` when the track can't be read (it matches no row, or the query
+ * failed). */
+export async function fetchTrackRatingId(
+  trackId: string,
+): Promise<string | null | undefined> {
+  const sql =
+    `select t.rating::text as rating from track t ` +
+    `where t.id = TRY_CAST('${sqlLiteral(trackId)}' as UUID);`;
+  try {
+    const row = (await runSql(sql)).get(0);
+    if (!row) return undefined;
+    const rating = row["rating"];
+    return rating == null ? null : stringifyArrowValue(rating);
+  } catch (err) {
+    console.error("track rating fetch failed", err);
+    return undefined;
+  }
+}
+
 /** Current local wall-clock as `YYYY-MM-DD HH:MM:SS` — the literal form DuckDB
  * casts into the `play.timestamp` (`timestamp_s`) column. `timestamp_s` is
  * timezone-naive, so this must be the listener's local time, not UTC — a UTC

@@ -1,4 +1,4 @@
-import { useState, type JSX, type ReactNode } from "react";
+import { useEffect, useState, type JSX, type ReactNode } from "react";
 import {
   selectEffectivePresets,
   selectPrelude,
@@ -191,10 +191,33 @@ function PanelHeader(props: {
       <IconButton
         icon={Icons.Close}
         label="Close record editor"
+        command="results.edit_selected"
         onClick={props.onClose}
       />
     </header>
   );
+}
+
+/** Consumes a pending `record.focus` request aimed at this tab: focuses the
+ * form's first item and clears the request. A form still loading has no items
+ * to focus, so the request waits on the form's own changes until it has some.
+ * Re-applying it is harmless (focusing the first item is idempotent), which is
+ * what StrictMode's second effect pass does. */
+function useRecordEditorFocus(tabId: string, model: RecordFormModel): void {
+  const requested = useApp((s) => s.recordEditorFocus?.tabId === tabId);
+  const { clearRecordEditorFocus } = useAppActions();
+  useEffect(() => {
+    if (!requested) return;
+    const attempt = (): boolean => {
+      if (!model.focusFirst()) return false;
+      clearRecordEditorFocus();
+      return true;
+    };
+    if (attempt()) return;
+    return model.store.subscribe(() => {
+      attempt();
+    });
+  }, [requested, model, clearRecordEditorFocus]);
 }
 
 /** The record-editor sidebar for `tabId`, when its editor is open.
@@ -335,6 +358,7 @@ function PanelForm(props: {
     return { identities: ids, model };
   });
   const { model } = form;
+  useRecordEditorFocus(props.tabId, model);
 
   const modified = useFormState(model, selectFormModified);
   const saving = useFormState(model, (s) => s.saving);

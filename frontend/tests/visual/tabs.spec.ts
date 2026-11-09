@@ -134,7 +134,8 @@ test.describe("a query's options", () => {
     await page.goto("/?tabs=Lemonade");
     await page.getByRole("button", { name: "Query actions" }).click();
     const items = await rows(page);
-    expect(items.slice(-3)).toEqual(OPTIONS);
+    // The active tab's Rename shows its shortcut, F2.
+    expect(items.slice(-3)).toEqual(["RenameF2", "Duplicate", "Delete"]);
     // A separator stands between them and the query's own actions.
     const separatorBefore = await page
       .getByRole("menu")
