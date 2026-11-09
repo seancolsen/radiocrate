@@ -584,6 +584,19 @@ function Surfaces(): JSX.Element {
           <Specimen caption="row swipe band">
             <div className="bg-accent text-panel px-4 py-2 text-sm">Edit</div>
           </Specimen>
+          <Specimen caption="row swipe band, queue">
+            <div className="bg-accent text-panel px-4 py-2 text-sm">Queue</div>
+          </Specimen>
+          {/* The results grid paints these on its canvas; this is their DOM
+              likeness, in the same tokens. */}
+          <Specimen caption="queued row">
+            <div className="border-now-playing text-ink relative rounded-lg border-2 border-dashed px-3 py-1.5 text-sm">
+              Formation
+              <span className="bg-now-playing text-panel absolute -top-[8px] left-1 min-w-[14px] rounded-full px-1 text-center text-[10px] leading-[14px] font-semibold">
+                2
+              </span>
+            </div>
+          </Specimen>
         </Row>
         <Row>
           <div className="w-56">

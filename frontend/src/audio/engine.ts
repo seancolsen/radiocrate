@@ -128,13 +128,18 @@ function streamQualityParam(pref: AudioQualityPref): string | undefined {
   return pref === "lower" ? "opus128" : undefined;
 }
 
+/** Which way the engine moved from one track to another. */
+export type TrackStep = "next" | "previous";
+
 /** What the engine reports back to its owner. Every callback can fire while the
  * app is backgrounded (the browser keeps dispatching media events), so the store
  * must treat them as arriving at any time — not just in response to a click. */
 export interface EngineEvents {
   /** The loaded track changed on the engine's own initiative: an auto-advance
-   * when a track ended, or a lock-screen / headset next-previous. */
-  onTrackChange: (id: string) => void;
+   * when a track ended, or a lock-screen / headset next-previous. `step` says
+   * which way it went: forward to the front of the queue (`"next"`), or back
+   * to the last track of the history (`"previous"`). */
+  onTrackChange: (id: string, step: TrackStep) => void;
   /** A track counts as a completed play: it reached its end, or it was skipped
    * away from after passing its halfway mark. The owner logs each. */
   onPlayCompleted: (id: string) => void;
@@ -205,6 +210,11 @@ interface DecodedByteCount {
 }
 
 /** A track id, shortened for the trace. */
+/** Whether two lists of track ids are the same, in the same order. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 function shortId(id: string | undefined): string {
   return id === undefined ? "none" : id.slice(0, 8);
 }
@@ -294,6 +304,27 @@ function inRanges(ranges: TimeRanges, t: number): boolean {
   }
   return false;
 }
+
+/** What the app drives playback through: the engine itself, or a stand-in
+ * that plays nothing in the store's tests (see `AppEnv.createPlayer`). */
+export type Player = Pick<
+  AudioEngine,
+  | "setQueue"
+  | "updateQueue"
+  | "play"
+  | "pause"
+  | "skipNext"
+  | "skipPrevious"
+  | "seek"
+  | "stop"
+  | "setMetadata"
+  | "traceContext"
+  | "isPlaying"
+  | "position"
+  | "duration"
+  | "hasNext"
+  | "pastHalfway"
+>;
 
 export class AudioEngine {
   /** The two interchangeable players: one active, one holding the next track
@@ -455,13 +486,17 @@ export class AudioEngine {
 
   /** Replaces the play context around the current track — `preceding` and
    * `upcoming` computed fresh, e.g. after the query it came from re-ran and the
-   * surrounding rows shifted — without touching what's actually playing. Drops
-   * a standby prime that no longer matches the new `upcoming[0]` and re-primes
-   * if one is now due. */
-  updateQueue(preceding: string[], upcoming: string[]): void {
+   * surrounding rows shifted, or a track was queued — without touching what's
+   * actually playing. `preceding: null` keeps the history as it is. Drops a
+   * standby prime that no longer matches the new `upcoming[0]` and re-primes if
+   * one is now due; an `upcoming` the same as the queue already held leaves
+   * the standby element alone, since a prime still downloading would
+   * otherwise be thrown away only to be fetched again. */
+  updateQueue(preceding: string[] | null, upcoming: string[]): void {
     if (this.current === undefined) return;
+    if (preceding !== null) this.history = preceding;
+    if (sameIds(this.queue, upcoming)) return;
     this.trace("update-queue", () => `next=${shortId(upcoming[0])}`);
-    this.history = preceding;
     this.queue = upcoming;
     this.yieldStandby();
     this.primeNext();
@@ -751,7 +786,7 @@ export class AudioEngine {
     else this.load(next);
     if (previous !== undefined) this.history.push(previous);
     if (completed !== undefined) this.events.onPlayCompleted(completed);
-    this.events.onTrackChange(next);
+    this.events.onTrackChange(next, "next");
     return true;
   }
 
@@ -766,7 +801,7 @@ export class AudioEngine {
     if (this.current !== undefined) this.queue.unshift(this.current);
     this.load(prev);
     if (completed !== undefined) this.events.onPlayCompleted(completed);
-    this.events.onTrackChange(prev);
+    this.events.onTrackChange(prev, "previous");
     return true;
   }
 

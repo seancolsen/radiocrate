@@ -41,11 +41,12 @@
 // what it is. Up or down, it pans; pulled down past the top, it takes the rows
 // with it, and letting go far enough along asks the owner to refresh them
 // (`onPullRefresh`), while a spinner in the gap waits on `setRefreshing`. Left
-// along a row the owner says can be edited (`onRowSwipeStart`), it takes that
-// row with it, along with the rest of the selection if the row is part of it,
-// over a band naming the action, and letting go far enough along asks the owner
-// to edit them (`onRowSwipe`). Neither answers to a mouse, which has the wheel,
-// Refresh and the context menu.
+// or right along a row the owner has an action for that way
+// (`onRowSwipeStart`: left edits, right queues), it takes that row with it,
+// along with the rest of the selection if the row is part of it, over a band
+// naming the action, and letting go far enough along asks the owner to act on
+// them (`onRowSwipe`). Neither answers to a mouse, which has the wheel, Refresh,
+// the context menu and Alt+click.
 //
 // The owner can also freeze the grid (`setFrozen`) while a menu it opened is up:
 // scrolling, hovering and clicking all stop, so the rows under an open context
@@ -102,6 +103,15 @@ const CURRENT_MARKER_INSET = 2;
 const CURRENT_MARKER_W = 2;
 const CURRENT_MARKER_RADIUS = 8;
 
+// A queued row wears the same ring, dashed. With more than one track queued,
+// a badge on the ring's top-left corner gives the row's place in the queue.
+const QUEUED_MARKER_DASH = [6, 4];
+const QUEUE_BADGE_H = 14;
+const QUEUE_BADGE_PAD_X = 4;
+const QUEUE_BADGE_FONT = 10;
+/** Where the badge's left edge sits, in from the row's. */
+const QUEUE_BADGE_X = 6;
+
 /** The glyph marking a row whose record has unsaved edits in the record editor,
  * drawn large enough to read at a glance over the row's left padding. */
 const MODIFIED_MARKER = "✱";
@@ -141,9 +151,8 @@ const PULL_SPINNER_SWEEP = 1.5 * Math.PI;
 /** How fast the arc turns (radians per ms). */
 const PULL_SPINNER_SPEED = 0.006;
 
-/** How far in from the right edge the swipe band's label sits. */
+/** How far in from the edge it uncovers the swipe band's label sits. */
 const SWIPE_LABEL_INSET = 16;
-const SWIPE_LABEL = "Edit";
 
 /** Theme colors read from CSS custom properties, so canvas paint tracks the
  * live light/dark theme just like the DOM did. Re-read on theme change. */
@@ -173,10 +182,17 @@ interface Theme {
   accent: string;
 }
 
+/** Which way a row is swiped. */
+export type SwipeDirection = "left" | "right";
+
 /** Callbacks the owner wires up to react to row interaction. */
 export interface GridInteraction {
-  /** A row was clicked, with the click's range/toggle modifiers. */
-  onRowClick: (index: number, mods: { shift: boolean; ctrl: boolean }) => void;
+  /** A row was clicked, with the click's range/toggle modifiers, and whether
+   * Alt (Option) was held. */
+  onRowClick: (
+    index: number,
+    mods: { shift: boolean; ctrl: boolean; alt: boolean },
+  ) => void;
   /** A row was double-clicked (row activation, e.g. play the track). */
   onRowDoubleClick: (index: number) => void;
   /** A row was right-clicked (or held still under a touch and let go), at the
@@ -194,12 +210,13 @@ export interface GridInteraction {
    * cancelled pointer, the grid freezing or going away). Returns whether the
    * release dropped the rows somewhere. */
   onRowDragEnd?: (x: number, y: number, drop: boolean) => boolean;
-  /** A touch began swiping row `index` left. Returns whether the row can be
-   * edited: `false` (or leaving this out) leaves it where it is, and the touch
-   * goes on as a pan. */
-  onRowSwipeStart?: (index: number) => boolean;
-  /** A swipe on row `index` went far enough to act on. */
-  onRowSwipe?: (index: number) => void;
+  /** A touch began swiping row `index` `direction`-ward. Returns the name of
+   * what letting go would do, which the band the row uncovers shows: `null`
+   * (or leaving this out) means nothing, which leaves the row where it is, and
+   * the touch goes on as a pan. */
+  onRowSwipeStart?: (index: number, direction: SwipeDirection) => string | null;
+  /** A swipe on row `index` went far enough `direction`-ward to act on. */
+  onRowSwipe?: (index: number, direction: SwipeDirection) => void;
   /** A pull past the top went far enough to refresh the rows. */
   onPullRefresh?: () => void;
 }
@@ -275,6 +292,9 @@ export class CanvasGrid {
   private selection: ReadonlySet<number> = new Set();
   /** The row holding the now-playing track, when it's in this result set. */
   private currentRow: number | undefined;
+  /** The rows holding queued tracks, each with its place in the queue to show
+   * (`null` for none). */
+  private queuedRows: ReadonlyMap<number, number | null> = new Map();
   /** Rows whose record has unsaved changes in the record editor. */
   private modifiedRows: ReadonlySet<number> = new Set();
   private hoverRow: number | undefined;
@@ -301,8 +321,10 @@ export class CanvasGrid {
 
   /** The row a swipe took hold of, until it has gone home. */
   private swipeRow: number | undefined;
-  /** How far it has come, in px from home: negative, or zero. */
+  /** How far it has come, in px from home: negative leftward. */
   private swipeOffset = 0;
+  /** The band it uncovers names this. */
+  private swipeLabel = "";
 
   // Frame scheduling: one rAF coalesces draws; the same loop steps the fling.
   private raf = 0;
@@ -324,7 +346,13 @@ export class CanvasGrid {
         row: number | undefined;
       }
     | { kind: "pan"; id: number; lastY: number; lastT: number }
-    | { kind: "swipe"; id: number; originX: number; samples: SwipeSample[] }
+    | {
+        kind: "swipe";
+        id: number;
+        originX: number;
+        direction: -1 | 1;
+        samples: SwipeSample[];
+      }
     | { kind: "scrollbar"; id: number; grabOffset: number }
     | undefined;
   private rect: DOMRect | undefined;
@@ -582,6 +610,15 @@ export class CanvasGrid {
   setCurrentRow(row: number | undefined): void {
     if (row === this.currentRow) return;
     this.currentRow = row;
+    this.requestDraw();
+  }
+
+  /** Marks the rows holding queued tracks, painted with a dashed blue ring —
+   * and, where the row's place in the queue is given, a badge numbering it.
+   * Replaced wholesale, like the selection. */
+  setQueuedRows(rows: ReadonlyMap<number, number | null>): void {
+    if (rows === this.queuedRows) return;
+    this.queuedRows = rows;
     this.requestDraw();
   }
 
@@ -881,7 +918,8 @@ export class CanvasGrid {
     }
 
     if (g.kind === "swipe") {
-      this.swipeOffset = Math.max(-this.vw, Math.min(0, x - g.originX));
+      const travel = (x - g.originX) * g.direction;
+      this.swipeOffset = Math.max(0, Math.min(this.vw, travel)) * g.direction;
       g.samples.push({ x, t: e.timeStamp });
       if (g.samples.length > 32) g.samples.shift();
       this.requestDraw();
@@ -935,15 +973,25 @@ export class CanvasGrid {
   ): void {
     const axis = swipeAxis(x - g.startX, y - g.startY);
     if (axis === null) return;
-    const swipes =
-      axis === "horizontal" &&
-      x < g.startX &&
-      g.row !== undefined &&
-      (this.interaction?.onRowSwipeStart?.(g.row) ?? false);
-    if (swipes) {
-      this.gesture = { kind: "swipe", id: g.id, originX: x, samples: [] };
+    const direction = x < g.startX ? -1 : 1;
+    const label =
+      axis === "horizontal" && g.row !== undefined
+        ? (this.interaction?.onRowSwipeStart?.(
+            g.row,
+            direction < 0 ? "left" : "right",
+          ) ?? null)
+        : null;
+    if (label !== null) {
+      this.gesture = {
+        kind: "swipe",
+        id: g.id,
+        originX: x,
+        direction,
+        samples: [],
+      };
       this.swipeRow = g.row;
       this.swipeOffset = 0;
+      this.swipeLabel = label;
       return;
     }
     this.gesture = { kind: "pan", id: g.id, lastY: y, lastT: t };
@@ -969,7 +1017,7 @@ export class CanvasGrid {
     }
     this.gesture = undefined;
     if (g.kind === "swipe") {
-      this.endSwipe(g.samples, e.timeStamp, release);
+      this.endSwipe(g.direction, g.samples, e.timeStamp, release);
       return;
     }
     if (g.kind !== "pan") return;
@@ -1004,6 +1052,7 @@ export class CanvasGrid {
    * home either way. A flick can be too short for the browser to count it as
    * having moved, and the click that makes isn't a click on the row. */
   private endSwipe(
+    direction: -1 | 1,
     samples: readonly SwipeSample[],
     now: number,
     release: boolean,
@@ -1014,9 +1063,12 @@ export class CanvasGrid {
     const velocity = releaseVelocity(samples, now);
     if (
       this.swipeRow !== undefined &&
-      rowSwipeCommits(this.swipeOffset, velocity)
+      rowSwipeCommits(this.swipeOffset, velocity, direction)
     ) {
-      this.interaction?.onRowSwipe?.(this.swipeRow);
+      this.interaction?.onRowSwipe?.(
+        this.swipeRow,
+        direction < 0 ? "left" : "right",
+      );
     }
   }
 
@@ -1066,6 +1118,7 @@ export class CanvasGrid {
     this.interaction?.onRowClick(row, {
       shift: e.shiftKey,
       ctrl: e.ctrlKey || e.metaKey,
+      alt: e.altKey,
     });
   };
 
@@ -1265,7 +1318,12 @@ export class CanvasGrid {
         this.drawCell(r, k, screenY);
       }
       if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
-      if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH);
+      const queued = this.queuedRows.get(r);
+      if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH, false);
+      else if (queued !== undefined) {
+        this.drawCurrentMarker(screenY, rowH, true);
+      }
+      if (queued != null) this.drawQueueBadge(screenY, queued, r === 0);
       if (slide !== 0) ctx.restore();
     }
     if (typeof this.dropGap === "number") {
@@ -1289,25 +1347,27 @@ export class CanvasGrid {
     return moves ? this.snap(this.swipeOffset) : 0;
   }
 
-  /** What a swiped row uncovers, in the `-slide` px it has left bare at the right
-   * edge: the accent, and the action's name, coming in as the row nears the
-   * distance that commits it. */
+  /** What a swiped row uncovers, in the `|slide|` px it has left bare at the
+   * edge it moved away from: the accent, and the action's name, coming in as
+   * the row nears the distance that commits it. */
   private drawSwipeBand(screenY: number, rowH: number, slide: number): void {
     const ctx = this.ctx;
-    const left = this.vw + slide;
+    const width = Math.abs(slide);
+    const leftward = slide < 0;
+    const left = leftward ? this.vw + slide : 0;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(left, screenY, -slide, rowH);
+    ctx.rect(left, screenY, width, rowH);
     ctx.clip();
     ctx.fillStyle = this.theme.accent;
-    ctx.fillRect(left, screenY, -slide, rowH);
-    ctx.globalAlpha = Math.min(1, -slide / ROW_SWIPE_DISTANCE);
+    ctx.fillRect(left, screenY, width, rowH);
+    ctx.globalAlpha = Math.min(1, width / ROW_SWIPE_DISTANCE);
     ctx.fillStyle = this.theme.panel;
     ctx.font = `${BODY_FONT}px ${this.fontFamily}`;
-    ctx.textAlign = "right";
+    ctx.textAlign = leftward ? "right" : "left";
     ctx.fillText(
-      SWIPE_LABEL,
-      this.snap(this.vw - SWIPE_LABEL_INSET),
+      this.swipeLabel,
+      this.snap(leftward ? this.vw - SWIPE_LABEL_INSET : SWIPE_LABEL_INSET),
       this.centeredBaseline(screenY + rowH / 2),
     );
     ctx.restore();
@@ -1402,7 +1462,11 @@ export class CanvasGrid {
    * isn't painted at all, which is what puts the scrollbar visually on top: the
    * thumb is translucent, so a ring merely drawn under it would tint it blue
    * and read as the nearer of the two. */
-  private drawCurrentMarker(screenY: number, rowH: number): void {
+  private drawCurrentMarker(
+    screenY: number,
+    rowH: number,
+    dashed: boolean,
+  ): void {
     const ctx = this.ctx;
     const off = CURRENT_MARKER_INSET + CURRENT_MARKER_W / 2;
     const w = this.vw - 2 * off;
@@ -1412,6 +1476,7 @@ export class CanvasGrid {
     this.clipOutThumb();
     ctx.strokeStyle = this.theme.currentMarker;
     ctx.lineWidth = CURRENT_MARKER_W;
+    if (dashed) ctx.setLineDash(QUEUED_MARKER_DASH);
     roundRectPath(
       ctx,
       this.snap(off),
@@ -1421,6 +1486,40 @@ export class CanvasGrid {
       CURRENT_MARKER_RADIUS,
     );
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /** A queued row's place in the queue: a pill in the playing-row blue,
+   * straddling its ring's top edge at the left, so it reads as a tag on the
+   * ring rather than as part of the row's first cell. The `first` row's has
+   * nothing above it to straddle, so it sits just inside instead, where the
+   * top of the rows can't cut it off. */
+  private drawQueueBadge(
+    screenY: number,
+    position: number,
+    first: boolean,
+  ): void {
+    const ctx = this.ctx;
+    const text = String(position);
+    ctx.save();
+    ctx.font = `600 ${QUEUE_BADGE_FONT}px ${this.fontFamily}`;
+    const w = Math.max(
+      QUEUE_BADGE_H,
+      ctx.measureText(text).width + 2 * QUEUE_BADGE_PAD_X,
+    );
+    const ring = screenY + CURRENT_MARKER_INSET + CURRENT_MARKER_W / 2;
+    const top = this.snap(first ? ring : ring - QUEUE_BADGE_H / 2);
+    const left = this.snap(QUEUE_BADGE_X);
+    ctx.fillStyle = this.theme.currentMarker;
+    roundRectPath(ctx, left, top, w, QUEUE_BADGE_H, QUEUE_BADGE_H / 2);
+    ctx.fill();
+    ctx.fillStyle = this.theme.panel;
+    ctx.textAlign = "center";
+    ctx.fillText(
+      text,
+      this.snap(left + w / 2),
+      this.centeredBaseline(top + QUEUE_BADGE_H / 2),
+    );
     ctx.restore();
   }
 

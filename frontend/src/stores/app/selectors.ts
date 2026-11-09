@@ -23,6 +23,7 @@ import {
 import type { ContextualQuery } from "../../query/contextualQuery";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
+import { queuePositions } from "../../state/playQueue";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QueryResult } from "../../query/result";
@@ -673,6 +674,78 @@ export function selectLocateRow(
   for (let i = 0; i < limit; i++)
     if (selectTrackIdAt(s, tabId, i) === id) return i;
   return null;
+}
+
+/** The row of `tabId`'s results holding track `id` that's nearest `from` in
+ * the direction `step` goes (`from` itself included), or `null` when none
+ * does. Where an auto-advance or a skip lands: on the row after (or before)
+ * the one it left, even when the track is also listed elsewhere. Capped like
+ * {@link selectLocateRow}. */
+export function selectRowNear(
+  s: AppState,
+  tabId: string,
+  id: string,
+  from: number,
+  step: 1 | -1,
+): number | null {
+  const count = s.pages[tabId]?.result?.rowCount ?? 0;
+  for (let i = 0, row = from; i < 1000; i++, row += step) {
+    if (row < 0 || row >= count) return null;
+    if (selectTrackIdAt(s, tabId, row) === id) return row;
+  }
+  return null;
+}
+
+/** The tracks rows `rows` hold, in the order shown, each once. Builds a fresh
+ * array on every call. */
+export function trackIdsOfRows(
+  result: QueryResult | undefined,
+  lineage: LineageMapping | undefined,
+  rows: Iterable<number>,
+): string[] {
+  const col = lineage?.trackIdColumn;
+  if (!result || col === undefined) return [];
+  const ids = new Set<string>();
+  for (const row of [...rows].sort((a, b) => a - b)) {
+    const id = result.keyText(row, col);
+    if (id !== "") ids.add(id);
+  }
+  return [...ids];
+}
+
+/** {@link trackIdsOfRows} against the whole state. Builds a fresh array on
+ * every call. */
+export function selectTrackIdsOfRows(
+  s: AppState,
+  tabId: string,
+  rows: Iterable<number>,
+): string[] {
+  return trackIdsOfRows(s.pages[tabId]?.result, s.pages[tabId]?.lineage, rows);
+}
+
+/** How many tracks are queued. */
+export function selectQueueLength(s: AppState): number {
+  return s.queuedTracks.length;
+}
+
+/** Every row of `tabId`'s results holding a queued track, with that track's
+ * place in the queue (from 1). Builds a fresh map, scanning every row: for the
+ * results grid's subscription, which re-reads it only when the queue or the
+ * rows change, not for a component. */
+export function queuedRowPositions(
+  s: AppState,
+  tabId: string,
+): ReadonlyMap<number, number> {
+  const rows = new Map<number, number>();
+  if (s.queuedTracks.length === 0) return rows;
+  const positions = queuePositions(s.queuedTracks);
+  const count = s.pages[tabId]?.result?.rowCount ?? 0;
+  for (let row = 0; row < count; row++) {
+    const id = selectTrackIdAt(s, tabId, row);
+    const position = id === undefined ? undefined : positions.get(id);
+    if (position !== undefined) rows.set(row, position);
+  }
+  return rows;
 }
 
 /** The result row of `tabId` that identifies `record`, preferring a selected

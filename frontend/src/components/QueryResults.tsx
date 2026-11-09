@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
+  queuedRowPositions,
   selectMultiSelect,
   selectPageDiagnostic,
   selectPageTab,
@@ -20,6 +21,8 @@ import {
   selectRowDropGap,
   selectRowRecords,
   selectRowSelection,
+  selectTrackIdAt,
+  type AppState,
   type RecordGroup,
 } from "../stores/app";
 import { cx } from "./ui/cx";
@@ -133,6 +136,18 @@ function subscribeModifiedRows(
   };
 }
 
+/** The rows of `tabId` holding queued tracks, for the grid's dashed rings:
+ * each with its place in the queue, which is shown only while there's more
+ * than one track queued. */
+function queuedRows(
+  state: AppState,
+  tabId: string,
+): ReadonlyMap<number, number | null> {
+  const rows = queuedRowPositions(state, tabId);
+  if (state.queuedTracks.length > 1) return rows;
+  return new Map([...rows.keys()].map((row) => [row, null]));
+}
+
 /** Puts the drag chip just below and right of viewport point (x, y), clear of
  * what the pointer is over. */
 function placeChip(el: HTMLElement | null, x: number, y: number): void {
@@ -164,6 +179,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     runQuery,
     setMultiSelect,
     setResultsScroll,
+    toggleQueuedRow,
   } = useAppActions();
   const multiSelect = useApp((s) => selectMultiSelect(s, props.tabId));
   // While the error strip shows a problem, these rows are an earlier
@@ -262,7 +278,12 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     };
 
     grid.setInteraction({
-      onRowClick: (index, mods) => clickRow(tabId, index, mods),
+      // Alt+click queues the row's track (or takes it out of the queue),
+      // leaving the selection as it is.
+      onRowClick: (index, mods) => {
+        if (mods.alt) toggleQueuedRow(tabId, index);
+        else clickRow(tabId, index, mods);
+      },
       onRowDoubleClick: (index) => doubleClickRow(tabId, index),
       onRowContextMenu: (index, x, y) => {
         // The menu acts on the selection.
@@ -292,11 +313,27 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         if (drop) hoverRowDrag(sourceAt(x, y), grid.gapAt(x, y) ?? null);
         return endRowDrag(drop);
       },
-      // A row that identifies no record has nothing to edit, so it doesn't
-      // offer to, and the touch goes on being a pan.
-      onRowSwipeStart: (index) =>
-        selectRowRecords(store.getState(), tabId, index).length > 0,
-      onRowSwipe: (index) => {
+      // Left edits the row, and right queues its track (or takes it out of
+      // the queue), as Alt+click does. A row with nothing to edit, or no
+      // track, doesn't offer to, and the touch goes on being a pan.
+      onRowSwipeStart: (index, direction) => {
+        const state = store.getState();
+        if (direction === "left") {
+          return selectRowRecords(state, tabId, index).length > 0
+            ? "Edit"
+            : null;
+        }
+        const id = selectTrackIdAt(state, tabId, index);
+        if (id === undefined) return null;
+        return state.queuedTracks.some((track) => track.id === id)
+          ? "Unqueue"
+          : "Queue";
+      },
+      onRowSwipe: (index, direction) => {
+        if (direction === "right") {
+          toggleQueuedRow(tabId, index);
+          return;
+        }
         aimAtRow(index);
         editSelectedRows(tabId);
       },
@@ -372,6 +409,18 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         (row) => grid.setCurrentRow(row),
         { fireImmediately: true },
       ),
+      // The rows holding queued tracks — from any tab: a track is queued
+      // wherever it's listed — which the grid rings with dashes.
+      store.subscribe(
+        (s) =>
+          [
+            s.queuedTracks,
+            s.pages[tabId]?.result,
+            s.pages[tabId]?.lineage,
+          ] as const,
+        () => grid.setQueuedRows(queuedRows(store.getState(), tabId)),
+        { equalityFn: shallow, fireImmediately: true },
+      ),
       // A row re-read after a DML write is rewritten *inside* the result the
       // engine already holds, so that a single changed row doesn't read as a
       // new result set (which would reset the scroll and clear the selection).
@@ -439,6 +488,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     loadRatings,
     runQuery,
     setResultsScroll,
+    toggleQueuedRow,
   ]);
 
   // The floating multi-select toolbar covers the first rows, so the grid gets
@@ -493,6 +543,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
           <RowActionsMenu
             tabId={props.tabId}
             groups={rowMenu.groups}
+            trackRows={tracks ? rowMenu.rows : undefined}
             onAddToPlaylist={
               tracks
                 ? () => requestAddToPlaylist(props.tabId, rowMenu.rows)

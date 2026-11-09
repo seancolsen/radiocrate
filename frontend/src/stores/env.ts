@@ -1,3 +1,11 @@
+import {
+  AudioEngine,
+  type AudioQualityPref,
+  type EngineEvents,
+  type EngineTrace,
+  type Player,
+} from "../audio/engine";
+
 /** The bits of the browser environment stores read or write directly, injected
  * so store unit tests can pass fakes instead of relying on a DOM (the vitest
  * config runs stores in the `node` environment — see `state management` rule 7
@@ -21,6 +29,13 @@ export interface AppEnv {
    * synchronously from the click that asks for it, like
    * {@link AppEnv.writeClipboardText}: the save dialog needs the gesture too. */
   saveTextFile: (name: string, text: string, type: string) => Promise<boolean>;
+  /** Builds what plays the tracks: the audio engine, with its two hidden
+   * `<audio>` elements and the OS media session. Called on the first play. */
+  createPlayer: (
+    events: EngineEvents,
+    getQuality: () => AudioQualityPref,
+    trace: EngineTrace,
+  ) => Player;
 }
 
 /** The File System Access API's save dialog, which TypeScript's DOM library
@@ -86,5 +101,7 @@ export function browserEnv(): AppEnv {
     },
     writeClipboardText: (text) => navigator.clipboard.writeText(text),
     saveTextFile,
+    createPlayer: (events, getQuality, trace) =>
+      new AudioEngine(events, getQuality, trace),
   };
 }

@@ -275,6 +275,17 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The same menu with a track queued, which adds "Clear queue".
+  test(`now-playing/menu-queued - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "now-playing/menu-queued", colorScheme);
+    await expect(
+      page.getByRole("menuitem", { name: "Clear queue" }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("now-playing/menu-queued", colorScheme),
+    );
+  });
+
   // The palette filtered by a typed query, which also drops the non-matching
   // commands. Shot through the dialog (it portals out of the stage).
   test(`command-palette/filtered - ${colorScheme}`, async ({ page }) => {

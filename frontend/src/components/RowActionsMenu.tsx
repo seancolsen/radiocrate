@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { Icons } from "../icons";
 import { ratingLabel } from "../query/ratings";
 import {
@@ -9,6 +9,7 @@ import {
 import {
   selectRatings,
   selectRatingsLoading,
+  trackIdsOfRows,
   type RecordGroup,
   type RecordRef,
 } from "../stores/app";
@@ -28,8 +29,8 @@ import {
  *   {table}" entry per table, then "Show album tracks" for albums, "Show
  *   artist tracks" and "Show artist albums" for artists, and "Rate track" for
  *   tracks;
- * - "Add to playlist…" when the rows are tracks, and "Remove from playlist" on
- *   a playlist's page;
+ * - the queue's entries when the rows are tracks ({@link QueueActions}),
+ *   "Add to playlist…" too, and "Remove from playlist" on a playlist's page;
  * - the records they lead to ({@link RecordNavigation}): the artists credited
  *   on tracks or albums, and a track's album — each a submenu offering the
  *   same entries for *its* records, so the user can walk from record to
@@ -45,6 +46,9 @@ export default function RowActionsMenu(props: {
   tabId: string;
   /** The rows' records, by table (see `recordGroupsForRows`). */
   groups: readonly RecordGroup[];
+  /** The rows themselves, when they're tracks: what the queue's entries act
+   * on. Omitted otherwise, which hides those entries. */
+  trackRows?: Iterable<number>;
   /** Opens the "Add to playlist…" dialog for the rows' tracks. Omitted when
    * the rows aren't tracks (no `trackIdColumn`), which hides the entry. */
   onAddToPlaylist?: () => void;
@@ -58,6 +62,9 @@ export default function RowActionsMenu(props: {
   return (
     <>
       <RecordActions tabId={props.tabId} groups={props.groups} />
+      {props.trackRows && (
+        <QueueActions tabId={props.tabId} rows={props.trackRows} />
+      )}
       {props.onAddToPlaylist && (
         <MenuItem
           icon={Icons.Playlist}
@@ -165,6 +172,80 @@ function RecordActions(props: {
         </>
       )}
       {tracks && <RateSubmenu onRate={(id) => rateTracks(tabId, tracks, id)} />}
+    </>
+  );
+}
+
+/** "1 track" or "3 tracks". */
+function tracksLabel(n: number): string {
+  return `${n.toLocaleString("en-US")} ${n === 1 ? "track" : "tracks"}`;
+}
+
+/** The queue's entries for the tracks of `rows`. With nothing else queued,
+ * "Queue track"; otherwise a choice of "Queue track next", ahead of what's
+ * queued, and "Queue after 5 queued tracks", behind it. And "Remove from
+ * queue", when any of them is queued. */
+function QueueActions(props: {
+  tabId: string;
+  rows: Iterable<number>;
+}): JSX.Element | null {
+  const { queueRows, unqueueRows } = useAppActions();
+  const { tabId, rows } = props;
+  const result = useApp((s) => s.pages[tabId]?.result);
+  const lineage = useApp((s) => s.pages[tabId]?.lineage);
+  const queue = useApp((s) => s.queuedTracks);
+  const trackIds = useMemo(
+    () => trackIdsOfRows(result, lineage, rows),
+    [result, lineage, rows],
+  );
+  const queued = useMemo(() => {
+    const ids = new Set(queue.map((track) => track.id));
+    return trackIds.filter((id) => ids.has(id)).length;
+  }, [queue, trackIds]);
+  const count = trackIds.length;
+  if (count === 0) return null;
+  // What's queued besides these tracks, which is what they'd go before or
+  // after.
+  const others = queue.length - queued;
+  const tracks = count === 1 ? "track" : tracksLabel(count);
+  return (
+    <>
+      {others === 0 && queued < count && (
+        <MenuItem
+          icon={Icons.QueueLast}
+          label={`Queue ${tracks}`}
+          command="queue.add_selected"
+          onClick={() => queueRows(tabId, rows, "last")}
+        />
+      )}
+      {others > 0 && (
+        <>
+          <MenuItem
+            icon={Icons.QueueNext}
+            label={`Queue ${tracks} next`}
+            command="queue.add_selected_next"
+            onClick={() => queueRows(tabId, rows, "next")}
+          />
+          <MenuItem
+            icon={Icons.QueueLast}
+            label={`Queue ${count === 1 ? "" : `${tracks} `}after ${others} queued ${others === 1 ? "track" : "tracks"}`}
+            command="queue.add_selected"
+            onClick={() => queueRows(tabId, rows, "last")}
+          />
+        </>
+      )}
+      {queued > 0 && (
+        <MenuItem
+          icon={Icons.Unqueue}
+          label={
+            count === 1
+              ? "Remove from queue"
+              : `Remove ${tracksLabel(queued)} from queue`
+          }
+          command="queue.remove_selected"
+          onClick={() => unqueueRows(tabId, rows)}
+        />
+      )}
     </>
   );
 }

@@ -13,7 +13,7 @@ import {
   type AppStoreBundle,
   type PreparedStep,
 } from "./index";
-import { fakeEnv } from "./testEnv";
+import { FakePlayer, fakeEnv } from "./testEnv";
 import { TOAST_MS } from "./actions";
 import { buildResultFromStringRows } from "../../query/result";
 import { presetTables } from "../../query/presetGroups";
@@ -4930,5 +4930,133 @@ describe("exporting results data", () => {
         "Write permission denied.",
       ),
     );
+  });
+});
+
+describe("the play queue", () => {
+  const TRACKS = { records: [], trackIdColumn: 0 };
+  let bundle: AppStoreBundle;
+  let player: FakePlayer;
+
+  beforeEach(() => {
+    bundle = createAppStore(
+      fakeEnv({
+        createPlayer: (events) => (player = new FakePlayer(events)),
+      }),
+    );
+    // Two tabs of tracks: "a" lists a1…a5, "b" lists b1…b3.
+    for (const [tab, count] of [
+      ["a", 5],
+      ["b", 3],
+    ] as const) {
+      openQueryTab(bundle, tab);
+      const rows = Array.from({ length: count }, (_, i) => [`${tab}${i + 1}`]);
+      bundle.actions.setResults(tab, buildResultFromStringRows(rows), TRACKS);
+    }
+  });
+
+  const state = () => bundle.store.getState();
+  const queued = () => state().queuedTracks.map((track) => track.id);
+  const playing = () => {
+    const ct = state().currentTrack;
+    return ct && [ct.id, ct.sourceTabId, ct.rowIndex];
+  };
+
+  it("plays the queued tracks next, then what follows the last of them", () => {
+    bundle.actions.playRow("a", 0);
+    bundle.actions.queueRows("b", [1], "last");
+    expect(player.queue).toEqual(["b2", "b3"]);
+    bundle.actions.queueRows("a", [3], "last");
+    bundle.actions.queueRows("a", [2], "next");
+    expect(queued()).toEqual(["a3", "b2", "a4"]);
+    expect(player.queue).toEqual(["a3", "b2", "a4", "a5"]);
+
+    player.end();
+    expect(playing()).toEqual(["a3", "a", 2]);
+    expect(queued()).toEqual(["b2", "a4"]);
+    player.end();
+    expect(playing()).toEqual(["b2", "b", 1]);
+    // "Previous" goes back up the rows of the tab playback is in now.
+    expect(player.history).toEqual(["b1"]);
+    player.end();
+    expect(playing()).toEqual(["a4", "a", 3]);
+    expect(queued()).toEqual([]);
+    player.end();
+    expect(playing()).toEqual(["a5", "a", 4]);
+    player.end();
+    expect(state().currentTrack).toBeNull();
+  });
+
+  it("moves a track queued again rather than queuing it twice", () => {
+    bundle.actions.queueRows("a", [0, 1], "last");
+    bundle.actions.queueRows("a", [0], "last");
+    expect(queued()).toEqual(["a2", "a1"]);
+    bundle.actions.unqueueRows("a", [1]);
+    expect(queued()).toEqual(["a1"]);
+    bundle.actions.clearQueue();
+    expect(queued()).toEqual([]);
+  });
+
+  it("toggles a row, or the selection it's part of, as the row says", () => {
+    bundle.actions.toggleQueuedRow("a", 2);
+    expect(queued()).toEqual(["a3"]);
+    // A row outside the selection is toggled alone.
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.clickRow("a", 2, { shift: true, ctrl: false });
+    bundle.actions.toggleQueuedRow("a", 4);
+    expect(queued()).toEqual(["a3", "a5"]);
+    // In it, unqueued: the whole selection is queued.
+    bundle.actions.toggleQueuedRow("a", 1);
+    expect(queued()).toEqual(["a5", "a1", "a2", "a3"]);
+    // Queued: the whole selection leaves the queue.
+    bundle.actions.toggleQueuedRow("a", 0);
+    expect(queued()).toEqual(["a5"]);
+    expect([...(state().pages["a"]?.selection ?? [])]).toEqual([0, 1, 2]);
+  });
+
+  it("takes a queued track off the queue when it's played", () => {
+    bundle.actions.queueRows("a", [1, 3], "last");
+    bundle.actions.playRow("a", 3);
+    expect(queued()).toEqual(["a2"]);
+    expect(player.queue).toEqual(["a2", "a3", "a4", "a5"]);
+  });
+
+  it("follows the queued tracks' rows as their tab's rows change", () => {
+    bundle.actions.playRow("b", 0);
+    bundle.actions.queueRows("a", [1], "last");
+    bundle.actions.setResults(
+      "a",
+      buildResultFromStringRows([["a9"], ["a1"], ["a8"], ["a2"], ["a7"]]),
+      TRACKS,
+    );
+    expect(state().queuedTracks[0]).toMatchObject({ id: "a2", rowIndex: 3 });
+    expect(player.queue).toEqual(["a2", "a7"]);
+  });
+
+  it("plays on through what followed a queued track whose tab closed", () => {
+    bundle.actions.playRow("b", 0);
+    bundle.actions.queueRows("a", [2], "last");
+    bundle.actions.closeTab("a");
+    expect(state().queuedTracks[0]).toMatchObject({
+      id: "a3",
+      sourceTabId: null,
+      rowIndex: null,
+    });
+    bundle.actions.unqueueRows("b", [2]); // Any edit: the order is re-read.
+    expect(player.queue).toEqual(["a3", "a4", "a5"]);
+    player.end();
+    player.end();
+    expect(playing()).toEqual(["a4", null, null]);
+    expect(player.queue).toEqual(["a5"]);
+  });
+
+  it("goes back along the rows, then on to the queue", () => {
+    bundle.actions.playRow("a", 2);
+    bundle.actions.queueRows("b", [0], "last");
+    player.skipPrevious();
+    expect(playing()).toEqual(["a2", "a", 1]);
+    expect(player.queue).toEqual(["b1", "b2", "b3"]);
+    player.skipNext();
+    expect(playing()).toEqual(["b1", "b", 0]);
   });
 });

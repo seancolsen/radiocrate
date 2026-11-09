@@ -72,6 +72,10 @@ import Play from "~icons/material-symbols/play-arrow";
 import Pause from "~icons/material-symbols/pause";
 import Next from "~icons/material-symbols/skip-next";
 import Locate from "~icons/material-symbols/my-location";
+import QueueNext from "~icons/material-symbols/queue-play-next";
+import QueueLast from "~icons/material-symbols/add-to-queue";
+import Unqueue from "~icons/material-symbols/remove-from-queue";
+import ClearQueue from "~icons/material-symbols/clear-all";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
 import Commands from "~icons/material-symbols/terminal";
 import Presets from "~icons/material-symbols/tune";
@@ -166,6 +170,10 @@ export const Icons = {
   Pause, // now-playing bar: pause
   Next, // now-playing menu: skip to the next queued track
   Locate, // now-playing menu: jump to the playing track's row
+  QueueNext, // results row menu: queue tracks ahead of the queue
+  QueueLast, // results row menu: queue tracks after the queue
+  Unqueue, // results row menu: take tracks out of the queue
+  ClearQueue, // now-playing menu: empty the queue
   Keyboard, // shortcuts editor: "Record keys" search toggle
   Commands, // the explorer footer's way into the command palette
   Presets, // the preset manager: its Settings-menu entry and tab handle

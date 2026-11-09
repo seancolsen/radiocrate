@@ -87,6 +87,7 @@ const MultiSelectToolbar = forwardRef<HTMLDivElement, { tabId: string }>(
           <RowActionsMenu
             tabId={props.tabId}
             groups={groups}
+            trackRows={tracks ? selection : undefined}
             onAddToPlaylist={
               tracks
                 ? () => requestAddToPlaylist(props.tabId, selection)

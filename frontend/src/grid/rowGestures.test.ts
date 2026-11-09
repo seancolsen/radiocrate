@@ -34,16 +34,20 @@ describe("pullDistance", () => {
 
 describe("rowSwipeCommits", () => {
   it("goes by distance without a flick", () => {
-    expect(rowSwipeCommits(-ROW_SWIPE_DISTANCE, 0)).toBe(true);
-    expect(rowSwipeCommits(-ROW_SWIPE_DISTANCE + 1, 0)).toBe(false);
+    expect(rowSwipeCommits(-ROW_SWIPE_DISTANCE, 0, -1)).toBe(true);
+    expect(rowSwipeCommits(-ROW_SWIPE_DISTANCE + 1, 0, -1)).toBe(false);
+    expect(rowSwipeCommits(ROW_SWIPE_DISTANCE, 0, 1)).toBe(true);
+    expect(rowSwipeCommits(ROW_SWIPE_DISTANCE - 1, 0, 1)).toBe(false);
   });
 
-  it("commits on a leftward flick, however short", () => {
-    expect(rowSwipeCommits(-20, -500)).toBe(true);
+  it("commits on a flick its own way, however short", () => {
+    expect(rowSwipeCommits(-20, -500, -1)).toBe(true);
+    expect(rowSwipeCommits(20, 500, 1)).toBe(true);
   });
 
-  it("springs back on a rightward flick, however far", () => {
-    expect(rowSwipeCommits(-300, 500)).toBe(false);
+  it("springs back on a flick the other way, however far", () => {
+    expect(rowSwipeCommits(-300, 500, -1)).toBe(false);
+    expect(rowSwipeCommits(300, -500, 1)).toBe(false);
   });
 });
 

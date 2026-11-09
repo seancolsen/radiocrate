@@ -539,6 +539,47 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A swipe right under way on a row of a two-row selection: both rows come
+  // away together, over the band at the left naming the queue.
+  test(`results/row-swipe-right - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/row-swipe-right", colorScheme);
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toBeVisible();
+    const box = (await canvas.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    const y = box.y + 54;
+    const touch = (type: "touchStart" | "touchMove", x: number) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: [{ x: box.x + x, y }],
+      });
+    await touch("touchStart", 100);
+    for (const x of [120, 160, 200]) await touch("touchMove", x);
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/row-swipe-right", colorScheme),
+    );
+  });
+
+  // Queued tracks' rows: the playing row's ring, dashed, and a badge on each
+  // numbering its place in the queue — tucked inside the ring on the first
+  // row, which has nothing above it to straddle.
+  test(`results/queued-rows - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/queued-rows", colorScheme);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/queued-rows", colorScheme),
+    );
+  });
+
+  // A lone queued track: the dashed ring, with no badge.
+  test(`results/queued-row - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "results/queued-row", colorScheme);
+    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("results/queued-row", colorScheme),
+    );
+  });
+
   // Rows pulled down past the top, far enough that letting go would refresh
   // them: the spinner's arc at its fullest, in the gap above the first row.
   test(`results/pull-refresh - ${colorScheme}`, async ({ page }) => {
@@ -582,10 +623,10 @@ for (const colorScheme of SCHEMES) {
   });
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
-  // the row carries, "Show album tracks" for an album, "Rate track" and "Add
-  // to playlist…" for a track, the track's "Artists" (but not its "Album",
-  // whose entries are already there), then "Select multiple". Shot through the
-  // menu (it portals out of the stage).
+  // the row carries, "Show album tracks" for an album, "Rate track", "Queue
+  // track" and "Add to playlist…" for a track, the track's "Artists" (but not
+  // its "Album", whose entries are already there), then "Select multiple".
+  // Shot through the menu (it portals out of the stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
     const menu = page.getByRole("menu");
@@ -594,6 +635,7 @@ for (const colorScheme of SCHEMES) {
       "Edit album",
       "Show album tracks",
       "Rate track",
+      "Queue track",
       "Add to playlist…",
       "Artists",
       "Select multiple",
@@ -613,6 +655,7 @@ for (const colorScheme of SCHEMES) {
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Edit track",
       "Rate track",
+      "Queue track",
       "Add to playlist…",
       "Remove from playlist",
       "Artists",
@@ -621,6 +664,28 @@ for (const colorScheme of SCHEMES) {
     ]);
     await expect(menu).toHaveScreenshot(
       snapshot("result-row/playlist-context-menu", colorScheme),
+    );
+  });
+
+  // The same menu while other tracks are queued, the row's own among them:
+  // queue it ahead of them or behind them, or take it out of the queue.
+  test(`result-row/queue-context-menu - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "result-row/queue-context-menu", colorScheme);
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Edit track",
+      "Edit album",
+      "Show album tracks",
+      "Rate track",
+      "Queue track next",
+      "Queue after 2 queued tracks",
+      "Remove from queue",
+      "Add to playlist…",
+      "Artists",
+      "Select multiple",
+    ]);
+    await expect(menu).toHaveScreenshot(
+      snapshot("result-row/queue-context-menu", colorScheme),
     );
   });
 
@@ -640,6 +705,7 @@ for (const colorScheme of SCHEMES) {
       "2: ✔️ (Like)",
       "3: ⭐ (Prefer)",
       "4: ❤️ (Love)",
+      "Queue track",
       "Add to playlist…",
       "Artists",
       "Select multiple",

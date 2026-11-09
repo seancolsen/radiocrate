@@ -240,19 +240,31 @@ export type PageTab = QueryTab | PlaylistTab;
  * switches on. */
 export type TabKind = Tab["kind"];
 
-/** The track shown in the now-playing bar, and where it came from. */
-export interface CurrentTrack {
-  /** The tab whose results this track was played from (results are per-tab).
-   * "Locate" jumps back here; `null` once that tab has been closed. */
-  sourceTabId: string | null;
+/** A track, and the row of a tab's results it was picked from: the playing
+ * track, or one waiting in the queue. Results are per tab, and what plays
+ * after a track is what its tab lists after its row, so each keeps track of
+ * where that row is as the tab's rows change. */
+export interface TrackAnchor {
   id: string;
-  /** The track's row within that tab's results, when it can be found — re-derived
-   * after an auto-advance or a re-run. `null` disables "Locate". */
+  /** The tab whose results the track was picked from. "Locate" jumps back
+   * here; `null` once that tab has been closed. */
+  sourceTabId: string | null;
+  /** The track's row within that tab's results, when it can be found —
+   * re-derived after an auto-advance or a re-run. `null` disables "Locate",
+   * and leaves what follows the track as it was last read. */
   rowIndex: number | null;
+}
+
+/** The track shown in the now-playing bar, and where it came from. */
+export interface CurrentTrack extends TrackAnchor {
   /** Filled in asynchronously by the metadata fetch (null until it lands). */
   title: string | null;
   artists: string[];
 }
+
+/** A track the user queued to play next — after the playing track and the
+ * tracks queued before it. */
+export type QueuedTrack = TrackAnchor;
 
 /** Live transport state, mirrored out of the audio engine on its events so the
  * bar can render it. The engine remains the source of truth. */
@@ -553,6 +565,12 @@ export interface AppState {
   currentTrack: CurrentTrack | null;
   /** Transport state for that track. */
   playback: PlaybackState;
+  /** The tracks the user queued, in the order they'll play: each one in turn
+   * once the playing track is done, and then whatever the last one's tab lists
+   * after it. Each track appears at most once. Empty by default, and kept when
+   * the bar is closed: it's the user's, and only they (or playing through it)
+   * empty it. */
+  queuedTracks: readonly QueuedTrack[];
   /** The saved sources — queries and playlists (loads via `source.list`;
    * `refetchSources` reloads). */
   sources: ResourceState<readonly Source[]>;
@@ -721,6 +739,7 @@ export function initialState(env: AppEnv): AppState {
     toast: null,
     currentTrack: null,
     playback: { playing: false, position: 0, duration: null, hasNext: false },
+    queuedTracks: [],
     sources: { status: "loading", data: [] },
     folders: { status: "loading", data: [] },
     ratings: { status: "loading", data: [] },

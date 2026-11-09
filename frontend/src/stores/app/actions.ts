@@ -49,7 +49,7 @@ import {
   playInsert,
   ratingUpdates,
 } from "../../api/track";
-import { AudioEngine, type AudioQualityPref } from "../../audio/engine";
+import type { AudioQualityPref, Player, TrackStep } from "../../audio/engine";
 import { PlaybackLog } from "../../audio/playbackLog";
 import {
   addInferredLinks,
@@ -77,6 +77,7 @@ import {
   type UndoHistory,
   type UndoStep,
 } from "../../state/undoHistory";
+import { dequeue, enqueue, type QueuePlace } from "../../state/playQueue";
 import {
   addEntriesWrites,
   createPlaylistWrites,
@@ -221,6 +222,8 @@ import {
   selectIsWriting,
   selectLocateRow,
   selectQueueAround,
+  selectRowNear,
+  selectTrackIdsOfRows,
   selectPageBase,
   selectPageTab,
   selectPrelude,
@@ -251,6 +254,8 @@ import {
   type AppState,
   type CurrentTrack,
   type ExportRows,
+  type QueuedTrack,
+  type TrackAnchor,
   type PageTab,
   type PresetFields,
   type PresetSave,
@@ -260,6 +265,17 @@ import {
   type ThemePref,
 } from "./state";
 import type { AppVanillaStore } from "./vanillaStore";
+
+/** The tracks in `s` picked from rows of tab `tabId`: the playing track,
+ * and the queued ones. Writable through when `s` is a draft. */
+function tracksFrom(
+  s: { currentTrack: TrackAnchor | null; queuedTracks: readonly TrackAnchor[] },
+  tabId: string,
+): TrackAnchor[] {
+  return [s.currentTrack, ...s.queuedTracks].filter(
+    (track): track is TrackAnchor => track?.sourceTabId === tabId,
+  );
+}
 
 /** Whether every one of `items` is defined, narrowing them to say so. */
 function allDefined<T>(items: (T | undefined)[]): items is T[] {
@@ -611,9 +627,24 @@ export interface AppActions {
    * to localStorage once rather than on every pointer move. */
   commitRecordSidebarWidth: () => void;
 
-  /** Play the track at result row `index` of `tabId`, with the rows before and
-   * after it as the previous/next context. A no-op for non-track rows. */
+  /** Play the track at result row `index` of `tabId`, with the rows before it
+   * as the previous context, and the queue and then the rows after it (or
+   * after the last queued track) as the next. A no-op for non-track rows. A
+   * queued track played this way leaves the queue. */
   playRow: (tabId: string, index: number) => void;
+  /** Queues the tracks of rows `rows` of `tabId`, in the order shown, at
+   * `place`: to play next, or after everything already queued. A track
+   * already queued moves there. A no-op for rows that aren't tracks. */
+  queueRows: (tabId: string, rows: Iterable<number>, place: QueuePlace) => void;
+  /** Takes the tracks of rows `rows` of `tabId` out of the queue. */
+  unqueueRows: (tabId: string, rows: Iterable<number>) => void;
+  /** Alt+click, or a swipe right, on row `index` of `tabId`: takes its track
+   * out of the queue when it's queued, and otherwise queues it last. A row in
+   * the selection does that for every selected row, as the row's own track
+   * says. The selection is left as it is. */
+  toggleQueuedRow: (tabId: string, index: number) => void;
+  /** Empties the queue. */
+  clearQueue: () => void;
   /** Pause if playing, resume if paused. */
   togglePlayPause: () => void;
   /** Skip to the next queued track (the bar's "Next"). */
@@ -625,7 +656,8 @@ export interface AppActions {
   seekBy: (offset: number) => void;
   /** Move the playing track's playhead to `seconds` (the bar's timeline). */
   seek: (seconds: number) => void;
-  /** Dismiss the bar: stop playback and tear down the queue (the bar's "Close"). */
+  /** Dismiss the bar: stop playback (the bar's "Close"). What the user
+   * queued stays queued. */
   stopPlayback: () => void;
   /** Jump to the playing track's row: activate its source tab, select the row and
    * scroll it into view (the bar's "Locate"). */
@@ -1351,9 +1383,10 @@ export function createAppActions(
       delete page.lineage;
       // Nor is the place in the old rows a place in these ones.
       page.scrollOffset = 0;
-      // The playing track's row belonged to the rows just replaced; it's
-      // re-located once the new mapping lands (see `analyzeLineage`).
-      if (s.currentTrack?.sourceTabId === tabId) s.currentTrack.rowIndex = null;
+      // The playing and queued tracks' rows belonged to the rows just
+      // replaced; they're re-located once the new mapping lands (see
+      // `analyzeLineage`).
+      for (const track of tracksFrom(s, tabId)) track.rowIndex = null;
     });
     // The anchor and the lead are row indexes too, so a refresh keeps them —
     // unless it left nothing selected for them to grow from.
@@ -1405,36 +1438,51 @@ export function createAppActions(
       });
     });
     if (!playable) return;
-    relocateCurrentTrack(tabId);
+    relocateTracks(tabId);
   };
 
-  /** Re-locates the playing track's row in the rows a tab has just landed, so
-   * "Locate" keeps working across a re-run (mirrors
-   * `maybe_revalidate_current_track_index`), and recomputes the play queue
-   * around that row — the surrounding tracks may have moved, been added, or
-   * dropped. A no-op for a tab that isn't the one the track is playing from.
-   * When the track can no longer be found, the queue is left as it was: there's
-   * no row to recompute it around. */
-  const relocateCurrentTrack = (tabId: string) => {
-    const ct = get().currentTrack;
-    if (ct?.sourceTabId !== tabId) return;
+  /** Re-locates the rows of the tracks picked from a tab — the playing one,
+   * and the queued ones — in the rows it has just landed, so "Locate" keeps
+   * working across a re-run (mirrors `maybe_revalidate_current_track_index`),
+   * and recomputes the play order around them: the surrounding tracks may
+   * have moved, been added, or dropped. A track that can no longer be found
+   * leaves what followed it as it was: there's no row to recompute it
+   * around. */
+  const relocateTracks = (tabId: string) => {
+    const s = get();
+    const ct = s.currentTrack;
+    const moved = tracksFrom(s, tabId);
+    if (moved.length === 0) return;
     // A hint is good for the first rows that can be searched, and only while
-    // it still points at the playing track.
+    // it still points at the playing track. Otherwise a track looks first
+    // where it was, which is where a refresh leaves it.
     const hint = locateHints.get(tabId);
-    if (get().pages[tabId]?.lineage?.trackIdColumn !== undefined) {
+    if (s.pages[tabId]?.lineage?.trackIdColumn !== undefined) {
       locateHints.delete(tabId);
     }
-    const rowIndex =
-      hint !== undefined && selectTrackIdAt(get(), tabId, hint) === ct.id
-        ? hint
-        : selectLocateRow(get(), tabId, ct.id);
-    set((s) => {
-      if (s.currentTrack) s.currentTrack.rowIndex = rowIndex;
+    const find = (track: TrackAnchor, near: number | null | undefined) =>
+      near != null && selectTrackIdAt(s, tabId, near) === track.id
+        ? near
+        : selectLocateRow(s, tabId, track.id);
+    const rows = new Map(
+      moved.map((track) => [
+        track,
+        find(track, track === ct ? (hint ?? track.rowIndex) : track.rowIndex),
+      ]),
+    );
+    set((d) => {
+      if (ct && rows.has(ct) && d.currentTrack) {
+        d.currentTrack.rowIndex = rows.get(ct)!;
+      }
+      if (s.queuedTracks.some((track) => rows.has(track))) {
+        d.queuedTracks = castDraft(
+          s.queuedTracks.map((track) =>
+            rows.has(track) ? { ...track, rowIndex: rows.get(track)! } : track,
+          ),
+        );
+      }
     });
-    if (rowIndex !== null) {
-      const { preceding, upcoming } = selectQueueAround(get(), tabId, rowIndex);
-      audio?.updateQueue(preceding, upcoming);
-    }
+    syncQueue();
   };
 
   /** Moves the playing track over to tab `tabId`, where it's row `row` (or
@@ -1447,7 +1495,7 @@ export function createAppActions(
       s.currentTrack.rowIndex = null;
     });
     locateHints.set(tabId, row);
-    relocateCurrentTrack(tabId);
+    relocateTracks(tabId);
   };
 
   /** Records `tabId`'s working definition in its undo history: whatever it's
@@ -1532,8 +1580,9 @@ export function createAppActions(
           // Identical SQL maps its columns identically, so the mapping the tab
           // already holds is the mapping these rows want — and re-deriving it
           // would only churn the reference the record editor's resync watches.
-          // The *rows* did move, though, so the playing one is looked up again.
-          relocateCurrentTrack(tabId);
+          // The *rows* did move, though, so the playing and queued tracks are
+          // looked up again.
+          relocateTracks(tabId);
         } else {
           // Off the critical path, figure out what these rows *are* — tracks to
           // play, records to edit. Deliberately not awaited: the results are
@@ -1989,11 +2038,12 @@ export function createAppActions(
         // this — or clear.
         s.activeTabId = s.tabHistory.find((h) => h !== id) ?? null;
       }
-      // Playback outlives its source tab (the engine owns the queue), but
-      // there's no longer anywhere for "Locate" to go.
-      if (s.currentTrack?.sourceTabId === id) {
-        s.currentTrack.sourceTabId = null;
-        s.currentTrack.rowIndex = null;
+      // Playback outlives its source tab (what followed its tracks was read
+      // already), and so does the queue, but there's no longer anywhere for
+      // "Locate" to go.
+      for (const track of tracksFrom(s, id)) {
+        track.sourceTabId = null;
+        track.rowIndex = null;
       }
     });
     sweepUnsavedPresets();
@@ -2270,11 +2320,11 @@ export function createAppActions(
 
   // The audio engine, built on the first play so a session that never plays
   // anything creates no <audio> element and claims no OS media session.
-  let audio: AudioEngine | undefined;
-  const engine = (): AudioEngine =>
-    (audio ??= new AudioEngine(
+  let audio: Player | undefined;
+  const engine = (): Player =>
+    (audio ??= env.createPlayer(
       {
-        onTrackChange: (id) => reconcileTrackChange(id),
+        onTrackChange: (id, step) => reconcileTrackChange(id, step),
         onPlayCompleted: (id) => logPlay(id),
         onQueueDry: () => clearNowPlaying(),
         onTransport: () => syncTransport(),
@@ -2283,6 +2333,63 @@ export function createAppActions(
       () => get().audioQuality,
       playbackLog,
     ));
+
+  // The play order is the store's, and the engine only follows it: the
+  // playing track, the queued tracks, and then the tracks the last of those
+  // (or, with nothing queued, the playing one) is followed by in its tab's
+  // rows. "Previous" goes back up the playing track's rows.
+  //
+  // That last stretch — what follows the play order's last track — as it
+  // was last read from the rows. Kept, not re-read every time, because those
+  // rows can be gone (their tab closed, or re-running), and playback goes on
+  // through what followed all the same. Non-reactive.
+  let continuation: string[] = [];
+
+  /** The play order around the playing track, in the engine's terms: the
+   * tracks "previous" goes back through (nearest last; `null` when the
+   * playing track's row is unknown, which leaves them as they are), and the
+   * tracks still to come. Re-reads {@link continuation} from the rows, when
+   * its track's row is known. */
+  const playOrder = (): {
+    preceding: string[] | null;
+    upcoming: string[];
+  } => {
+    const s = get();
+    const ct = s.currentTrack;
+    const last = s.queuedTracks.at(-1) ?? ct;
+    if (last?.sourceTabId != null && last.rowIndex !== null) {
+      continuation = selectQueueAround(
+        s,
+        last.sourceTabId,
+        last.rowIndex,
+      ).upcoming;
+    }
+    const preceding =
+      ct?.sourceTabId != null && ct.rowIndex !== null
+        ? selectQueueAround(s, ct.sourceTabId, ct.rowIndex).preceding
+        : null;
+    const upcoming = [
+      ...s.queuedTracks.map((track) => track.id),
+      ...continuation,
+    ];
+    return { preceding, upcoming };
+  };
+
+  /** Hands the engine the play order as it stands, after anything that moves
+   * it: the queue changing, the tracks' rows moving, a track change. */
+  const syncQueue = () => {
+    if (!audio || !get().currentTrack) return;
+    const { preceding, upcoming } = playOrder();
+    audio.updateQueue(preceding, upcoming);
+  };
+
+  /** Replaces the queue with `queue`, and the play order with it. */
+  const setQueue = (queue: readonly QueuedTrack[]) => {
+    set((s) => {
+      s.queuedTracks = castDraft(queue);
+    });
+    syncQueue();
+  };
 
   /** Mirrors the engine's transport state into the store for the bar to render.
    * The engine stays the source of truth; this is a projection of it. */
@@ -2406,21 +2513,49 @@ export function createAppActions(
 
   /** Folds a track change that originated in the engine (an auto-advance when a
    * track ended, or a lock-screen / headset skip) into the bar: swaps the track,
-   * re-locates its row, refetches metadata, and records the play. The engine owns
-   * the queue across these transitions, so there's nothing to re-sync there. */
-  const reconcileTrackChange = (newId: string) => {
-    const source = get().currentTrack?.sourceTabId ?? null;
-    if (get().currentTrack === null) return;
-    const rowIndex =
-      source === null ? null : selectLocateRow(get(), source, newId);
-    set((s) => {
-      if (!s.currentTrack) return;
-      s.currentTrack.id = newId;
-      s.currentTrack.rowIndex = rowIndex;
-      s.currentTrack.title = null;
-      s.currentTrack.artists = [];
-    });
+   * re-locates its row, refetches metadata, and records the play. A step
+   * forward onto the first queued track takes it off the queue, and its tab
+   * becomes the one playback goes on from. */
+  const reconcileTrackChange = (newId: string, step: TrackStep) => {
+    const s = get();
+    const ct = s.currentTrack;
+    if (ct === null) return;
+    const head = s.queuedTracks[0];
+    if (step === "next" && head?.id === newId) {
+      set((d) => {
+        d.queuedTracks = castDraft(s.queuedTracks.slice(1));
+        d.currentTrack = { ...head, title: null, artists: [] };
+      });
+    } else {
+      // Along the rows, onto the row beside the one it left — wherever else
+      // the track is listed.
+      const source = ct.sourceTabId;
+      const dir = step === "next" ? 1 : -1;
+      const rowIndex =
+        source === null
+          ? null
+          : ((ct.rowIndex === null
+              ? null
+              : selectRowNear(s, source, newId, ct.rowIndex + dir, dir)) ??
+            selectLocateRow(s, source, newId));
+      // What follows the playing track moves with it, for when it can't be
+      // read again from rows that have gone.
+      if (s.queuedTracks.length === 0) {
+        if (step === "previous") continuation = [ct.id, ...continuation];
+        else if (continuation[0] === newId)
+          continuation = continuation.slice(1);
+      }
+      set((d) => {
+        if (!d.currentTrack) return;
+        d.currentTrack.id = newId;
+        d.currentTrack.rowIndex = rowIndex;
+        d.currentTrack.title = null;
+        d.currentTrack.artists = [];
+      });
+    }
+    syncQueue();
     void loadMetadata(newId);
+    const source = get().currentTrack?.sourceTabId ?? null;
     if (source !== null) recordQueryPlay(source);
     syncTransport();
   };
@@ -2428,6 +2563,7 @@ export function createAppActions(
   /** Tears down playback and empties the bar. */
   const clearNowPlaying = () => {
     audio?.stop();
+    continuation = [];
     set((s) => {
       s.currentTrack = null;
     });
@@ -2437,7 +2573,9 @@ export function createAppActions(
   const playRow = (tabId: string, index: number) => {
     const id = selectTrackIdAt(get(), tabId, index);
     if (id === undefined) return;
-    const { preceding, upcoming } = selectQueueAround(get(), tabId, index);
+    // Playing a queued track is its turn come early.
+    const queued = get().queuedTracks;
+    const rest = dequeue(queued, [id]);
     set((s) => {
       s.currentTrack = {
         sourceTabId: tabId,
@@ -2446,8 +2584,10 @@ export function createAppActions(
         title: null,
         artists: [],
       };
+      if (rest.length !== queued.length) s.queuedTracks = castDraft(rest);
     });
-    engine().setQueue(preceding, id, upcoming);
+    const { preceding, upcoming } = playOrder();
+    engine().setQueue(preceding ?? [], id, upcoming);
     syncTransport();
     void loadMetadata(id);
     recordQueryPlay(tabId);
@@ -2846,9 +2986,10 @@ export function createAppActions(
       const page = pageDraft(d, tabId);
       page.result = castDraft(reordered);
       page.resultIsRefresh = true;
-      const ct = d.currentTrack;
-      if (ct?.sourceTabId === tabId && ct.rowIndex !== null) {
-        ct.rowIndex = move.order.indexOf(ct.rowIndex);
+      for (const track of tracksFrom(d, tabId)) {
+        if (track.rowIndex !== null) {
+          track.rowIndex = move.order.indexOf(track.rowIndex);
+        }
       }
     });
     selectRows(
@@ -3504,6 +3645,8 @@ export function createAppActions(
         set((s) => {
           pageDraft(s, tabId).lineage = castDraft(lineage);
         });
+        // As the lineage analysis does once it lands on playable rows.
+        if (lineage.trackIdColumn !== undefined) relocateTracks(tabId);
       }
     },
     setResultRow: (tabId, index, values) => {
@@ -3717,6 +3860,36 @@ export function createAppActions(
       persistRecordSidebarWidth(env, get().recordSidebarWidth),
 
     playRow,
+    queueRows: (tabId, rows, place) => {
+      const s = get();
+      const tracks: QueuedTrack[] = [...rows]
+        .sort((a, b) => a - b)
+        .flatMap((row) => {
+          const id = selectTrackIdAt(s, tabId, row);
+          return id === undefined
+            ? []
+            : [{ id, sourceTabId: tabId, rowIndex: row }];
+        });
+      if (tracks.length === 0) return;
+      setQueue(enqueue(s.queuedTracks, tracks, place));
+    },
+    unqueueRows: (tabId, rows) => {
+      const s = get();
+      setQueue(dequeue(s.queuedTracks, selectTrackIdsOfRows(s, tabId, rows)));
+    },
+    toggleQueuedRow: (tabId, index) => {
+      const s = get();
+      const id = selectTrackIdAt(s, tabId, index);
+      if (id === undefined) return;
+      const selection = selectRowSelection(s, tabId);
+      const rows = selection.has(index) ? selection : [index];
+      if (s.queuedTracks.some((track) => track.id === id)) {
+        actions.unqueueRows(tabId, rows);
+      } else {
+        actions.queueRows(tabId, rows, "last");
+      }
+    },
+    clearQueue: () => setQueue([]),
     togglePlayPause: () => {
       if (!audio || !get().currentTrack) return;
       if (audio.isPlaying) audio.pause();

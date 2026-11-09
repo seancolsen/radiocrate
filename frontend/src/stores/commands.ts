@@ -177,6 +177,7 @@ export function selectCommandContext(
       selectPageTab(app, active)?.kind === "playlist",
     resultsAvailable,
     trackLoaded: app.currentTrack !== null,
+    tracksQueued: app.queuedTracks.length > 0,
     recordFormFocused,
     recordFormModified:
       active !== null && selectModifiedForm(forms, active) !== undefined,
@@ -421,6 +422,33 @@ export function createCommandsStore(
         break;
       case "playback.seek_forward":
         app.actions.seekBy(SEEK_STEP_SECONDS);
+        break;
+      // Like the row menu's entries, these act on the selected rows.
+      case "queue.add_selected":
+        if (tabId)
+          app.actions.queueRows(
+            tabId,
+            selectRowSelection(app.store.getState(), tabId),
+            "last",
+          );
+        break;
+      case "queue.add_selected_next":
+        if (tabId)
+          app.actions.queueRows(
+            tabId,
+            selectRowSelection(app.store.getState(), tabId),
+            "next",
+          );
+        break;
+      case "queue.remove_selected":
+        if (tabId)
+          app.actions.unqueueRows(
+            tabId,
+            selectRowSelection(app.store.getState(), tabId),
+          );
+        break;
+      case "queue.clear":
+        app.actions.clearQueue();
         break;
       case "query.new":
         app.actions.newQueryTab();

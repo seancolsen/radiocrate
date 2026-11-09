@@ -32,6 +32,10 @@ export type CommandId =
   | "playback.previous_track"
   | "playback.seek_backward"
   | "playback.seek_forward"
+  | "queue.add_selected"
+  | "queue.add_selected_next"
+  | "queue.remove_selected"
+  | "queue.clear"
   | "query.new"
   | "query.focus_filter"
   | "query.focus_sort"
@@ -77,6 +81,7 @@ export type When =
   | "playlistResults"
   | "results"
   | "trackLoaded"
+  | "tracksQueued"
   | "transport"
   | "resultsFocused"
   | "recordForm"
@@ -103,6 +108,8 @@ export interface CommandContext {
   resultsAvailable: boolean;
   /** A track is loaded in the now-playing bar. */
   trackLoaded: boolean;
+  /** At least one track is in the play queue. */
+  tracksQueued: boolean;
   /** The user is working inside a record editor form: one of its items holds
    * focus, or it has a selection. The arrow keys belong to the form then, not to
    * the result rows or anything else on the page. */
@@ -197,6 +204,32 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Playback: Seek forward 10 seconds",
     when: "transport",
     defaultChord: chordOf("Right"),
+  },
+  // The queue's commands ship unbound: Alt+click (or a swipe right) is the
+  // quick way to queue a row, and the row's context menu names them.
+  {
+    id: "queue.add_selected",
+    title: "Queue: Add the selected tracks to the end of the queue",
+    when: "results",
+    defaultChord: null,
+  },
+  {
+    id: "queue.add_selected_next",
+    title: "Queue: Add the selected tracks to the front of the queue",
+    when: "results",
+    defaultChord: null,
+  },
+  {
+    id: "queue.remove_selected",
+    title: "Queue: Remove the selected tracks from the queue",
+    when: "tracksQueued",
+    defaultChord: null,
+  },
+  {
+    id: "queue.clear",
+    title: "Queue: Clear the queue",
+    when: "tracksQueued",
+    defaultChord: null,
   },
   {
     id: "query.new",
@@ -479,6 +512,8 @@ export function whenSatisfied(when: When, ctx: CommandContext): boolean {
       return ctx.resultsAvailable;
     case "trackLoaded":
       return ctx.trackLoaded;
+    case "tracksQueued":
+      return ctx.tracksQueued;
     case "transport":
       return ctx.trackLoaded && !ctx.recordFormFocused;
     case "resultsFocused":
@@ -530,6 +565,8 @@ export function whenLabel(when: When): string {
       return "results";
     case "trackLoaded":
       return "track loaded";
+    case "tracksQueued":
+      return "tracks queued";
     case "transport":
       return "track loaded";
     case "resultsFocused":

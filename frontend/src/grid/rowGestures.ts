@@ -1,8 +1,9 @@
 // What a touch on the results can do besides scroll them, apart from the events
-// that feed it: pull down past the top to refresh, and swipe a row left to edit
-// it. The results grid (`canvasGrid.ts`) feeds the numbers in and paints what
-// comes out, so the decisions are plain code a unit test can drive. Which way a
-// touch is heading, and how fast it let go, are `gestures/swipe.ts`'s.
+// that feed it: pull down past the top to refresh, and swipe a row left or
+// right to act on it. The results grid (`canvasGrid.ts`) feeds the numbers in
+// and paints what comes out, so the decisions are plain code a unit test can
+// drive. Which way a touch is heading, and how fast it let go, are
+// `gestures/swipe.ts`'s.
 
 import { FLICK_VELOCITY } from "../gestures/swipe";
 
@@ -36,13 +37,18 @@ export function fingerForPull(pull: number): number {
   return pull / PULL_RESISTANCE;
 }
 
-/** Whether a row released `offset` px from home (negative: leftward) at
- * `velocity` commits, rather than springing back. A flick wins outright in its
- * own direction; without one, it's how far the row has come. */
-export function rowSwipeCommits(offset: number, velocity: number): boolean {
-  if (velocity <= -FLICK_VELOCITY) return true;
-  if (velocity >= FLICK_VELOCITY) return false;
-  return -offset >= ROW_SWIPE_DISTANCE;
+/** Whether a row swiped in `direction` (`-1` leftward, `1` rightward) and
+ * released `offset` px from home (negative: leftward) at `velocity` commits,
+ * rather than springing back. A flick wins outright in its own direction;
+ * without one, it's how far the row has come. */
+export function rowSwipeCommits(
+  offset: number,
+  velocity: number,
+  direction: -1 | 1,
+): boolean {
+  if (velocity * direction >= FLICK_VELOCITY) return true;
+  if (velocity * direction <= -FLICK_VELOCITY) return false;
+  return offset * direction >= ROW_SWIPE_DISTANCE;
 }
 
 /** `value` after `dt` ms more of settling toward `target`, frame-rate

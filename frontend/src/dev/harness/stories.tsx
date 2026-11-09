@@ -387,6 +387,9 @@ function rowActionsMenu(
     ratingsLoading?: boolean;
     lookupDelay?: number;
     playlist?: boolean;
+    /** Rows of the grid to queue first, whose tracks the menu's own row
+     * (row 0) goes before or after — or, for row 0 itself, comes out of. */
+    queued?: readonly number[];
   } = {},
 ): Story {
   const records = opts.records ?? [
@@ -407,12 +410,22 @@ function rowActionsMenu(
           s.ratings = { status: "ready", data: castDraft(RATINGS_FIXTURE) };
         });
       }
+      // Rows of tracks, as the queue's entries read them: the menu is row 0's.
+      if (tracks) {
+        const id = openLemonade(stores);
+        const { result, lineage } = lemonadeGridResult({
+          trackIds: GRID_TRACK_IDS,
+        });
+        stores.app.actions.setResults(id, result, lineage);
+        if (opts.queued) stores.app.actions.queueRows(id, opts.queued, "last");
+      }
     },
     render: () => (
       <ContextMenu x={8} y={8} onClose={() => {}}>
         <RowActionsMenu
-          tabId="row-menu"
+          tabId={tracks ? LEMONADE.id : "row-menu"}
           groups={groups}
+          trackRows={tracks ? MENU_ROWS : undefined}
           onAddToPlaylist={tracks ? () => {} : undefined}
           onRemoveFromPlaylist={opts.playlist ? () => {} : undefined}
           onSelectMultiple={() => {}}
@@ -421,6 +434,12 @@ function rowActionsMenu(
     ),
   };
 }
+
+/** The track ids of the grid's rows, for stories about playing and queuing. */
+const GRID_TRACK_IDS = ["t1", "t2", "t3", "t4", "t5"];
+
+/** The rows a row-menu story's menu was raised on. */
+const MENU_ROWS: readonly number[] = [0];
 
 /** A record-editor story: the panel alone, on the tracks `ns` names (rows of
  * the seeded grid, selected), over the
@@ -963,6 +982,24 @@ export const STORIES: Record<string, Story> = {
     frame: "flex flex-col",
     setup: (stores) => seedPlayback(stores),
     render: () => <NowPlaying />,
+  },
+  // The same menu with tracks queued, which adds "Clear queue".
+  "now-playing/menu-queued": {
+    width: 200,
+    height: 120,
+    setup: (stores) => {
+      seedPlayback(stores);
+      const { result, lineage } = lemonadeGridResult({
+        trackIds: GRID_TRACK_IDS,
+      });
+      stores.app.actions.setResults(LEMONADE.id, result, lineage);
+      stores.app.actions.queueRows(LEMONADE.id, [3], "last");
+    },
+    render: () => (
+      <Menu defaultOpen width="130px" trigger={() => null}>
+        <PlaybackActionsMenu />
+      </Menu>
+    ),
   },
   // Its overflow menu on its own. "Locate" is disabled: the seeded track is
   // deliberately left unlocated in the results (see `seedPlayback`).
@@ -1589,6 +1626,51 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // Queued tracks' rows, dashed where the playing row is solid, each with a
+  // badge giving its place in the queue: row 3 queued first, then row 0,
+  // whose badge sits inside its ring for want of a row above. Row 3 is
+  // selected too, and row 2 is playing.
+  "results/queued-rows": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        trackIds: GRID_TRACK_IDS,
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.seedNowPlaying(
+        {
+          sourceTabId: id,
+          id: "t3",
+          rowIndex: 2,
+          title: "Uncatena",
+          artists: ["Sylvan Esso", "Nick Sanborn"],
+        },
+        { playing: true, position: 74, duration: 255, hasNext: true },
+      );
+      stores.app.actions.queueRows(id, [3], "last");
+      stores.app.actions.queueRows(id, [0], "last");
+      stores.app.actions.clickRow(id, 3, { shift: false, ctrl: false });
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
+  // One queued track: its ring, but no badge, since there's no order to give.
+  "results/queued-row": {
+    width: 1280,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        trackIds: GRID_TRACK_IDS,
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.queueRows(id, [1], "last");
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // A playlist's row being dragged to another place among its rows: the row
   // in hand stays selected where it is, and the drop line marks the gap
   // between the first two rows, where it would land. No pointer has moved, so
@@ -1631,6 +1713,23 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryResults tabId={LEMONADE.id} />,
   },
+  // The same, with a track on every row, for a test to swipe right: the band
+  // opens at the left, naming the queue.
+  "results/row-swipe-right": {
+    width: 800,
+    height: 200,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      const id = openLemonade(stores);
+      const { result, lineage } = lemonadeGridResult({
+        trackIds: GRID_TRACK_IDS,
+      });
+      stores.app.actions.setResults(id, result, lineage);
+      stores.app.actions.clickRow(id, 1, { shift: false, ctrl: false });
+      stores.app.actions.clickRow(id, 2, { shift: false, ctrl: true });
+    },
+    render: () => <QueryResults tabId={LEMONADE.id} />,
+  },
   // The rows for a test to pull down from the top, opening the gap the spinner
   // sits in.
   "results/pull-refresh": {
@@ -1655,6 +1754,9 @@ export const STORIES: Record<string, Story> = {
     records: [trackRecord(1)],
     playlist: true,
   }),
+  // A row's context menu while other tracks are queued, its own among them:
+  // "Queue track next", "Queue after 2 queued tracks", "Remove from queue".
+  "result-row/queue-context-menu": rowActionsMenu({ queued: [1, 0, 2] }),
   // Its "Rate track" submenu, opened out (the test does the opening): one entry
   // per record of the `rating` table, lowest value first.
   "result-row/rate-submenu": rowActionsMenu(),

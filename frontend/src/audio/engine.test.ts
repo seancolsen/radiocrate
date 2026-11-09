@@ -381,7 +381,40 @@ describe("updating the queue in place", () => {
     engine.updateQueue([], ["t5"]);
     engine.skipNext();
 
-    expect(events.onTrackChange).toHaveBeenCalledWith("t5");
+    expect(events.onTrackChange).toHaveBeenCalledWith("t5", "next");
+  });
+
+  it("says which way a skip went", () => {
+    const { engine, events } = setup();
+    engine.setQueue(["t0"], "t1", ["t2"]);
+
+    engine.skipPrevious();
+    expect(events.onTrackChange).toHaveBeenLastCalledWith("t0", "previous");
+    engine.skipNext();
+    expect(events.onTrackChange).toHaveBeenLastCalledWith("t1", "next");
+  });
+
+  it("keeps the history when handed none", () => {
+    const { engine, events } = setup();
+    engine.setQueue(["t0"], "t1", ["t2"]);
+
+    engine.updateQueue(null, ["t5"]);
+    engine.skipPrevious();
+
+    expect(events.onTrackChange).toHaveBeenCalledWith("t0", "previous");
+  });
+
+  it("leaves a prime under way alone when the queue hasn't changed", () => {
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", ["t2"]);
+    finishDownload(created[0]!);
+    expect(created[1]!.src).toContain("t2");
+    events.onStreamRequest.mockClear();
+
+    engine.updateQueue([], ["t2"]);
+
+    expect(created[1]!.src).toContain("t2");
+    expect(events.onStreamRequest).not.toHaveBeenCalled();
   });
 
   it("is a no-op with nothing loaded", () => {

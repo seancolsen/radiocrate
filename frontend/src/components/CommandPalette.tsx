@@ -111,6 +111,7 @@ function PaletteDialog(): JSX.Element {
       selectPageTab(s, s.activeTabId)?.kind === "playlist",
   );
   const trackLoaded = useApp((s) => s.currentTrack !== null);
+  const tracksQueued = useApp((s) => s.queuedTracks.length > 0);
   const recordFormFocused = useForms((s) => selectFocusedForm(s) !== undefined);
   const recordFormModified = useForms(
     (s) =>
@@ -128,6 +129,7 @@ function PaletteDialog(): JSX.Element {
         playlistActive && resultsAvailable && !recordFormFocused,
       resultsAvailable,
       trackLoaded,
+      tracksQueued,
       recordFormFocused,
       recordFormModified,
       recordAutocompleteAvailable,
@@ -139,6 +141,7 @@ function PaletteDialog(): JSX.Element {
       playlistActive,
       resultsAvailable,
       trackLoaded,
+      tracksQueued,
       recordFormFocused,
       recordFormModified,
       recordAutocompleteAvailable,
