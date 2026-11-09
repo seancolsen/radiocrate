@@ -367,7 +367,7 @@ describe("commands store", () => {
 
       press("KeyA", { key: "a", ctrlKey: true });
       expect(selectAll).toHaveBeenCalledWith("t");
-      expect(app.store.getState().pages["t"]?.selection).toEqual(
+      expect(app.store.getState().pages["t"]?.selection?.rows).toEqual(
         new Set([0, 1]),
       );
     });

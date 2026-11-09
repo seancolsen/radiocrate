@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import * as arrow from "apache-arrow";
 import { castDraft } from "immer";
 import { buildResultFromStringRows } from "../../query/result";
+import { singleRow, someRows } from "./rowSelection";
 import { emptyPage } from "./state";
 import { createAppVanillaStore } from "./vanillaStore";
 import { fakeEnv } from "./testEnv";
 
 // Pins down Immer's behavior around the two state shapes every action relies
 // on it handling: a class-instance result that is patched in place, and
-// selection `Set`s that are replaced wholesale.
+// selections (holding a `Set`) that are replaced wholesale.
 
 describe("Immer compatibility", () => {
   it("holds a QueryResult by reference, undrafted and unfrozen", () => {
@@ -37,27 +38,27 @@ describe("Immer compatibility", () => {
     expect(result.value(0, 0)).toBe("patched");
   });
 
-  it("treats a selection Set as opaque: replaced wholesale, never mutated through a draft", () => {
+  it("treats a selection's Set as opaque: replaced wholesale, never mutated through a draft", () => {
     const store = createAppVanillaStore(fakeEnv());
-    const first = new Set([1, 2, 3]);
+    const first = someRows([1, 2, 3])!;
 
     store.setState((s) => {
       s.pages["t1"] = castDraft({ ...emptyPage(), selection: first });
     });
     expect(store.getState().pages["t1"]?.selection).toBe(first);
-    expect([...(store.getState().pages["t1"]?.selection ?? [])]).toEqual([
+    expect([...(store.getState().pages["t1"]?.selection?.rows ?? [])]).toEqual([
       1, 2, 3,
     ]);
 
     // No `enableMapSet()` is called anywhere in the store (see the doc comment
-    // on `QueryPageState.selection`) — writes always swap in a fresh `Set`
-    // rather than mutating the stored one, exactly like every other action in
+    // on `RowSelection`) — writes always swap in a fresh selection rather than
+    // mutating the stored one, exactly like every other action in
     // `actions.ts` (`clickRow`, `moveRowSelection`, …).
-    const second = new Set([4]);
+    const second = singleRow(4);
     store.setState((s) => {
-      s.pages["t1"].selection = second;
+      s.pages["t1"].selection = castDraft(second);
     });
     expect(store.getState().pages["t1"]?.selection).toBe(second);
-    expect(first.has(1)).toBe(true); // the old Set is untouched, just orphaned
+    expect(first.rows.has(1)).toBe(true); // the old one is untouched, just orphaned
   });
 });

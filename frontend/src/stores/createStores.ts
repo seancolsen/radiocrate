@@ -138,7 +138,8 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   // itself: the editor target lives in the same page object, so watching the
   // object would re-fire on the resync's own write.
   const unsubscribeResync = app.store.subscribe(
-    (s) => Object.values(s.pages).flatMap((p) => [p.selection, p.lineage]),
+    (s) =>
+      Object.values(s.pages).flatMap((p) => [p.selection?.rows, p.lineage]),
     () => {
       app.actions.resyncRecordEditors();
     },

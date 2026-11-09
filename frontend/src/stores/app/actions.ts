@@ -264,6 +264,14 @@ import {
   type RenamePlace,
   type ThemePref,
 } from "./state";
+import {
+  allRows,
+  clickedSelection,
+  singleRow,
+  someRows,
+  steppedSelection,
+  trimmedSelection,
+} from "./rowSelection";
 import type { AppVanillaStore } from "./vanillaStore";
 
 /** The tracks in `s` picked from rows of tab `tabId`: the playing track,
@@ -1088,16 +1096,6 @@ export function createAppActions(
   // Tabs that have been auto-run once (the "have I run this tab yet" guard).
   const autoRun = new Set<string>();
 
-  // Per-tab selection anchor: the fixed end a Shift-click range grows from (and
-  // that a plain/Ctrl click re-plants). Non-reactive — only the resulting
-  // page `selection` set drives the paint.
-  const rowClickAnchor = new Map<string, number>();
-
-  // Per-tab selection lead: the moving end — the row an arrow-key step counts
-  // from. Split from the anchor so Shift+Arrow after a Shift+click keeps
-  // growing the same range.
-  const rowSelectionLead = new Map<string, number>();
-
   // Monotonic per-tab run token, so a slow lineage analysis (WASM load) from a
   // superseded run can't clobber a newer run's track-id mapping.
   const runTokens = new Map<string, number>();
@@ -1333,20 +1331,19 @@ export function createAppActions(
     refresh = false,
   ) => {
     // What a refresh has to do about rows the re-run came back too short for,
-    // worked out here rather than inside the producer below: a selection is a
-    // `Set`, and *reading* one through a draft is what would ask Immer for the
-    // MapSet plugin this store deliberately does without (see the state's
-    // "treated as opaque by Immer" note). `undefined` means "leave it as it
-    // is" — including leaving the reference alone, so the record editor's
-    // resync doesn't wake up for a refresh that moved nothing.
-    let trimmed: Set<number> | undefined;
-    const selected = get().pages[tabId]?.selection ?? EMPTY_SELECTION;
-    if (refresh) {
-      const rows = [...selected];
-      const kept = rows.filter((row) => row < result.rowCount);
-      if (kept.length !== rows.length) trimmed = new Set(kept);
-    }
-    if (selected.size !== 0 && (!refresh || trimmed?.size === 0)) {
+    // worked out here rather than inside the producer below: a selection holds
+    // a `Set`, and *reading* one through a draft is what would ask Immer for
+    // the MapSet plugin this store deliberately does without (see
+    // `RowSelection`). `trimmed` is `selected` itself when nothing changes,
+    // which leaves the reference alone so the record editor's resync doesn't
+    // wake up for a refresh that moved nothing, and `undefined` when nothing
+    // selected is left.
+    const selected = get().pages[tabId]?.selection;
+    const trimmed =
+      refresh && selected
+        ? trimmedSelection(selected, result.rowCount)
+        : undefined;
+    if (selected?.rows.size && trimmed === undefined) {
       sweptSelections.add(tabId);
     }
     set((s) => {
@@ -1363,8 +1360,8 @@ export function createAppActions(
       if (refresh) {
         // Same query, same rows: everything pinned to a row index still means
         // what it meant, so nothing else here is touched.
-        if (trimmed !== undefined) {
-          if (trimmed.size !== 0) page.selection = trimmed;
+        if (trimmed !== selected) {
+          if (trimmed) page.selection = castDraft(trimmed);
           else {
             // Nothing selected is left: multi-select mode goes with it, rather
             // than leaving a toolbar counting rows that are gone.
@@ -1388,11 +1385,6 @@ export function createAppActions(
       // `analyzeLineage`).
       for (const track of tracksFrom(s, tabId)) track.rowIndex = null;
     });
-    // The anchor and the lead are row indexes too, so a refresh keeps them —
-    // unless it left nothing selected for them to grow from.
-    if (refresh && trimmed?.size !== 0) return;
-    rowClickAnchor.delete(tabId);
-    rowSelectionLead.delete(tabId);
   };
 
   /** Off the critical path: traces the compiled SQL's output columns back to
@@ -2053,8 +2045,6 @@ export function createAppActions(
     autoRun.delete(id);
     cancelScheduledRun(id);
     cancelSettle(id);
-    rowClickAnchor.delete(id);
-    rowSelectionLead.delete(id);
     runTokens.delete(id);
     lastRunSql.delete(id);
     rearranged.delete(id);
@@ -2637,7 +2627,7 @@ export function createAppActions(
   const resyncRecordEditors = () => {
     const s = get();
     for (const [tabId, page] of Object.entries(s.pages)) {
-      const selection = page.selection ?? EMPTY_SELECTION;
+      const selection = page.selection?.rows ?? EMPTY_SELECTION;
       // Selecting rows again ends the sweep: emptying *this* selection is the
       // user's doing.
       if (selection.size !== 0) sweptSelections.delete(tabId);
@@ -2899,21 +2889,15 @@ export function createAppActions(
    * shift-clicking the last would (they needn't be contiguous). With none,
    * nothing is selected, and multi-select mode ends with the selection. */
   const selectRows = (tabId: string, rows: readonly number[]) => {
+    const next = someRows(rows);
     set((s) => {
       const page = pageDraft(s, tabId);
-      if (rows.length > 0) page.selection = new Set(rows);
+      if (next) page.selection = castDraft(next);
       else {
         delete page.selection;
         page.multiSelect = false;
       }
     });
-    if (rows.length === 0) {
-      rowClickAnchor.delete(tabId);
-      rowSelectionLead.delete(tabId);
-      return;
-    }
-    rowClickAnchor.set(tabId, rows[0]);
-    rowSelectionLead.set(tabId, rows[rows.length - 1]);
   };
 
   /** Selects the rows of `result` (`tabId`'s) that list entries `ids`. */
@@ -3689,35 +3673,14 @@ export function createAppActions(
       }),
     clickRow: (tabId, index, mods) => {
       const page = get().pages[tabId];
-      const prev = page?.selection;
-      // Multi-select mode gives a plain click the Ctrl click's meaning, which
-      // is the whole point of it: a touch device has no Ctrl to hold.
-      const toggle = mods.ctrl || (page?.multiSelect ?? false);
-      let next: Set<number>;
-      if (mods.shift) {
-        // Grow a range from the anchor (or this row, with nothing anchored yet).
-        const anchor = rowClickAnchor.get(tabId) ?? index;
-        const lo = Math.min(anchor, index);
-        const hi = Math.max(anchor, index);
-        next = new Set<number>();
-        for (let i = lo; i <= hi; i++) next.add(i);
-        rowClickAnchor.set(tabId, anchor);
-      } else if (toggle) {
-        // Toggle this row in/out of the existing selection.
-        next = new Set(prev);
-        if (next.has(index)) next.delete(index);
-        else next.add(index);
-        rowClickAnchor.set(tabId, index);
-      } else {
-        // Plain click: this row alone.
-        next = new Set<number>([index]);
-        rowClickAnchor.set(tabId, index);
-      }
-      // Whichever branch ran, the clicked row is where a following arrow-key
-      // step counts from.
-      rowSelectionLead.set(tabId, index);
+      const next = clickedSelection(page?.selection, index, {
+        shift: mods.shift,
+        // Multi-select mode gives a plain click the Ctrl click's meaning,
+        // which is the whole point of it: a touch device has no Ctrl to hold.
+        toggle: mods.ctrl || (page?.multiSelect ?? false),
+      });
       set((s) => {
-        pageDraft(s, tabId).selection = next;
+        pageDraft(s, tabId).selection = castDraft(next);
       });
     },
     doubleClickRow: (tabId, index) => {
@@ -3736,50 +3699,25 @@ export function createAppActions(
       }
     },
     moveRowSelection: (tabId, forward, extend) => {
-      const len = get().pages[tabId]?.result?.rowCount ?? 0;
-      if (len === 0) return;
-      const last = len - 1;
-      // Step from the current lead (or the anchor); with nothing selected yet,
-      // an initial Down selects the first row and Up the last.
-      const cur = rowSelectionLead.get(tabId) ?? rowClickAnchor.get(tabId);
-      const target =
-        cur === undefined
-          ? forward
-            ? 0
-            : last
-          : forward
-            ? Math.min(cur + 1, last)
-            : Math.max(cur - 1, 0);
-
-      let next: Set<number>;
-      if (extend) {
-        const anchor = rowClickAnchor.get(tabId) ?? target;
-        rowClickAnchor.set(tabId, anchor);
-        const lo = Math.min(anchor, target);
-        const hi = Math.max(anchor, target);
-        next = new Set<number>();
-        for (let i = lo; i <= hi; i++) next.add(i);
-      } else {
-        next = new Set<number>([target]);
-        rowClickAnchor.set(tabId, target);
-      }
-      rowSelectionLead.set(tabId, target);
+      const page = get().pages[tabId];
+      const next = steppedSelection(
+        page?.selection,
+        page?.result?.rowCount ?? 0,
+        forward,
+        extend,
+      );
+      if (!next) return;
       set((s) => {
-        pageDraft(s, tabId).selection = next;
-        s.rowReveal = { tabId, row: target, seq: ++revealSeq };
+        pageDraft(s, tabId).selection = castDraft(next);
+        s.rowReveal = { tabId, row: next.lead, seq: ++revealSeq };
       });
     },
 
     selectAllRows: (tabId) => {
-      const len = get().pages[tabId]?.result?.rowCount ?? 0;
-      if (len === 0) return;
-      const next = new Set<number>();
-      for (let i = 0; i < len; i++) next.add(i);
-      // Arrow keys and Shift-extension count from the ends of the span.
-      rowClickAnchor.set(tabId, 0);
-      rowSelectionLead.set(tabId, len - 1);
+      const next = allRows(get().pages[tabId]?.result?.rowCount ?? 0);
+      if (!next) return;
       set((s) => {
-        pageDraft(s, tabId).selection = next;
+        pageDraft(s, tabId).selection = castDraft(next);
       });
     },
 
@@ -3932,10 +3870,13 @@ export function createAppActions(
       ) {
         return;
       }
+      const row = ct.rowIndex;
       set((s) => {
         s.activeTabId = source;
-        pageDraft(s, source).selection = new Set([ct.rowIndex!]);
-        s.rowReveal = { tabId: source, row: ct.rowIndex!, seq: ++revealSeq };
+        // The playing row alone, anchored there like a click on it, so the
+        // arrow keys step on from it.
+        pageDraft(s, source).selection = castDraft(singleRow(row));
+        s.rowReveal = { tabId: source, row, seq: ++revealSeq };
       });
     },
     rateSelectedTracksMostCommon: (tabId) => {

@@ -157,7 +157,7 @@ export const selectResultCount = (
 export const selectRowSelection = (
   s: AppState,
   tabId: string,
-): ReadonlySet<number> => s.pages[tabId]?.selection ?? EMPTY_SELECTION;
+): ReadonlySet<number> => s.pages[tabId]?.selection?.rows ?? EMPTY_SELECTION;
 
 /** The rows and columns the open "Export results data" dialog would write out,
  * as tab-separated text — `undefined` while it's closed or its page has no
@@ -761,7 +761,7 @@ export function selectRowForRecord(
 ): number | undefined {
   const identifies = (row: number) =>
     selectRowRecords(s, tabId, row).some((r) => sameRecord(r, record));
-  for (const row of s.pages[tabId]?.selection ?? []) {
+  for (const row of selectRowSelection(s, tabId)) {
     if (identifies(row)) return row;
   }
   const limit = Math.min(s.pages[tabId]?.result?.rowCount ?? 0, 1000);

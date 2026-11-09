@@ -362,7 +362,7 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 3, { shift: true, ctrl: false });
     expect(
-      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort(),
     ).toEqual([1, 2, 3]);
   });
 
@@ -371,7 +371,7 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 4, { shift: true, ctrl: false });
     expect(
-      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort(),
     ).toEqual([3, 4]);
   });
 
@@ -379,16 +379,16 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.moveRowSelection("a", true, true); // Shift+Down from row 1
     expect(
-      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort(),
     ).toEqual([1, 2]);
   });
 
   it("moves the lead without extending on a plain arrow key", () => {
     bundle.actions.clickRow("a", 2, { shift: false, ctrl: false });
     bundle.actions.moveRowSelection("a", false, false); // Up, no shift
-    expect([...(bundle.store.getState().pages["a"]?.selection ?? [])]).toEqual([
-      1,
-    ]);
+    expect([
+      ...(bundle.store.getState().pages["a"]?.selection?.rows ?? []),
+    ]).toEqual([1]);
   });
 
   it("toggles rows on a plain click in multi-select mode", () => {
@@ -398,7 +398,7 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
     expect(
-      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort(),
     ).toEqual([1, 4]);
   });
 
@@ -407,8 +407,29 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.clickRow("a", 3, { shift: true, ctrl: false });
     expect(
-      [...(bundle.store.getState().pages["a"]?.selection ?? [])].sort(),
+      [...(bundle.store.getState().pages["a"]?.selection?.rows ?? [])].sort(),
     ).toEqual([1, 2, 3]);
+  });
+
+  it("steps the arrow keys on from the row Locate selected", () => {
+    const rows = () => [
+      ...(bundle.store.getState().pages["a"]?.selection?.rows ?? []),
+    ];
+    bundle.actions.seedNowPlaying(
+      { sourceTabId: "a", id: "t1", rowIndex: 1, title: null, artists: [] },
+      { playing: true, position: 0, duration: null, hasNext: false },
+    );
+    bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
+
+    bundle.actions.locateCurrentTrack();
+    expect(rows()).toEqual([1]);
+    bundle.actions.moveRowSelection("a", false, false); // Up
+    expect(rows()).toEqual([0]);
+
+    bundle.actions.clickRow("a", 3, { shift: false, ctrl: false });
+    bundle.actions.locateCurrentTrack();
+    bundle.actions.moveRowSelection("a", true, true); // Shift+Down
+    expect(rows().sort()).toEqual([1, 2]);
   });
 
   it("keeps the selection when multi-select mode is turned off", () => {
@@ -418,12 +439,12 @@ describe("clickRow / moveRowSelection", () => {
     bundle.actions.setMultiSelect("a", false);
     const s = bundle.store.getState();
     expect(s.pages["a"]?.multiSelect).toBe(false);
-    expect([...(s.pages["a"]?.selection ?? [])].sort()).toEqual([1, 2]);
+    expect([...(s.pages["a"]?.selection?.rows ?? [])].sort()).toEqual([1, 2]);
     // …and a plain click replaces the selection again.
     bundle.actions.clickRow("a", 4, { shift: false, ctrl: false });
-    expect([...(bundle.store.getState().pages["a"]?.selection ?? [])]).toEqual([
-      4,
-    ]);
+    expect([
+      ...(bundle.store.getState().pages["a"]?.selection?.rows ?? []),
+    ]).toEqual([4]);
   });
 });
 
@@ -2171,7 +2192,7 @@ describe("a refresh", () => {
 
     const page = bundle.store.getState().pages["a"];
     expect(page?.resultIsRefresh).toBe(true);
-    expect([...(page?.selection ?? [])]).toEqual([1]);
+    expect([...(page?.selection?.rows ?? [])]).toEqual([1]);
     expect(page?.multiSelect).toBe(true);
     expect(page?.scrollOffset).toBe(420);
     expect(page?.recordEditor?.records).toEqual([
@@ -2249,7 +2270,7 @@ describe("a refresh", () => {
 
     const page = bundle.store.getState().pages["a"];
     expect(page?.resultIsRefresh).toBe(true);
-    expect([...(page?.selection ?? [])]).toEqual([0, 1]);
+    expect([...(page?.selection?.rows ?? [])]).toEqual([0, 1]);
   });
 });
 
@@ -3524,7 +3545,7 @@ describe("removing tracks and committing conditions", () => {
       expect(sent()).toEqual([["delete:e2", "delete:e4"]]);
       // Nothing followed e4, so the row before it that stays (e3) is
       // selected, where it is now.
-      expect(page()?.selection).toEqual(new Set([1]));
+      expect(page()?.selection?.rows).toEqual(new Set([1]));
 
       bundle.actions.undo(SOURCE);
       await settled();
@@ -3548,7 +3569,7 @@ describe("removing tracks and committing conditions", () => {
       await settled();
       expect(sent()).toEqual([["delete:e1", "delete:e2"]]);
       // e3, now the first row.
-      expect(page()?.selection).toEqual(new Set([0]));
+      expect(page()?.selection?.rows).toEqual(new Set([0]));
       expect(page()?.scrollOffset).toBe(40);
     });
 
@@ -3997,7 +4018,7 @@ describe("dragging result rows", () => {
 
   const drag = () => bundle.store.getState().rowDrag;
   const selection = (tabId: string) =>
-    [...(bundle.store.getState().pages[tabId]?.selection ?? [])].sort();
+    [...(bundle.store.getState().pages[tabId]?.selection?.rows ?? [])].sort();
 
   /** A query tab "q" whose four rows hold tracks t1…t4. */
   function openTracks() {
@@ -4166,7 +4187,8 @@ describe("rearranging a playlist's rows", () => {
       (_, row) => rowEntry(result, row)?.id,
     );
   };
-  const selection = () => [...(page()?.selection ?? [])].sort((a, b) => a - b);
+  const selection = () =>
+    [...(page()?.selection?.rows ?? [])].sort((a, b) => a - b);
   /** Each `dml` request's operations, as `id=position` updates. */
   const sent = () =>
     vi
@@ -5011,7 +5033,7 @@ describe("the play queue", () => {
     // Queued: the whole selection leaves the queue.
     bundle.actions.toggleQueuedRow("a", 0);
     expect(queued()).toEqual(["a5"]);
-    expect([...(state().pages["a"]?.selection ?? [])]).toEqual([0, 1, 2]);
+    expect([...(state().pages["a"]?.selection?.rows ?? [])]).toEqual([0, 1, 2]);
   });
 
   it("takes a queued track off the queue when it's played", () => {

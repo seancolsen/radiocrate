@@ -30,6 +30,7 @@ import {
   storedTheme,
 } from "./persistence";
 import type { ThemePref } from "./theme";
+import type { RowSelection } from "./rowSelection";
 
 export type { ThemePref };
 export type { AudioQualityPref };
@@ -400,12 +401,13 @@ export interface QueryPageState {
    * is on screen (the grid owns the offset there), and a new result set puts
    * it back to the top. */
   scrollOffset: number;
-  /** The result-row selection: a set of row indexes (absent = none). Replaced
-   * wholesale on every change so subscribers observe a new reference; cleared
-   * when the result changes. Treated as opaque by Immer: a `Set` is always
-   * swapped in whole, never mutated through a draft, so no `enableMapSet()`
-   * plugin is needed. */
-  selection?: ReadonlySet<number>;
+  /** The result-row selection (absent = none): the selected rows together
+   * with the anchor and lead that Shift+click and the arrow keys work from.
+   * Written whole, from one of the transitions in `rowSelection.ts`, so
+   * subscribers observe a new reference. Cleared when the result changes.
+   * Its `rows` `Set` is never mutated or read through a draft, so no
+   * `enableMapSet()` plugin is needed. */
+  selection?: RowSelection;
   /** Whether the results pane is in multi-select mode: the floating
    * multi-select toolbar is up, and a plain click toggles a row in or out of
    * the selection rather than replacing it (what a touch device has instead of
