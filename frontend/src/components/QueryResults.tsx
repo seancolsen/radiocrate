@@ -277,6 +277,24 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
       if (!keep) clickRow(tabId, index, { shift: false, ctrl: false });
     };
 
+    // Opens the row menu at viewport point (x, y), for row `index` and
+    // whatever else of the selection a gesture there means (see `aimAtRow`).
+    const raiseMenu = (index: number, x: number, y: number) => {
+      // The menu acts on the selection.
+      aimAtRow(index);
+      const multiMode = selectMultiSelect(store.getState(), tabId);
+      const rows = [...selectRowSelection(store.getState(), tabId)];
+      const groups = selectRecordGroupsForRows(store.getState(), tabId, rows);
+      // Nothing editable in the targeted rows leaves the menu with only
+      // "Select multiple" — and nothing at all once that mode is already on.
+      if (groups.length === 0 && multiMode) return;
+      // The rating vocabulary is fetched the first time a menu that offers it
+      // is raised, which is here — an event handler, so no effect has to
+      // chase the menu's open state.
+      if (groups.some((group) => group.table === "track")) loadRatings();
+      setRowMenu({ x, y, rows, groups });
+    };
+
     grid.setInteraction({
       // Alt+click queues the row's track (or takes it out of the queue),
       // leaving the selection as it is.
@@ -285,20 +303,18 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         else clickRow(tabId, index, mods);
       },
       onRowDoubleClick: (index) => doubleClickRow(tabId, index),
-      onRowContextMenu: (index, x, y) => {
-        // The menu acts on the selection.
-        aimAtRow(index);
-        const multiMode = selectMultiSelect(store.getState(), tabId);
-        const rows = [...selectRowSelection(store.getState(), tabId)];
-        const groups = selectRecordGroupsForRows(store.getState(), tabId, rows);
-        // Nothing editable in the targeted rows leaves the menu with only
-        // "Select multiple" — and nothing at all once that mode is already on.
-        if (groups.length === 0 && multiMode) return;
-        // The rating vocabulary is fetched the first time a menu that offers it
-        // is raised, which is here — an event handler, so no effect has to
-        // chase the menu's open state.
-        if (groups.some((group) => group.table === "track")) loadRatings();
-        setRowMenu({ x, y, rows, groups });
+      onRowContextMenu: raiseMenu,
+      // From the keyboard, the menu is for the selection, and hangs from its
+      // lead row (the one the arrow keys last moved to), brought into view.
+      onKeyboardContextMenu: () => {
+        const selection = store.getState().pages[tabId]?.selection;
+        if (!selection) return;
+        const row = selection.rows.has(selection.lead)
+          ? selection.lead
+          : Math.min(...selection.rows);
+        grid.revealRow(row);
+        const point = grid.rowMenuPoint(row);
+        if (point) raiseMenu(row, point.x, point.y);
       },
       onRowDragStart: (index, x, y) => {
         dragPoint.current = { x, y };
@@ -524,11 +540,15 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
 
   return (
     <div className="bg-panel relative min-h-0 flex-1 overflow-hidden">
+      {/* Focusable (by a click, not Tab), so the Menu key has the rows to
+          raise their menu over. */}
       <canvas
         ref={canvasRef}
-        className={cx("block h-full w-full touch-none transition-opacity", {
-          "opacity-50": stale,
-        })}
+        tabIndex={-1}
+        className={cx(
+          "block h-full w-full touch-none transition-opacity outline-none",
+          { "opacity-50": stale },
+        )}
       />
       {multiSelect && (
         <MultiSelectToolbar ref={toolbarRef} tabId={props.tabId} />

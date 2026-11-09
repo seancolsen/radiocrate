@@ -32,6 +32,7 @@ export function ContextMenu(props: {
    * palette 110 — so a menu opened *within* a dialog needs 120. */
   z?: number;
 }): JSX.Element {
+  const { onClose } = props;
   const menuRef = useRef<HTMLDivElement>(null);
   const menu = useMenuRoot(
     () => menuRef.current,
@@ -46,11 +47,19 @@ export function ContextMenu(props: {
   );
 
   useEffect(() => {
-    // A resize (or an on-screen keyboard) moves the content out from under the
-    // anchor; dismiss rather than leave the menu pointing at nothing.
-    window.addEventListener("resize", props.onClose);
-    return () => window.removeEventListener("resize", props.onClose);
-  }, [props.onClose]);
+    // A resize that narrows or widens the window (or turns a phone) moves the
+    // content out from under the anchor; dismiss rather than leave the menu
+    // pointing at nothing. One that only changes the height doesn't, and is
+    // mostly an on-screen keyboard coming or going — which a menu raised while
+    // a text field has focus sets off itself, as it takes the focus (or as a
+    // touch-and-hold lets go of it). Placement keeps the menu on screen.
+    const width = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth !== width) onClose();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [onClose]);
 
   return createPortal(
     <div

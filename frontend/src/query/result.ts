@@ -159,6 +159,31 @@ export class QueryResult {
     return next;
   }
 
+  /** The same rows, shown as `metas` says: what an edit that changed only a
+   * query's annotations (a column's width, its formatter) comes to, with no
+   * need to fetch the rows again. `metas` is every column's, positionally, as
+   * {@link buildResultFromArrow} resolves them. Returns this result itself when
+   * nothing would look any different. A reordered view stays reordered, and a
+   * re-read row keeps its patch. */
+  withMetadata(metas: readonly ColumnMetadata[]): QueryResult {
+    const same = this.columns.every(
+      (c, i) =>
+        metas[i] !== undefined &&
+        JSON.stringify(c.meta) === JSON.stringify(metas[i]),
+    );
+    if (same) return this;
+    const next = new QueryResult(
+      this.table,
+      this.columns.map((c, i) => ({
+        ...c,
+        meta: metas[i] ?? defaultColumnMetadata(),
+      })),
+      this.rowMap,
+    );
+    for (const [row, patch] of this.patches) next.patches.set(row, patch);
+    return next;
+  }
+
   /** The table row display row `row` reads. */
   private tableRow(row: number): number {
     return this.rowMap ? this.rowMap[row] : row;
@@ -233,6 +258,20 @@ export function buildResultFromArrow(
   return buildResult(
     table,
     table.schema.fields.map((_, i) =>
+      columnMetadataFromAnnotation(annotations[i] ?? null),
+    ),
+  );
+}
+
+/** `result` shown as `annotations` says, over the rows it already holds — see
+ * {@link QueryResult.withMetadata}. For annotations compiled with the SQL
+ * those rows came from: the columns are matched up by position. */
+export function reannotateResult(
+  result: QueryResult,
+  annotations: readonly (AnnotationValue | null)[],
+): QueryResult {
+  return result.withMetadata(
+    result.columns.map((_, i) =>
       columnMetadataFromAnnotation(annotations[i] ?? null),
     ),
   );

@@ -411,14 +411,20 @@ test.describe("what a touch is otherwise", () => {
     const grid = await openGrid(page, SEEDED, 200);
     const canvas = page.locator("canvas[data-rows]");
     const before = await canvas.screenshot();
+    await expect(canvas).toHaveAttribute("data-thumb", "hidden");
     await touch(grid, "touchStart", 400, 90);
     for (const y of [80, 70, 60, 50, 40]) {
       await touch(grid, "touchMove", 400, y);
     }
+    // The scrollbar shows as the rows move, and goes once they've stopped.
+    await expect(canvas).toHaveAttribute("data-thumb", "shown");
     await page.waitForTimeout(150);
     await touch(grid, "touchEnd");
     await page.waitForTimeout(100);
     expect(Buffer.compare(before, await canvas.screenshot())).not.toBe(0);
+    await expect(canvas).toHaveAttribute("data-thumb", "hidden", {
+      timeout: 3000,
+    });
     expect(await editor(page)).toBeNull();
     expect(grid.counts.queries).toBe(0);
   });
@@ -437,5 +443,25 @@ test.describe("what a touch is otherwise", () => {
     await page.waitForTimeout(600);
     await touch(grid, "touchEnd");
     await expect(page.getByRole("menu")).toBeVisible();
+  });
+
+  // Held while a text field has focus, the menu takes it from the field, and
+  // an on-screen keyboard goes (or, as Android does after a long press, comes
+  // back): the window changes height under the menu, which stays.
+  test("the menu outlasts an on-screen keyboard", async ({ page }) => {
+    const grid = await openGrid(page);
+    await touch(grid, "touchStart", 400, rowY(1));
+    await page.waitForTimeout(600);
+    await touch(grid, "touchEnd");
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await page.waitForTimeout(100);
+    await expect(menu).toBeVisible();
+
+    // A turned phone (or a narrowed window) does move the rows from under it.
+    await page.setViewportSize({ width: 900, height: 500 });
+    await expect(menu).toBeHidden();
   });
 });

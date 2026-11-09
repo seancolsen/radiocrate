@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as arrow from "apache-arrow";
 import type { AnnotationValue } from "querydown-js";
-import { buildResultFromArrow } from "./result";
+import { buildResultFromArrow, reannotateResult } from "./result";
 
 // Guards the full decode path against the two real-backend regressions: (1)
 // annotations arriving as JS `Map`s (serde-wasm-bindgen), and (2) DuckDB list
@@ -239,6 +239,52 @@ describe("QueryResult.reordered", () => {
     expect(() => result.reordered([0, 1])).toThrow();
     expect(() => result.reordered([0, 0, 1])).toThrow();
     expect(() => result.reordered([0, 1, 3])).toThrow();
+  });
+});
+
+describe("reannotateResult", () => {
+  const table = new arrow.Table({
+    id: arrow.vectorFromArray(["t1", "t2", "t3"], new arrow.Utf8()),
+    title: arrow.vectorFromArray(["Pray You Catch Me", "Hold Up", "Sorry"]),
+  });
+  const annotations: (AnnotationValue | null)[] = [
+    mapAnno([["hide", "yes"]]),
+    null,
+  ];
+
+  it("shows the same rows the new annotations' way", () => {
+    const result = buildResultFromArrow(table, annotations);
+    const next = reannotateResult(result, [null, mapAnno([["prefix", "♪ "]])]);
+    expect(next).not.toBe(result);
+    expect(next.visible.map((c) => c.index)).toEqual([0, 1]);
+    expect(next.text(2, next.visible[1])).toBe("♪ Sorry");
+    expect(result.visible.map((c) => c.index)).toEqual([1]);
+  });
+
+  it("keeps a reordering and a re-read row", () => {
+    const result = buildResultFromArrow(table, annotations);
+    result.patchRow(
+      1,
+      new arrow.Table({
+        id: arrow.vectorFromArray(["t2"], new arrow.Utf8()),
+        title: arrow.vectorFromArray(["Hold Up (refreshed)"]),
+      }),
+      0,
+    );
+    const next = reannotateResult(result.reordered([1, 2, 0]), [
+      mapAnno([["hide", "yes"]]),
+      mapAnno([["align", "right"]]),
+    ]);
+    expect(next.visible[0]?.meta.text_align).toBe("right");
+    expect(next.text(0, next.visible[0])).toBe("Hold Up (refreshed)");
+    expect(next.text(2, next.visible[0])).toBe("Pray You Catch Me");
+  });
+
+  it("is the result itself when nothing would look different", () => {
+    const result = buildResultFromArrow(table, annotations);
+    expect(reannotateResult(result, [mapAnno([["hide", "yes"]]), null])).toBe(
+      result,
+    );
   });
 });
 

@@ -183,7 +183,11 @@ import {
   trackIdColumn,
   type LineageMapping,
 } from "../../query/lineage";
-import { buildResultFromArrow, type QueryResult } from "../../query/result";
+import {
+  buildResultFromArrow,
+  reannotateResult,
+  type QueryResult,
+} from "../../query/result";
 import { runRowDml } from "../../query/rowDml";
 import {
   applyPlacements,
@@ -1108,6 +1112,12 @@ export function createAppActions(
   // renders from it.
   const lastRunSql = new Map<string, string>();
 
+  // The run whose rows each tab last put on screen (its `runTokens` token). A
+  // run's rows land only if no later run's have, so an edit's rows, kept and
+  // landed at once (see `runEdited`), aren't overwritten by an earlier run's
+  // fetch landing after them. Non-reactive.
+  const landedTokens = new Map<string, number>();
+
   // The entries to select once a playlist page's next run lands, which is the
   // reload after a write to its entries: the ones a rearrangement just moved
   // (see `rearrangeRows`), or the one after the rows a removal took (see
@@ -1164,7 +1174,7 @@ export function createAppActions(
       tabId,
       setTimeout(() => {
         runTimers.delete(tabId);
-        runQuery(tabId);
+        runEdited(tabId);
       }, RUN_DEBOUNCE_MS),
     );
   };
@@ -1511,7 +1521,17 @@ export function createAppActions(
     });
   };
 
-  const runQuery = (tabId: string) => {
+  /** Re-runs page `tabId`'s query, fetching its rows. */
+  const runQuery = (tabId: string) => runPage(tabId, false);
+
+  /** Re-runs page `tabId`'s query for an edit to its definition. An edit that
+   * compiles to the SQL the rows on screen came from asks for the same rows,
+   * so they're kept rather than fetched again, and only shown the way the
+   * edit's annotations now say (a column's width, its formatter). */
+  const runEdited = (tabId: string) => runPage(tabId, true);
+
+  /** {@link runQuery}, or with `reuseRows`, {@link runEdited}. */
+  const runPage = (tabId: string, reuseRows: boolean) => {
     const t = selectPageTab(get(), tabId);
     if (!t) return;
     // An immediate run supersedes any run this tab had pending on the debounce.
@@ -1542,13 +1562,35 @@ export function createAppActions(
         if (!current || schemaJson === undefined) return;
         compiled = current.live;
         const { sql, columnAnnotations } = compilePage(current, schemaJson);
+        const onScreen = get().pages[tabId]?.result;
+        if (reuseRows && onScreen && lastRunSql.get(tabId) === sql) {
+          // The same rows, as a refresh would bring them back: everything
+          // pinned to them (selection, scroll, lineage, the playing track's
+          // row) still stands. Rows that look no different aren't news.
+          const result = reannotateResult(onScreen, columnAnnotations);
+          landedTokens.set(tabId, token);
+          if (result !== onScreen) setTabResult(tabId, result, true);
+          set((s) => {
+            pageDraft(s, tabId).runFailed = false;
+          });
+          if (isLive(compiled)) showDiagnostic(tabId, null);
+          // The analysis of these rows may still have been under way, under
+          // the token this run has just superseded.
+          if (get().pages[tabId]?.lineage === undefined) {
+            void analyzeLineage(tabId, sql, result, token);
+          }
+          return;
+        }
         const table = await runSql(sql);
+        // A run begun after this one has already put its rows on screen
+        // (rows it kept, which land at once): these would be older news.
+        if ((landedTokens.get(tabId) ?? 0) > token) return;
         // Decode the result once, here — never per resize/frame (§6). Display
         // text is derived from it on read, not precomputed.
         const result = buildResultFromArrow(table, columnAnnotations);
         // A run that compiled to the SQL the rows on screen came from is a
-        // *refresh* — the Refresh button, a re-run after a settings change, a
-        // revert or preset edit that turned out to change nothing. The same
+        // *refresh* — the Refresh button, or a pull. (An edit that compiles to
+        // it keeps the rows instead, above.) The same
         // question asked again, so what the user built on the last answer
         // (selection, editor, scroll) survives it; see `setTabResult`.
         const page = get().pages[tabId];
@@ -1562,6 +1604,7 @@ export function createAppActions(
         const refresh =
           page?.result !== undefined && (sameSql || moved !== undefined);
         lastRunSql.set(tabId, sql);
+        landedTokens.set(tabId, token);
         setTabResult(tabId, result, refresh);
         if (moved) selectEntryRows(tabId, result, moved);
         set((s) => {
@@ -1583,6 +1626,7 @@ export function createAppActions(
         }
       } catch (err) {
         console.error("query run failed", err);
+        if ((landedTokens.get(tabId) ?? 0) > token) return;
         rearranged.delete(tabId);
         set((s) => {
           const page = s.pages[tabId];
@@ -1623,7 +1667,7 @@ export function createAppActions(
     if (run === "held") return;
     touch(tabId);
     if (run === "now") {
-      runQuery(tabId);
+      runEdited(tabId);
       return;
     }
     runAfterTyping(tabId);
@@ -2046,6 +2090,7 @@ export function createAppActions(
     cancelScheduledRun(id);
     cancelSettle(id);
     runTokens.delete(id);
+    landedTokens.delete(id);
     lastRunSql.delete(id);
     rearranged.delete(id);
     locateHints.delete(id);
@@ -4601,7 +4646,7 @@ export function createAppActions(
         if (idx !== -1) s.presets[idx] = castDraft(save.saved);
         delete s.presetSaves[id];
       });
-      for (const tabId of presetUserPages(id)) runQuery(tabId);
+      for (const tabId of presetUserPages(id)) runEdited(tabId);
     },
     addNewPreset: (tabId, section) => {
       const base = selectPageBase(get(), tabId);
@@ -4901,7 +4946,7 @@ export function createAppActions(
           (t.kind === "query" || t.kind === "playlist") &&
           !selectIsPristine(get(), t.id)
         ) {
-          runQuery(t.id);
+          runEdited(t.id);
         }
       }
     },

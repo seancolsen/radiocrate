@@ -495,14 +495,20 @@ for (const colorScheme of SCHEMES) {
   });
 
   // The same row on a scrolling grid: the ring runs the full width and the
-  // scrollbar thumb sits over it, so no cell content is clipped.
+  // scrollbar thumb sits over it, so no cell content is clipped. The thumb
+  // shows while the mouse is over the rows — here, over the thumb itself,
+  // where no row is hovered.
   test(`results/playing-row-scrollbar - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
       "results/playing-row-scrollbar",
       colorScheme,
     );
-    await expect(page.locator("canvas[data-rows]")).toBeVisible();
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toBeVisible();
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width - 6, box.y + 10);
+    await expect(canvas).toHaveAttribute("data-thumb", "shown");
     await expect(stage).toHaveScreenshot(
       snapshot("results/playing-row-scrollbar", colorScheme),
     );
@@ -846,4 +852,70 @@ test("a section toggle's tooltip stands in for its hidden label", async ({
   await expect(filter).toHaveAttribute("aria-keyshortcuts", "Control+Shift+F");
   await filter.hover();
   await expect(tooltip).toHaveText("FilterCtrl+Shift+F");
+});
+
+// The results' scrollbar comes and goes as the sidebars' does (see "the
+// scrollbar" in sidebars.spec.ts): there while the rows scroll or the mouse is
+// over them, and gone a second after both stop. What's drawn is canvas pixels,
+// so the grid says where its thumb is at in `data-thumb`.
+test.describe("the results' scrollbar", () => {
+  test.use({ hasTouch: false });
+
+  test("shows at once on a scroll, and stays while the mouse is over the rows", async ({
+    page,
+  }) => {
+    await openStory(page, "results/playing-row-scrollbar", "light");
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toHaveAttribute("data-thumb", "hidden");
+
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + 400, box.y + 20);
+    await page.mouse.wheel(0, 40);
+    // At full strength from the first frame, with no fade in.
+    await expect(canvas).toHaveAttribute("data-thumb", "shown", {
+      timeout: 100,
+    });
+    await page.waitForTimeout(1500);
+    await expect(canvas).toHaveAttribute("data-thumb", "shown");
+
+    await page.mouse.move(box.x + 400, box.y + box.height + 100);
+    await page.waitForTimeout(500);
+    await expect(canvas).toHaveAttribute("data-thumb", "shown");
+    await expect(canvas).toHaveAttribute("data-thumb", "hidden", {
+      timeout: 3000,
+    });
+  });
+
+  test("fades in under the mouse", async ({ page }) => {
+    await openStory(page, "results/playing-row-scrollbar", "light");
+    const canvas = page.locator("canvas[data-rows]");
+    await expect(canvas).toHaveAttribute("data-thumb", "hidden");
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + 400, box.y + 20);
+    await expect(canvas).toHaveAttribute("data-thumb", "shown");
+  });
+});
+
+// The Menu key raises the row menu for the selection, once a click has put
+// the keyboard on the rows.
+test("the Menu key raises a clicked row's menu", async ({ page }) => {
+  await openStory(page, "results/playing-row", "light");
+  const canvas = page.locator("canvas[data-rows]");
+  await expect(canvas).toBeVisible();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.click(box.x + 400, box.y + 18);
+  await expect(canvas).toBeFocused();
+  await page.keyboard.press("ContextMenu");
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  // Hung from the row's bottom-left corner, not wherever the browser put it.
+  const at = (await menu.boundingBox())!;
+  expect(Math.round(at.x - box.x)).toBeLessThan(40);
+  expect(Math.round(at.y - box.y)).toBeGreaterThanOrEqual(30);
+  expect(Math.round(at.y - box.y)).toBeLessThan(50);
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeVisible();
 });

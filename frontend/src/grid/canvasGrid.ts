@@ -127,12 +127,19 @@ const DROP_LINE_INSET = 4;
  * ALPHA = 90/255 in results.rs). */
 const SELECTED_SHEEN_ALPHA = 90 / 255;
 
-// Scrollbar (custom overlay, macOS-style).
+// Scrollbar (custom overlay, macOS-style). It comes and goes as the sidebars'
+// does: at full strength the moment the rows scroll, fading in while the mouse
+// is over them, and fading out a second after both have stopped.
 const SB_WIDTH = 8;
 const SB_MARGIN = 2;
 const SB_MIN_THUMB = 24;
 /** Extra horizontal slop around the thumb for an easier grab (logical px). */
 const SB_GRAB_SLOP = 8;
+/** How long (ms) the thumb stays once the rows stop scrolling, or the mouse
+ * leaves them — the sidebars' `ScrollArea` wait. */
+const SB_HIDE_AFTER_MS = 1000;
+/** How long (ms) the thumb takes to fade in or out (`ScrollArea`'s too). */
+const SB_FADE_MS = 200;
 
 // Touch inertia.
 /** Velocity below which the fling stops (logical px per ms). */
@@ -198,6 +205,10 @@ export interface GridInteraction {
   /** A row was right-clicked (or held still under a touch and let go), at the
    * given viewport coordinates — where the owner anchors its DOM menu. */
   onRowContextMenu: (index: number, x: number, y: number) => void;
+  /** The keyboard asked for a context menu (the Menu key, or Shift+F10) while
+   * the grid had focus: for whichever rows the owner has selected, since the
+   * keyboard points at none of them. See {@link CanvasGrid.rowMenuPoint}. */
+  onKeyboardContextMenu?: () => void;
   /** A press on row `index` would pick the rows up, at viewport point (x, y).
    * Returns whether the owner took them: `false` (or leaving this out) means
    * these rows don't drag, and the press stays a click — or, under a touch
@@ -302,6 +313,9 @@ export class CanvasGrid {
   private interaction: GridInteraction | undefined;
   /** While true the grid ignores every input (see `setFrozen`). */
   private frozen = false;
+  /** Whether the `contextmenu` to come is the keyboard's: the Menu key or
+   * Shift+F10 went down since the last press on the rows. */
+  private keyboardMenu = false;
   /** Where rows in hand would drop among these rows (see `setDropGap`). */
   private dropGap: number | null | undefined;
   /** Where the pointer dragging rows is, in viewport coordinates. */
@@ -359,6 +373,19 @@ export class CanvasGrid {
 
   // Last-drawn thumb geometry, for pointer hit-testing.
   private thumb: { y: number; h: number } | undefined;
+  /** How strongly the thumb is drawn, from 0 (gone) to 1. */
+  private thumbAlpha = 0;
+  /** Whether a mouse (or pen) is over the rows, which keeps the thumb. */
+  private mouseOver = false;
+  /** Until when (`performance.now()`) the thumb stays after the last scroll,
+   * or the mouse leaving. */
+  private thumbUntil = 0;
+  /** Wakes the frame loop to fade the thumb once {@link thumbUntil} passes. */
+  private thumbTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly reducedMotion: MediaQueryList | undefined =
+    typeof matchMedia === "function"
+      ? matchMedia("(prefers-reduced-motion: reduce)")
+      : undefined;
 
   /** The press on a row, which may pick the rows up (see `rowPress.ts`). */
   private readonly press = new RowPress({
@@ -413,6 +440,7 @@ export class CanvasGrid {
     canvas.addEventListener("click", this.onClick);
     canvas.addEventListener("dblclick", this.onDblClick);
     canvas.addEventListener("contextmenu", this.onContextMenu);
+    canvas.addEventListener("keydown", this.onKeyDown);
 
     // Re-paint once web fonts finish loading so text metrics (and thus ellipsis
     // truncation and pill widths) are measured against the real font.
@@ -448,8 +476,10 @@ export class CanvasGrid {
     c.removeEventListener("click", this.onClick);
     c.removeEventListener("dblclick", this.onDblClick);
     c.removeEventListener("contextmenu", this.onContextMenu);
+    c.removeEventListener("keydown", this.onKeyDown);
     // A drag under way when the grid goes (its tab hidden) drops nothing.
     this.press.cancel();
+    clearTimeout(this.thumbTimer);
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
   }
@@ -688,6 +718,22 @@ export class CanvasGrid {
     this.requestDraw();
   }
 
+  /** Where a menu for row `index` is raised from the keyboard, in viewport
+   * coordinates: just inside its bottom-left corner, as a menu for a focused
+   * control hangs from it. Call {@link revealRow} first, so the row is on
+   * screen. `undefined` when there's no such row. */
+  rowMenuPoint(index: number): { x: number; y: number } | undefined {
+    const layout = this.layout;
+    const count = this.result?.rowCount ?? 0;
+    if (!layout || index < 0 || index >= count) return undefined;
+    const rect = this.canvas.getBoundingClientRect();
+    const bottom = (index + 1) * layout.rowH - this.viewTop;
+    return {
+      x: rect.left + TEXT_PAD_X,
+      y: rect.top + Math.max(0, Math.min(this.vh, bottom)),
+    };
+  }
+
   /** Re-reads theme colors + font family from CSS and repaints (theme toggle). */
   refreshTheme(): void {
     this.theme = this.readTheme();
@@ -812,6 +858,7 @@ export class CanvasGrid {
     this.scrollTop = before + dy;
     this.clampScroll();
     this.dirty = true;
+    if (this.scrollTop !== before) this.showThumb();
     return (
       this.scrollTop === this.minScroll || this.scrollTop === this.maxScroll
     );
@@ -849,6 +896,7 @@ export class CanvasGrid {
   }
 
   private onPointerDown = (e: PointerEvent): void => {
+    this.keyboardMenu = false;
     if (this.frozen || this.gesture || this.press.pointerId !== undefined) {
       return;
     }
@@ -897,14 +945,22 @@ export class CanvasGrid {
       this.press.move(CanvasGrid.pressPoint(e));
     }
     const g = this.gesture;
+    // A mouse over the rows keeps the scrollbar (a finger, which can't hover,
+    // shows it by scrolling).
+    if (e.pointerType !== "touch" && !this.mouseOver) {
+      this.mouseOver = true;
+      this.requestDraw();
+    }
     // Not mid-gesture: a mouse move only updates the hovered row — unless the
     // rows are in hand, which leaves them as they were. (Touch has no hover; a
     // pan is handled below once its gesture is active.)
     if (!g) {
       if (e.pointerType === "mouse" && !this.press.dragging) {
-        const { y } = this.localPoint(e);
+        const { x, y } = this.localPoint(e);
         this.lastMouseY = y;
-        this.updateHover(y);
+        // Over the scrollbar's column, the pointer is at the thumb, not a row.
+        if (this.overScrollbar(x)) this.clearHover();
+        else this.updateHover(y);
       }
       return;
     }
@@ -934,6 +990,7 @@ export class CanvasGrid {
         range > 0
           ? this.minScroll + (thumbY / range) * this.scrollRange
           : this.minScroll;
+      this.showThumb();
       this.dirty = true;
       this.requestDraw();
       e.preventDefault();
@@ -1086,7 +1143,7 @@ export class CanvasGrid {
   };
 
   private hitThumb(x: number, y: number): boolean {
-    if (!this.thumb) return false;
+    if (!this.thumb || !this.thumbShown) return false;
     const left = this.vw - SB_MARGIN - SB_WIDTH - SB_GRAB_SLOP;
     return (
       x >= left &&
@@ -1098,11 +1155,18 @@ export class CanvasGrid {
 
   private onPointerLeave = (): void => {
     this.lastMouseY = undefined;
-    if (this.hoverRow !== undefined) {
-      this.hoverRow = undefined;
-      this.requestDraw();
+    this.clearHover();
+    if (this.mouseOver) {
+      this.mouseOver = false;
+      this.holdThumb();
     }
   };
+
+  private clearHover(): void {
+    if (this.hoverRow === undefined) return;
+    this.hoverRow = undefined;
+    this.requestDraw();
+  }
 
   // Clicks come through the native `click`/`dblclick` events (not the pointer
   // gesture handlers) so the browser handles click timing and double-click
@@ -1143,12 +1207,29 @@ export class CanvasGrid {
       e.preventDefault();
       return;
     }
+    // The keyboard's menu comes with a point on the canvas (where depends on
+    // the browser) that says nothing about which row it's for.
+    if (this.keyboardMenu) {
+      this.keyboardMenu = false;
+      e.preventDefault();
+      this.interaction?.onKeyboardContextMenu?.();
+      return;
+    }
     const p = this.mousePoint(e);
     if (this.overScrollbar(p.x)) return;
     const row = this.rowAt(p.y);
     if (row === undefined) return;
     e.preventDefault();
     this.interaction?.onRowContextMenu(row, e.clientX, e.clientY);
+  };
+
+  /** Notes the keys that raise a context menu, for the `contextmenu` they go
+   * on to produce — on their keydown or their keyup, depending on the
+   * platform. */
+  private onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      this.keyboardMenu = true;
+    }
   };
 
   private mousePoint(e: MouseEvent): { x: number; y: number } {
@@ -1159,8 +1240,74 @@ export class CanvasGrid {
   /** Whether local x falls in the custom scrollbar's grab column (only when a
    * scrollbar is actually shown). */
   private overScrollbar(x: number): boolean {
-    if (this.scrollRange <= 0) return false;
+    if (!this.thumbShown) return false;
     return x >= this.vw - SB_MARGIN - SB_WIDTH - SB_GRAB_SLOP;
+  }
+
+  /** Whether there's a thumb to grab: one is drawn, or is on its way in. A
+   * touch at the edge of rows whose thumb has faded is on the rows. */
+  private get thumbShown(): boolean {
+    return (
+      this.scrollRange > 0 &&
+      (this.thumbAlpha > 0 || this.thumbWanted(performance.now()))
+    );
+  }
+
+  /** Whether the thumb should be showing, `now`: while the mouse is over the
+   * rows, a finger or the thumb scrolls them, a fling carries them on, and for
+   * a while after any of that. */
+  private thumbWanted(now: number): boolean {
+    const kind = this.gesture?.kind;
+    return (
+      this.mouseOver ||
+      kind === "pan" ||
+      kind === "scrollbar" ||
+      this.flinging ||
+      now < this.thumbUntil
+    );
+  }
+
+  /** The rows scrolled: the thumb shows at full strength at once, rather than
+   * fading in behind the scroll it reports, and stays a while. */
+  private showThumb(): void {
+    this.thumbAlpha = 1;
+    this.holdThumb();
+  }
+
+  /** Keeps the thumb (whatever it's showing) for {@link SB_HIDE_AFTER_MS}
+   * from now, then lets it fade. */
+  private holdThumb(): void {
+    this.thumbUntil = performance.now() + SB_HIDE_AFTER_MS;
+    this.requestDraw();
+    if (this.thumbTimer !== undefined) return;
+    const wake = () => {
+      const left = this.thumbUntil - performance.now();
+      if (left > 0) {
+        this.thumbTimer = setTimeout(wake, left);
+        return;
+      }
+      this.thumbTimer = undefined;
+      this.requestDraw();
+    };
+    this.thumbTimer = setTimeout(wake, SB_HIDE_AFTER_MS);
+  }
+
+  /** One frame of the thumb fading toward where it should be. Returns whether
+   * there's more to come. */
+  private stepThumbFade(dt: number): boolean {
+    if (this.scrollRange <= 0) {
+      this.thumbAlpha = 0;
+      return false;
+    }
+    const target = this.thumbWanted(performance.now()) ? 1 : 0;
+    if (this.thumbAlpha === target) return false;
+    const step = this.reducedMotion?.matches ? 1 : dt / SB_FADE_MS;
+    this.thumbAlpha =
+      target > this.thumbAlpha
+        ? Math.min(target, this.thumbAlpha + step)
+        : Math.max(target, this.thumbAlpha - step);
+    this.dirty = true;
+    return this.thumbAlpha !== target;
   }
 
   /** The result row under local y (accounting for scroll), or undefined when past
@@ -1209,11 +1356,12 @@ export class CanvasGrid {
     if (this.flinging) this.stepFling(dt);
     const edgeScrolling = this.stepEdgeScroll();
     const settling = this.stepSettle(dt);
+    const fading = this.stepThumbFade(dt);
     if (this.dirty) {
       this.draw();
       this.dirty = false;
     }
-    if (this.flinging || edgeScrolling || settling) {
+    if (this.flinging || edgeScrolling || settling || fading) {
       this.raf = requestAnimationFrame(this.frame);
     } else {
       this.lastFrameT = 0;
@@ -1288,6 +1436,7 @@ export class CanvasGrid {
     const result = this.result;
     const layout = this.layout;
     if (!result || !layout || result.rowCount === 0) {
+      this.canvas.dataset.thumb = "none";
       this.drawEmpty();
       return;
     }
@@ -1317,12 +1466,14 @@ export class CanvasGrid {
       for (let k = 0; k < result.visible.length; k++) {
         this.drawCell(r, k, screenY);
       }
-      if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
       const queued = this.queuedRows.get(r);
       if (this.currentRow === r) this.drawCurrentMarker(screenY, rowH, false);
       else if (queued !== undefined) {
         this.drawCurrentMarker(screenY, rowH, true);
       }
+      // Over the ring, whose left edge it straddles: unsaved changes are the
+      // more urgent of the two to notice.
+      if (this.modifiedRows.has(r)) this.drawModifiedMarker(screenY, rowH);
       if (queued != null) this.drawQueueBadge(screenY, queued, r === 0);
       if (slide !== 0) ctx.restore();
     }
@@ -1472,20 +1623,32 @@ export class CanvasGrid {
     const w = this.vw - 2 * off;
     const h = rowH - 2 * off;
     if (w <= 0 || h <= 0) return;
+    const ring = () => {
+      roundRectPath(
+        ctx,
+        this.snap(off),
+        this.snap(screenY + off),
+        w,
+        h,
+        CURRENT_MARKER_RADIUS,
+      );
+      ctx.stroke();
+    };
     ctx.save();
-    this.clipOutThumb();
     ctx.strokeStyle = this.theme.currentMarker;
     ctx.lineWidth = CURRENT_MARKER_W;
     if (dashed) ctx.setLineDash(QUEUED_MARKER_DASH);
-    roundRectPath(
-      ctx,
-      this.snap(off),
-      this.snap(screenY + off),
-      w,
-      h,
-      CURRENT_MARKER_RADIUS,
-    );
-    ctx.stroke();
+    ctx.save();
+    this.clipThumb("out");
+    ring();
+    ctx.restore();
+    // Behind a thumb that's faded (or fading), the ring shows through as much
+    // as the thumb doesn't.
+    if (this.thumb && this.thumbAlpha < 1) {
+      this.clipThumb("in");
+      ctx.globalAlpha = 1 - this.thumbAlpha;
+      ring();
+    }
     ctx.restore();
   }
 
@@ -1544,20 +1707,21 @@ export class CanvasGrid {
     ctx.fill();
   }
 
-  /** Cuts the thumb's box out of the clip region, so what follows paints
-   * everywhere but behind the scrollbar. The cut is the thumb's *bounding* box,
-   * not its rounded pill: squaring it off keeps stray slivers of the clipped
-   * artwork out of the notches beside the thumb's round ends. Its edges are
-   * snapped outward to whole device pixels so no fraction of a pixel survives
-   * along them. Call inside a `save()`/`restore()` pair. */
-  private clipOutThumb(): void {
+  /** Cuts the thumb's box out of the clip region (`"out"`), so what follows
+   * paints everywhere but behind the scrollbar — or clips to just that box
+   * (`"in"`). The box is the thumb's *bounding* box, not its rounded pill:
+   * squaring it off keeps stray slivers of the clipped artwork out of the
+   * notches beside the thumb's round ends. Its edges are snapped outward to
+   * whole device pixels so no fraction of a pixel survives along them. Call
+   * inside a `save()`/`restore()` pair. */
+  private clipThumb(mode: "out" | "in"): void {
     const thumb = this.thumb;
     if (!thumb) return;
     const ctx = this.ctx;
     const out = (v: number, dir: -1 | 1): number =>
       (dir < 0 ? Math.floor(v * this.dpr) : Math.ceil(v * this.dpr)) / this.dpr;
     ctx.beginPath();
-    ctx.rect(0, 0, this.vw, this.vh);
+    if (mode === "out") ctx.rect(0, 0, this.vw, this.vh);
     ctx.rect(
       this.vw - SB_MARGIN - SB_WIDTH,
       out(thumb.y, -1),
@@ -1739,8 +1903,20 @@ export class CanvasGrid {
   }
 
   private drawScrollbar(): void {
-    if (!this.thumb) return;
+    // For tests: whether the thumb is there to see, which they can't read
+    // from the pixels.
+    const state = !this.thumb
+      ? "none"
+      : this.thumbAlpha >= 1
+        ? "shown"
+        : this.thumbAlpha <= 0
+          ? "hidden"
+          : "fading";
+    if (this.canvas.dataset.thumb !== state) this.canvas.dataset.thumb = state;
+    if (!this.thumb || this.thumbAlpha <= 0) return;
     const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = this.thumbAlpha;
     ctx.fillStyle = this.theme.scrollThumb;
     roundRectPath(
       ctx,
@@ -1751,6 +1927,7 @@ export class CanvasGrid {
       SB_WIDTH / 2,
     );
     ctx.fill();
+    ctx.restore();
   }
 
   /** Truncates `text` with an ellipsis so it fits within `maxWidth`. Assumes the

@@ -1132,9 +1132,18 @@ describe("editing a preset", () => {
       bundle.actions.addNewPreset("a", "filter");
       await vi.advanceTimersByTimeAsync(0);
       vi.mocked(runSql).mockClear();
+      // Its text is in the SQL now, which is what the rows are fetched for.
+      vi.mocked(compileSavedQuery).mockReturnValue({
+        sql: "select 1 where title like '%new%'",
+        columnAnnotations: [],
+      });
       bundle.actions.patchPreset(added().id, { definition: "title:new" });
       await vi.advanceTimersByTimeAsync(300);
       expect(runSql).toHaveBeenCalledTimes(1);
+      vi.mocked(compileSavedQuery).mockReturnValue({
+        sql: "select 1",
+        columnAnnotations: [],
+      });
       await vi.advanceTimersByTimeAsync(IDLE);
       expect(presetUpdate).not.toHaveBeenCalled();
       expect(presetAdd).not.toHaveBeenCalled();
@@ -2271,6 +2280,112 @@ describe("a refresh", () => {
     const page = bundle.store.getState().pages["a"];
     expect(page?.resultIsRefresh).toBe(true);
     expect([...(page?.selection?.rows ?? [])]).toEqual([0, 1]);
+  });
+});
+
+describe("an edit that compiles to the same SQL", () => {
+  // Each edit here is `clearFilterCustom`, which re-runs at once; what it
+  // compiles to is whatever `compileSavedQuery` is mocked to say.
+  beforeEach(() => {
+    vi.mocked(analyzeColumnSources).mockResolvedValue(undefined);
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 1",
+      columnAnnotations: [],
+    });
+    vi.mocked(buildResultFromArrow).mockReturnValue(
+      buildResultFromStringRows([["1"], ["2"], ["3"]]),
+    );
+  });
+
+  async function settled(bundle: AppStoreBundle) {
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().pages["a"]?.running).toBe(false),
+    );
+  }
+
+  async function tabWithRows(): Promise<AppStoreBundle> {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setSchemaJson("{}");
+    bundle.actions.runQuery("a");
+    await settled(bundle);
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    vi.mocked(runSql).mockClear();
+    return bundle;
+  }
+
+  it("shows the rows on screen its new way, without fetching them", async () => {
+    const bundle = await tabWithRows();
+    const before = bundle.store.getState().pages["a"]?.result;
+
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 1",
+      columnAnnotations: [{ align: "right" }],
+    });
+    bundle.actions.clearFilterCustom("a");
+    await settled(bundle);
+
+    expect(runSql).not.toHaveBeenCalled();
+    const page = bundle.store.getState().pages["a"];
+    expect(page?.result).not.toBe(before);
+    expect(page?.result?.visible[0]?.meta.text_align).toBe("right");
+    expect(page?.result?.text(2, page.result.visible[0])).toBe("3");
+    expect(page?.resultIsRefresh).toBe(true);
+    expect([...(page?.selection?.rows ?? [])]).toEqual([1]);
+  });
+
+  it("leaves rows that would look the same as they are", async () => {
+    const bundle = await tabWithRows();
+    const before = bundle.store.getState().pages["a"]?.result;
+
+    bundle.actions.clearFilterCustom("a");
+    await settled(bundle);
+
+    expect(runSql).not.toHaveBeenCalled();
+    expect(bundle.store.getState().pages["a"]?.result).toBe(before);
+  });
+
+  it("isn't overtaken by an earlier run's rows landing after it", async () => {
+    const bundle = await tabWithRows();
+    let land: (table: never) => void = () => {};
+    vi.mocked(runSql).mockReturnValueOnce(
+      new Promise((resolve) => (land = resolve)),
+    );
+    vi.mocked(compileSavedQuery).mockReturnValueOnce({
+      sql: "select 2",
+      columnAnnotations: [],
+    });
+    bundle.actions.clearFilterCustom("a");
+    await vi.waitFor(() => expect(runSql).toHaveBeenCalledTimes(1));
+
+    // Back to the query on screen before the other one's rows arrive.
+    vi.mocked(compileSavedQuery).mockReturnValue({
+      sql: "select 1",
+      columnAnnotations: [{ align: "right" }],
+    });
+    bundle.actions.clearFilterCustom("a");
+    await vi.waitFor(() =>
+      expect(
+        bundle.store.getState().pages["a"]?.result?.visible[0]?.meta.text_align,
+      ).toBe("right"),
+    );
+    const kept = bundle.store.getState().pages["a"]?.result;
+    vi.mocked(buildResultFromArrow).mockReturnValueOnce(
+      buildResultFromStringRows([["other"]]),
+    );
+    land({} as never);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(bundle.store.getState().pages["a"]?.result).toBe(kept);
+  });
+
+  it("is still fetched again by the Refresh button", async () => {
+    const bundle = await tabWithRows();
+
+    bundle.actions.runQuery("a");
+    await settled(bundle);
+
+    expect(runSql).toHaveBeenCalledTimes(1);
   });
 });
 

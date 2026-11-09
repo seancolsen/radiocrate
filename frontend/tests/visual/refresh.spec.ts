@@ -63,7 +63,7 @@ async function openShortGrid(page: Page, url: string) {
  * put a highlight in the buffer that every later comparison would have to
  * reproduce exactly. It rests on the tab bar's empty right end: over a button
  * (the explorer toggle in the corner) it would raise that button's tooltip
- * over the grid.  */
+ * over the grid. */
 async function scrollResults(page: Page) {
   // Every open tab keeps its page; only the active one's canvas is visible.
   const canvas = page.locator("canvas:visible");
@@ -72,6 +72,11 @@ async function scrollResults(page: Page) {
   await page.mouse.wheel(0, 120);
   await page.mouse.move(1000, 17);
   await page.waitForTimeout(150); // let the fling-free wheel scroll settle
+  // The scroll brought the scrollbar out; it's gone again a second after,
+  // as it is from every shot the caller compares this one with.
+  await expect(canvas).toHaveAttribute("data-thumb", "hidden", {
+    timeout: 3000,
+  });
   return { canvas, top, scrolled: await canvas.screenshot() };
 }
 
