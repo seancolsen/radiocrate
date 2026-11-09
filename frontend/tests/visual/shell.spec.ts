@@ -124,6 +124,12 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  test(`menu/columns - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "menu/columns", colorScheme);
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await expect(stage).toHaveScreenshot(snapshot("menu/columns", colorScheme));
+  });
+
   test(`settings/menu-rescanning - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,

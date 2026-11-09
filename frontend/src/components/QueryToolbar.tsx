@@ -146,6 +146,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
               menu={
                 <SectionOptionsMenu tabId={props.tabId} section={s.section} />
               }
+              menuWidth="220px"
             />
           ))
         )}

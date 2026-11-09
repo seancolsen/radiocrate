@@ -21,7 +21,11 @@ import { Checkbox } from "../../components/ui/Checkbox";
 import { Kbd } from "../../components/ui/Kbd";
 import IconButton from "../../components/ui/IconButton";
 import SplitButton from "../../components/ui/SplitButton";
-import { MenuItem, MenuToggleItem } from "../../components/ui/Menu";
+import {
+  MENU_COLUMNS_CLASS,
+  MenuItem,
+  MenuToggleItem,
+} from "../../components/ui/Menu";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ToastCard } from "../../components/Toast";
@@ -483,14 +487,16 @@ function Inputs(): JSX.Element {
   );
 }
 
-/** A menu's rows on a static panel: the menu's own look, without its
- * positioning (`MENU_PANEL_CLASS`, less `fixed`). */
+/** A menu's rows on a static panel: the menu's own look and columns, without
+ * its positioning (`MENU_PANEL_CLASS`, less `fixed`). */
 function Menus(): JSX.Element {
   const [checks, setChecks] = useState({ filter: true, sort: false });
   const [radio, setRadio] = useState<"custom" | "querydown">("custom");
   return (
     <Section title="Menus">
-      <div className="bg-panel border-edge flex w-56 flex-col gap-0.5 rounded-md border p-1 shadow-lg">
+      <div
+        className={`bg-panel border-edge ${MENU_COLUMNS_CLASS} w-56 rounded-md border p-1 shadow-lg`}
+      >
         <MenuItem icon={Icons.Rename} label="Rename" />
         <MenuItem icon={Icons.Duplicate} label="Duplicate" disabled />
         <MenuItem icon={Icons.Delete} label="Delete" danger />

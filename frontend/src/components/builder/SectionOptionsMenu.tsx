@@ -91,7 +91,7 @@ export default function SectionOptionsMenu(props: {
   };
 
   return (
-    <div className="min-w-[220px]">
+    <>
       {showPlaylistOrder && (
         <MenuToggleItem
           kind="radio"
@@ -150,6 +150,6 @@ export default function SectionOptionsMenu(props: {
         label="Manage presets"
         onClick={() => openPresetsTab(base === "" ? undefined : base)}
       />
-    </div>
+    </>
   );
 }

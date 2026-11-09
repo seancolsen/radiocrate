@@ -41,6 +41,11 @@ export type PresetFields = Pick<Preset, "name" | "definition" | "isDefault">;
  * backend hasn't acknowledged, keyed by preset id in `presetSaves`. The changes
  * themselves are already in `presets`: that's the version everything uses, and
  * the write catches up once the app goes quiet (see `api/idleQueue.ts`). */
+/** Where an open tab's name is being edited in place: its tab handle, or its
+ * row in the explorer's "Opened" list (which, at phone width, covers the tab
+ * bar). Only that one shows the field. */
+export type RenamePlace = "tab" | "opened";
+
 export interface PresetSaveState {
   /** The preset as the backend has it: what a revert goes back to. */
   saved: Preset;
@@ -499,8 +504,9 @@ export interface AppState {
   viewSql: string | null;
   /** The "Export results data" dialog, when open. */
   exportData: ExportData | null;
-  /** The in-progress inline rename (tab handle field), when active. */
-  renaming: { id: string; buffer: string } | null;
+  /** The in-progress inline rename of an open tab, when active: in its tab
+   * handle or its "Opened" row, as `where` says. */
+  renaming: { id: string; buffer: string; where: RenamePlace } | null;
   /** The source pending delete confirmation (modal), when open: a query (saved
    * or not) or a playlist. */
   pendingDelete: {

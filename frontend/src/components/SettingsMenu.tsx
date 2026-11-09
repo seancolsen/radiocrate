@@ -70,11 +70,13 @@ export default function SettingsMenu(): JSX.Element {
       <MenuItem
         icon={Icons.Presets}
         label="Query presets"
+        command="presets.manage"
         onClick={() => actions.openPresetsTab()}
       />
       <MenuItem
         icon={Icons.Keyboard}
         label="Keyboard shortcuts"
+        command="shortcuts.configure"
         onClick={() => actions.openShortcutsTab()}
       />
       <MenuItem

@@ -143,10 +143,10 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   const items = menu.getByRole("menuitem");
   await expect(items).toHaveText([
     "Base",
-    "Rename",
-    "Duplicate",
     "View SQL",
     "Export results data",
+    "Rename",
+    "Duplicate",
     "Delete",
   ]);
 
@@ -171,9 +171,7 @@ test("the query-actions menu traps focus and Up/Down/Enter drive it", async ({
   // menu dismisses, just as clicking the row would.
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("ArrowUp");
-  await expect(items.nth(1)).toBeFocused();
+  await expect(items.nth(3)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(menu).toBeHidden();
   expect(

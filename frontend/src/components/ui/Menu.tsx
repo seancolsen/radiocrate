@@ -11,8 +11,13 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { chordToAria, type Chord } from "../../commands/chord";
+import type { CommandId } from "../../commands/registry";
 import { Icons, type IconComponent } from "../../icons";
+import { selectBinding } from "../../stores/commands";
+import { useCommands } from "../../stores/react";
 import { CheckboxBox } from "./Checkbox";
+import { Kbd } from "./Kbd";
 import { placeDropdown, placeSubmenu } from "./menuGeometry";
 import {
   MenuContext,
@@ -30,11 +35,100 @@ export interface MenuApi {
   close: () => void;
 }
 
-/** The classes every menu panel shares, root or submenu. `fixed`, placed by
- * {@link usePlacement}; `overflow-y-auto` for when the viewport caps its
- * height. */
-export const MENU_PANEL_CLASS =
-  "bg-panel border-edge fixed z-50 flex flex-col gap-0.5 overflow-y-auto rounded-md border p-1 shadow-lg";
+/** A menu panel's surface — its fill, edge, shadow and stacking — with no
+ * layout. `fixed`, placed by {@link usePlacement}; `overflow-y-auto` for when
+ * the viewport caps its height. Shared with the one popup that looks like a
+ * menu without being one (the record form's value suggestions). */
+export const MENU_SURFACE_CLASS =
+  "bg-panel border-edge fixed z-50 overflow-y-auto rounded-md border p-1 shadow-lg";
+
+/** A menu's column layout. Every row lays its parts out in the same five
+ * columns — the checkbox or radio, the icon, the label, the keyboard shortcut
+ * and the submenu's chevron — so each kind of part lines up down the whole
+ * panel, as in a desktop app's menus, whichever rows happen to have one. The
+ * panel owns the columns; each row is a `subgrid` across all five and puts its
+ * parts in theirs (see {@link MenuRowCells}).
+ *
+ * A column no row uses is 0 wide: the space between columns is a margin on the
+ * part that's there, not a `column-gap`, which would hold the gaps open around
+ * an empty column. The label's column takes whatever width is left over, which
+ * is what pushes the shortcuts and chevrons to the right edge.
+ *
+ * Anything else in the panel (a heading, a separator, a note) spans every
+ * column. */
+export const MENU_COLUMNS_CLASS =
+  "grid grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] content-start gap-y-0.5 [&>*]:col-span-full";
+
+/** Everything a menu panel wears, root or submenu. `w-max` sizes it to its
+ * rows rather than to the room left beside its anchor — a panel squeezed
+ * against the viewport's edge would otherwise just truncate its labels, and
+ * never read as too wide for where it is (see `placeSubmenu`). */
+export const MENU_PANEL_CLASS = `${MENU_SURFACE_CLASS} ${MENU_COLUMNS_CLASS} w-max max-w-[calc(100vw-16px)]`;
+
+/** The classes every row shares, before its colors: one subgrid row of the
+ * panel's columns (see {@link MENU_COLUMNS_CLASS}). */
+const ROW_CLASS =
+  "control col-span-full grid grid-cols-subgrid items-center rounded px-2 text-left outline-none";
+
+/** Renders `children` with the keyboard shortcut `command` is bound to, as the
+ * user has bound it — null for an unbound command, or for no command at all.
+ * Only a row that names a command reads the commands store, so a menu of rows
+ * that don't can be drawn without one (the kitchen sink does). */
+function WithChord(props: {
+  command: CommandId | undefined;
+  children: (chord: Chord | null) => ReactNode;
+}): ReactNode {
+  return props.command ? (
+    <BoundChord command={props.command}>{props.children}</BoundChord>
+  ) : (
+    props.children(null)
+  );
+}
+
+function BoundChord(props: {
+  command: CommandId;
+  children: (chord: Chord | null) => ReactNode;
+}): ReactNode {
+  const chord = useCommands((s) => selectBinding(s, props.command));
+  return props.children(chord);
+}
+
+/** A row's parts, each in its own column of the panel — see
+ * {@link MENU_COLUMNS_CLASS}. All but the label are optional. */
+function MenuRowCells(props: {
+  /** A checkbox or radio indicator. */
+  indicator?: ReactNode;
+  icon?: IconComponent;
+  label: string;
+  chord?: Chord | null;
+  submenu?: boolean;
+}): JSX.Element {
+  const Icon = props.icon;
+  return (
+    <>
+      {props.indicator && (
+        <span className="col-start-1 mr-2 flex size-4 items-center justify-center">
+          {props.indicator}
+        </span>
+      )}
+      {Icon && (
+        <span className="text-ink-weak col-start-2 mr-2 flex size-4 items-center justify-center">
+          <Icon className="size-4" />
+        </span>
+      )}
+      <span className="col-start-3 min-w-0 truncate">{props.label}</span>
+      {props.chord && (
+        <Kbd
+          chord={props.chord}
+          className="text-ink-weak col-start-4 ml-6 justify-self-end"
+        />
+      )}
+      {props.submenu && (
+        <Icons.ExpandClosed className="text-ink-weak col-start-5 ml-2 size-4" />
+      )}
+    </>
+  );
+}
 
 /** The dropdown content itself, mounted fresh each time the menu opens — which
  * is what gives it a focus trap and a freshly-highlighted first row every
@@ -143,6 +237,12 @@ export function Menu(props: {
 /** A plain, clickable menu row: optional leading icon + label. `danger` tints it
  * red; `disabled` dims it and swallows the click.
  *
+ * `command` names the command whose keyboard shortcut does the same thing: its
+ * chord, as the user has bound it, shows at the row's right and goes out as
+ * `aria-keyshortcuts`. Only when the two really are the same — the row acts on
+ * what the command acts on (the active tab, say), not on whatever the menu was
+ * raised over.
+ *
  * `keepOpen` leaves the menu up when the row is clicked — for a row whose action
  * happens *in* the menu (one that runs long enough to report on itself there)
  * rather than by dismissing it. Closing then belongs to the action: a row that
@@ -150,82 +250,84 @@ export function Menu(props: {
 export function MenuItem(props: {
   icon?: IconComponent;
   label: string;
+  command?: CommandId;
   onClick?: () => void;
   disabled?: boolean;
   danger?: boolean;
   keepOpen?: boolean;
 }): JSX.Element {
-  const Icon = props.icon;
   return (
-    <button
-      type="button"
-      role="menuitem"
-      disabled={props.disabled}
-      className={cx(
-        "control flex w-full items-center gap-2 rounded px-2 text-left outline-none",
-        {
-          "text-ink focus:bg-hover": !props.disabled && !props.danger,
-          "text-danger focus:bg-hover": !props.disabled && props.danger,
-          "text-ink-weak/40": props.disabled,
-        },
+    <WithChord command={props.command}>
+      {(chord) => (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={props.disabled}
+          aria-keyshortcuts={chord ? chordToAria(chord) : undefined}
+          className={cx(ROW_CLASS, {
+            "text-ink focus:bg-hover": !props.disabled && !props.danger,
+            "text-danger focus:bg-hover": !props.disabled && props.danger,
+            "text-ink-weak/40": props.disabled,
+          })}
+          onClick={(e) => {
+            // The panel dismisses the menu on any click that reaches it.
+            if (props.keepOpen) e.stopPropagation();
+            props.onClick?.();
+          }}
+        >
+          <MenuRowCells icon={props.icon} label={props.label} chord={chord} />
+        </button>
       )}
-      onClick={(e) => {
-        // The panel dismisses the menu on any click that reaches it.
-        if (props.keepOpen) e.stopPropagation();
-        props.onClick?.();
-      }}
-    >
-      {Icon && (
-        <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
-          <Icon className="size-4" />
-        </span>
-      )}
-      <span className="min-w-0 flex-1 truncate">{props.label}</span>
-    </button>
+    </WithChord>
   );
 }
 
 /** A menu row carrying a checkbox (independent toggle) or radio (exclusive)
  * indicator, then an optional icon and the label — the shared shape of a
- * section's options-menu rows. */
+ * section's options-menu rows. `command` is as {@link MenuItem}'s. */
 export function MenuToggleItem(props: {
   kind: "checkbox" | "radio";
   icon?: IconComponent;
   label: string;
+  command?: CommandId;
   checked: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }): JSX.Element {
-  const Icon = props.icon;
+  const indicator =
+    props.kind === "checkbox" ? (
+      <CheckboxBox checked={props.checked} />
+    ) : (
+      <span className="border-ink-weak flex size-4 shrink-0 items-center justify-center rounded-full border">
+        {props.checked && <span className="bg-accent size-2 rounded-full" />}
+      </span>
+    );
   return (
-    <button
-      type="button"
-      role={props.kind === "checkbox" ? "menuitemcheckbox" : "menuitemradio"}
-      aria-checked={props.checked}
-      disabled={props.disabled}
-      className={cx(
-        "control flex w-full items-center gap-2 rounded px-2 text-left outline-none",
-        {
-          "text-ink focus:bg-hover": !props.disabled,
-          "text-ink-weak/40": props.disabled,
-        },
+    <WithChord command={props.command}>
+      {(chord) => (
+        <button
+          type="button"
+          role={
+            props.kind === "checkbox" ? "menuitemcheckbox" : "menuitemradio"
+          }
+          aria-checked={props.checked}
+          aria-keyshortcuts={chord ? chordToAria(chord) : undefined}
+          disabled={props.disabled}
+          className={cx(ROW_CLASS, {
+            "text-ink focus:bg-hover": !props.disabled,
+            "text-ink-weak/40": props.disabled,
+          })}
+          onClick={() => props.onClick?.()}
+        >
+          <MenuRowCells
+            indicator={indicator}
+            icon={props.icon}
+            label={props.label}
+            chord={chord}
+          />
+        </button>
       )}
-      onClick={() => props.onClick?.()}
-    >
-      {props.kind === "checkbox" ? (
-        <CheckboxBox checked={props.checked} />
-      ) : (
-        <span className="border-ink-weak flex size-4 shrink-0 items-center justify-center rounded-full border">
-          {props.checked && <span className="bg-accent size-2 rounded-full" />}
-        </span>
-      )}
-      {Icon && (
-        <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
-          <Icon className="size-4" />
-        </span>
-      )}
-      <span className="min-w-0 flex-1 truncate">{props.label}</span>
-    </button>
+    </WithChord>
   );
 }
 
@@ -257,7 +359,6 @@ export function MenuSubmenu(props: {
   // How the last press on the row was made, for the click it turns into.
   const pointerTypeRef = useRef("mouse");
   const panelId = useId();
-  const Icon = props.icon;
 
   useLayoutEffect(() => {
     const row = rowRef.current;
@@ -284,7 +385,10 @@ export function MenuSubmenu(props: {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        className="control text-ink focus:bg-hover aria-expanded:bg-hover flex w-full items-center gap-2 rounded px-2 text-left outline-none"
+        className={cx(
+          ROW_CLASS,
+          "text-ink focus:bg-hover aria-expanded:bg-hover",
+        )}
         onPointerDown={(e) => {
           pointerTypeRef.current = e.pointerType;
         }}
@@ -297,13 +401,7 @@ export function MenuSubmenu(props: {
         }}
         onClick={onClick}
       >
-        {Icon && (
-          <span className="text-ink-weak flex size-4 shrink-0 items-center justify-center">
-            <Icon className="size-4" />
-          </span>
-        )}
-        <span className="min-w-0 flex-1 truncate">{props.label}</span>
-        <Icons.ExpandClosed className="text-ink-weak size-4 shrink-0" />
+        <MenuRowCells icon={props.icon} label={props.label} submenu />
       </button>
       {open && (
         <SubmenuPanel
@@ -389,11 +487,16 @@ export function MenuHeading(props: { text: string }): JSX.Element {
  * rows that aren't there yet (an empty list, a schema still loading). Carries no
  * `menuitem` role, so the keyboard walks straight past it. */
 export function MenuNote(props: { text: string }): JSX.Element {
-  return <div className="control text-ink-weak px-2">{props.text}</div>;
+  return (
+    <div className="control text-ink-weak grid grid-cols-subgrid px-2">
+      <span className="col-start-3 min-w-0 truncate">{props.text}</span>
+    </div>
+  );
 }
 
 /** A submenu's rows that arrive after it opens: a spinning note until
- * `loading` clears, then `children`.
+ * `loading` clears, then `children`. The panel moves to keep the rows on
+ * screen as they arrive (see `usePlacement`).
  *
  * A keyboard open moves focus to a submenu's first row as its panel mounts —
  * which, while the rows are still loading, finds none and leaves focus on the
@@ -413,9 +516,11 @@ export function MenuLoader(props: {
   }, [loading, menu, depth]);
   if (!loading) return <>{props.children}</>;
   return (
-    <div className="control text-ink-weak flex items-center gap-2 px-2">
-      <Icons.Spinner className="size-4 shrink-0" />
-      Loading…
+    <div className="control text-ink-weak grid grid-cols-subgrid items-center px-2">
+      <span className="col-start-2 mr-2 flex size-4 items-center justify-center">
+        <Icons.Spinner className="size-4" />
+      </span>
+      <span className="col-start-3">Loading…</span>
     </div>
   );
 }

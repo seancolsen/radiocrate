@@ -11,7 +11,7 @@ import { openStory } from "./harness";
 
 const VIEWPORT = { width: 1280, height: 900 };
 
-function row(page: Page, name: string): Locator {
+function row(page: Page, name: string | RegExp): Locator {
   return page.getByRole("menuitem", { name, exact: true });
 }
 
@@ -293,6 +293,34 @@ test.describe("staying on screen", () => {
     const more = (await menus.nth(2).boundingBox())!;
     expect(colors.x + colors.width).toBeLessThanOrEqual(root.x + 1);
     expect(more.x + more.width).toBeLessThanOrEqual(colors.x + 1);
+  });
+
+  test("a submenu whose rows load late moves to keep them on screen", async ({
+    page,
+  }) => {
+    await openStory(page, "menu/late-rows", "light");
+    const menus = page.getByRole("menu");
+    await row(page, "Late").click();
+    await expect(page.getByText("Loading…")).toBeVisible();
+    // Loading, it fits to the right of the menu, level with its row.
+    const root = (await menus.nth(0).boundingBox())!;
+    const late = (await row(page, "Late").boundingBox())!;
+    const loading = (await menus.nth(1).boundingBox())!;
+    expect(loading.x).toBeGreaterThanOrEqual(late.x + late.width);
+    expect(Math.abs(loading.y - late.y)).toBeLessThanOrEqual(1);
+
+    await page.evaluate(
+      (name) => window.dispatchEvent(new Event(name)),
+      "story:late-rows",
+    );
+    await expect(row(page, /number 12$/)).toBeVisible();
+    // Loaded, it's too tall to hang down from the row, and too wide for the
+    // room to the right: it moves up, and over to the left.
+    const loaded = menus.nth(1);
+    await expectOnScreen(loaded);
+    const box = (await loaded.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(root.x + 1);
+    expect(box.y).toBeLessThan(late.y);
   });
 
   test("a dropdown with no room below opens above its trigger", async ({

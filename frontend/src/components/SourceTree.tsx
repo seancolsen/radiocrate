@@ -15,6 +15,7 @@ import {
 } from "../query/explorerTree";
 import { useApp, useAppActions } from "../stores/react";
 import FolderRow from "./FolderRow";
+import SourceOptions from "./SourceOptions";
 import SourceRow from "./SourceRow";
 import { ContextMenu } from "./ui/ContextMenu";
 import { MenuItem } from "./ui/Menu";
@@ -51,41 +52,6 @@ function FolderMenu(props: { id: string }): JSX.Element {
         label="Delete folder"
         danger
         onClick={() => actions.deleteFolder(props.id)}
-      />
-    </>
-  );
-}
-
-/** A saved source's context menu: the page actions menu's Rename, Duplicate
- * and Delete — with the rename made in place, in the row. Duplicating a query
- * opens an unsaved copy; duplicating a playlist saves one. */
-function SourceMenu(props: { id: string }): JSX.Element {
-  const actions = useAppActions();
-  const playlist = useApp(
-    (s) => s.sources.data.find((x) => x.id === props.id)?.kind === "playlist",
-  );
-  const item = { kind: "source", id: props.id } as const;
-  return (
-    <>
-      <MenuItem
-        icon={Icons.Rename}
-        label="Rename"
-        onClick={() => actions.beginTreeRename(item)}
-      />
-      <MenuItem
-        icon={Icons.Duplicate}
-        label="Duplicate"
-        onClick={() =>
-          playlist
-            ? actions.duplicatePlaylist(props.id)
-            : actions.duplicateQuery(props.id)
-        }
-      />
-      <MenuItem
-        icon={Icons.Delete}
-        label="Delete"
-        danger
-        onClick={() => actions.requestDelete(props.id)}
       />
     </>
   );
@@ -227,7 +193,10 @@ export default function SourceTree(props: {
           {menu.item.kind === "folder" ? (
             <FolderMenu id={menu.item.id} />
           ) : (
-            <SourceMenu id={menu.item.id} />
+            <SourceOptions
+              id={menu.item.id}
+              onRename={() => actions.beginTreeRename(menu.item)}
+            />
           )}
         </ContextMenu>
       )}

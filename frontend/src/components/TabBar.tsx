@@ -1,9 +1,17 @@
-import { useRef, type JSX, type PointerEvent } from "react";
+import {
+  useRef,
+  useState,
+  type JSX,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { Icons } from "../icons";
 import { useApp, useAppActions } from "../stores/react";
 import { selectIsUnsaved, selectPageTab, type TabKind } from "../stores/app";
 import { useTabDragReorder } from "../gestures/useTabDragReorder";
+import SourceOptions from "./SourceOptions";
 import TabHandle from "./TabHandle";
+import { ContextMenu } from "./ui/ContextMenu";
 import { useTooltip } from "./ui/Tooltip";
 import { tabIcon } from "./tabKind";
 
@@ -17,11 +25,16 @@ function WiredTabHandle(props: {
   active: boolean;
   dragging: boolean;
   onPointerDown: (e: PointerEvent<HTMLElement>, id: string) => void;
+  /** Raises the tab's context menu at the pointer — a query's or playlist's
+   * options. Other pages have none. */
+  onContextMenu: (id: string, x: number, y: number) => void;
 }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.id));
   // Only a query or playlist has a name to rename.
   const renameable = useApp((s) => selectPageTab(s, props.id) !== undefined);
-  const renaming = useApp((s) => s.renaming?.id === props.id);
+  const renaming = useApp(
+    (s) => s.renaming?.id === props.id && s.renaming.where === "tab",
+  );
   const renameBuffer = useApp((s) =>
     s.renaming?.id === props.id ? s.renaming.buffer : "",
   );
@@ -40,6 +53,10 @@ function WiredTabHandle(props: {
       onSelect={() => actions.selectTab(props.id)}
       onClose={() => actions.closeTab(props.id)}
       onPointerDown={(e) => props.onPointerDown(e, props.id)}
+      onContextMenu={(e: MouseEvent) => {
+        e.preventDefault();
+        if (renameable) props.onContextMenu(props.id, e.clientX, e.clientY);
+      }}
       onRenameStart={() => actions.beginRename(props.id)}
       onRenameInput={(text) => actions.setRenameBuffer(text)}
       onRenameCommit={() => actions.commitRename()}
@@ -82,7 +99,9 @@ function ExplorerToggle(): JSX.Element {
  * the bar background is a step darker than the content panel.
  *
  * Kind-agnostic: a handle takes its icon from the tab's kind and otherwise treats
- * every page the same (select, close, drag to reorder). */
+ * every page the same (select, close, drag to reorder) — except that a query's
+ * or playlist's handle raises its options on a right-click (see
+ * {@link SourceOptions}), renaming in the handle itself. */
 export default function TabBar(): JSX.Element {
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
@@ -91,6 +110,9 @@ export default function TabBar(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const dnd = useTabDragReorder(() => containerRef.current);
   const newQueryTip = useTooltip({ label: "New query", command: "query.new" });
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
+    null,
+  );
 
   return (
     <div
@@ -110,6 +132,7 @@ export default function TabBar(): JSX.Element {
           active={tab.id === activeTabId}
           dragging={dnd.drag?.id === tab.id}
           onPointerDown={dnd.onPointerDown}
+          onContextMenu={(id, x, y) => setMenu({ id, x, y })}
         />
       ))}
 
@@ -132,6 +155,15 @@ export default function TabBar(): JSX.Element {
         <Icons.Query className="size-5" />
       </button>
       {newQueryTip.tooltip}
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <SourceOptions
+            id={menu.id}
+            onRename={() => actions.beginRename(menu.id)}
+          />
+        </ContextMenu>
+      )}
     </div>
   );
 }

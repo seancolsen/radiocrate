@@ -25,6 +25,8 @@ export default function SplitButton(props: {
   alert?: boolean;
   onMainClick: () => void;
   menu?: ReactNode;
+  /** The options menu's least width (its `Menu`'s `width`). */
+  menuWidth?: string;
 }): JSX.Element {
   const Icon = props.icon;
   const showLabel = props.showLabel !== false;
@@ -71,6 +73,7 @@ export default function SplitButton(props: {
       {withMenu && (
         <Menu
           align="end"
+          width={props.menuWidth}
           trigger={(api) => (
             <button
               type="button"

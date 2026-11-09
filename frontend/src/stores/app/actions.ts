@@ -246,6 +246,7 @@ import {
   type PresetSave,
   type QueryTab,
   type RecordRef,
+  type RenamePlace,
   type ThemePref,
 } from "./state";
 import type { AppVanillaStore } from "./vanillaStore";
@@ -763,8 +764,9 @@ export interface AppActions {
     table: "track" | "album",
   ) => void;
 
-  /** Begin renaming query `id`, seeding the buffer with its current name. */
-  beginRename: (id: string) => void;
+  /** Begin renaming open query or playlist `id`, seeding the buffer with its
+   * current name, in its tab handle (the default) or its "Opened" row. */
+  beginRename: (id: string, where?: RenamePlace) => void;
   /** Update the in-progress rename buffer. */
   setRenameBuffer: (text: string) => void;
   /** Commit the in-progress rename (`source.rename`); an empty name cancels. */
@@ -3874,11 +3876,11 @@ export function createAppActions(
     // down for it. A query or playlist tab can be renamed, saved or not: an
     // unsaved query keeps the name on its tab alone, and takes it along when
     // it's saved.
-    beginRename: (id) => {
+    beginRename: (id, where = "tab") => {
       const t = selectPageTab(get(), id);
       if (t) {
         set((s) => {
-          s.renaming = { id, buffer: t.name };
+          s.renaming = { id, buffer: t.name, where };
         });
       }
     },

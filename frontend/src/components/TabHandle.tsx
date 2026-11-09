@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, type JSX, type PointerEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  type JSX,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { Icons, type IconComponent } from "../icons";
 import { cx } from "./ui/cx";
 import { useTooltip } from "./ui/Tooltip";
@@ -55,7 +61,11 @@ function RenameInput(props: {
  * `renameable` is what a non-query page turns off: a settings tab's handle text
  * is fixed, so double-clicking it does nothing (the query-only affordances
  * stand down for a non-query `TabKind`). On a query tab, saved or not, a
- * double-click starts an inline rename, replacing the name with a text field. */
+ * double-click starts an inline rename, replacing the name with a text field.
+ *
+ * A right-click (or, on a touch screen, a press held on it) raises the tab's
+ * context menu through `onContextMenu`; while the name is being edited, the
+ * field's own menu (cut, copy, paste) is left to the browser. */
 export default function TabHandle(props: {
   id: string;
   name: string;
@@ -70,6 +80,7 @@ export default function TabHandle(props: {
   onSelect: () => void;
   onClose: () => void;
   onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
+  onContextMenu: (e: MouseEvent<HTMLDivElement>) => void;
   onRenameStart: () => void;
   onRenameInput: (text: string) => void;
   onRenameCommit: () => void;
@@ -84,7 +95,7 @@ export default function TabHandle(props: {
     <div
       data-tab-id={props.id}
       className={cx(
-        "border-edge relative flex h-full max-w-[220px] min-w-0 shrink items-center gap-[5px] rounded-t border-r pr-1.5 pl-2 select-none",
+        "border-edge relative flex h-full max-w-[220px] min-w-0 shrink items-center gap-[5px] rounded-t border-r pr-1.5 pl-2 select-none [-webkit-touch-callout:none]",
         {
           "bg-panel text-ink": props.active,
           "bg-bar text-ink-weak hover:bg-hover": !props.active,
@@ -102,6 +113,9 @@ export default function TabHandle(props: {
         props.onClose();
       }}
       onClick={() => props.onSelect()}
+      onContextMenu={(e) => {
+        if (!props.renaming) props.onContextMenu(e);
+      }}
       onDoubleClick={() => props.renameable && props.onRenameStart()}
     >
       {/* 4px accent top edge on the active handle. */}

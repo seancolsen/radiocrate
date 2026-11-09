@@ -118,3 +118,83 @@ test("a tab keeps its focus and caret while it's away", async ({ page }) => {
   await page.keyboard.type("X");
   await expect(editor).toContainText("abcdXef");
 });
+
+test.describe("a query's options", () => {
+  // Every menu a query raises — its wrench menu, its tab handle's, its row's in
+  // the explorer — ends with the same three options.
+  const OPTIONS = ["Rename", "Duplicate", "Delete"];
+  const rows = (page: Page) =>
+    page
+      .getByRole("menu")
+      .getByRole("menuitem")
+      .evaluateAll((items) => items.map((item) => item.textContent ?? ""));
+
+  test("the wrench menu sets them apart at its end", async ({ page }) => {
+    await mockRpc(page);
+    await page.goto("/?tabs=Lemonade");
+    await page.getByRole("button", { name: "Query actions" }).click();
+    const items = await rows(page);
+    expect(items.slice(-3)).toEqual(OPTIONS);
+    // A separator stands between them and the query's own actions.
+    const separatorBefore = await page
+      .getByRole("menu")
+      .getByRole("menuitem", { name: "Rename" })
+      .evaluate((row) => !row.previousElementSibling?.matches("button"));
+    expect(separatorBefore).toBe(true);
+  });
+
+  test("a tab handle's context menu renames in the handle", async ({
+    page,
+  }) => {
+    await mockRpc(page);
+    await page.goto("/?tabs=Lemonade,Deep%20Cuts");
+    await handle(page, "Deep Cuts").click({ button: "right" });
+    expect(await rows(page)).toEqual(OPTIONS);
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const field = handle(page, "").getByRole("textbox");
+    await expect(field).toBeFocused();
+    await field.fill("Deeper Cuts");
+    await field.press("Enter");
+    await expect(handle(page, "Deeper Cuts")).toBeVisible();
+  });
+
+  test("a tab handle's context menu duplicates and deletes", async ({
+    page,
+  }) => {
+    await mockRpc(page);
+    await page.goto("/?tabs=Lemonade");
+    await handle(page, "Lemonade").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Duplicate" }).click();
+    // An unsaved copy, opened beside it.
+    await expect(handles(page)).toHaveCount(2);
+    await expect(handles(page).nth(1).getByText("new")).toBeVisible();
+
+    await handle(page, "Lemonade").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect(page.getByText("Delete “Lemonade”?")).toBeVisible();
+  });
+
+  test("an Opened row's context menu renames in the row", async ({ page }) => {
+    await mockRpc(page);
+    // Narrow: the explorer is a drawer over the tab bar, and lists what's open.
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto("/?tabs=Lemonade,Deep%20Cuts");
+    await page.getByRole("button", { name: "Open explorer" }).click();
+    await expect(page.getByRole("heading", { name: "Opened" })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Deep Cuts", exact: true })
+      .click({ button: "right" });
+    expect(await rows(page)).toEqual(OPTIONS);
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    // The field is in the row, not under the drawer in the tab handle.
+    const field = page.getByRole("textbox", { name: "Name of Deep Cuts" });
+    await expect(field).toBeFocused();
+    await expect(handle(page, "").getByRole("textbox")).toHaveCount(0);
+    await field.fill("Deeper Cuts");
+    await field.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Deeper Cuts", exact: true }),
+    ).toBeVisible();
+    await expect(handle(page, "Deeper Cuts")).toBeAttached();
+  });
+});

@@ -388,10 +388,16 @@ type Place = (
 /** Keeps a `position: fixed` panel where `place` says, measured against the
  * element `getAnchor` returns (read at placement time, so an anchor whose ref
  * React attaches after this panel's effects run — a parent's — still counts):
- * before its first paint, after every render (its rows may have changed its
- * size), and whenever the window resizes, anything scrolls or a font swaps in
- * (each of which moves the anchor out from under it, and a font can resize the
- * panel too). */
+ * before its first paint, after every render, whenever the panel changes size,
+ * and whenever the window resizes, anything scrolls or a font swaps in (each
+ * of which moves the anchor out from under it, and a font can resize the panel
+ * too).
+ *
+ * The panel's own renders aren't the only thing that resizes it: rows that
+ * load after it opens (a submenu of the artists on an album) render from a
+ * component of their own, and never re-render the panel. A submenu opened near
+ * the foot of the screen with one "Loading…" row has to move up as the list
+ * that replaces it arrives, so the panel's size is watched directly. */
 export function usePlacement(
   panelRef: RefObject<HTMLElement | null>,
   getAnchor: (() => Element | null | undefined) | null,
@@ -407,10 +413,14 @@ export function usePlacement(
       const { getAnchor, place } = inputsRef.current;
       applyPlacement(panelRef.current, getAnchor?.(), place);
     };
+    const panel = panelRef.current;
+    const observer = new ResizeObserver(update);
+    if (panel) observer.observe(panel);
     window.addEventListener("resize", update);
     document.addEventListener("scroll", update, true);
     document.fonts.addEventListener("loadingdone", update);
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", update);
       document.removeEventListener("scroll", update, true);
       document.fonts.removeEventListener("loadingdone", update);

@@ -12,7 +12,7 @@ import { Icons } from "../../icons";
 import IconButton from "../ui/IconButton";
 import Pager from "../ui/Pager";
 import LoadingRegion from "../ui/LoadingRegion";
-import { MENU_PANEL_CLASS } from "../ui/Menu";
+import { MENU_SURFACE_CLASS } from "../ui/Menu";
 import { cx } from "../ui/cx";
 import { placeDropdown } from "../ui/menuGeometry";
 import { useResizeObserver } from "../ui/useElementWidth";
@@ -218,7 +218,7 @@ export function ValueSuggestionsPanel(props: {
   return createPortal(
     <div
       ref={panelRef}
-      className={MENU_PANEL_CLASS}
+      className={`${MENU_SURFACE_CLASS} flex flex-col gap-0.5`}
       style={{ width, minWidth: 200 }}
       // Pressing anywhere in here leaves focus in the text box, and the edit going.
       onMouseDown={(e) => e.preventDefault()}

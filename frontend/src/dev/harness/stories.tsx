@@ -1,4 +1,5 @@
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
+import { Icons } from "../../icons";
 import { castDraft } from "immer";
 import {
   selectTab,
@@ -77,7 +78,14 @@ import { CaptureDialog } from "../../components/ShortcutsPage";
 import { RpcErrorBar } from "../../components/RpcErrorBanner";
 import { UpdateBar } from "../../components/UpdateBanner";
 import { ContextMenu } from "../../components/ui/ContextMenu";
-import { Menu, MenuItem, MenuSubmenu } from "../../components/ui/Menu";
+import {
+  Menu,
+  MenuItem,
+  MenuLoader,
+  MenuSeparator,
+  MenuSubmenu,
+  MenuToggleItem,
+} from "../../components/ui/Menu";
 import SettingsMenu from "../../components/SettingsMenu";
 import ScrollArea from "../../components/ui/ScrollArea";
 import SidebarLeft from "../../components/ui/SidebarLeft";
@@ -596,6 +604,31 @@ function NestedMenuBody(): JSX.Element {
   );
 }
 
+/** The event `menu/late-rows` waits for before its submenu's rows arrive, so a
+ * test can look at the submenu while it's loading and then let them in. */
+export const LATE_ROWS_EVENT = "story:late-rows";
+
+/** A submenu body whose rows load late: a "Loading…" row until the window
+ * sees {@link LATE_ROWS_EVENT}, then a dozen rows, each far wider than it. */
+function LateRows(): JSX.Element {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const load = () => setLoaded(true);
+    window.addEventListener(LATE_ROWS_EVENT, load);
+    return () => window.removeEventListener(LATE_ROWS_EVENT, load);
+  }, []);
+  return (
+    <MenuLoader loading={!loaded}>
+      {Array.from({ length: 12 }, (_, i) => (
+        <MenuItem
+          key={i}
+          label={`A row much, much wider than the "Loading…" row it replaces — number ${i + 1}`}
+        />
+      ))}
+    </MenuLoader>
+  );
+}
+
 /** The export dialog's callbacks, all inert. */
 const EXPORT_DIALOG_HANDLERS = {
   onRowsChange: () => {},
@@ -835,7 +868,7 @@ export const STORIES: Record<string, Story> = {
 
   // ── Settings ─────────────────────────────────────────────────────────────
   "settings/menu": {
-    width: 200,
+    width: 240,
     // Tall enough to clear the menu's bottom edge (its last row is "Re-scan
     // collection"), so the snapshot isn't cropping the panel.
     height: 400,
@@ -849,7 +882,7 @@ export const STORIES: Record<string, Story> = {
   // by the spinner, and the menu still up — which is what a click on it leaves
   // behind until the call comes back.
   "settings/menu-rescanning": {
-    width: 200,
+    width: 240,
     height: 400,
     setup: (stores) => {
       stores.app.store.setState((s) => {
@@ -1864,6 +1897,63 @@ export const STORIES: Record<string, Story> = {
     render: () => (
       <ContextMenu x={1275} y={895} onClose={() => {}}>
         <NestedMenuBody />
+      </ContextMenu>
+    ),
+  },
+  // Every column a menu row can fill — checkbox or radio, icon, label,
+  // shortcut, submenu chevron — with rows that leave some out, so the snapshot
+  // shows each kind of part lining up down the panel whichever rows have one.
+  "menu/columns": {
+    width: 420,
+    height: 340,
+    frame: "p-4",
+    render: () => (
+      <Menu defaultOpen trigger={() => null}>
+        <MenuItem icon={Icons.Query} label="New query" command="query.new" />
+        <MenuItem
+          icon={Icons.ExplorerOpen}
+          label="Toggle explorer"
+          command="explorer.toggle"
+        />
+        <MenuItem label="No icon" />
+        <MenuSeparator />
+        <MenuToggleItem
+          kind="checkbox"
+          icon={Icons.Filter}
+          label="Checked, with icon"
+          checked
+        />
+        <MenuToggleItem
+          kind="checkbox"
+          label="Unchecked, no icon"
+          command="palette.open"
+          checked={false}
+        />
+        <MenuToggleItem
+          kind="radio"
+          icon={Icons.Querydown}
+          label="Radio"
+          checked
+        />
+        <MenuSeparator />
+        <MenuSubmenu icon={Icons.Base} label="Submenu">
+          <MenuItem label="Inside" />
+        </MenuSubmenu>
+        <MenuItem icon={Icons.Delete} label="Delete" danger />
+      </Menu>
+    ),
+  },
+  // A context menu low on the screen and right of center, with a submenu
+  // ("Late") whose rows load after it opens. Its "Loading…" row fits beside
+  // the menu, to its right; the dozen wide rows that replace it don't fit
+  // there, nor below.
+  "menu/late-rows": {
+    render: () => (
+      <ContextMenu x={760} y={780} width="160px" onClose={() => {}}>
+        <MenuItem label="Alpha" />
+        <MenuSubmenu label="Late">
+          <LateRows />
+        </MenuSubmenu>
       </ContextMenu>
     ),
   },
