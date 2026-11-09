@@ -4554,7 +4554,7 @@ describe("contextual queries", () => {
         name: "Credits",
         definition: expect.objectContaining({
           base: "credit",
-          filter: { custom: "", presets: [] },
+          filter: { custom: "artist.id:@id", presets: [] },
         }) as unknown,
       },
     ]);

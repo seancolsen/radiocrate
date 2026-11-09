@@ -18,7 +18,12 @@ import {
 } from "./definition";
 import { defaultEmbedSections, embedSpec } from "./embeddedRecord";
 import type { ContextQueryField, RecordQuery } from "./recordForm";
-import { identifyingColumns, primaryKey, type SchemaTable } from "./schema";
+import {
+  identifyingColumns,
+  inferLinks,
+  primaryKey,
+  type SchemaTable,
+} from "./schema";
 
 /** One contextual query, as the app holds it. */
 export interface ContextualQuery {
@@ -129,21 +134,122 @@ export function withSectionText(
   return { ...def, [section]: { custom: text } };
 }
 
-/** A new contextual query's definition on `base`: no filter, which is the user's
- * to write, and the sort and display a multi-record field of that table would
- * start from. */
+/** One step along the schema's links, from one table to the next: out through
+ * one of the table's own link columns (to the table it's named after), or back
+ * from a table holding a link column named after this one. */
+export type LinkStep =
+  { kind: "out"; column: string } | { kind: "in"; table: string };
+
+/** The shortest walk along the schema's links from table `from` to table `to`,
+ * each link walked either way; `[]` when they're the same table, and undefined
+ * when nothing connects them. Among walks of the same length, the first found
+ * wins, trying a table's own link columns (in column order) ahead of the tables
+ * linking to it (in table order). */
+export function linkPath(
+  tables: readonly SchemaTable[],
+  from: string,
+  to: string,
+): LinkStep[] | undefined {
+  const links = inferLinks(tables);
+  const reached = new Map<string, LinkStep[]>([[from, []]]);
+  const queue = [from];
+  for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+    const path = reached.get(at)!;
+    if (at === to) return path;
+    const steps: [string, LinkStep][] = [
+      ...links
+        .filter((l) => l.fromTable === at)
+        .map((l): [string, LinkStep] => [
+          l.toTable,
+          { kind: "out", column: l.fromColumn },
+        ]),
+      ...links
+        .filter((l) => l.toTable === at)
+        .map((l): [string, LinkStep] => [
+          l.fromTable,
+          { kind: "in", table: l.fromTable },
+        ]),
+    ];
+    for (const [next, step] of steps) {
+      if (reached.has(next)) continue;
+      reached.set(next, [...path, step]);
+      queue.push(next);
+    }
+  }
+  return undefined;
+}
+
+/** A filter on `path` that holds `condition` at its far end. Links walked out
+ * are a dotted path (`track.album.…`), and links walked back are "has at least
+ * one" (`++#credit{…}`), whose braces hold the rest. Links walked out ahead of
+ * one walked back hold it in braces of their own (`track{++#playlist_track{…}}`).
+ */
+function filterAlong(path: readonly LinkStep[], condition: string): string {
+  const columns: string[] = [];
+  let i = 0;
+  for (; i < path.length; i++) {
+    const step = path[i]!;
+    if (step.kind !== "out") break;
+    columns.push(step.column);
+  }
+  const back = path[i];
+  if (back?.kind !== "in") return [...columns, condition].join(".");
+  const inner = `++#${back.table}{${filterAlong(path.slice(i + 1), condition)}}`;
+  return columns.length === 0 ? inner : `${columns.join(".")}{${inner}}`;
+}
+
+/** A guess at what a new contextual query on the records of `table`, listing
+ * records of `base`, is after: the records of `base` the schema's links connect
+ * to the record, by the shortest way they do. Listing credits on a track:
+ *
+ * ```
+ * track.id:@id
+ * ```
+ *
+ * And albums on an artist (albums with a track with a credit to the artist):
+ *
+ * ```
+ * ++#track{++#credit{artist.id:@id}}
+ * ```
+ *
+ * Empty when there's no guess to make: when nothing connects the two tables,
+ * when `table` has no key for `@id` to hold, and when `base` is `table` itself,
+ * whose only record connected to the record is the record. */
+export function seedFilter(
+  tables: readonly SchemaTable[],
+  table: string,
+  base: string,
+): string {
+  if (base === table) return "";
+  const key = contextKeyColumn(tables, table);
+  if (key === undefined) return "";
+  const path = linkPath(tables, base, table);
+  if (path === undefined) return "";
+  const type = tables
+    .find((t) => t.name === table)
+    ?.columns.find((c) => c.name === key)?.type;
+  // `:` is a substring match on text; on a UUID it's equality already.
+  const equals = (type ?? "").toUpperCase() === "UUID" ? ":" : ":=";
+  return filterAlong(path, `${key}${equals}${ID_VARIABLE}`);
+}
+
+/** A new definition for a contextual query on the records of `table`, listing
+ * records of `base`: the filter {@link seedFilter} guesses at, and the sort and
+ * display a multi-record field of `base` would start from. */
 export function seedDefinition(
   tables: readonly SchemaTable[],
+  table: string,
   base: string,
 ): QueryDefinition {
-  const table = tables.find((t) => t.name === base);
+  const listed = tables.find((t) => t.name === base);
   const sections = defaultEmbedSections(
     embedSpec(tables, base),
-    table ? identifyingColumns(table) : [],
+    listed ? identifyingColumns(listed) : [],
   );
   return {
     ...emptyDefinition(),
     base,
+    filter: { custom: seedFilter(tables, table, base), presets: [] },
     sort: { custom: sections.sorting },
     display: { custom: sections.display },
   };

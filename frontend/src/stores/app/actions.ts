@@ -2978,7 +2978,7 @@ export function createAppActions(
         id: newUuid(),
         tableName: table,
         name: name.trim() || DEFAULT_CONTEXTUAL_QUERY_NAME,
-        definition: seedDefinition(s0.schema.tables, base),
+        definition: seedDefinition(s0.schema.tables, table, base),
       };
       set((s) => {
         s.contextualQueries.data = [...s.contextualQueries.data, query];

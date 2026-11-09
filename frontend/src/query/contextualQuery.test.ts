@@ -6,9 +6,11 @@ import {
   contextRowsQuery,
   contextTabDefinition,
   isRunnable,
+  linkPath,
   listableTables,
   sectionText,
   seedDefinition,
+  seedFilter,
   withSectionText,
   type ContextualQuery,
 } from "./contextualQuery";
@@ -153,12 +155,99 @@ describe("sections", () => {
   });
 
   it("seeds a new query's sort and display as an embedded record's", () => {
-    expect(seedDefinition(TABLES, "artist")).toEqual({
+    expect(seedDefinition(TABLES, "track", "artist")).toEqual({
       ...emptyDefinition(),
       base: "artist",
+      filter: { custom: "++#credit{track.id:@id}", presets: [] },
       sort: { custom: "\\\\name \\\\id" },
       display: { custom: "$name" },
     });
+  });
+});
+
+// The links of RadioCrate's own schema, give or take: a UUID column named after
+// a table links to it. (`credit` is keyed by `id` here, so that it can have
+// contextual queries.)
+const uuid = (name: string) => col(name, "UUID", name !== "id");
+const keyed = (name: string, ...columns: SchemaTable["columns"]) => ({
+  name,
+  columns: [col("id", "UUID"), ...columns],
+  uniqueConstraints: [["id"]],
+});
+const LINKED: SchemaTable[] = [
+  keyed("album", col("title", "VARCHAR")),
+  keyed("artist", col("name", "VARCHAR")),
+  keyed("credit", uuid("track"), uuid("artist")),
+  keyed("file", col("path", "VARCHAR")),
+  keyed("playlist", col("name", "VARCHAR")),
+  keyed("playlist_track", uuid("playlist"), uuid("track")),
+  keyed("preset", col("name", "VARCHAR")),
+  keyed("track", uuid("file"), uuid("album"), col("title", "VARCHAR")),
+  {
+    name: "setting",
+    columns: [col("key", "VARCHAR"), uuid("track")],
+    uniqueConstraints: [["key"]],
+  },
+];
+
+describe("linkPath", () => {
+  it("walks links either way, by the shortest way there is", () => {
+    expect(linkPath(LINKED, "album", "artist")).toEqual([
+      { kind: "in", table: "track" },
+      { kind: "in", table: "credit" },
+      { kind: "out", column: "artist" },
+    ]);
+    expect(linkPath(LINKED, "credit", "album")).toEqual([
+      { kind: "out", column: "track" },
+      { kind: "out", column: "album" },
+    ]);
+    expect(linkPath(LINKED, "track", "track")).toEqual([]);
+    expect(linkPath(LINKED, "track", "preset")).toBeUndefined();
+  });
+
+  it("tries a table's own links ahead of those to it", () => {
+    // Both two links long: through the track's file, or through a credit.
+    const tables = [...LINKED, keyed("label", uuid("file"), uuid("artist"))];
+    expect(linkPath(tables, "track", "label")).toEqual([
+      { kind: "out", column: "file" },
+      { kind: "in", table: "label" },
+    ]);
+  });
+});
+
+describe("seedFilter", () => {
+  it("follows a link out of the base", () => {
+    expect(seedFilter(LINKED, "track", "credit")).toBe("track.id:@id");
+    expect(seedFilter(LINKED, "album", "credit")).toBe("track.album.id:@id");
+  });
+
+  it("follows a link into the base", () => {
+    expect(seedFilter(LINKED, "credit", "track")).toBe("++#credit{id:@id}");
+  });
+
+  it("nests the links it follows", () => {
+    expect(seedFilter(LINKED, "artist", "album")).toBe(
+      "++#track{++#credit{artist.id:@id}}",
+    );
+    expect(seedFilter(LINKED, "playlist", "credit")).toBe(
+      "track{++#playlist_track{playlist.id:@id}}",
+    );
+    expect(seedFilter(LINKED, "playlist", "album")).toBe(
+      "++#track{++#playlist_track{playlist.id:@id}}",
+    );
+  });
+
+  it("matches a text key exactly", () => {
+    expect(seedFilter(LINKED, "setting", "track")).toBe("++#setting{key:=@id}");
+  });
+
+  it("leaves the filter to the user when there's no guess to make", () => {
+    // Nothing connects them.
+    expect(seedFilter(LINKED, "track", "preset")).toBe("");
+    // The only track connected to the track is itself.
+    expect(seedFilter(LINKED, "track", "track")).toBe("");
+    // No key for `@id` to hold.
+    expect(seedFilter(TABLES, "track_tag", "track")).toBe("");
   });
 });
 

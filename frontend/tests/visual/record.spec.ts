@@ -1239,7 +1239,7 @@ test.describe("contextual queries", () => {
     await expect.poll(async () => (await writes(page)).length).toBe(2);
   });
 
-  test("one being added takes a name, then a base, then a filter", async ({
+  test("one being added takes a name, then a base, and guesses a filter", async ({
     page,
   }) => {
     const stage = await opened(page, "record-editor/provisional-query");
@@ -1256,12 +1256,8 @@ test.describe("contextual queries", () => {
     await expect(fieldLabelOf(stage, "credited")).toBeVisible();
     const filter = embedEditor(stage, "Filter of credited");
     await expect(filter).toBeFocused();
-    // No filter, so nothing runs yet.
-    await expect(
-      stage.getByText("Write a filter to run this query."),
-    ).toBeVisible();
-
-    await page.keyboard.type("track:=@id");
+    // The credits of the track, by the link from credit to track — so it runs.
+    await expect(filter).toHaveText("track.id:@id");
     await expect(stage.getByText("The Weeknd", { exact: true })).toBeVisible();
     expect((await writes(page))[0]).toMatchObject({
       operations: [
@@ -1272,6 +1268,21 @@ test.describe("contextual queries", () => {
         },
       ],
     });
+  });
+
+  test("one listing its own table starts with no filter", async ({ page }) => {
+    const stage = await opened(page, "record-editor/provisional-query");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add contextual query" }).click();
+    await page.keyboard.press("Enter");
+    await stage.getByRole("combobox", { name: "Base" }).selectOption("track");
+    const filter = embedEditor(stage, "Filter of query");
+    await expect(filter).toBeFocused();
+    await expect(filter).toHaveText("");
+    // No filter, so nothing runs yet.
+    await expect(
+      stage.getByText("Write a filter to run this query."),
+    ).toBeVisible();
   });
 
   test("Escape while it's being named drops a query being added", async ({
