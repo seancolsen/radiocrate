@@ -57,60 +57,6 @@ function VersionVerdict(props: {
   );
 }
 
-/** Copies or clears the playback log (see `audio/playbackLog.ts`): what the
- * player did while nobody could watch, to paste into a bug report. The status
- * line says how it went, since on a phone the clipboard gives no other sign. */
-function PlaybackLogSection(props: {
-  onCopy: () => Promise<number>;
-  onClear: () => void;
-}): JSX.Element {
-  const [status, setStatus] = useState<string | null>(null);
-
-  const copy = () => {
-    props.onCopy().then(
-      (lines) => setStatus(`Copied ${lines} lines.`),
-      (err: unknown) =>
-        setStatus(
-          `Couldn’t copy: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-    );
-  };
-
-  return (
-    <section className="border-edge mt-4 border-t pt-3">
-      <h3 className="text-ink text-sm font-medium">Playback log</h3>
-      <p className="text-ink-weak mt-1 text-sm">
-        What the player has been doing, for diagnosing playback that stops while
-        the screen is locked.
-      </p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className="control text-ink hover:bg-hover rounded-md"
-          onClick={copy}
-        >
-          Copy log
-        </button>
-        <button
-          type="button"
-          className="control text-ink hover:bg-hover rounded-md"
-          onClick={() => {
-            props.onClear();
-            setStatus("Cleared.");
-          }}
-        >
-          Clear
-        </button>
-        {status !== null && (
-          <span className="text-ink-weak text-sm" role="status">
-            {status}
-          </span>
-        )}
-      </div>
-    </section>
-  );
-}
-
 /** The About dialog: which client this is, which binary is serving it, and
  * whether those two agree — the first thing to look at when a client seems
  * stuck on an old build. Takes its values as props (rather than reading the
@@ -128,8 +74,6 @@ export function AboutDialog(props: {
   checking?: boolean;
   onCheck: () => void;
   onReloadFresh: () => void;
-  onCopyPlaybackLog: () => Promise<number>;
-  onClearPlaybackLog: () => void;
   onClose: () => void;
 }): JSX.Element {
   const [confirming, setConfirming] = useState(false);
@@ -151,10 +95,6 @@ export function AboutDialog(props: {
         clientBuildId={props.clientBuildId}
         version={props.version}
         checking={props.checking ?? false}
-      />
-      <PlaybackLogSection
-        onCopy={props.onCopyPlaybackLog}
-        onClear={props.onClearPlaybackLog}
       />
       {confirming ? (
         <>
@@ -256,8 +196,6 @@ function AboutModalBody(): JSX.Element {
       checking={checking}
       onCheck={() => void check()}
       onReloadFresh={() => void updateActions.resetAppData()}
-      onCopyPlaybackLog={() => appActions.copyPlaybackLog()}
-      onClearPlaybackLog={() => appActions.clearPlaybackLog()}
       onClose={() => appActions.closeAbout()}
     />
   );

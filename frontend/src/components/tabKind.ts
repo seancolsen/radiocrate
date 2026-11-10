@@ -15,5 +15,7 @@ export function tabIcon(kind: TabKind): IconComponent {
       return Icons.Presets;
     case "prelude":
       return Icons.Querydown;
+    case "log":
+      return Icons.Log;
   }
 }

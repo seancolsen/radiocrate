@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { emptyDefinition } from "../../query/definition";
 import { createAppStore } from "./index";
-import { PRELUDE_TAB_ID, PRESETS_TAB_ID, SHORTCUTS_TAB_ID } from "./state";
+import {
+  LOG_TAB_ID,
+  PRELUDE_TAB_ID,
+  PRESETS_TAB_ID,
+  SHORTCUTS_TAB_ID,
+} from "./state";
 import { fakeEnv } from "./testEnv";
 
 describe("open tabs", () => {
@@ -16,6 +21,7 @@ describe("open tabs", () => {
     before.actions.openShortcutsTab();
     before.actions.openPresetsTab();
     before.actions.openPreludeTab();
+    before.actions.openLogTab();
     before.actions.selectTab("q1");
     before.dispose();
 
@@ -28,9 +34,10 @@ describe("open tabs", () => {
       "shortcuts",
       "presets",
       "prelude",
+      "log",
     ]);
     expect(s.activeTabId).toBe("q1");
-    const [restored, duplicate, shortcuts, presets, prelude] = s.tabs;
+    const [restored, duplicate, shortcuts, presets, prelude, log] = s.tabs;
     expect(restored).toMatchObject({
       id: "q1",
       name: "Lemonade",
@@ -55,6 +62,7 @@ describe("open tabs", () => {
       id: PRELUDE_TAB_ID,
       name: "Querydown Prelude",
     });
+    expect(log).toEqual({ kind: "log", id: LOG_TAB_ID, name: "Logging" });
     after.dispose();
   });
 

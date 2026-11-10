@@ -217,7 +217,8 @@ export type StoredTab =
     }
   | { kind: "shortcuts" }
   | { kind: "presets" }
-  | { kind: "prelude" };
+  | { kind: "prelude" }
+  | { kind: "log" };
 
 /** The open tabs a previous visit left, in tab-bar order, and the id of the one
  * that was active. */
@@ -266,6 +267,7 @@ interface OpenTabsRecord {
     | { kind: "shortcuts" }
     | { kind: "presets" }
     | { kind: "prelude" }
+    | { kind: "log" }
   >;
 }
 
@@ -292,6 +294,7 @@ export function storedTabs(env: AppEnv): StoredTabs {
   let shortcuts = false;
   let presets = false;
   let prelude = false;
+  let log = false;
   for (const entry of record.tabs as unknown[]) {
     if (typeof entry !== "object" || entry === null) continue;
     const t = entry as Record<string, unknown>;
@@ -304,6 +307,9 @@ export function storedTabs(env: AppEnv): StoredTabs {
     } else if (t.kind === "prelude" && !prelude) {
       prelude = true;
       tabs.push({ kind: "prelude" });
+    } else if (t.kind === "log" && !log) {
+      log = true;
+      tabs.push({ kind: "log" });
     } else if (
       t.kind === "query" &&
       typeof t.id === "string" &&
@@ -404,6 +410,8 @@ export function persistTabs(
             return { kind: "presets" };
           case "prelude":
             return { kind: "prelude" };
+          case "log":
+            return { kind: "log" };
         }
       }),
     };

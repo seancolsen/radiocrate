@@ -29,7 +29,8 @@ const AUDIO_QUALITY_OPTIONS: {
 
 /** The Settings menu body: a Light/Dark/System theme picker, a Higher
  * quality/Lower bandwidth audio streaming picker, the Querydown Prelude, Query
- * presets, Keyboard shortcuts and About entries, and the collection re-scan. */
+ * presets, Keyboard shortcuts, Logging and About entries, and the collection
+ * re-scan. */
 export default function SettingsMenu(): JSX.Element {
   const theme = useApp((s) => s.theme);
   const audioQuality = useApp((s) => s.audioQuality);
@@ -78,6 +79,11 @@ export default function SettingsMenu(): JSX.Element {
         label="Keyboard shortcuts"
         command="shortcuts.configure"
         onClick={() => actions.openShortcutsTab()}
+      />
+      <MenuItem
+        icon={Icons.Log}
+        label="Logging"
+        onClick={() => actions.openLogTab()}
       />
       <MenuItem
         icon={Icons.About}

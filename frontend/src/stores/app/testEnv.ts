@@ -76,7 +76,7 @@ export class FakePlayer implements Player {
     this.isPlaying = false;
   }
   setMetadata(): void {}
-  traceContext(): void {}
+  logSettings(): void {}
 }
 
 /** A fake {@link AppEnv} for store unit tests: an in-memory `storage`, a
@@ -109,6 +109,7 @@ export function fakeEnv(overrides: Partial<AppEnv> = {}): AppEnv {
     writeClipboardText: vi.fn(() => Promise.resolve()),
     saveTextFile: vi.fn(() => Promise.resolve(true)),
     createPlayer: (events) => new FakePlayer(events),
+    describeEnvironment: () => ["Test environment"],
     ...overrides,
   };
 }

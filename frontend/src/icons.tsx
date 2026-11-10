@@ -85,6 +85,9 @@ import Commands from "~icons/material-symbols/terminal";
 import Presets from "~icons/material-symbols/tune";
 import About from "~icons/material-symbols/info";
 import Help from "~icons/material-symbols/help-outline";
+import Log from "~icons/material-symbols/receipt-long";
+import StartLogging from "~icons/material-symbols/radio-button-checked";
+import StopLogging from "~icons/material-symbols/stop-circle";
 import PaintRoller from "~icons/material-symbols/imagesearch-roller";
 // The record editor's field-label glyphs, one per value category.
 import FieldText from "~icons/material-symbols/notes";
@@ -186,7 +189,10 @@ export const Icons = {
   Commands, // the explorer footer's way into the command palette
   Presets, // the preset manager: its Settings-menu entry and tab handle
   About, // Settings footer: "About RadioCrate" (versions + update actions)
-  Help, // a page's "?" help, shown in a tooltip (the prelude editor)
+  Help, // a page's "?" help: a tooltip (the prelude editor) or a popover (the log)
+  Log, // the Logging page: its Settings-menu entry and tab handle
+  StartLogging, // Logging page toolbar: "Start logging"
+  StopLogging, // Logging page toolbar: "Stop logging"
   PaintRoller, // record editor: take one distinct value for every record
   FieldText, // record editor: a text field's label
   FieldNumber, // record editor: a numeric field's label

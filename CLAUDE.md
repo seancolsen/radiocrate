@@ -124,7 +124,7 @@ rules.
   stack.
 - **`stores/` never imports React** except `stores/react.tsx` (lint-enforced),
   and the framework-free modules (`query/`, `commands/`, `api/`, `audio/`,
-  `editor/`, `grid/`, `record/`, `state/`) import neither React nor a store.
+  `editor/`, `grid/`, `log/`, `record/`, `state/`) import neither React nor a store.
 - **Environment access is injected** through `AppEnv` (`stores/env.ts`) so store
   tests run in plain vitest with fakes.
 - Immer makes every write a new reference along its path, so "replace, don't

@@ -18,6 +18,7 @@ import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
 import PresetManager from "./components/PresetManager";
 import PreludePage from "./components/PreludePage";
+import LogPage from "./components/LogPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
 import TabSwitcher from "./components/TabSwitcher";
@@ -46,6 +47,7 @@ function TabPage(props: { tabId: string }): JSX.Element | null {
   if (kind === "shortcuts") return <ShortcutsPage />;
   if (kind === "presets") return <PresetManager />;
   if (kind === "prelude") return <PreludePage />;
+  if (kind === "log") return <LogPage />;
   return null;
 }
 

@@ -56,6 +56,8 @@ import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import PresetDeleteModal from "../../components/PresetDeleteModal";
 import PresetManager from "../../components/PresetManager";
 import PreludePage from "../../components/PreludePage";
+import LogPage from "../../components/LogPage";
+import type { LogEntry } from "../../log/log";
 import {
   ExportDataDialog,
   type ExportColumnOption,
@@ -326,6 +328,67 @@ function showProblem(
     }
   });
 }
+
+/** A few minutes of log around a track change on a locked phone, at fixed
+ * local times. */
+const LOG_FIXTURE: LogEntry[] = (() => {
+  const at = (m: number, s: number, ms: number) =>
+    new Date(2026, 10, 10, 9, m, s, ms).getTime();
+  const entries: Omit<LogEntry, "id">[] = [
+    {
+      time: at(40, 12, 3),
+      source: "app",
+      message: "Logging started",
+      details: [
+        "App build 3c7ae10",
+        "Browser: Mozilla/5.0 (Linux; Android 10; K) Chrome/155.0.0.0 Mobile",
+        "Running as an installed app",
+        "Page visible",
+        "Online",
+      ],
+    },
+    {
+      time: at(40, 20, 551),
+      source: "playback",
+      message: "Asked to play track 3f2a1b9c, with 11 tracks after it",
+    },
+    {
+      time: at(40, 20, 602),
+      source: "playback",
+      message:
+        "Now playing track 3f2a1b9c: \u201cFormation\u201d by Beyonc\u00e9, 3:26",
+    },
+    {
+      time: at(41, 2, 18),
+      source: "page",
+      message: "The app went into the background, or the screen turned off",
+    },
+    {
+      time: at(41, 2, 20),
+      source: "playback",
+      message: "Status: track 3f2a1b9c at 0:41.4",
+      details: [
+        "Page hidden \u00b7 lock-screen controls show playing",
+        "Player A (current): playing at 0:41.4 \u00b7 buffered 0:00\u20133:26 \u00b7 enough audio ahead \u00b7 download idle \u00b7 4.1 MB decoded \u00b7 track 3f2a1b9c (original file)",
+        "Player B (standby): paused at 0:00.0 \u00b7 buffered 0:00\u20134:11 \u00b7 enough audio ahead \u00b7 download idle \u00b7 track 8d04e7aa (original file)",
+        "Keep-alive player: playing at 1.2 s",
+      ],
+    },
+    {
+      time: at(41, 9, 870),
+      source: "server",
+      message: "A request to the server failed: source.record_play",
+      details: ["503 Service Unavailable"],
+    },
+    {
+      time: at(43, 46, 912),
+      source: "playback",
+      message:
+        "The track ended: moving on to track 8d04e7aa, which is preloaded",
+    },
+  ];
+  return entries.map((entry, i) => ({ id: i + 1, ...entry }));
+})();
 
 /** A prelude whose last definition is left open, as the prelude editor's
  * error story holds it. */
@@ -955,6 +1018,37 @@ export const STORIES: Record<string, Story> = {
     frame: "flex flex-col",
     render: () => <PreludePage />,
   },
+  // The Logging page with logging on and a stretch of log: Stop logging, Copy
+  // log and Clear log, and entries from several parts of the app, details
+  // under their messages, under the date they were written.
+  "settings/logging": {
+    width: 720,
+    height: 420,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.logging = true;
+        s.logEntries = castDraft(LOG_FIXTURE);
+      });
+    },
+    render: () => <LogPage />,
+  },
+  // Logging off, with nothing logged: Start logging alone in the toolbar, and
+  // a line saying what to do.
+  "settings/logging-off": {
+    width: 720,
+    height: 200,
+    frame: "flex flex-col",
+    render: () => <LogPage />,
+  },
+  // The "?" clicked: what logging is and how to read it, in a popover kept
+  // inside the right edge. (The click is the test's.)
+  "settings/logging-help": {
+    width: 720,
+    height: 680,
+    frame: "flex flex-col",
+    render: () => <LogPage />,
+  },
   // The prelude holding a syntax error: the problem between the toolbar and
   // the editor — located, with the line marked — and Save disabled.
   "settings/prelude-problem": {
@@ -1124,8 +1218,6 @@ export const STORIES: Record<string, Story> = {
         version={STUB_VERSION}
         onCheck={() => {}}
         onReloadFresh={() => {}}
-        onCopyPlaybackLog={() => Promise.resolve(0)}
-        onClearPlaybackLog={() => {}}
         onClose={() => {}}
       />
     ),

@@ -12,6 +12,7 @@ import {
   selectRangeOrigin,
   PRELUDE_TAB_ID,
   PRESETS_TAB_ID,
+  LOG_TAB_ID,
   type AppStoreBundle,
   type PreparedStep,
 } from "./index";
@@ -1850,6 +1851,117 @@ describe("saveSetting", () => {
     expect(
       bundle.store.getState().settingOverrides["querydown_prelude"],
     ).toBeUndefined();
+  });
+});
+
+describe("logging", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is off by default, and logs nothing then", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.log("app", "Something happened");
+    const s = bundle.store.getState();
+    expect(s.logging).toBe(false);
+    expect(s.logEntries).toEqual([]);
+  });
+
+  it("starts with where the app is running, and stops with an entry saying so", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.startLogging();
+    bundle.actions.log("server", "A request failed", ["500"]);
+    bundle.actions.stopLogging();
+    bundle.actions.log("app", "Not logged");
+    const s = bundle.store.getState();
+    expect(s.logging).toBe(false);
+    expect(
+      s.logEntries.map((e) => [e.source, e.message, e.details ?? []]),
+    ).toEqual([
+      ["app", "Logging started", ["Test environment"]],
+      ["server", "A request failed", ["500"]],
+      ["app", "Logging stopped", []],
+    ]);
+  });
+
+  it("is kept across a reload, on, until it's turned off", () => {
+    vi.useFakeTimers();
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    before.actions.startLogging();
+    before.actions.log("page", "The app went into the background");
+    before.actions.flushLog();
+
+    const after = createAppStore(env);
+    const s = after.store.getState();
+    expect(s.logging).toBe(true);
+    expect(s.logEntries.map((e) => e.message)).toEqual([
+      "Logging started",
+      "The app went into the background",
+      "The app loaded, with logging on",
+    ]);
+    // Ids carry on from where the last page left off.
+    expect(new Set(s.logEntries.map((e) => e.id)).size).toBe(3);
+  });
+
+  it("saves in batches, not on every entry", () => {
+    vi.useFakeTimers();
+    const env = fakeEnv();
+    const bundle = createAppStore(env);
+    bundle.actions.startLogging();
+    expect(env.storage.getItem("log")).toBeNull();
+    vi.advanceTimersByTime(5000);
+    expect(JSON.parse(env.storage.getItem("log")!)).toHaveLength(1);
+  });
+
+  it("empties on Clear, and carries on logging if it's on", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.startLogging();
+    bundle.actions.log("app", "Something happened");
+    bundle.actions.clearLog();
+    expect(bundle.store.getState().logEntries.map((e) => e.message)).toEqual([
+      "Log cleared",
+    ]);
+
+    bundle.actions.stopLogging();
+    bundle.actions.clearLog();
+    expect(bundle.store.getState().logEntries).toEqual([]);
+  });
+
+  it("copies the log as text, and says so", async () => {
+    const env = fakeEnv();
+    const bundle = createAppStore(env);
+    bundle.actions.startLogging();
+    bundle.actions.copyLog();
+    await Promise.resolve();
+    expect(env.writeClipboardText).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^RadioCrate log: 1 entry,[^]*App {7}Logging started\n {24}Test environment$/,
+      ),
+    );
+    expect(bundle.store.getState().toast?.text).toBe(
+      "Copied the log (1 entry)",
+    );
+  });
+
+  it("logs failed requests to the server, even those the error bar ignores", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.startLogging();
+    bundle.actions.reportRpcFailure("app.version", new Error("offline"));
+    expect(bundle.store.getState().logEntries.at(-1)).toMatchObject({
+      source: "server",
+      message: "A request to the server failed: app.version",
+      details: ["offline"],
+    });
+  });
+
+  it("opens its page as one tab", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.openLogTab();
+    bundle.actions.openLogTab();
+    const s = bundle.store.getState();
+    expect(s.tabs.map((t) => t.id)).toEqual([LOG_TAB_ID]);
+    expect(s.activeTabId).toBe(LOG_TAB_ID);
   });
 });
 

@@ -2,9 +2,9 @@ import {
   AudioEngine,
   type AudioQualityPref,
   type EngineEvents,
-  type EngineTrace,
   type Player,
 } from "../audio/engine";
+import type { Logger } from "../log/log";
 
 /** The bits of the browser environment stores read or write directly, injected
  * so store unit tests can pass fakes instead of relying on a DOM (the vitest
@@ -34,8 +34,12 @@ export interface AppEnv {
   createPlayer: (
     events: EngineEvents,
     getQuality: () => AudioQualityPref,
-    trace: EngineTrace,
+    logger: Logger,
   ) => Player;
+  /** What the log says about where the app is running (its build, the
+   * browser, whether it's installed, visible and online), one fact a line —
+   * written when logging starts, and when a page loads with it on. */
+  describeEnvironment: () => string[];
 }
 
 /** The File System Access API's save dialog, which TypeScript's DOM library
@@ -101,7 +105,22 @@ export function browserEnv(): AppEnv {
     },
     writeClipboardText: (text) => navigator.clipboard.writeText(text),
     saveTextFile,
-    createPlayer: (events, getQuality, trace) =>
-      new AudioEngine(events, getQuality, trace),
+    createPlayer: (events, getQuality, logger) =>
+      new AudioEngine(events, getQuality, logger),
+    describeEnvironment,
   };
+}
+
+/** See {@link AppEnv.describeEnvironment}. */
+function describeEnvironment(): string[] {
+  const installed =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  return [
+    `App build ${__BUILD_ID__}`,
+    `Browser: ${navigator.userAgent}`,
+    installed ? "Running as an installed app" : "Running in a browser tab",
+    `Page ${document.visibilityState}`,
+    navigator.onLine ? "Online" : "Offline",
+  ];
 }

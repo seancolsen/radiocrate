@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AudioEngine,
   silentWav,
@@ -718,8 +718,10 @@ describe("the duration", () => {
   });
 });
 
-describe("a traced engine", () => {
-  it("records a track boundary: the handoff and the events around it", () => {
+describe("a logging engine", () => {
+  /** An engine logging into `lines` — each entry's message, then its details
+   * indented — while `enabled` says logging is on. */
+  function loggingEngine(enabled: { on: boolean }) {
     vi.useFakeTimers();
     vi.stubGlobal("window", { addEventListener: () => {} });
     vi.stubGlobal("navigator", { userAgent: "test" });
@@ -739,25 +741,69 @@ describe("a traced engine", () => {
       },
       () => "higher",
       {
-        add: (kind, detail) => lines.push(detail ? `${kind} ${detail}` : kind),
-        flush: () => {},
+        get enabled() {
+          return enabled.on;
+        },
+        add: (source, message, details) => {
+          expect(source).toBe("playback");
+          lines.push(message, ...(details ?? []).map((d) => `  ${d}`));
+        },
       },
     );
+    return { engine, lines };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("records a track boundary in words: the handoff and the events around it", () => {
+    const { engine, lines } = loggingEngine({ on: true });
     engine.setQueue([], "t1", ["t2"]);
     const [first] = created;
     finishDownload(first!);
     first!.dispatchEvent(new Event("ended"));
     vi.advanceTimersByTime(3000);
-    vi.useRealTimers();
 
-    const kinds = lines.map((line) => line.split(" ")[0]);
-    expect(kinds.slice(0, 3)).toEqual(["context", "cmd:set-queue", "load"]);
-    expect(kinds).toContain("prime");
-    expect(kinds.indexOf("ev:ended")).toBeLessThan(kinds.indexOf("handoff"));
-    expect(lines.find((l) => l.startsWith("prime"))).toBe("prime t2 on B");
-    expect(lines.at(-1)).toMatch(
-      /^hb t2 vis=hidden ms=- \| B\* t=0\.00 .* src=t2 \| A /,
+    const messages = lines.filter((l) => !l.startsWith("  "));
+    expect(messages.slice(0, 3)).toEqual([
+      "Playback settings",
+      "Asked to play track t1, with 1 track after it",
+      "Loading track t1 on player A (current)",
+    ]);
+    expect(messages).toContain(
+      "Preloading the next track, track t2, on player B (standby)",
     );
+    const ended = messages.indexOf(
+      "Player A (current) reached the end of its track",
+    );
+    const handoff = messages.indexOf(
+      "Switching to player B (standby), which has track t2 preloaded",
+    );
+    expect(ended).toBeGreaterThan(-1);
+    expect(ended).toBeLessThan(handoff);
+
+    const status = lines.lastIndexOf("Status: track t2 at 0:00.0");
+    expect(status).toBeGreaterThan(-1);
+    expect(lines[status + 1]).toBe(
+      "  Page hidden \u00b7 lock-screen controls show nothing (no media session)",
+    );
+    expect(lines[status + 2]).toMatch(
+      /^ {2}Player B \(current\): playing at 0:00\.0 .* track t2 \(original file\)$/,
+    );
+    expect(lines[status + 3]).toMatch(/^ {2}Player A \(standby\): /);
+  });
+
+  it("logs nothing while logging is off, and starts when it's turned on", () => {
+    const enabled = { on: false };
+    const { engine, lines } = loggingEngine(enabled);
+    engine.setQueue([], "t1", []);
+    vi.advanceTimersByTime(3000);
+    expect(lines).toEqual([]);
+
+    enabled.on = true;
+    vi.advanceTimersByTime(3000);
+    expect(lines[0]).toBe("Status: track t1 at 0:00.0");
   });
 });
 

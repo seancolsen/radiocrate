@@ -55,7 +55,16 @@ import type {
   Player,
   TrackStep,
 } from "../../audio/engine";
-import { PlaybackLog } from "../../audio/playbackLog";
+import {
+  MAX_LOG_ENTRIES,
+  describeError,
+  formatLog,
+  saveLogEntries,
+  saveLogging,
+  type LogEntry,
+  type Logger,
+  type LogSource,
+} from "../../log/log";
 import {
   addInferredLinks,
   INTROSPECTION_SQL,
@@ -253,6 +262,8 @@ import {
   EMPTY_SELECTION,
   PRELUDE_TAB_ID,
   PRELUDE_TAB_NAME,
+  LOG_TAB_ID,
+  LOG_TAB_NAME,
   PRESETS_TAB_ID,
   PRESETS_TAB_NAME,
   SHORTCUTS_TAB_ID,
@@ -1007,13 +1018,30 @@ export interface AppActions {
    * `app.check_for_updates` command's action. */
   openAbout: () => void;
   closeAbout: () => void;
-  /** Copy the playback log — the engine's record of what it and the page did,
-   * for diagnosing playback that stalls out of sight — to the clipboard.
-   * Resolves to the number of lines copied. A gesture action: call it from the
-   * click itself. */
-  copyPlaybackLog: () => Promise<number>;
-  /** Empty the playback log, so a test run starts from a clean slate. */
-  clearPlaybackLog: () => void;
+
+  /** Open (or focus) the singleton Logging tab — the Settings menu's entry. */
+  openLogTab: () => void;
+  /** Add an entry to the log (see `log/log.ts`), if logging is on: `message`
+   * says what happened, `details` the state around it, a fact a line. */
+  log: (
+    source: LogSource,
+    message: string,
+    details?: readonly string[],
+  ) => void;
+  /** Turn logging on: from here on the app keeps a log, across reloads,
+   * until it's turned off. Its first entry says where the app is running. */
+  startLogging: () => void;
+  /** Turn logging off. The log is kept, to be copied or cleared. */
+  stopLogging: () => void;
+  /** Copy the log to the clipboard as text, and say so in a toast. A gesture
+   * action: call it from the click itself. */
+  copyLog: () => void;
+  /** Empty the log. Logging carries on if it's on, starting the new log with
+   * where the app is running, as starting it does. */
+  clearLog: () => void;
+  /** Write the log to storage now, rather than with the next batch — for a
+   * page that may be about to stop running. */
+  flushLog: () => void;
 
   /** Store a setting's value and re-run the open queries under it. A value
    * equal to the default is stored as a *deletion* — the reset path. */
@@ -2377,8 +2405,54 @@ export function createAppActions(
 
   // ── Playback ────────────────────────────────────────────────────────────────
 
-  // What the engine did, kept across reloads (see `audio/playbackLog.ts`).
-  const playbackLog = new PlaybackLog(env.storage);
+  // ── Log ─────────────────────────────────────────────────────────────────────
+
+  // Entries are written to storage in batches: playback writes one every few
+  // seconds while the page is hidden, and the whole log is rewritten each
+  // time. `flushLog` writes at once, for a page about to stop running.
+  let logSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let logDirty = false;
+  let logSeq = get().logEntries.at(-1)?.id ?? 0;
+  /** How long an entry may wait in memory before the log is saved. */
+  const LOG_SAVE_DELAY_MS = 5000;
+
+  const saveLog = () => {
+    clearTimeout(logSaveTimer);
+    logSaveTimer = undefined;
+    if (!logDirty) return;
+    logDirty = false;
+    saveLogEntries(env.storage, get().logEntries);
+  };
+
+  const addLogEntry = (
+    source: LogSource,
+    message: string,
+    details?: readonly string[],
+  ) => {
+    if (!get().logging) return;
+    const entry: LogEntry = {
+      id: ++logSeq,
+      time: Date.now(),
+      source,
+      message,
+      ...(details && details.length > 0 && { details: [...details] }),
+    };
+    set((s) => {
+      s.logEntries.push(castDraft(entry));
+      const excess = s.logEntries.length - MAX_LOG_ENTRIES;
+      if (excess > 0) s.logEntries.splice(0, excess);
+    });
+    logDirty = true;
+    logSaveTimer ??= setTimeout(saveLog, LOG_SAVE_DELAY_MS);
+  };
+
+  /** The log, for code outside the store (the audio engine). */
+  const logger: Logger = {
+    get enabled() {
+      return get().logging;
+    },
+    add: addLogEntry,
+  };
 
   // The audio engine, built on the first play so a session that never plays
   // anything creates no <audio> element and claims no OS media session.
@@ -2393,7 +2467,7 @@ export function createAppActions(
         onStreamRequest: () => saves.touch(),
       },
       () => get().audioQuality,
-      playbackLog,
+      logger,
     ));
 
   // The play order is the store's, and the engine only follows it: the
@@ -3475,7 +3549,7 @@ export function createAppActions(
         s.audioQuality = pref;
       });
       persistAudioQuality(env, pref);
-      audio?.traceContext();
+      audio?.logSettings();
     },
     openTab: (source) => openSource(source),
     openShortcutsTab: () => {
@@ -4977,15 +5051,55 @@ export function createAppActions(
       set((s) => {
         s.aboutOpen = false;
       }),
-    copyPlaybackLog: () => {
-      const lines = playbackLog.length;
-      return env.writeClipboardText(playbackLog.text()).then(() => lines);
+    openLogTab: () =>
+      set((s) => {
+        // A singleton, like the shortcuts editor.
+        if (!s.tabs.some((t) => t.kind === "log")) {
+          s.tabs.push({ kind: "log", id: LOG_TAB_ID, name: LOG_TAB_NAME });
+        }
+        s.activeTabId = LOG_TAB_ID;
+      }),
+    log: addLogEntry,
+    startLogging: () => {
+      if (get().logging) return;
+      set((s) => {
+        s.logging = true;
+      });
+      saveLogging(env.storage, true);
+      addLogEntry("app", "Logging started", env.describeEnvironment());
+      audio?.logSettings();
     },
-    clearPlaybackLog: () => {
-      playbackLog.clear();
-      // A cleared log still says what it's being recorded under.
-      audio?.traceContext();
+    stopLogging: () => {
+      if (!get().logging) return;
+      addLogEntry("app", "Logging stopped");
+      set((s) => {
+        s.logging = false;
+      });
+      saveLogging(env.storage, false);
+      saveLog();
     },
+    copyLog: () => {
+      const entries = get().logEntries;
+      const noun = entries.length === 1 ? "entry" : "entries";
+      env.writeClipboardText(formatLog(entries, Date.now())).then(
+        () => showToast(`Copied the log (${entries.length} ${noun})`),
+        (err: unknown) =>
+          showToast(`Couldn’t copy the log: ${describeError(err)}`),
+      );
+    },
+    clearLog: () => {
+      set((s) => {
+        s.logEntries = [];
+      });
+      logDirty = true;
+      saveLog();
+      // A log started afresh still says what it's being recorded under.
+      if (get().logging) {
+        addLogEntry("app", "Log cleared", env.describeEnvironment());
+        audio?.logSettings();
+      }
+    },
+    flushLog: saveLog,
     saveSetting: (key, value) => {
       const next = withSetting(get().settingOverrides, key, value);
       set((s) => {
@@ -5053,8 +5167,11 @@ export function createAppActions(
     },
 
     reportRpcFailure: (method, error) => {
-      if (UNREPORTED_METHODS.has(method)) return;
       const message = error instanceof Error ? error.message : String(error);
+      addLogEntry("server", `A request to the server failed: ${method}`, [
+        message,
+      ]);
+      if (UNREPORTED_METHODS.has(method)) return;
       set((s) => {
         const current = s.rpcError;
         s.rpcError =
@@ -5085,6 +5202,17 @@ export function createAppActions(
     if (!pageDefsEqual(t.saved, storedForm(t.id, t.live))) deferSave(t.id);
   }
 
+  // A page that loads with logging on is a page that went away and came back
+  // — perhaps without the user seeing it, when the browser discarded a
+  // backgrounded tab — which is part of the story the log tells.
+  if (get().logging) {
+    addLogEntry(
+      "app",
+      "The app loaded, with logging on",
+      env.describeEnvironment(),
+    );
+  }
+
   const dispose = () => {
     stopWatchingSystemTheme();
     stopPersistingTabs();
@@ -5092,6 +5220,7 @@ export function createAppActions(
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();
     clearTimeout(toastTimer);
+    clearTimeout(logSaveTimer);
     saves.dispose();
   };
 

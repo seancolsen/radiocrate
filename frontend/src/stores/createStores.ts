@@ -13,6 +13,7 @@ import { createMenusStore, type MenusStoreBundle } from "./menus";
 import { createExpansionMemory, type ExpansionMemory } from "./recordForm";
 import { createUpdateStore, type UpdateStoreBundle } from "./update";
 import { embedChanges } from "../query/fieldMetadata";
+import { describeError, stackLines } from "../log/log";
 
 export interface Stores {
   app: AppStoreBundle;
@@ -23,9 +24,10 @@ export interface Stores {
   commands: CommandsStoreBundle;
   update: UpdateStoreBundle;
   /** Tears down everything `createStores()` installed: the cross-store
-   * subscriptions below, the global keydown and visibility listeners, and the
-   * app store's own `dispose` (the "system" theme listener, pending debounce
-   * timers, saves waiting for the app to go quiet). */
+   * subscriptions below, the global keydown, visibility and logging
+   * listeners, and the app store's own `dispose` (the "system" theme
+   * listener, pending debounce and log-save timers, saves waiting for the app
+   * to go quiet). */
   dispose: () => void;
 }
 
@@ -166,6 +168,58 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
 
+  // What the page and the network did, for the log: the background is where
+  // the trouble the log is for happens, and a page that's hidden, frozen or
+  // unloading may not run again for a while — so the log is saved then too.
+  const log = app.actions.log;
+  const onPageVisibility = () => {
+    if (document.visibilityState === "hidden") {
+      log("page", "The app went into the background, or the screen turned off");
+      app.actions.flushLog();
+    } else {
+      log("page", "The app is on screen again");
+    }
+  };
+  const onFreeze = () => {
+    log("page", "The browser froze the app: nothing runs until it resumes");
+    app.actions.flushLog();
+  };
+  const onResume = () => log("page", "The browser resumed the app");
+  const onPageHide = (e: PageTransitionEvent) => {
+    log(
+      "page",
+      e.persisted
+        ? "The page is being put aside, to be restored if the user comes back"
+        : "The page is unloading",
+    );
+    app.actions.flushLog();
+  };
+  const onPageShow = (e: PageTransitionEvent) => {
+    if (e.persisted) log("page", "The page was restored as it was left");
+  };
+  const onOnline = () => log("network", "The device is back online");
+  const onOffline = () => log("network", "The device went offline");
+  const onError = (e: ErrorEvent) => {
+    log("app", `Error: ${e.message}`, [
+      ...(e.filename ? [`In ${e.filename}:${e.lineno}:${e.colno}`] : []),
+      ...stackLines(e.error),
+    ]);
+  };
+  const onRejection = (e: PromiseRejectionEvent) => {
+    log("app", `Error left unhandled: ${describeError(e.reason)}`, [
+      ...stackLines(e.reason),
+    ]);
+  };
+  document.addEventListener("visibilitychange", onPageVisibility);
+  document.addEventListener("freeze", onFreeze);
+  document.addEventListener("resume", onResume);
+  window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("pageshow", onPageShow);
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onRejection);
+
   // The global shortcut pass. Capture phase, so a chord is claimed before a
   // focused widget acts on it.
   const onKeyDown = (e: KeyboardEvent) => commands.actions.handleKeyDown(e);
@@ -184,6 +238,15 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     unsubscribeRpcFailures();
     unsubscribeRequests();
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    document.removeEventListener("visibilitychange", onPageVisibility);
+    document.removeEventListener("freeze", onFreeze);
+    document.removeEventListener("resume", onResume);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onRejection);
     document.removeEventListener("keydown", onKeyDown, true);
     document.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onWindowBlur);

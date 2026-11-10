@@ -17,6 +17,7 @@ import type { QueryResult } from "../../query/result";
 import type { ContextualQuery } from "../../query/contextualQuery";
 import type { MetadataByTable } from "../../query/fieldMetadata";
 import type { SchemaTable } from "../../query/schema";
+import { loadLog, type LogEntry } from "../../log/log";
 import { SETTINGS, type SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
 import type { AppEnv } from "../env";
@@ -134,6 +135,13 @@ export const PRELUDE_TAB_ID = "settings:querydown-prelude";
 /** The prelude editor tab's handle text: the setting's own name. */
 export const PRELUDE_TAB_NAME = SETTINGS.querydown_prelude.name;
 
+/** A fixed sentinel id for the singleton Logging tab, namespaced like
+ * {@link SHORTCUTS_TAB_ID}. */
+export const LOG_TAB_ID = "settings:logging";
+
+/** The Logging tab's handle text. */
+export const LOG_TAB_NAME = "Logging";
+
 /** An open query tab. Tab id == source id. Carries the working (`live`) query
  * definition the builder edits, and the `saved` one the backend is known to
  * hold.
@@ -222,14 +230,22 @@ export interface PreludeTab {
   name: string;
 }
 
+/** The Logging tab, which turns the log on and off and shows it. There is at
+ * most one; the log itself is the app store's `logging` and `logEntries`. */
+export interface LogTab {
+  kind: "log";
+  id: typeof LOG_TAB_ID;
+  name: string;
+}
+
 /** An open tab: a query page, a playlist page, or one of the singleton
  * settings pages (the keyboard-shortcuts editor, the preset manager, the
- * prelude editor). More page kinds (artists, …) slot in here as
+ * prelude editor, the log). More page kinds (artists, …) slot in here as
  * further variants — the tab bar, the explorer's "Opened" list and the tab
  * commands all work off the shared `kind` / `id` / `name` fields, and only
  * `selectQueryTab` / `selectPageTab` narrow to a page's own state. */
 export type Tab =
-  QueryTab | PlaylistTab | ShortcutsTab | PresetsTab | PreludeTab;
+  QueryTab | PlaylistTab | ShortcutsTab | PresetsTab | PreludeTab | LogTab;
 
 /** A tab whose page is the results page — a query's or a playlist's: a working
  * definition built with the filter, sort and display builders, run, and shown
@@ -576,6 +592,11 @@ export interface AppState {
   rowDrag: RowDrag | null;
   /** Whether the About dialog (versions + the update actions) is open. */
   aboutOpen: boolean;
+  /** Whether the app is keeping a log (see `log/log.ts`). Off until the user
+   * turns it on, and remembered across reloads. */
+  logging: boolean;
+  /** The log, oldest entry first. Kept while logging is off, until cleared. */
+  logEntries: readonly LogEntry[];
   /** The prelude editor's text while it differs from the prelude in force:
    * edited, and not yet saved (null when there's no such edit). Dropped when
    * its tab closes. */
@@ -722,6 +743,8 @@ function restoredTabs(env: AppEnv): {
         return { kind: "presets", id: PRESETS_TAB_ID, name: PRESETS_TAB_NAME };
       case "prelude":
         return { kind: "prelude", id: PRELUDE_TAB_ID, name: PRELUDE_TAB_NAME };
+      case "log":
+        return { kind: "log", id: LOG_TAB_ID, name: LOG_TAB_NAME };
       default:
         return { ...t, saveFailed: false };
     }
@@ -734,6 +757,7 @@ function restoredTabs(env: AppEnv): {
 
 export function initialState(env: AppEnv): AppState {
   const { tabs, activeTabId, unsavedPresets } = restoredTabs(env);
+  const log = loadLog(env.storage);
   return {
     sidebarOpen: storedSidebarOpen(env),
     explorerWidth: storedExplorerWidth(env),
@@ -761,6 +785,8 @@ export function initialState(env: AppEnv): AppState {
     pendingAddToPlaylist: null,
     rowDrag: null,
     aboutOpen: false,
+    logging: log.logging,
+    logEntries: log.entries,
     preludeDraft: null,
     rescanning: false,
     rpcError: null,

@@ -180,6 +180,52 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The Logging page, logging, with a stretch of log.
+  test(`settings/logging - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "settings/logging", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: "Stop logging" }),
+    ).toBeVisible();
+    await expect(stage.getByRole("button", { name: "Copy log" })).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("settings/logging", colorScheme),
+    );
+  });
+
+  // Logging off and nothing logged: no Copy log or Clear log.
+  test(`settings/logging-off - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "settings/logging-off", colorScheme);
+    await expect(
+      stage.getByRole("button", { name: "Start logging" }),
+    ).toBeVisible();
+    await expect(stage.getByRole("button", { name: "Copy log" })).toHaveCount(
+      0,
+    );
+    await expect(stage.getByRole("button", { name: "Clear log" })).toHaveCount(
+      0,
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("settings/logging-off", colorScheme),
+    );
+  });
+
+  // The "?" clicked: the help in a popover, which Escape closes.
+  test(`settings/logging-help - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "settings/logging-help", colorScheme);
+    const help = stage.getByRole("button", { name: "About logging" });
+    await help.click();
+    const popover = page.getByRole("dialog", { name: "About logging" });
+    await expect(popover).toContainText("Players A and B");
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await expect(stage).toHaveScreenshot(
+      snapshot("settings/logging-help", colorScheme),
+    );
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
+    await expect(help).toBeFocused();
+  });
+
   // The prelude holding a prelude that doesn't parse: the problem under the
   // toolbar, and Save disabled.
   test(`settings/prelude-problem - ${colorScheme}`, async ({ page }) => {

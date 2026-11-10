@@ -53,7 +53,7 @@
 // pause fares worse: Chrome pauses the element again ~70 ms later.
 //
 // Why, as best we've been able to trace it (verified on the device with the
-// playback log, then explained by research into the Android docs and Chromium
+// app's log, then explained by research into the Android docs and Chromium
 // source):
 //
 // - Android 17's "background audio hardening" requires an app playing from the
@@ -108,11 +108,17 @@
 // merely once a Chrome stops targeting API 37. The target change was reverted
 // on Chromium's main branch (M158) two weeks after landing, for an unrelated
 // reason, and is bound to come back. To test the real thing: drop the
-// keep-alive, play from a locked phone across a boundary, and
-// read the playback log (About → Playback log) — or `adb logcat | grep
+// keep-alive, turn logging on (Settings → Logging), play from a locked phone
+// across a boundary, and read the log — or `adb logcat | grep
 // AudioHardening`, which logs "background playback muted" when it bites.
 
 import { trackStreamUrl } from "api-client";
+import {
+  describeError,
+  formatBytes,
+  formatSeconds,
+  type Logger,
+} from "../log/log";
 
 /** The audio-streaming quality preference: "higher" streams the source file
  * as-is; "lower" asks the backend to transcode lossless sources down to Opus
@@ -155,53 +161,91 @@ export interface EngineEvents {
   onStreamRequest: () => void;
 }
 
-/** Where the engine reports what it does, for diagnosing playback that goes
- * wrong out of sight — see `playbackLog.ts`, which is what implements it. */
-export interface EngineTrace {
-  add(kind: string, detail?: string): void;
-  /** Persists what's been added; called when the page may be about to stop. */
-  flush(): void;
-}
+/** The element events logged, beyond the ones the engine acts on, and what
+ * each says about the player it fired on. `progress` and `timeupdate` are left
+ * out: they fire several times a second, and the status entries already sample
+ * what they'd show. */
+const LOGGED_EVENTS = {
+  loadstart: "started loading",
+  loadedmetadata: "knows the track's format and length",
+  loadeddata: "has audio for the current moment",
+  canplay: "can start playing",
+  canplaythrough: "expects to play to the end without stopping",
+  play: "was told to play",
+  playing: "is playing",
+  pause: "paused",
+  waiting: "is waiting for more audio to arrive",
+  stalled: "isn't receiving any data",
+  suspend:
+    "stopped downloading (the file is complete, or enough is buffered for now)",
+  emptied: "was emptied",
+  abort: "abandoned its download",
+  ended: "reached the end of its track",
+  error: "failed",
+  seeking: "is seeking",
+  seeked: "finished seeking",
+  volumechange: "changed volume or mute",
+  ratechange: "changed playback speed",
+} as const;
 
-/** The element events traced, beyond the ones the engine acts on. `progress`
- * and `timeupdate` are left out: they fire several times a second, and the
- * heartbeat already samples what they'd show. */
-const TRACED_EVENTS = [
-  "loadstart",
-  "loadedmetadata",
-  "loadeddata",
-  "canplay",
-  "canplaythrough",
-  "play",
-  "playing",
-  "pause",
-  "waiting",
-  "stalled",
-  "suspend",
-  "emptied",
-  "abort",
-  "ended",
-  "error",
-  "seeking",
-  "seeked",
-  "volumechange",
-  "ratechange",
-] as const;
+/** What the engine was calling `play()` for, by the reason it passes. */
+const PLAY_REASONS: Record<string, string> = {
+  load: "to start a newly loaded track",
+  resume: "to resume",
+  handoff: "to take over with the preloaded next track",
+  unlock: "for the muted permission check",
+  "keep-alive": "to keep the audio session open",
+  restart: "after restarting the stream",
+  "visible-retry": "to retry now the app is back on screen",
+};
 
-/** Page events traced: visibility, and the Page Lifecycle API's `freeze` and
- * `resume`, which Chrome fires around freezing a backgrounded page. */
-const TRACED_PAGE_EVENTS = [
-  "visibilitychange",
-  "freeze",
-  "resume",
-  "pagehide",
-  "pageshow",
-] as const;
+/** The lock-screen, notification and headset controls, as their buttons
+ * read. */
+const MEDIA_ACTION_NAMES: Partial<Record<MediaSessionAction, string>> = {
+  play: "Play",
+  pause: "Pause",
+  nexttrack: "Next track",
+  previoustrack: "Previous track",
+  seekbackward: "Skip back",
+  seekforward: "Skip forward",
+  seekto: "Seek",
+};
 
-/** How often the heartbeat samples the players while the page is hidden —
- * where the trouble is — and while it's visible. */
-const HIDDEN_HEARTBEAT_MS = 3000;
-const VISIBLE_HEARTBEAT_MS = 15000;
+/** Page events that get a status entry of their own, so the players' state
+ * at the moment the page goes away (or comes back) is on record. The page
+ * events themselves are logged app-wide (`createStores`). */
+const STATUS_PAGE_EVENTS = ["visibilitychange", "freeze", "resume"] as const;
+
+/** How often the status is logged while the page is hidden — where the
+ * trouble is — and while it's visible. */
+const HIDDEN_STATUS_MS = 3000;
+const VISIBLE_STATUS_MS = 15000;
+
+/** `HTMLMediaElement.readyState`, in words: how much audio a player has. */
+const READY_STATES = [
+  "no audio yet",
+  "length known, no audio yet",
+  "audio for the current moment only",
+  "a little audio ahead",
+  "enough audio ahead",
+];
+
+/** `HTMLMediaElement.networkState`, in words. */
+const NETWORK_STATES = [
+  "no source",
+  "download idle",
+  "downloading",
+  "no usable source",
+];
+
+/** `MediaError.code`, in words. */
+const MEDIA_ERRORS = [
+  "",
+  "download aborted",
+  "network error",
+  "couldn't decode the audio",
+  "format not supported",
+];
 
 /** Chrome's count of audio bytes an element has decoded: it climbs while the
  * media pipeline is running, whatever comes out of the speaker. */
@@ -209,22 +253,31 @@ interface DecodedByteCount {
   webkitAudioDecodedByteCount?: number;
 }
 
-/** A track id, shortened for the trace. */
 /** Whether two lists of track ids are the same, in the same order. */
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
-function shortId(id: string | undefined): string {
-  return id === undefined ? "none" : id.slice(0, 8);
+/** A track, for the log: the first eight characters of its id, which is
+ * enough to tell tracks apart ("Now playing" entries say which is which). */
+function trackName(id: string | undefined): string {
+  return id === undefined ? "no track" : `track ${id.slice(0, 8)}`;
 }
 
-/** An element's `src`, shortened for the trace: the track id and query. */
-function shortSrc(src: string | null): string {
-  if (!src) return "none";
-  if (src.startsWith("data:")) return "silence";
-  const m = /\/api\/tracks\/([^/]+)\/stream(\?.*)?$/.exec(src);
-  return m ? `${shortId(decodeURIComponent(m[1]!))}${m[2] ?? ""}` : src;
+/** What an element's `src` holds, for the log: which track, in which form. */
+function describeSrc(src: string | null): string {
+  if (!src) return "no track";
+  if (src.startsWith("data:") || src.startsWith("blob:")) return "silence";
+  const m = /\/api\/tracks\/([^/?]+)\/stream(?:\?(.*))?$/.exec(src);
+  if (!m) return src;
+  const params = new URLSearchParams(m[2] ?? "");
+  const quality = params.get("quality");
+  const start = Number(params.get("start") ?? 0);
+  const form = quality
+    ? `${quality === "opus128" ? "Opus 128 kbps" : quality} transcode`
+    : "original file";
+  const from = start > 0 ? `, starting at ${formatSeconds(start)}` : "";
+  return `${trackName(decodeURIComponent(m[1]!))} (${form}${from})`;
 }
 
 /** Artwork for the lock screen and notification shade. The collection has no
@@ -242,7 +295,7 @@ const ARTWORK: MediaImage[] = [
 interface AudioSessionNavigator {
   audioSession?: {
     type: string;
-    /** Read only by the trace: whether the platform has the session active,
+    /** Read only by the log: whether the platform has the session active,
      * inactive or interrupted. */
     state?: string;
     addEventListener?: (type: string, listener: () => void) => void;
@@ -363,7 +416,7 @@ export type Player = Pick<
   | "seek"
   | "stop"
   | "setMetadata"
-  | "traceContext"
+  | "logSettings"
   | "isPlaying"
   | "loading"
   | "buffered"
@@ -434,20 +487,20 @@ export class AudioEngine {
   /** A track whose prime failed (its file is missing, say), so it isn't
    * re-fetched on every `suspend` only to fail again. */
   private primeFailed: string | undefined;
-  /** Where to report what happens, if anywhere. */
-  private readonly tracer: EngineTrace | undefined;
-  /** The last heartbeat's wall-clock time and track position, so the next can
-   * say how far each moved in between. */
-  private lastBeat: { wall: number; position: number } | undefined;
+  /** Where to log what happens, if anywhere. */
+  private readonly logger: Logger | undefined;
+  /** The last status entry's wall-clock time and track position, so the next
+   * can say how far each moved in between. */
+  private lastStatus: { wall: number; position: number } | undefined;
 
   constructor(
     events: EngineEvents,
     getQuality: () => AudioQualityPref,
-    tracer?: EngineTrace,
+    logger?: Logger,
   ) {
     this.events = events;
     this.getQuality = getQuality;
-    this.tracer = tracer;
+    this.logger = logger;
 
     // Both elements are created up front and kept in the document (hidden) for
     // the app's lifetime. iOS ties the permission earned by the first
@@ -474,7 +527,7 @@ export class AudioEngine {
     if (nav.audioSession) nav.audioSession.type = "playback";
 
     this.installHandlers();
-    if (tracer) this.installDiagnostics(tracer);
+    if (logger) this.installDiagnostics();
   }
 
   /** The element currently playing. */
@@ -557,9 +610,8 @@ export class AudioEngine {
    * back through, `upcoming` the ones after it that auto-advance and "next" walk
    * forward through. */
   setQueue(preceding: string[], current: string, upcoming: string[]): void {
-    this.trace(
-      "cmd:set-queue",
-      () => `${shortId(current)} upcoming=${upcoming.length}`,
+    this.log(
+      `Asked to play ${trackName(current)}, with ${upcoming.length} ${upcoming.length === 1 ? "track" : "tracks"} after it`,
     );
     // Starting a fresh track abandons whatever was playing. If that track was
     // already past its halfway mark it counts as a completed play — note it
@@ -585,7 +637,11 @@ export class AudioEngine {
     if (this.current === undefined) return;
     if (preceding !== null) this.history = preceding;
     if (sameIds(this.queue, upcoming)) return;
-    this.trace("update-queue", () => `next=${shortId(upcoming[0])}`);
+    this.log(
+      upcoming.length > 0
+        ? `Up next is now ${trackName(upcoming[0])}`
+        : "Nothing is queued after this track any more",
+    );
     this.queue = upcoming;
     this.yieldStandby();
     this.primeNext();
@@ -593,7 +649,7 @@ export class AudioEngine {
   }
 
   play(): void {
-    this.trace("cmd:play");
+    this.log("Asked to resume");
     // A track that failed to load has nothing to resume: load it again.
     const id = this.current;
     if (id !== undefined && (this.failure !== null || this.audio.error)) {
@@ -608,7 +664,7 @@ export class AudioEngine {
   }
 
   pause(): void {
-    this.trace("cmd:pause");
+    this.log("Asked to pause");
     this.wantPlaying = false;
     this.audio.pause();
     this.releaseSession();
@@ -627,7 +683,7 @@ export class AudioEngine {
 
   /** Stops playback and tears down the play context and OS media session. */
   stop(): void {
-    this.trace("cmd:stop");
+    this.log("Asked to stop");
     this.wantPlaying = false;
     for (const el of this.elements) {
       el.pause();
@@ -665,7 +721,9 @@ export class AudioEngine {
     artist: string | null,
     duration: number | null,
   ): void {
-    this.trace("metadata", () => `duration=${duration}`);
+    this.log(
+      `Now playing ${trackName(this.current)}: ${title ? `“${title}”` : "untitled"}${artist ? ` by ${artist}` : ""}, ${duration !== null ? formatSeconds(duration) : "length unknown"}`,
+    );
     this.knownDuration = duration !== null && duration > 0 ? duration : null;
     this.updatePositionState();
     this.events.onTransport();
@@ -677,17 +735,23 @@ export class AudioEngine {
     });
   }
 
-  /** Writes the circumstances to the trace — the page, the quality, the
-   * browser — so a log, or a stretch of one, says what it was recorded
-   * under. */
-  traceContext(): void {
+  /** Logs the settings playback runs under — the streaming quality, the
+   * players in use, the iOS audio session — so a log, or a stretch of one,
+   * says what it was recorded under. */
+  logSettings(): void {
     const session = (navigator as Navigator & AudioSessionNavigator)
       .audioSession;
-    this.trace(
-      "context",
-      () =>
-        `vis=${document.visibilityState} quality=${this.getQuality()} audioSession=${session ? `${session.type}/${session.state ?? "?"}` : "absent"} ua=${navigator.userAgent}`,
-    );
+    this.log("Playback settings", () => [
+      this.getQuality() === "lower"
+        ? "Streaming quality: lower bandwidth (lossless files are transcoded to Opus 128 kbps)"
+        : "Streaming quality: higher (files are streamed as they are)",
+      this.keepAlive
+        ? "Players: A and B, which take turns, and a keep-alive player (this is Android)"
+        : "Players: A and B, which take turns (no keep-alive player: this isn't Android)",
+      session
+        ? `iOS audio session: type ${session.type}, ${session.state ?? "state unknown"}`
+        : "No iOS audio session (this isn't iOS or Safari)",
+    ]);
   }
 
   /** Whether playback of the current track has reached its halfway point —
@@ -723,7 +787,7 @@ export class AudioEngine {
     // A prime that failed under the last track gets another chance under this
     // one: it may have been a dropped connection rather than a missing file.
     this.primeFailed = undefined;
-    this.trace("load", () => `${shortId(id)} on ${this.name(this.audio)}`);
+    this.log(`Loading ${trackName(id)} on ${this.name(this.audio)}`);
     this.activeQuality = streamQualityParam(this.getQuality());
     this.fetchStream(this.audio, trackStreamUrl(id, this.activeQuality));
     this.wantPlaying = true;
@@ -761,7 +825,7 @@ export class AudioEngine {
    * in flight; removing the attribute alone lets it run on. */
   private releaseStandby(): void {
     const el = this.standby;
-    this.trace("release-standby", () => this.describe(el));
+    this.log(`Emptying ${this.name(el)}`, () => [this.describe(el)]);
     el.pause();
     el.removeAttribute("src");
     el.load();
@@ -785,7 +849,9 @@ export class AudioEngine {
     if (this.primeFailed === next) return;
     if (this.audio.networkState !== NETWORK_IDLE) return;
     el.pause();
-    this.trace("prime", () => `${shortId(next)} on ${this.name(el)}`);
+    this.log(
+      `Preloading the next track, ${trackName(next)}, on ${this.name(el)}`,
+    );
     this.primedQuality = streamQualityParam(this.getQuality());
     this.fetchStream(el, trackStreamUrl(next, this.primedQuality));
     this.primed = next;
@@ -796,9 +862,9 @@ export class AudioEngine {
    * `ended` handler of a page that has, for the moment, stopped rendering audio
    * and is therefore at its most freezable. */
   private handoff(id: string): void {
-    this.trace(
-      "handoff",
-      () => `${shortId(id)} to ${this.describe(this.standby)}`,
+    this.log(
+      `Switching to ${this.name(this.standby)}, which has ${trackName(id)} preloaded`,
+      () => [this.describe(this.standby)],
     );
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
     this.activeQuality = this.primedQuality;
@@ -826,7 +892,9 @@ export class AudioEngine {
    * that does have permission and never hand off again. */
   private handoffFailed(id: string): void {
     if (this.current !== id) return; // superseded by a later navigation
-    this.trace("handoff-failed", () => shortId(id));
+    this.log(
+      `The browser wouldn't let ${this.name(this.audio)} play, so ${trackName(id)} is being loaded again on the other player. From now on only one player is used, and nothing is preloaded`,
+    );
     this.handoffBlocked = true;
     const stranded = this.audio;
     stranded.pause();
@@ -847,7 +915,10 @@ export class AudioEngine {
     const borrowed = !el.getAttribute("src");
     if (borrowed) el.src = SILENCE;
     el.muted = true;
-    this.trace("unlock", () => this.describe(el));
+    this.log(
+      `Asking permission for ${this.name(el)} to play later, with a muted play while the user's tap is still in progress`,
+      () => [this.describe(el)],
+    );
     void this.startPlaying(el, "unlock")
       .then(() => {
         el.pause();
@@ -883,9 +954,8 @@ export class AudioEngine {
     // reported after it: `onPlayCompleted` and `onTrackChange` both put requests
     // on the wire, and nothing may share the boundary with getting audio going
     // again.
-    this.trace(
-      "next",
-      () => `${shortId(next)} ended=${ended} primed=${this.primed === next}`,
+    this.log(
+      `${ended ? "The track ended" : "Skipping ahead"}: moving on to ${trackName(next)}, which ${this.primed === next ? "is preloaded" : "isn't preloaded, so it loads now"}`,
     );
     const completed = this.completedPlay(ended);
     const previous = this.current;
@@ -903,7 +973,7 @@ export class AudioEngine {
   private goPrev(): boolean {
     const prev = this.history.pop();
     if (prev === undefined) return false;
-    this.trace("prev", () => shortId(prev));
+    this.log(`Going back to ${trackName(prev)}`);
     const completed = this.completedPlay(false);
     if (this.current !== undefined) this.queue.unshift(this.current);
     this.load(prev);
@@ -972,7 +1042,7 @@ export class AudioEngine {
    * seeks in place only within what it has already buffered. Anywhere else the
    * stream is restarted from the target (see {@link restartAt}). */
   seek(seconds: number): void {
-    this.trace("cmd:seek", () => seconds.toFixed(2));
+    this.log(`Asked to seek to ${formatSeconds(seconds, true)}`);
     const duration = this.duration;
     let target = Math.max(seconds, 0);
     if (duration !== null) target = Math.min(target, duration);
@@ -1003,7 +1073,9 @@ export class AudioEngine {
     }
     const start = Math.round(target * 1000) / 1000;
     const el = this.audio;
-    this.trace("restart", () => `${shortId(id)} at ${start}`);
+    this.log(
+      `Restarting the stream of ${trackName(id)} at ${formatSeconds(start, true)}: a transcode can only seek within what it has buffered`,
+    );
     this.offset = start;
     this.clearFailure();
     this.fetchStream(el, trackStreamUrl(id, this.activeQuality, start));
@@ -1048,7 +1120,7 @@ export class AudioEngine {
     }
     if (this.diagnosis !== controller || this.current !== id) return;
     this.diagnosis = undefined;
-    this.trace("failure", () => `${shortId(id)} ${message}`);
+    this.log(`${trackName(id)} failed to load: ${message}`);
     this.failure = message;
     this.events.onTransport();
   }
@@ -1075,15 +1147,9 @@ export class AudioEngine {
       // the active one's events describe the transport the user can see.
       const active = () => el === this.audio;
 
-      // Registered first, so each event's line comes before anything the
+      // Registered first, so each event's entry comes before anything the
       // handlers below go on to do about it.
-      if (this.tracer) {
-        for (const type of TRACED_EVENTS) {
-          el.addEventListener(type, () =>
-            this.trace(`ev:${type}`, () => this.describe(el)),
-          );
-        }
-      }
+      if (this.logger) this.logEvents(el, LOGGED_EVENTS);
 
       el.addEventListener("play", () => {
         if (active()) transport();
@@ -1170,20 +1236,18 @@ export class AudioEngine {
       if (document.visibilityState !== "visible") return;
       if (!this.wantPlaying || this.current === undefined) return;
       if (!this.audio.paused || this.audio.ended) return;
-      this.trace("visible-retry");
+      this.log(
+        "The app is back on screen, but the track that should be playing is paused: trying to play it again",
+      );
       void this.startPlaying(this.audio, "visible-retry").catch(() => {});
       this.holdSession();
     });
 
     // The keep-alive's own transport, which nothing else reports: if Chrome
     // pauses it, that's the moment the page stands to lose its audio.
-    if (this.keepAlive && this.tracer) {
-      const keepAlive = this.keepAlive;
-      for (const type of ["play", "playing", "pause", "error"]) {
-        keepAlive.addEventListener(type, () =>
-          this.trace(`ev:${type}`, () => this.describe(keepAlive)),
-        );
-      }
+    if (this.keepAlive && this.logger) {
+      const { play, playing, pause, error } = LOGGED_EVENTS;
+      this.logEvents(this.keepAlive, { play, playing, pause, error });
     }
 
     this.installMediaActionHandlers();
@@ -1230,17 +1294,22 @@ export class AudioEngine {
     action: MediaSessionAction,
     handler: MediaSessionActionHandler | null,
   ): void {
-    const traced: MediaSessionActionHandler | null =
-      handler && this.tracer
+    const logged: MediaSessionActionHandler | null =
+      handler && this.logger
         ? (details) => {
-            this.trace(`session:${action}`, () =>
-              details.seekTime != null ? `to ${details.seekTime}` : "",
+            const name = MEDIA_ACTION_NAMES[action] ?? action;
+            const to =
+              details.seekTime != null
+                ? `, to ${formatSeconds(details.seekTime, true)}`
+                : "";
+            this.log(
+              `Media control pressed (lock screen, notification or headset): ${name}${to}`,
             );
             handler(details);
           }
         : handler;
     try {
-      this.media?.setActionHandler(action, traced);
+      this.media?.setActionHandler(action, logged);
     } catch {
       // An action this browser doesn't know about — nothing to degrade.
     }
@@ -1248,117 +1317,171 @@ export class AudioEngine {
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
 
-  /** Reports `kind` to the tracer, if there is one. `detail` is a thunk so an
-   * engine without one never pays for describing its state. */
-  private trace(kind: string, detail?: () => string): void {
-    if (this.tracer) this.tracer.add(kind, detail?.());
+  /** Logs `message`, with the `details` the thunk builds, while logging is
+   * on. The thunk is only called then, so describing the players costs
+   * nothing while it's off. */
+  private log(message: string, details?: () => string[]): void {
+    const logger = this.logger;
+    if (logger?.enabled) logger.add("playback", message, details?.());
   }
 
-  /** Calls `play()` on `el`, tracing how the browser answers it. */
+  /** Logs each of `events` on `el`, saying what it means for the player. */
+  private logEvents(
+    el: HTMLAudioElement,
+    events: Partial<Record<keyof typeof LOGGED_EVENTS, string>>,
+  ): void {
+    for (const [type, meaning] of Object.entries(events)) {
+      el.addEventListener(type, () => {
+        if (!this.logger?.enabled) return;
+        const name = this.name(el);
+        this.log(`${name[0]!.toUpperCase()}${name.slice(1)} ${meaning}`, () => [
+          this.describe(el),
+        ]);
+      });
+    }
+  }
+
+  /** Calls `play()` on `el`, logging how the browser answers it. */
   private startPlaying(el: HTMLAudioElement, why: string): Promise<void> {
     const playing = el.play();
-    if (this.tracer) {
+    if (this.logger) {
+      const reason = PLAY_REASONS[why] ?? why;
       playing.then(
-        () => this.trace("play-ok", () => `${why} ${this.name(el)}`),
+        () => this.log(`The browser let ${this.name(el)} play (${reason})`),
         (err: unknown) =>
-          this.trace(
-            "play-rejected",
-            () =>
-              `${why} ${this.name(el)} ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+          this.log(
+            `The browser refused to let ${this.name(el)} play (${reason})`,
+            () => [describeError(err)],
           ),
       );
     }
     return playing;
   }
 
-  /** `A` or `B`, starred while it's the active element; `K`, the keep-alive. */
+  /** A player's name and its part: "player A (current)" is the one playing,
+   * "player B (standby)" the one holding the next track. */
   private name(el: HTMLAudioElement): string {
-    if (el === this.keepAlive) return "K";
-    return `${el === this.elements[0] ? "A" : "B"}${el === this.audio ? "*" : ""}`;
+    if (el === this.keepAlive) return "the keep-alive player";
+    const letter = el === this.elements[0] ? "A" : "B";
+    return `player ${letter} (${el === this.audio ? "current" : "standby"})`;
   }
 
-  /** One element's state, in a line's worth of `key=value`s. */
+  /** One player's state, on one line. */
   private describe(el: HTMLAudioElement): string {
+    const at = formatSeconds(el.currentTime, true);
     const parts = [
-      this.name(el),
-      `t=${el.currentTime.toFixed(2)}`,
-      `rs=${el.readyState}`,
-      `ns=${el.networkState}`,
-      el.ended ? "ended" : el.paused ? "paused" : "playing",
+      el.ended
+        ? `ended at ${at}`
+        : el.paused
+          ? `paused at ${at}`
+          : `playing at ${at}`,
     ];
     if (el.muted) parts.push("muted");
-    if (el.volume !== 1) parts.push(`vol=${el.volume}`);
-    if (el.error) parts.push(`err=${el.error.code}:${el.error.message}`);
+    if (el.volume !== 1) parts.push(`volume ${Math.round(el.volume * 100)}%`);
     const ranges: string[] = [];
     for (let i = 0; i < el.buffered.length; i++) {
       ranges.push(
-        `${el.buffered.start(i).toFixed(1)}-${el.buffered.end(i).toFixed(1)}`,
+        `${formatSeconds(el.buffered.start(i))}–${formatSeconds(el.buffered.end(i))}`,
       );
     }
-    parts.push(`buf=${ranges.join(",") || "none"}`);
+    parts.push(
+      ranges.length > 0 ? `buffered ${ranges.join(", ")}` : "nothing buffered",
+    );
+    parts.push(READY_STATES[el.readyState] ?? `ready state ${el.readyState}`);
+    parts.push(
+      NETWORK_STATES[el.networkState] ?? `network state ${el.networkState}`,
+    );
     const decoded = (el as HTMLAudioElement & DecodedByteCount)
       .webkitAudioDecodedByteCount;
-    if (decoded !== undefined) parts.push(`dec=${decoded}`);
-    parts.push(`src=${shortSrc(el.getAttribute("src"))}`);
-    return parts.join(" ");
+    if (decoded !== undefined) parts.push(`${formatBytes(decoded)} decoded`);
+    if (el.error) {
+      const kind = MEDIA_ERRORS[el.error.code] ?? `code ${el.error.code}`;
+      parts.push(
+        `error: ${kind}${el.error.message ? ` (${el.error.message})` : ""}`,
+      );
+    }
+    parts.push(describeSrc(el.getAttribute("src")));
+    return parts.join(" · ");
   }
 
-  /** Traces the page around the players — its visibility and lifecycle, the
-   * network, the audio session where there is one — and starts the heartbeat.
-   * Only an engine with a tracer does any of this. */
-  private installDiagnostics(tracer: EngineTrace): void {
+  /** Logs the players' state on the page events that may be the last chance
+   * to (hidden, frozen) or the first since (shown, resumed), and the iOS audio
+   * session's changes, and starts the periodic status. Only an engine with a
+   * logger does any of this, but it does it whether or not logging is on: it
+   * can be turned on at any time. */
+  private installDiagnostics(): void {
     const session = (navigator as Navigator & AudioSessionNavigator)
       .audioSession;
-    this.traceContext();
+    if (this.logger?.enabled) this.logSettings();
     session?.addEventListener?.("statechange", () =>
-      this.trace("audio-session", () => `state=${session.state ?? "?"}`),
+      this.log(
+        `The iOS audio session is now ${session.state ?? "in an unknown state"}`,
+      ),
     );
-
-    for (const type of TRACED_PAGE_EVENTS) {
-      document.addEventListener(type, () => {
-        this.trace(
-          `page:${type}`,
-          () => `vis=${document.visibilityState} ${this.describe(this.audio)}`,
-        );
-        // Any of these can be the last moment the page runs for a while.
-        tracer.flush();
-      });
+    for (const type of STATUS_PAGE_EVENTS) {
+      document.addEventListener(type, () => this.logStatus(true));
     }
-    for (const type of ["online", "offline"]) {
-      window.addEventListener(type, () => this.trace(`net:${type}`));
-    }
-
     // The engine lives as long as the app, so the interval is never cleared.
-    setInterval(() => this.heartbeat(), HIDDEN_HEARTBEAT_MS);
+    setInterval(() => this.logStatus(false), HIDDEN_STATUS_MS);
   }
 
-  /** Samples both players while a track is loaded — often while the page is
-   * hidden, rarely while it's on screen. Each beat says how far the wall clock
-   * and the track position moved since the last: a track whose position keeps
-   * pace with the clock is playing, whatever the speaker says; a long gap
-   * between beats means the page wasn't running at all. */
-  private heartbeat(): void {
-    if (this.current === undefined) {
-      this.lastBeat = undefined;
+  /** Logs both players' state while a track is loaded — often while the page
+   * is hidden, rarely while it's on screen, and at once when `now`. Each entry
+   * says how far the wall clock and the track's position moved since the
+   * last: a track whose position keeps pace with the clock is playing,
+   * whatever the speaker says, and a long gap between entries means the page
+   * wasn't running at all. */
+  private logStatus(now: boolean): void {
+    if (this.current === undefined || !this.logger?.enabled) {
+      this.lastStatus = undefined;
       return;
     }
     const wall = Date.now();
-    const last = this.lastBeat;
+    const last = this.lastStatus;
     const hidden = document.visibilityState === "hidden";
-    if (!hidden && last && wall - last.wall < VISIBLE_HEARTBEAT_MS) return;
+    if (!now && !hidden && last && wall - last.wall < VISIBLE_STATUS_MS) {
+      return;
+    }
     const position = this.position;
-    this.lastBeat = { wall, position };
-    const session = (navigator as Navigator & AudioSessionNavigator)
-      .audioSession;
-    this.trace("hb", () => {
-      const moved = last
-        ? ` dwall=${((wall - last.wall) / 1000).toFixed(1)} dpos=${(position - last.position).toFixed(1)}`
-        : "";
-      const os = `ms=${this.media?.playbackState ?? "-"}${session ? ` as=${session.state ?? "?"}` : ""}`;
-      const keepAlive = this.keepAlive
-        ? ` | K ${this.keepAlive.paused ? "paused" : "playing"} t=${this.keepAlive.currentTime.toFixed(1)}`
-        : "";
-      return `${shortId(this.current)} vis=${document.visibilityState}${moved} ${os} | ${this.describe(this.audio)} | ${this.describe(this.standby)}${keepAlive}`;
-    });
+    this.lastStatus = { wall, position };
+    this.log(
+      `Status: ${trackName(this.current)} at ${formatSeconds(position, true)}`,
+      () => {
+        const lines: string[] = [];
+        if (last) {
+          const elapsed = (wall - last.wall) / 1000;
+          const moved = position - last.position;
+          const pace =
+            Math.abs(moved) < 0.05
+              ? "the track didn't move"
+              : Math.abs(moved - elapsed) < 0.5
+                ? "the track kept pace"
+                : `the track moved ${moved.toFixed(1)} s`;
+          lines.push(`${elapsed.toFixed(1)} s since the last status; ${pace}`);
+        }
+        const session = (navigator as Navigator & AudioSessionNavigator)
+          .audioSession;
+        const facts = [
+          `Page ${document.visibilityState}`,
+          `lock-screen controls show ${this.media?.playbackState ?? "nothing (no media session)"}`,
+        ];
+        if (session)
+          facts.push(`iOS audio session ${session.state ?? "unknown"}`);
+        lines.push(facts.join(" · "));
+        for (const el of [this.audio, this.standby]) {
+          const name = this.name(el);
+          lines.push(
+            `${name[0]!.toUpperCase()}${name.slice(1)}: ${this.describe(el)}`,
+          );
+        }
+        const keepAlive = this.keepAlive;
+        if (keepAlive) {
+          lines.push(
+            `Keep-alive player: ${keepAlive.paused ? "paused" : "playing"} at ${formatSeconds(keepAlive.currentTime, true)}`,
+          );
+        }
+        return lines;
+      },
+    );
   }
 }

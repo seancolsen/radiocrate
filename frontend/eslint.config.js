@@ -12,6 +12,7 @@ const FRAMEWORK_FREE = [
   "src/commands/**",
   "src/editor/**",
   "src/grid/**",
+  "src/log/**",
   "src/query/**",
   "src/record/**",
   "src/state/**",
