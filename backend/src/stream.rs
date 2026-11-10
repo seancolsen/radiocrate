@@ -531,11 +531,6 @@ impl Layout {
         self.header_len + self.pages() * AUDIO_PAGE_BYTES
     }
 
-    /// Where audio page `i` begins.
-    fn page_offset(&self, i: u64) -> u64 {
-        self.header_len + i * AUDIO_PAGE_BYTES
-    }
-
     /// The audio page holding `byte`, which must be past the headers.
     fn page_at(&self, byte: u64) -> u64 {
         (byte - self.header_len) / AUDIO_PAGE_BYTES
@@ -549,6 +544,11 @@ impl Layout {
             (i + 1) * OPUS_FRAME_SAMPLES as u64
         }
     }
+}
+
+/// Where audio page `i` begins, after `header_len` bytes of headers.
+fn page_offset(header_len: u64, i: u64) -> u64 {
+    header_len + i * AUDIO_PAGE_BYTES
 }
 
 /// `N` for a source of `frames` frames at `rate`: its length at 48 kHz,
@@ -1185,6 +1185,13 @@ fn encode<S: Sink>(
     if out.emit(0, &header).is_err() {
         return Ok(Outcome::ClientGone);
     }
+    if job.last_page.is_none() && job.window.is_some_and(|(_, last)| last < header_len) {
+        // A range inside the headers: nothing to encode.
+        return Ok(match out.finish() {
+            Ok(()) => Outcome::Completed,
+            Err(ClientGone) => Outcome::ClientGone,
+        });
+    }
 
     loop {
         // A stream without a layout learns its length only when the source runs
@@ -1240,10 +1247,7 @@ fn encode<S: Sink>(
                 (i + 2) as u32,
                 &packet[..len],
             );
-            if out
-                .emit_page(header_len + i * AUDIO_PAGE_BYTES, &bytes)
-                .is_err()
-            {
+            if out.emit_page(page_offset(header_len, i), &bytes).is_err() {
                 return Ok(Outcome::ClientGone);
             }
             if last || job.last_page == Some(i) {
@@ -1287,6 +1291,81 @@ fn run_encode(
 }
 
 // ── The response ────────────────────────────────────────────────────────────
+
+/// What a request for a stream of `len` bytes is answered with, by its
+/// `Range` and `If-Range` headers (RFC 9110, §14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    /// The whole stream: no range asked for, one that can't be read, more than
+    /// one (which the RFC allows ignoring), or a condition that isn't met.
+    Whole,
+    /// Bytes `first..=last`.
+    Part { first: u64, last: u64 },
+    /// A range that starts past the end.
+    Unsatisfiable,
+}
+
+fn answer(range: Option<&str>, if_range: Option<&str>, etag: &str, len: u64) -> Answer {
+    let Some(range) = range else {
+        return Answer::Whole;
+    };
+    // A client with an older copy of the stream must get the whole of this one.
+    if if_range.is_some_and(|tag| tag.trim() != etag) {
+        return Answer::Whole;
+    }
+    let Some(spec) = range.trim().strip_prefix("bytes=") else {
+        return Answer::Whole;
+    };
+    if spec.contains(',') {
+        return Answer::Whole;
+    }
+    let Some((first, last)) = spec.split_once('-') else {
+        return Answer::Whole;
+    };
+    let number = |s: &str| s.trim().parse::<u64>().ok();
+    match (first.trim(), last.trim()) {
+        ("", suffix) => {
+            // The last `suffix` bytes.
+            let Some(suffix) = number(suffix) else {
+                return Answer::Whole;
+            };
+            if suffix == 0 || len == 0 {
+                return Answer::Unsatisfiable;
+            }
+            Answer::Part {
+                first: len.saturating_sub(suffix),
+                last: len - 1,
+            }
+        }
+        (first, "") => {
+            let Some(first) = number(first) else {
+                return Answer::Whole;
+            };
+            if first >= len {
+                return Answer::Unsatisfiable;
+            }
+            Answer::Part {
+                first,
+                last: len - 1,
+            }
+        }
+        (first, last) => {
+            let (Some(first), Some(last)) = (number(first), number(last)) else {
+                return Answer::Whole;
+            };
+            if first > last {
+                return Answer::Whole;
+            }
+            if first >= len {
+                return Answer::Unsatisfiable;
+            }
+            Answer::Part {
+                first,
+                last: last.min(len - 1),
+            }
+        }
+    }
+}
 
 /// What a transcode needs to know about the request: taken out of it up
 /// front, so nothing of the request is held while the source is prepared.
@@ -1343,12 +1422,38 @@ async fn transcode_response(
     let base = (start.max(0.0) * f64::from(OPUS_SAMPLE_RATE)).round() as u64;
     let (job, response) = match prepared.layout {
         Some(layout) if base == 0 => {
+            let len = layout.len();
             let response = Response::builder()
-                .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "audio/ogg")
-                .header(header::CONTENT_LENGTH, layout.len())
+                .header(header::ACCEPT_RANGES, "bytes")
                 .header(header::ETAG, &prepared.etag);
-            (Job::whole(layout), response)
+            match answer(
+                request.range.as_deref(),
+                request.if_range.as_deref(),
+                &prepared.etag,
+                len,
+            ) {
+                Answer::Whole => (
+                    Job::whole(layout),
+                    response
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_LENGTH, len),
+                ),
+                Answer::Part { first, last } => (
+                    Job::range(layout, first, last),
+                    response
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(header::CONTENT_RANGE, format!("bytes {first}-{last}/{len}"))
+                        .header(header::CONTENT_LENGTH, last - first + 1),
+                ),
+                Answer::Unsatisfiable => {
+                    return response
+                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{len}"))
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
         }
         layout => {
             if layout.is_none() {
@@ -1615,7 +1720,7 @@ mod tests {
         };
         assert_eq!(layout.pages(), 51); // 48 312 / 960, rounded up
         assert_eq!(layout.len(), 101 + 51 * 349);
-        assert_eq!(layout.page_offset(0), 101);
+        assert_eq!(page_offset(layout.header_len, 0), 101);
         assert_eq!(layout.page_at(101 + 349 * 3 + 348), 3);
         assert_eq!(layout.page_at(101 + 349 * 4), 4);
         assert_eq!(layout.granule(0), 960);
@@ -1754,5 +1859,170 @@ mod tests {
             layout.granule(layout.pages() - 1)
         );
         assert!(pages.last().unwrap().flags & OGG_EOS != 0);
+    }
+
+    // ── Ranges ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_range_is_answered_by_the_rfc() {
+        let tag = "\"abc\"";
+        let ask = |range: Option<&str>, if_range: Option<&str>| answer(range, if_range, tag, 1000);
+        let part = |first, last| Answer::Part { first, last };
+        assert_eq!(ask(None, None), Answer::Whole);
+        assert_eq!(ask(Some("bytes=0-499"), None), part(0, 499));
+        assert_eq!(ask(Some("bytes=500-"), None), part(500, 999));
+        assert_eq!(ask(Some("bytes=-100"), None), part(900, 999));
+        assert_eq!(ask(Some("bytes=-5000"), None), part(0, 999));
+        assert_eq!(ask(Some("bytes=0-5000"), None), part(0, 999));
+        assert_eq!(ask(Some("bytes=999-999"), None), part(999, 999));
+        assert_eq!(ask(Some("bytes=1000-"), None), Answer::Unsatisfiable);
+        assert_eq!(ask(Some("bytes=1000-1005"), None), Answer::Unsatisfiable);
+        assert_eq!(ask(Some("bytes=-0"), None), Answer::Unsatisfiable);
+        assert_eq!(ask(Some("bytes=0-10,20-30"), None), Answer::Whole);
+        assert_eq!(ask(Some("bytes=30-20"), None), Answer::Whole);
+        assert_eq!(ask(Some("bytes=abc"), None), Answer::Whole);
+        assert_eq!(ask(Some("items=0-10"), None), Answer::Whole);
+        assert_eq!(ask(Some("bytes=0-10"), Some(tag)), part(0, 10));
+        assert_eq!(ask(Some("bytes=0-10"), Some("\"old\"")), Answer::Whole);
+        assert_eq!(
+            ask(Some("bytes=0-10"), Some("Tue, 10 Nov 2026 10:00:00 GMT")),
+            Answer::Whole
+        );
+        assert_eq!(
+            answer(Some("bytes=-10"), None, tag, 0),
+            Answer::Unsatisfiable
+        );
+    }
+
+    #[test]
+    fn a_range_job_covers_the_pages_it_touches() {
+        let layout = Layout {
+            header_len: 101,
+            pre_skip: 312,
+            samples: 48_000,
+        };
+        let job = Job::range(layout, 0, 50);
+        assert_eq!((job.first_page, job.last_page), (0, None));
+        let job = Job::range(layout, 100, 101);
+        assert_eq!((job.first_page, job.last_page), (0, Some(0)));
+        let job = Job::range(layout, 101 + 349 * 3 + 10, 101 + 349 * 5);
+        assert_eq!((job.first_page, job.last_page), (3, Some(5)));
+        let job = Job::range(layout, layout.len() - 1, layout.len() - 1);
+        assert_eq!((job.first_page, job.last_page), (50, Some(50)));
+    }
+
+    /// Checks a range `first..=last` of the stream of `path` against the whole
+    /// stream `whole`: the right length; byte-identical when its pre-roll
+    /// reaches the start; and every page's header fields the same otherwise.
+    fn check_range(path: &Path, layout: Layout, whole: &[u8], first: u64, last: u64) {
+        let job = Job::range(layout, first, last);
+        let bytes = encode_job(path, &job);
+        assert_eq!(
+            bytes.len() as u64,
+            last - first + 1,
+            "length of {first}-{last}"
+        );
+        let expected = &whole[first as usize..=last as usize];
+        let from_start = job.first_page * OPUS_FRAME_SAMPLES as u64 <= PRE_ROLL_SAMPLES;
+        if from_start {
+            assert!(bytes == expected, "bytes of {first}-{last} differ");
+            return;
+        }
+        // Each page's header, up to the CRC, where the two coincide.
+        let mut at = page_offset(layout.header_len, job.first_page);
+        while at + AUDIO_PAGE_BYTES <= last + 1 {
+            if at >= first {
+                let lo = (at - first) as usize;
+                assert_eq!(
+                    &bytes[lo..lo + 22],
+                    &whole[at as usize..at as usize + 22],
+                    "page header at {at} in {first}-{last}"
+                );
+            }
+            at += AUDIO_PAGE_BYTES;
+        }
+    }
+
+    #[test]
+    fn ranges_line_up_with_the_whole_stream() {
+        let dir = TempDir::new("ranges");
+        let path = dir.path("tone.wav");
+        write_wav(&path, 44_100, 2, 110_250); // 2.5 s: 120 000 samples, 126 pages
+        let (whole, layout) = encode_whole(&path);
+        let len = layout.len();
+        assert_eq!(layout.pages(), 126);
+        let page = |i: u64| page_offset(layout.header_len, i);
+        let firsts = [
+            0,
+            1,
+            50,
+            100,
+            101,
+            102,
+            page(1),
+            page(10) + 5,
+            page(50),
+            page(51),
+            page(60) + 348,
+            page(100) + 17,
+            len - 1000,
+            len - 1,
+        ];
+        for &first in &firsts {
+            check_range(&path, layout, &whole, first, len - 1);
+        }
+        check_range(&path, layout, &whole, 0, 0);
+        check_range(&path, layout, &whole, 0, 100);
+        check_range(&path, layout, &whole, 46, 47);
+        check_range(&path, layout, &whole, 100, 101);
+        check_range(&path, layout, &whole, page(3) + 100, page(3) + 200);
+        check_range(&path, layout, &whole, page(70) + 100, page(72) + 200);
+        check_range(&path, layout, &whole, page(125), len - 1);
+    }
+
+    #[test]
+    fn a_stream_begun_part_way_in_sounds_like_the_whole() {
+        let dir = TempDir::new("splice");
+        let path = dir.path("tone.wav");
+        write_wav(&path, 44_100, 2, 132_300); // 3 s, resampled: the phase alignment matters
+        let (whole, layout) = encode_whole(&path);
+        let k = 100usize; // 2 s in: the pre-roll starts at 1 s, not at the start
+        let bytes = encode_job(
+            &path,
+            &Job::range(
+                layout,
+                page_offset(layout.header_len, k as u64),
+                layout.len() - 1,
+            ),
+        );
+        let whole_pages = parse_pages(&whole);
+        let part_audio = parse_pages(&bytes);
+        assert_eq!(part_audio.len() as u64, layout.pages() - k as u64);
+        assert_eq!(part_audio[0].seq as usize, k + 2);
+        let reference = decode(&whole_pages, 2);
+        let total = reference.len();
+        let frame = OPUS_FRAME_SAMPLES * 2;
+
+        // A retry after a dropped connection: the decoder has played the whole
+        // stream up to page k, and goes on with the range's pages.
+        let mut spliced = parse_pages(&whole[..page_offset(layout.header_len, k as u64) as usize]);
+        spliced.extend(part_audio);
+        let warm = decode(&spliced, 2);
+        let snr = snr_db(&reference[k * frame..], &warm[k * frame..total]);
+        assert!(snr > 40.0, "spliced onto a warm decoder: SNR {snr:.1} dB");
+
+        // A seek: the decoder starts cold at page k. Opus predicts each frame's
+        // band energies from the last, so a cold decoder takes a few frames to
+        // converge, which is why RFC 7845 has players pre-roll 80 ms (four
+        // pages) after a seek. The same happens in any Ogg Opus file.
+        let mut from_k = parse_pages(&whole[..layout.header_len as usize]);
+        from_k.extend(parse_pages(&bytes));
+        let cold = decode(&from_k, 2);
+        let settle = 4;
+        let snr = snr_db(
+            &reference[(k + settle) * frame..],
+            &cold[settle * frame..cold.len()],
+        );
+        assert!(snr > 30.0, "cold decoder, 80 ms in: SNR {snr:.1} dB");
     }
 }

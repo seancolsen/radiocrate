@@ -18,7 +18,7 @@ reconstruct progress from `git log`.
 | ----- | ------ |
 | 1 — Playback logging | done (items 1–5; item 6 lands with phase 2; device checks for items 1 and 5 still owed) |
 | 2 — Fixed layout, whole stream with `Content-Length` | done (with phase 1's item 6, the server-side log) |
-| 3 — Range requests | not started |
+| 3 — Range requests | done; checked with curl locally (not yet through the tunnel) |
 | 4 — Client cleanup | not started |
 | 5 — Stress testing on the phone | not started (the user does this; see "Validation") |
 
@@ -301,6 +301,14 @@ That page then holds the start of one encode and the end of another, and its
 CRC won't match. Expect at most one 20 ms frame to be dropped or garbled on a
 retry. That's accepted (requirement 3). A *seek* doesn't have this problem:
 Chrome resets the decoder and resyncs to the next page.
+
+*Measured in phase 3* (`a_stream_begun_part_way_in_sounds_like_the_whole`):
+with the second of pre-roll, an encode begun at page `k` produces packets
+that a decoder which has played pages `0..k` decodes at over 160 dB SNR
+against the whole stream, i.e. the same audio. A decoder started *cold* at
+page `k` (a seek) converges over the next frames, as it would in any Ogg Opus
+file: Opus predicts each frame's band energies from the last, which is why
+RFC 7845 has players pre-roll 80 ms after a seek. Chrome does.
 
 ### Writing pages by hand
 
