@@ -16,7 +16,7 @@ reconstruct progress from `git log`.
 
 | Phase | Status |
 | ----- | ------ |
-| 1 — Playback logging | not started |
+| 1 — Playback logging | done (items 1–5; item 6 lands with phase 2; device checks for items 1 and 5 still owed) |
 | 2 — Fixed layout, whole stream with `Content-Length` | not started |
 | 3 — Range requests | not started |
 | 4 — Client cleanup | not started |

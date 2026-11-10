@@ -846,6 +846,20 @@ describe("a logging engine", () => {
       addEventListener: () => {},
       visibilityState: "hidden",
     });
+    // The Resource Timing observer the engine installs, so a test can hand it
+    // an entry as the browser would once a player's request finishes.
+    let observe: ((entries: unknown[]) => void) | undefined;
+    vi.stubGlobal(
+      "PerformanceObserver",
+      class {
+        constructor(callback: (list: { getEntries: () => unknown[] }) => void) {
+          observe = (entries) => callback({ getEntries: () => entries });
+        }
+        observe(): void {}
+      },
+    );
+    const finishRequest = (entry: Record<string, unknown>) =>
+      observe?.([entry]);
     const lines: string[] = [];
     const engine = new AudioEngine(
       {
@@ -866,8 +880,12 @@ describe("a logging engine", () => {
         },
       },
     );
-    return { engine, lines };
+    return { engine, lines, finishRequest };
   }
+
+  /** The entries' messages alone, without their details. */
+  const messages = (lines: string[]) =>
+    lines.filter((l) => !l.startsWith("  "));
 
   afterEach(() => {
     vi.useRealTimers();
@@ -920,6 +938,132 @@ describe("a logging engine", () => {
     enabled.on = true;
     vi.advanceTimersByTime(3000);
     expect(lines[0]).toBe("Status: track t1 at 0:00.0");
+  });
+
+  it("says when a player has been downloading with nothing arriving, once per stall, and when data comes back", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    expect(el.networkState).toBe(NETWORK_LOADING);
+
+    vi.advanceTimersByTime(9000);
+    expect(messages(lines)).not.toContainEqual(
+      expect.stringContaining("without receiving any data"),
+    );
+
+    vi.advanceTimersByTime(3000);
+    expect(messages(lines)).toContain(
+      "Player A (current) has been downloading for 12 s without receiving any data",
+    );
+    // The status line says how long it's been, too.
+    expect(lines.at(-2)).toMatch(/last data 12 s ago/);
+
+    // Still stalled: no second entry.
+    vi.advanceTimersByTime(6000);
+    expect(
+      messages(lines).filter((m) => m.includes("without receiving any data")),
+    ).toHaveLength(1);
+
+    el.dispatchEvent(new Event("progress"));
+    expect(messages(lines).at(-1)).toBe(
+      "Player A (current) is receiving data again, after 18 s without any",
+    );
+  });
+
+  it("isn't fooled by a player that isn't downloading", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    finishDownload(created[0]!);
+    vi.advanceTimersByTime(30000);
+    expect(messages(lines)).not.toContainEqual(
+      expect.stringContaining("without receiving any data"),
+    );
+    expect(lines.join("\n")).not.toContain("last data");
+  });
+
+  it("records each player's length, and when it changes", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    vi.advanceTimersByTime(3000);
+    expect(lines.at(-2)).toMatch(/Player A \(current\): .* · no length yet · /);
+
+    el.duration = Number.POSITIVE_INFINITY;
+    el.dispatchEvent(new Event("durationchange"));
+    expect(messages(lines).at(-1)).toBe(
+      "Player A (current) now has no length (live stream)",
+    );
+
+    el.duration = 376;
+    el.dispatchEvent(new Event("durationchange"));
+    expect(messages(lines).at(-1)).toBe(
+      "Player A (current) now has length 6:16",
+    );
+    vi.advanceTimersByTime(3000);
+    expect(lines.at(-2)).toMatch(/Player A \(current\): .* · length 6:16 · /);
+  });
+
+  it("puts the position against the library's length in the status", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    engine.setMetadata("Title", null, 376);
+    created[0]!.currentTime = 127.6;
+    vi.advanceTimersByTime(3000);
+    expect(messages(lines).at(-1)).toBe("Status: track t1 at 2:07.6 of 6:16");
+  });
+
+  it("warns when a track ends well before the library's length, whatever the stream", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 300; // a file served whole
+    el.dispatchEvent(new Event("loadedmetadata"));
+    engine.setMetadata(null, null, 376);
+
+    endAt(el, 127.6);
+
+    const list = messages(lines);
+    const ended = list.indexOf(
+      "Player A (current) reached the end of its track",
+    );
+    expect(list[ended + 1]).toBe(
+      "Player A (current) stopped 4:08 before the end of track t1 (6:16)",
+    );
+  });
+
+  it("doesn't warn about a track that ends at its length", () => {
+    const { engine, lines } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+    engine.setMetadata(null, null, 376);
+    endAt(created[0]!, 375.2);
+    expect(messages(lines)).not.toContainEqual(
+      expect.stringContaining("before the end of"),
+    );
+  });
+
+  it("records each stream request the players make, from Resource Timing", () => {
+    const { engine, lines, finishRequest } = loggingEngine({ on: true });
+    engine.setQueue([], "t1", []);
+
+    finishRequest({
+      name: "https://music.example/api/tracks/5f62a92b-1a9a/stream?quality=opus128",
+      responseStatus: 206,
+      encodedBodySize: 2.0 * 1024 * 1024,
+      startTime: 1000,
+      responseEnd: 372_000,
+    });
+    finishRequest({
+      name: "https://music.example/api/query",
+      responseStatus: 200,
+      encodedBodySize: 10,
+      startTime: 0,
+      responseEnd: 5,
+    });
+
+    expect(messages(lines).at(-1)).toBe(
+      "A download for track 5f62a92b (Opus 128 kbps transcode) finished: response 206, 2.0 MB in 6 min 11 s",
+    );
   });
 });
 

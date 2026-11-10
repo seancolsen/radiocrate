@@ -278,6 +278,36 @@ function trackName(id: string | undefined): string {
   return id === undefined ? "no track" : `track ${id.slice(0, 8)}`;
 }
 
+/** A stretch of wall-clock time, for the log: "320 ms", "6.2 s", "6 min 11 s". */
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "?";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ${Math.round(seconds - minutes * 60)} s`;
+}
+
+/** A player's length, as the log says it: what the browser reports as its
+ * duration, which a stream without a known length reports as infinite. */
+function describeLength(el: HTMLAudioElement): string {
+  const d = el.duration;
+  if (Number.isFinite(d)) return `length ${formatSeconds(d)}`;
+  if (d === Number.POSITIVE_INFINITY) return "no length (live stream)";
+  return "no length yet";
+}
+
+/** The fields of a `resource` Resource Timing entry the log reads. Declared
+ * here rather than taken from `lib.dom`, whose `PerformanceResourceTiming`
+ * lacks `responseStatus` in older lib versions. */
+interface StreamTimingEntry {
+  name: string;
+  startTime: number;
+  responseEnd: number;
+  encodedBodySize?: number;
+  responseStatus?: number;
+}
+
 /** What an element's `src` holds, for the log: which track, in which form. */
 function describeSrc(src: string | null): string {
   if (!src) return "no track";
@@ -327,6 +357,14 @@ const HAVE_FUTURE_DATA = 3;
 /** `HTMLMediaElement.NETWORK_IDLE`: the element has a resource but isn't
  * fetching any of it right now. */
 const NETWORK_IDLE = 1;
+
+/** `HTMLMediaElement.NETWORK_LOADING`: the element is fetching its resource. */
+const NETWORK_LOADING = 2;
+
+/** How long a player can sit downloading with nothing arriving before the
+ * log says so. Chrome's own `stalled` event can't be relied on: it didn't
+ * fire for a connection that died while a primed track was held. */
+const STALL_SECS = 10;
 
 /** How far short of the library's length a transcode can end and still count
  * as having reached its end. A whole transcode ends within a fraction of a
@@ -520,6 +558,14 @@ export class AudioEngine {
   /** The last status entry's wall-clock time and track position, so the next
    * can say how far each moved in between. */
   private lastStatus: { wall: number; position: number } | undefined;
+  /** When each player last received data, in epoch milliseconds: the time
+   * of its last `progress` event, or of its load if none has fired since.
+   * Only kept for the log. */
+  private readonly lastData = new Map<HTMLAudioElement, number>();
+  /** The players whose current stall (downloading, nothing arriving for
+   * {@link STALL_SECS}) has been logged, so each stall gets one entry, and
+   * one more when data arrives again. */
+  private readonly stalled = new Set<HTMLAudioElement>();
 
   constructor(
     events: EngineEvents,
@@ -718,6 +764,8 @@ export class AudioEngine {
       el.removeAttribute("src");
       // Without this, a download in flight runs on to the end of the file.
       el.load();
+      this.lastData.delete(el);
+      this.stalled.delete(el);
     }
     this.releaseSession();
     this.clearFailure();
@@ -834,6 +882,9 @@ export class AudioEngine {
   /** Points `el` at the stream `url` and starts fetching it. */
   private fetchStream(el: HTMLAudioElement, url: string): void {
     this.unbounded.delete(el); // until the new stream's metadata says
+    // A fresh download: nothing has arrived yet, and any stall is over.
+    this.lastData.set(el, Date.now());
+    this.stalled.delete(el);
     el.src = url;
     el.load();
     this.events.onStreamRequest();
@@ -859,6 +910,8 @@ export class AudioEngine {
     el.pause();
     el.removeAttribute("src");
     el.load();
+    this.lastData.delete(el);
+    this.stalled.delete(el);
     this.primed = undefined;
   }
 
@@ -1193,6 +1246,22 @@ export class AudioEngine {
     this.events.onTransport();
   }
 
+  /** Logs a track ending more than {@link CUT_SHORT_SECS} before the
+   * library's length, on `ended`, before anything is done about it. For every
+   * kind of stream: for a transcode it records the cut whether or not
+   * {@link resumeCutShort} recovers; for a file served whole it reveals a
+   * wrong library length. */
+  private noteEarlyEnd(el: HTMLAudioElement): void {
+    const id = this.current;
+    const length = this.knownDuration;
+    if (id === undefined || length === null) return;
+    const short = length - this.position;
+    if (short <= CUT_SHORT_SECS) return;
+    this.log(
+      `${this.title(el)} stopped ${formatSeconds(short)} before the end of ${trackName(id)} (${formatSeconds(length)})`,
+    );
+  }
+
   /** Forgets the current track's failure, and stops looking into it. */
   private clearFailure(): void {
     this.diagnosis?.abort();
@@ -1217,7 +1286,16 @@ export class AudioEngine {
 
       // Registered first, so each event's entry comes before anything the
       // handlers below go on to do about it.
-      if (this.logger) this.logEvents(el, LOGGED_EVENTS);
+      if (this.logger) {
+        this.logEvents(el, LOGGED_EVENTS);
+        // Which player received data when. Kept whether or not logging is
+        // on (it's one assignment), so a stall is measured from the right
+        // moment the instant logging is turned on.
+        el.addEventListener("progress", () => this.noteData(el));
+        el.addEventListener("durationchange", () => {
+          this.log(`${this.title(el)} now has ${describeLength(el)}`);
+        });
+      }
 
       el.addEventListener("play", () => {
         if (active()) transport();
@@ -1275,6 +1353,7 @@ export class AudioEngine {
       // That one is picked back up instead.
       el.addEventListener("ended", () => {
         if (!active()) return;
+        this.noteEarlyEnd(el);
         if (this.resumeCutShort()) return;
         if (!this.goNext(true)) this.events.onQueueDry();
       });
@@ -1410,12 +1489,58 @@ export class AudioEngine {
     for (const [type, meaning] of Object.entries(events)) {
       el.addEventListener(type, () => {
         if (!this.logger?.enabled) return;
-        const name = this.name(el);
-        this.log(`${name[0]!.toUpperCase()}${name.slice(1)} ${meaning}`, () => [
-          this.describe(el),
-        ]);
+        this.log(`${this.title(el)} ${meaning}`, () => [this.describe(el)]);
       });
     }
+  }
+
+  /** Notes that `el` has just received data, and, if it had been logged as
+   * stalled, that it's receiving data again. */
+  private noteData(el: HTMLAudioElement): void {
+    const now = Date.now();
+    const since = this.lastData.get(el);
+    this.lastData.set(el, now);
+    if (!this.stalled.delete(el) || since === undefined) return;
+    this.log(
+      `${this.title(el)} is receiving data again, after ${Math.round((now - since) / 1000)} s without any`,
+    );
+  }
+
+  /** Logs any player that has been downloading for {@link STALL_SECS} with
+   * nothing arriving, once per stall. Run on the status timer. */
+  private checkStalls(): void {
+    if (!this.logger?.enabled) return;
+    const now = Date.now();
+    for (const el of this.elements) {
+      if (el.networkState !== NETWORK_LOADING || this.stalled.has(el)) continue;
+      const since = this.lastData.get(el);
+      if (since === undefined || now - since < STALL_SECS * 1000) continue;
+      this.stalled.add(el);
+      this.log(
+        `${this.title(el)} has been downloading for ${Math.round((now - since) / 1000)} s without receiving any data`,
+      );
+    }
+  }
+
+  /** Logs a finished request one of the players made for a stream, from its
+   * Resource Timing entry: the only view the page gets of the browser's own
+   * range requests and retries. Anything else (the app's own fetches) is
+   * passed over. */
+  private logDownload(entry: StreamTimingEntry): void {
+    if (!this.logger?.enabled) return;
+    if (!/\/api\/tracks\/[^/?]+\/stream(?:\?|$)/.test(entry.name)) return;
+    const status =
+      entry.responseStatus !== undefined && entry.responseStatus > 0
+        ? `response ${entry.responseStatus}`
+        : "response status unknown";
+    const size =
+      entry.encodedBodySize !== undefined
+        ? formatBytes(entry.encodedBodySize)
+        : "an unknown amount";
+    const took = formatElapsed(entry.responseEnd - entry.startTime);
+    this.log(
+      `A download for ${describeSrc(entry.name)} finished: ${status}, ${size} in ${took}`,
+    );
   }
 
   /** Calls `play()` on `el`, logging how the browser answers it. */
@@ -1443,6 +1568,12 @@ export class AudioEngine {
     return `player ${letter} (${el === this.audio ? "current" : "standby"})`;
   }
 
+  /** {@link name}, capitalized to start a sentence. */
+  private title(el: HTMLAudioElement): string {
+    const name = this.name(el);
+    return `${name[0]!.toUpperCase()}${name.slice(1)}`;
+  }
+
   /** One player's state, on one line. */
   private describe(el: HTMLAudioElement): string {
     const at = formatSeconds(el.currentTime, true);
@@ -1464,10 +1595,17 @@ export class AudioEngine {
     parts.push(
       ranges.length > 0 ? `buffered ${ranges.join(", ")}` : "nothing buffered",
     );
+    parts.push(describeLength(el));
     parts.push(READY_STATES[el.readyState] ?? `ready state ${el.readyState}`);
     parts.push(
       NETWORK_STATES[el.networkState] ?? `network state ${el.networkState}`,
     );
+    const lastData = this.lastData.get(el);
+    if (el.networkState === NETWORK_LOADING && lastData !== undefined) {
+      parts.push(
+        `last data ${Math.round((Date.now() - lastData) / 1000)} s ago`,
+      );
+    }
     const decoded = (el as HTMLAudioElement & DecodedByteCount)
       .webkitAudioDecodedByteCount;
     if (decoded !== undefined) parts.push(`${formatBytes(decoded)} decoded`);
@@ -1499,7 +1637,25 @@ export class AudioEngine {
       document.addEventListener(type, () => this.logStatus(true));
     }
     // The engine lives as long as the app, so the interval is never cleared.
-    setInterval(() => this.logStatus(false), HIDDEN_STATUS_MS);
+    setInterval(() => {
+      this.checkStalls();
+      this.logStatus(false);
+    }, HIDDEN_STATUS_MS);
+    // The players' own requests aren't visible to page code, but Resource
+    // Timing reports each once it finishes. An observer, rather than
+    // `getEntriesByType`, so the browser's entry buffer limit doesn't apply.
+    if (typeof PerformanceObserver !== "undefined") {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            this.logDownload(entry as unknown as StreamTimingEntry);
+          }
+        });
+        observer.observe({ type: "resource", buffered: false });
+      } catch {
+        // A browser without resource entries: the log goes without them.
+      }
+    }
   }
 
   /** Logs both players' state while a track is loaded — often while the page
@@ -1521,8 +1677,10 @@ export class AudioEngine {
     }
     const position = this.position;
     this.lastStatus = { wall, position };
+    const length = this.knownDuration;
+    const of = length !== null ? ` of ${formatSeconds(length)}` : "";
     this.log(
-      `Status: ${trackName(this.current)} at ${formatSeconds(position, true)}`,
+      `Status: ${trackName(this.current)} at ${formatSeconds(position, true)}${of}`,
       () => {
         const lines: string[] = [];
         if (last) {
@@ -1546,10 +1704,7 @@ export class AudioEngine {
           facts.push(`iOS audio session ${session.state ?? "unknown"}`);
         lines.push(facts.join(" · "));
         for (const el of [this.audio, this.standby]) {
-          const name = this.name(el);
-          lines.push(
-            `${name[0]!.toUpperCase()}${name.slice(1)}: ${this.describe(el)}`,
-          );
+          lines.push(`${this.title(el)}: ${this.describe(el)}`);
         }
         const keepAlive = this.keepAlive;
         if (keepAlive) {
