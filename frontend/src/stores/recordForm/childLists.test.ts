@@ -29,8 +29,8 @@ import {
 // The two kinds of multi-record field the form treats specially: one whose
 // records are kept in an order of the user's own (a table with an `order`
 // column), and one whose records only join the record to others (a table whose
-// only required columns are two links) — `credit` is both, `track_tag` the
-// second alone.
+// only columns are two required links) — `credit` is the first, having a `role`
+// of its own to say, and `track_tag` the second.
 
 const col = (name: string, type: string, nullable = false) => ({
   name,
@@ -79,15 +79,29 @@ const CREDITS: readonly (readonly [string, string | null])[] = [
   ["a3", "3"],
 ];
 
-/** Answers every query: the track `t1`, its credits and no tags, and any
- * artist or tag by id. */
+/** The track's tags. */
+const TAGS = ["g1", "g2"] as const;
+
+/** Answers every query: the track `t1`, its credits and tags, and any artist
+ * or tag by id. */
 function serve(credits = CREDITS) {
   runner.mockImplementation(async (query: RecordQuery) => {
     const id = /id:="([^"]*)"/.exec(query.filter)?.[1] ?? "";
     switch (query.base) {
       case "track":
         // The key, `id`, `title`, then the `#credit` and `#track_tag` counts.
-        return [["t1", "t1", "Song", String(credits.length), "0"]];
+        return [
+          ["t1", "t1", "Song", String(credits.length), String(TAGS.length)],
+        ];
+      case "track_tag":
+        // A list (the key, one preview cell, then every column) or one
+        // record's own data (the key, then `tag`).
+        if (query.display.includes("\n")) {
+          return TAGS.map((tag) => ["t1", tag, `Tag ${tag}`, "t1", tag]);
+        }
+        return TAGS.flatMap((tag) =>
+          query.filter.includes(`"${tag}"`) ? [["t1", tag, tag]] : [],
+        );
       case "credit":
         // A list (the key, one preview cell, then every column) or one
         // credit's own data (the key, then `artist`, `order` and `role`).
@@ -152,6 +166,17 @@ async function opened(
   model.start();
   await flush();
   model.toggleField(ROOT_ID, field<"multiRecord">(model, ROOT_ID, "#credit"));
+  await flush();
+  return model;
+}
+
+/** The form on track `t1`, its tags opened. */
+async function openedTags() {
+  const model = await opened();
+  model.toggleField(
+    ROOT_ID,
+    field<"multiRecord">(model, ROOT_ID, "#track_tag"),
+  );
   await flush();
   return model;
 }
@@ -257,25 +282,34 @@ describe("a field whose records are kept in order", () => {
 
 describe("a join table's field", () => {
   it("opens a record onto the one it stands for", async () => {
+    const model = await openedTags();
+    const [first] = model.store.getState().lists[TAGS_LIST]!.childIds;
+    model.toggleChild(first, true);
+    await flush();
+    const tag = model.store.getState().records[scalarChildId(first, "tag")];
+    expect(tag?.table).toBe("tag");
+    expect(tag?.values["name"]).toEqual(["Name g1"]);
+  });
+
+  it("leaves a table with a column of its own to open onto itself", async () => {
     const model = await opened();
     const [first] = model.store.getState().lists[CREDITS_LIST]!.childIds;
     model.toggleChild(first, true);
     await flush();
-    const artist =
-      model.store.getState().records[scalarChildId(first, "artist")];
-    expect(artist?.table).toBe("artist");
-    expect(artist?.values["name"]).toEqual(["Name a1"]);
+    const s = model.store.getState();
+    expect(s.records[first]?.join).toBeUndefined();
+    expect(s.records[scalarChildId(first, "artist")]).toBeUndefined();
+    expect(s.records[first]?.fields.map((f) => f.key)).toContain("role");
   });
 
   it("offers to edit its records, and to go on from what they stand for", async () => {
-    const model = await opened();
-    const [first, second] =
-      model.store.getState().lists[CREDITS_LIST]!.childIds;
+    const model = await openedTags();
+    const [first, second] = model.store.getState().lists[TAGS_LIST]!.childIds;
     model.openMenu({
       target: {
         kind: "childRecords",
         recordId: ROOT_ID,
-        fieldKey: "#credit",
+        fieldKey: "#track_tag",
         ids: [first, second],
       },
       x: 0,
@@ -283,29 +317,29 @@ describe("a join table's field", () => {
     });
     expect(model.store.getState().menu?.records).toEqual({
       edit: {
-        table: "credit",
+        table: "track_tag",
         keys: [
           [
             { column: "track", value: "t1" },
-            { column: "artist", value: "a1" },
+            { column: "tag", value: "g1" },
           ],
           [
             { column: "track", value: "t1" },
-            { column: "artist", value: "a2" },
+            { column: "tag", value: "g2" },
           ],
         ],
       },
       navigate: {
-        table: "artist",
+        table: "tag",
         keys: [
-          [{ column: "id", value: "a1" }],
-          [{ column: "id", value: "a2" }],
+          [{ column: "id", value: "g1" }],
+          [{ column: "id", value: "g2" }],
         ],
       },
     });
   });
 
-  it("starts a new record by picking what it joins to, and then shows that", async () => {
+  it("starts a new record closed, by picking what it joins to", async () => {
     const model = await opened();
     model.addChild(ROOT_ID, field<"multiRecord">(model, ROOT_ID, "#track_tag"));
     const [child] = model.store.getState().lists[TAGS_LIST]!.childIds;
@@ -314,14 +348,29 @@ describe("a join table's field", () => {
       fieldKey: "tag",
     });
 
-    model.pickRecord(child, field<"scalarLink">(model, child, "tag"), "g1", [
+    model.pickRecord(child, field<"scalarLink">(model, child, "tag"), "g3", [
       "Rock",
     ]);
     await flush();
-    const s = model.store.getState();
+    let s = model.store.getState();
     expect(s.picker).toBeNull();
+    // It shows as the tag picked, closed like the tags around it.
+    expect(s.expanded[child]).not.toBe(true);
+    expect(s.embeds[scalarChildId(child, "tag")]?.cells).toEqual(["Rock"]);
+
+    // Opened, it shows that tag.
+    model.toggleChild(child, true);
+    await flush();
+    s = model.store.getState();
     expect(s.records[scalarChildId(child, "tag")]?.values["name"]).toEqual([
-      "Name g1",
+      "Name g3",
     ]);
+  });
+
+  it("opens a new record of any other table, for its fields to be filled in", async () => {
+    const model = await opened();
+    model.addChild(ROOT_ID, field<"multiRecord">(model, ROOT_ID, "#credit"));
+    const child = model.store.getState().lists[CREDITS_LIST]!.childIds.at(-1)!;
+    expect(model.store.getState().expanded[child]).toBe(true);
   });
 });

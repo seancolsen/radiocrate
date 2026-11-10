@@ -112,7 +112,6 @@ describe("buildFormFields", () => {
       column: "track",
       keyColumns: ["track", "artist"],
       ordered: false,
-      join: { column: "artist", table: "artist", keyColumn: "id" },
     });
   });
 
@@ -137,34 +136,59 @@ describe("buildFormFields", () => {
     expect(ordered("track", "#play")).toBe(false);
   });
 
-  it("finds a join table: two required columns, both links", () => {
+  it("finds a join table: two columns, both required links", () => {
     const joinOf = (tables: SchemaTable[], table: string, key: string) => {
       const field = buildFormFields(tables, table).find((f) => f.key === key);
       return field?.kind === "multiRecord" ? field.join : undefined;
     };
+    const tag = {
+      name: "tag",
+      columns: [col("id", "UUID"), col("name", "VARCHAR")],
+      uniqueConstraints: [["id"]],
+    };
+    const withTags = (...extra: ReturnType<typeof col>[]): SchemaTable[] => [
+      ...TABLES,
+      tag,
+      {
+        name: "track_tag",
+        columns: [col("track", "UUID"), col("tag", "UUID"), ...extra],
+        uniqueConstraints: [["track", "tag"]],
+      },
+    ];
     // Seen from either side, the join is to the other one.
-    expect(joinOf(TABLES, "artist", "#credit")).toEqual({
+    expect(joinOf(withTags(), "track", "#track_tag")).toEqual({
+      column: "tag",
+      table: "tag",
+      keyColumn: "id",
+    });
+    expect(joinOf(withTags(), "tag", "#track_tag")).toEqual({
       column: "track",
       table: "track",
       keyColumn: "id",
     });
-    // `play`'s other required column is a timestamp, not a link.
+    // `play`'s other column is a timestamp, not a link.
     expect(joinOf(TABLES, "track", "#play")).toBeUndefined();
-    // A third required column (here, its own id) makes it a table of its own.
-    const withId: SchemaTable[] = [
+    // Any third column makes it a table with something of its own to say:
+    // `credit` has a `role`, optional though it is.
+    expect(joinOf(TABLES, "track", "#credit")).toBeUndefined();
+    expect(joinOf(TABLES, "artist", "#credit")).toBeUndefined();
+    expect(
+      joinOf(withTags(col("note", "VARCHAR", true)), "track", "#track_tag"),
+    ).toBeUndefined();
+    expect(
+      joinOf(withTags(col("id", "UUID")), "track", "#track_tag"),
+    ).toBeUndefined();
+    // And a link that may be empty isn't one a record stands for.
+    const optional: SchemaTable[] = [
       ...TABLES,
-      {
-        name: "tag",
-        columns: [col("id", "UUID"), col("name", "VARCHAR")],
-        uniqueConstraints: [["id"]],
-      },
+      tag,
       {
         name: "track_tag",
-        columns: [col("id", "UUID"), col("track", "UUID"), col("tag", "UUID")],
-        uniqueConstraints: [["id"]],
+        columns: [col("track", "UUID"), col("tag", "UUID", true)],
+        uniqueConstraints: [["track", "tag"]],
       },
     ];
-    expect(joinOf(withId, "track", "#track_tag")).toBeUndefined();
+    expect(joinOf(optional, "track", "#track_tag")).toBeUndefined();
   });
 
   it("classifies every other column as a primitive field", () => {

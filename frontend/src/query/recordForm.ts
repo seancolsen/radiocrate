@@ -85,7 +85,7 @@ export interface MultiRecordField extends FieldBase {
    * column named `order`, which the form numbers for them as they're added and
    * rearranged rather than showing it as a field. */
   ordered: boolean;
-  /** Set when `table` is a *join table* — its only two required columns are
+  /** Set when `table` is a *join table* — its only two columns are required
    * links, `column` and this one — whose records stand for the records this
    * link points at (a track's tags, through `track_tag`). It's those records a
    * row of the field shows when it's opened. */
@@ -249,13 +249,16 @@ export function buildFormFields(
 }
 
 /** The far side of `table`, when it's a join table as seen from the records its
- * `column` points at: it has two required columns and no more, and both are
+ * `column` points at: it has two columns and no more, both required and both
  * links — `column`, and the one returned. `undefined` for any other table. */
 export function joinLink(
   tables: readonly SchemaTable[],
   table: SchemaTable,
   column: string,
 ): JoinLink | undefined {
+  // Any column beyond the two — a credit's `role`, say — is something the
+  // record says for itself, which showing the far side in its place would hide.
+  if (table.columns.length !== 2) return undefined;
   const required = table.columns.filter((c) => !c.nullable);
   if (required.length !== 2) return undefined;
   if (!required.some((c) => c.name === column)) return undefined;

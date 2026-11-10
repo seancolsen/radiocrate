@@ -415,8 +415,7 @@ test("switching tabs and back leaves the form exactly as it was", async ({
   await editor
     .getByRole("button", { name: /^Expand Jack White/ })
     .click({ timeout: delay * 3 });
-  // A credit opens onto its artist.
-  await expect(editor.getByText("name", { exact: true })).toBeVisible({
+  await expect(editor.getByText("role", { exact: true })).toBeVisible({
     timeout: delay * 3,
   });
 
@@ -430,7 +429,7 @@ test("switching tabs and back leaves the form exactly as it was", async ({
   const quick = { timeout: delay / 4 };
   await expect(editor.getByText(/Live at the Superdome/)).toBeVisible(quick);
   await expect(selectableRecords(editor)).toHaveCount(2, quick);
-  await expect(editor.getByText("name", { exact: true })).toBeVisible(quick);
+  await expect(editor.getByText("role", { exact: true })).toBeVisible(quick);
   await expect(
     editor.getByRole("button", { name: /^Collapse Jack White/ }),
   ).toBeVisible(quick);
@@ -1042,12 +1041,17 @@ test("expanding a multi-record field lists its records, each expandable in turn"
   await expect(credits.nth(1)).toContainText("Jack White");
   await expect(credits.nth(1)).toContainText("Featured");
 
-  // A credit only joins the track to an artist, so expanding one opens onto
-  // the artist's own form rather than the credit's.
+  // Expanding one loads that record's own form — a credit has a `role` of its
+  // own, so it isn't a join table's shortcut to the artist — without the
+  // `track` field it was reached through, or the `order` the form keeps for it.
+  // "Featured" is on screen twice by then — in the preview above and in the
+  // form below — so this asks for the form's own copy.
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
-  await expect(editor.getByText("name", { exact: true })).toBeVisible();
-  await expect(editor.getByText("artist-2", { exact: true })).toBeVisible();
-  await expect(editor.getByText("role", { exact: true })).toBeHidden();
+  await expect(editor.getByText("role", { exact: true })).toBeVisible();
+  await expect(editor.getByText("artist", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Featured").last()).toBeVisible();
+  await expect(editor.getByText("track", { exact: true })).toBeHidden();
+  await expect(editor.getByText("order", { exact: true })).toBeHidden();
 });
 
 test("expanding a scalar linked record field loads that record's form", async ({
@@ -1324,8 +1328,9 @@ test("a change deep in the tree stars the collapsed field above it", async ({
 
   await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
-  // The primitive edited deep in the tree is the name of the artist the credit
-  // opens onto. Enter on a focused label is the field's "do the thing" key.
+  // The primitive edited deep in the tree is the name of the credit's artist.
+  // Enter on a focused label is the field's "do the thing" key.
+  await editor.getByRole("button", { name: "Expand artist" }).click();
   await formItem(editor, "r##credit[1]>artist:name").click();
   await page.keyboard.press("Enter");
   await valueEditor(editor).fill("42");
@@ -1654,8 +1659,6 @@ test("an embedded record's menu deletes it — or the whole selection", async ({
   await expect(credits.nth(1)).toHaveAttribute("data-selected", "true");
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Edit",
-    "Show artist tracks",
-    "Show artist albums",
     "Delete",
   ]);
   await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -1740,7 +1743,7 @@ test("the picker searches as the user types, and picking links the record", asyn
   // the form — the embedded record is filled in without another request.
   await pickerCanvas(page).click({ position: { x: 100, y: 15 } });
   await expect(picker(page)).toBeHidden();
-  await expect(selectableRecords(editor).last()).toHaveText("The Weeknd");
+  await expect(editor.getByText("The Weeknd")).toBeVisible();
   await expect(star(editor, "credits")).toBeVisible();
 });
 
@@ -1765,7 +1768,7 @@ test("Up/Down and Enter drive the results without leaving the search box", async
 
   await page.keyboard.press("Enter");
   await expect(picker(page)).toBeHidden();
-  await expect(selectableRecords(editor).last()).toHaveText("The Weeknd");
+  await expect(editor.getByText("The Weeknd")).toBeVisible();
 });
 
 test("closing the picker leaves the field as it was", async ({ page }) => {
@@ -2111,14 +2114,22 @@ test("an embedded record's menu goes on from it, as a result row's does", async 
   const editor = editorPanel(page);
   await editor.getByRole("button", { name: "Expand credits" }).click();
   await selectableRecords(editor).first().click({ button: "right" });
-  // A credit stands for its artist: the artist's ways on, between editing the
-  // credit and deleting it.
+  // A credit is a record of its own, with nowhere to go on to.
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Edit",
-    "Show artist tracks",
-    "Show artist albums",
     "Delete",
   ]);
+  await page.keyboard.press("Escape");
+
+  // The artist it points at offers the artist's.
+  await editor.getByRole("button", { name: /^Expand Beyoncé/ }).click();
+  await embeddedRecords(editor)
+    .filter({ hasText: "Beyoncé" })
+    .last()
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menu").getByRole("menuitem", { name: /^Show / }),
+  ).toHaveText(["Show artist tracks", "Show artist albums"]);
   await page.keyboard.press("Escape");
 
   // The album a track points at offers the album's.
@@ -2215,6 +2226,9 @@ test("a join table's records open onto what they join, and are added by picking 
   await expect(picker.getByRole("textbox")).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(picker).toBeHidden();
-  // Tags aren't kept in order: it goes in at the top.
+  // Tags aren't kept in order: it goes in at the top — closed, like the rest.
   await expect(tags.first()).toHaveText("Neo soul");
+  await expect(
+    editor.getByRole("button", { name: "Expand Neo soul" }),
+  ).toBeVisible();
 });

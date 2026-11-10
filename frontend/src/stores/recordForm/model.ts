@@ -2701,9 +2701,13 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       // under each. The load that is on its way will count the lot.
       if (get().lists[id]?.status === "loaded") recountField(recordId, field);
       else bumpCounts(recordId, field.key, 1);
-      set((s) => {
-        s.expanded[child] = true;
-      });
+      // It opens for its fields to be filled in — unless it's a join table's,
+      // which has only the one to pick and shows as what was picked.
+      if (!field.join) {
+        set((s) => {
+          s.expanded[child] = true;
+        });
+      }
       // A record whose first field is a link it can't be saved without starts
       // by choosing what it links to — a track's new tag, say.
       const first = firstShownField(child);
