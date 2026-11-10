@@ -606,6 +606,68 @@ describe("resyncRecordEditors", () => {
   });
 });
 
+describe("the record editor's way back", () => {
+  const track = (id: string) => ({
+    table: "track",
+    key: [{ column: "id", value: id }],
+  });
+  const tag = { table: "tag", key: [{ column: "id", value: "g1" }] };
+
+  /** Tab "a" with rows of tracks 1 and 2, the first selected and open in the
+   * editor. */
+  const opened = () => {
+    const bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.setResults("a", buildResultFromStringRows([["1"], ["2"]]), {
+      records: [{ table: "track", keyColumns: ["id"], keyIndices: [0] }],
+    });
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.editSelectedRows("a");
+    return bundle;
+  };
+  const editor = (bundle: ReturnType<typeof opened>) =>
+    bundle.store.getState().pages["a"]?.recordEditor;
+
+  it("opens an embedded record on top, and goes back down, focusing each", () => {
+    const bundle = opened();
+    const focus = () => bundle.store.getState().recordEditorFocus?.seq;
+    const opening = focus();
+    expect(opening).toBeDefined();
+
+    bundle.actions.pushRecordEditor("a", "tag", [tag]);
+    expect(editor(bundle)).toEqual({
+      table: "tag",
+      records: [tag],
+      back: [{ table: "track", records: [track("1")] }],
+    });
+    expect(focus()).toBe(opening! + 1);
+
+    bundle.actions.popRecordEditor("a");
+    expect(editor(bundle)).toEqual({
+      table: "track",
+      records: [track("1")],
+      back: [],
+    });
+    expect(focus()).toBe(opening! + 2);
+
+    // Nothing further back.
+    bundle.actions.popRecordEditor("a");
+    expect(editor(bundle)?.table).toBe("track");
+  });
+
+  it("stays where the user took it while the selection does", () => {
+    const bundle = opened();
+    bundle.actions.pushRecordEditor("a", "tag", [tag]);
+    bundle.actions.resyncRecordEditors();
+    expect(editor(bundle)?.table).toBe("tag");
+
+    // Another row: the editor follows it, and starts over there.
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.resyncRecordEditors();
+    expect(editor(bundle)).toEqual({ table: "track", records: [track("2")] });
+  });
+});
+
 describe("toggleFilterPreset", () => {
   it("collapses the expanded preset when it's the one just removed", () => {
     const bundle = createAppStore(fakeEnv());
@@ -1507,7 +1569,7 @@ describe("showChildRecords", () => {
   });
 });
 
-describe("doubleClickRow", () => {
+describe("openRow", () => {
   const col = (name: string, type: string) => ({
     name,
     type,
@@ -1554,7 +1616,7 @@ describe("doubleClickRow", () => {
 
   it("opens an album's tracks", () => {
     const bundle = withRow("album", "album");
-    bundle.actions.doubleClickRow("a", 0);
+    bundle.actions.openRow("a", 0);
     const tab = newTab(bundle);
     expect(tab?.live.base).toBe("track");
     expect(tab?.live.filter.custom).toBe(`album:="x"`);
@@ -1563,7 +1625,7 @@ describe("doubleClickRow", () => {
 
   it("opens an artist's albums", () => {
     const bundle = withRow("artist", "artist");
-    bundle.actions.doubleClickRow("a", 0);
+    bundle.actions.openRow("a", 0);
     const tab = newTab(bundle);
     expect(tab?.live.base).toBe("album");
     expect(tab?.live.filter.custom).toContain('"x"');
@@ -1571,20 +1633,20 @@ describe("doubleClickRow", () => {
 
   it("goes by the base a full query's text names", () => {
     const bundle = withRow("track", "album", "#album\n$id");
-    bundle.actions.doubleClickRow("a", 0);
+    bundle.actions.openRow("a", 0);
     expect(newTab(bundle)?.live.base).toBe("track");
     expect(newTab(bundle)?.live.filter.custom).toContain('"x"');
   });
 
   it("opens nothing for a row that only carries some other table's record", () => {
     const bundle = withRow("track", "album");
-    bundle.actions.doubleClickRow("a", 0);
+    bundle.actions.openRow("a", 0);
     expect(newTab(bundle)).toBeUndefined();
   });
 
   it("opens nothing for an album it can't identify", () => {
     const bundle = withRow("album", "track");
-    bundle.actions.doubleClickRow("a", 0);
+    bundle.actions.openRow("a", 0);
     expect(newTab(bundle)).toBeUndefined();
   });
 });

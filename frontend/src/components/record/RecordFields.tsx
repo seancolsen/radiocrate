@@ -64,6 +64,7 @@ import {
 } from "../../stores/recordForm";
 import { selectContextualQuery, selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
+import { useChildDrag } from "../../gestures/useChildDrag";
 import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
 import { embedText } from "../../query/embedPreview";
@@ -76,6 +77,7 @@ import {
 } from "../../query/contextualQuery";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
+import { useTooltip } from "../ui/Tooltip";
 import { cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
 import {
@@ -157,7 +159,22 @@ export default function RecordNodeView(props: {
   const error = useFormState(model, (s) => s.records[recordId]?.error ?? null);
   const isNew = useFormState(model, (s) => s.records[recordId]?.isNew === true);
   const table = useFormState(model, (s) => s.records[recordId]?.table);
-  if (!fields || table === undefined) return null;
+  const concealed = useFormState(model, (s) => s.records[recordId]?.concealed);
+  // A field the form keeps for itself (an ordered list's `order`) isn't shown.
+  const shown = useMemo(
+    () =>
+      concealed && fields
+        ? fields.filter(
+            (field) =>
+              !(
+                (field.kind === "primitive" || field.kind === "scalarLink") &&
+                concealed.includes(field.column)
+              ),
+          )
+        : fields,
+    [fields, concealed],
+  );
+  if (!shown || table === undefined) return null;
   return (
     <LoadingRegion loading={status === "loading"}>
       <FieldList
@@ -165,7 +182,7 @@ export default function RecordNodeView(props: {
         recordId={recordId}
         table={table}
         isNew={isNew}
-        fields={fields}
+        fields={shown}
       />
       {status === "error" && (
         <p className="text-danger px-1 py-0.5 text-xs">{error}</p>
@@ -624,6 +641,8 @@ function FieldRow(props: {
             onOverflow={setOverflowing}
           />
         )}
+
+        {field.kind === "multiRecord" && field.ordered && <OrderedNote />}
       </div>
 
       {/* Between the row and what it expands into, so the records being changed
@@ -687,6 +706,28 @@ function FieldRow(props: {
           <ChildList model={model} recordId={recordId} field={field} />
         </Subtree>
       )}
+    </>
+  );
+}
+
+/** "(ordered)": a multi-record field's records are kept in an order of the
+ * user's own, which hovering it explains. */
+function OrderedNote(): JSX.Element {
+  const { triggerProps, tooltip } = useTooltip({
+    label: "Ordered",
+    description:
+      "These records are kept in the order shown, by their order column. New ones go at the end, and dragging records — or a selection of them — moves them. The new order is written when you save.",
+    align: "end",
+  });
+  return (
+    <>
+      <span
+        {...triggerProps}
+        className="text-ink-weak ml-auto shrink-0 cursor-default pr-1 text-xs select-none"
+      >
+        (ordered)
+      </span>
+      {tooltip}
     </>
   );
 }
@@ -1331,46 +1372,123 @@ function ChildList(props: {
   recordId: string;
   field: MultiRecordField | ContextQueryField;
 }): JSX.Element | null {
-  const { model } = props;
-  const id = listId(props.recordId, props.field.key);
+  const { model, field } = props;
+  const id = listId(props.recordId, field.key);
   const exists = useFormState(model, (s) => s.lists[id] !== undefined);
   const status = useFormState(model, (s) => s.lists[id]?.status);
   const expected = useFormState(model, (s) => s.lists[id]?.expected ?? 0);
   const childIds = useFormState(model, (s) => s.lists[id]?.childIds);
   const error = useFormState(model, (s) => s.lists[id]?.error ?? null);
+  const selection = useFormState(model, (s) => s.selection);
   const [requested, setPage] = useState(0);
-  if (!exists) return null;
   const total = childIds?.length ?? 0;
   // Records can leave the list under the page being shown: stay on the last.
   const page = Math.min(requested, Math.max(0, pageCount(total) - 1));
-  const shown = childIds?.slice(
-    page * CHILDREN_PER_PAGE,
-    (page + 1) * CHILDREN_PER_PAGE,
+  const shown = useMemo(
+    () =>
+      childIds?.slice(page * CHILDREN_PER_PAGE, (page + 1) * CHILDREN_PER_PAGE),
+    [childIds, page],
   );
   const loading = status === "unloaded" || status === "loading";
+
+  /** Whether the user can drag these records into an order: a field whose
+   * records are kept in one, on a single record — on several, each has its own
+   * order, which no one list could rearrange. */
+  const single = useFormState(
+    model,
+    (s) => (s.records[props.recordId]?.keys.length ?? 0) <= 1,
+  );
+  const draggable =
+    field.kind === "multiRecord" && field.ordered && single && !loading;
+
+  /** What picking up `child` takes along: the selection, when it's part of
+   * it, in the order the list has them. */
+  const moving = (child: string): string[] => {
+    const s = model.store.getState();
+    if (!s.selection.includes(child)) return [child];
+    return (s.lists[id]?.childIds ?? []).filter((c) => s.selection.includes(c));
+  };
+
+  const listRef = useRef<HTMLDivElement>(null);
+  const dnd = useChildDrag({
+    listRef,
+    ids: shown ?? [],
+    moving,
+    onDrop: (child, gap) =>
+      field.kind === "multiRecord" &&
+      model.reorderChildren(
+        props.recordId,
+        field,
+        moving(child),
+        page * CHILDREN_PER_PAGE + gap,
+      ),
+    onHold: (child, x, y) =>
+      openChildMenu(model, props.recordId, field, child, x, y),
+  });
+  const drag = dnd.drag;
+  /** The records in hand, grayed out where they are. */
+  const inHand = drag
+    ? selection.includes(drag.item)
+      ? (childIds ?? []).filter((c) => selection.includes(c))
+      : [drag.item]
+    : [];
+
+  if (!exists) return null;
+  const noun =
+    nounFor(field.table, inHand.length) ??
+    (inHand.length === 1 ? "record" : "records");
   return (
     <LoadingRegion loading={loading}>
-      {loading
-        ? Array.from({ length: expected }, (_, i) => (
+      {loading ? (
+        Array.from({ length: expected }, (_, i) => (
+          <div
+            key={i}
+            className="flex min-h-[30px] items-center gap-1 py-0.5"
+            data-testid="record-placeholder"
+          >
+            <span className="size-4 shrink-0" aria-hidden="true" />
+            <EmbeddedRecord cells={NO_CELLS} />
+          </div>
+        ))
+      ) : (
+        <div ref={listRef} className="relative">
+          {shown?.map((childId) => (
             <div
-              key={i}
-              className="flex min-h-[30px] items-center gap-1 py-0.5"
-              data-testid="record-placeholder"
-            >
-              <span className="size-4 shrink-0" aria-hidden="true" />
-              <EmbeddedRecord cells={NO_CELLS} />
-            </div>
-          ))
-        : shown?.map((childId) => (
-            <ChildRow
               key={childId}
-              model={model}
-              parentId={props.recordId}
-              field={props.field}
-              listId={id}
-              recordId={childId}
-            />
+              data-child-row
+              className={cx({ "opacity-50": inHand.includes(childId) })}
+            >
+              <ChildRow
+                model={model}
+                parentId={props.recordId}
+                field={field}
+                listId={id}
+                recordId={childId}
+                onPointerDown={
+                  draggable ? (e) => dnd.onPointerDown(e, childId) : undefined
+                }
+                pressing={dnd.pressing}
+              />
+            </div>
           ))}
+          {drag?.target != null && (
+            <div
+              aria-hidden="true"
+              className="bg-accent pointer-events-none absolute right-1 left-5 h-0.5 -translate-y-1/2 rounded-full"
+              style={{ top: drag.lineTop }}
+            />
+          )}
+        </div>
+      )}
+      {drag &&
+        createPortal(
+          <DragChip
+            icon={Icons.Record}
+            label={`${inHand.length} ${noun}`}
+            style={{ transform: dragChipTransform(drag.x, drag.y) }}
+          />,
+          document.body,
+        )}
       {!loading && (
         <Pager
           page={page}
@@ -1384,6 +1502,44 @@ function ChildList(props: {
       )}
     </LoadingRegion>
   );
+}
+
+/** The records a menu raised on `child` acts on: the whole selection when it's
+ * part of it, otherwise just it. Read from the model's current state as the
+ * menu opens, so the action isn't at the mercy of what happens to the
+ * selection while the menu is up. */
+function menuTargets(model: RecordFormModel, list: string, child: string) {
+  const s = model.store.getState();
+  if (!selectIsSelected(s, child)) return [child];
+  const siblings = s.lists[list]?.childIds ?? [];
+  return s.selection.filter((id) => siblings.includes(id));
+}
+
+/** Raises the menu on record `child` of a multi-record field at viewport point
+ * (x, y) — moving the selection to it first when it's outside it, so the
+ * menu's target is visible: the same courtesy the result rows extend. */
+function openChildMenu(
+  model: RecordFormModel,
+  parentId: string,
+  field: MultiRecordField | ContextQueryField,
+  child: string,
+  x: number,
+  y: number,
+): void {
+  const ids = menuTargets(model, listId(parentId, field.key), child);
+  if (!selectIsSelected(model.store.getState(), child)) {
+    model.clickEmbedded(child, { shift: false, ctrl: false });
+  }
+  model.openMenu({
+    target: {
+      kind: "childRecords",
+      recordId: parentId,
+      fieldKey: field.key,
+      ids,
+    },
+    x,
+    y,
+  });
 }
 
 /** One record within a multi-record field: an embedded record previewing it, and
@@ -1400,18 +1556,43 @@ function ChildRow(props: {
   field: MultiRecordField | ContextQueryField;
   listId: string;
   recordId: string;
+  /** A press on the record, which may be the start of dragging it to a new
+   * place — absent where the records can't be rearranged. */
+  onPointerDown?: (e: PointerEvent<HTMLElement>) => void;
+  /** Whether a touch is resting on a record, on its way to picking it up. */
+  pressing: () => boolean;
 }): JSX.Element {
   const { model, parentId, field, recordId } = props;
   const expanded = useFormState(model, (s) => selectIsExpanded(s, recordId));
-  const cells = useFormState(
+  /** Under a join table's field, the record this one stands for: what it
+   * shows once it's open, in place of its own fields — once there is one. */
+  const joinId =
+    field.kind === "multiRecord" && field.join
+      ? scalarChildId(recordId, field.join.column)
+      : undefined;
+  const joined = useFormState(
     model,
-    (s) => s.embeds[recordId]?.cells ?? NO_CELLS,
+    (s) => joinId !== undefined && s.records[joinId] !== undefined,
   );
-  const columns = useFormState(model, (s) => s.embeds[recordId]?.columns);
+  // A new record of a join table shows the record it was pointed at as soon
+  // as it is, having no preview of its own until it's saved.
+  const cells = useFormState(model, (s) =>
+    s.records[recordId]?.isNew && joinId !== undefined
+      ? (s.embeds[joinId]?.cells ?? NO_CELLS)
+      : (s.embeds[recordId]?.cells ?? NO_CELLS),
+  );
+  const columns = useFormState(model, (s) =>
+    s.records[recordId]?.isNew && joinId !== undefined
+      ? s.embeds[joinId]?.columns
+      : s.embeds[recordId]?.columns,
+  );
   /** Whether this record is one the form is creating rather than one it
    * loaded — which is what the widget says, in place of a preview it has no
    * values for yet. */
   const isNew = useFormState(model, (s) => s.records[recordId]?.isNew === true);
+  /** Whether it's a new one that has a preview all the same: the record it
+   * joins to. */
+  const previewed = isNew && cells.length > 0;
   // A record within a multi-record field is always exactly one record.
   const keyText = useFormState(model, (s) => {
     const key = s.records[recordId]?.keys[0];
@@ -1437,40 +1618,17 @@ function ChildRow(props: {
 
   /** What an expansion toggle's aria-label names this record: the preview it
    * shows, falling back to its key. */
-  const label = isNew ? "new record" : embedText({ cells, columns }) || keyText;
-
-  /** The records a menu raised on this one acts on: the whole selection when
-   * this record is part of it, otherwise just this record. Fixed as the menu
-   * opens — read from the model's current state at that moment — so the action
-   * isn't at the mercy of what happens to the selection while the menu is up. */
-  const menuTargets = (): string[] => {
-    const s = model.store.getState();
-    if (!selectIsSelected(s, recordId)) return [recordId];
-    const siblings = s.lists[props.listId]?.childIds ?? [];
-    return s.selection.filter((id) => siblings.includes(id));
-  };
+  const label =
+    isNew && !previewed
+      ? "new record"
+      : embedText({ cells, columns }) || keyText;
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
-    // A record a query found has no menu: all its menu would offer is deleting
-    // it from the list, which a query's records can't be.
-    if (field.kind === "contextQuery") return;
-    const targets = menuTargets();
-    // Right-clicking outside the selection moves it here first, so the menu's
-    // target is visible — the same courtesy the result rows extend.
-    if (!selectIsSelected(model.store.getState(), recordId)) {
-      model.clickEmbedded(recordId, { shift: false, ctrl: false });
-    }
-    model.openMenu({
-      target: {
-        kind: "childRecords",
-        recordId: parentId,
-        fieldKey: field.key,
-        ids: targets,
-      },
-      x: e.clientX,
-      y: e.clientY,
-    });
+    // A touch resting on the record is picking it up; its menu comes with the
+    // release, if the record isn't moved.
+    if (props.pressing()) return;
+    openChildMenu(model, parentId, field, recordId, e.clientX, e.clientY);
   };
 
   // Like a field row, a child row stands for one record for its whole life
@@ -1511,9 +1669,9 @@ function ChildRow(props: {
           </span>
         )}
         <EmbeddedRecord
-          cells={isNew ? NO_CELLS : cells}
+          cells={isNew && !previewed ? NO_CELLS : cells}
           columns={columns}
-          isNew={isNew}
+          isNew={isNew && !previewed}
           itemId={recordId}
           focusable
           selected={selected}
@@ -1530,6 +1688,7 @@ function ChildRow(props: {
           }}
           onDblClick={() => model.toggleChild(recordId)}
           onFocus={() => model.noteFocus(recordId)}
+          onPointerDown={props.onPointerDown}
         />
         {field.kind === "multiRecord" && (
           <IconButton
@@ -1543,7 +1702,10 @@ function ChildRow(props: {
       </div>
       {expanded && (
         <Subtree>
-          <RecordNodeView model={model} recordId={recordId} />
+          <RecordNodeView
+            model={model}
+            recordId={joined && joinId !== undefined ? joinId : recordId}
+          />
         </Subtree>
       )}
     </>

@@ -8,7 +8,7 @@ import {
 } from "../stores/app";
 import { contextKeyColumn } from "../query/contextualQuery";
 import { entityNames } from "../query/entityNames";
-import { recordIdentity } from "../stores/forms";
+import { recordIdentity, selectFormFor } from "../stores/forms";
 import {
   createRecordForm,
   selectAnyExpanded,
@@ -178,11 +178,23 @@ function FormActionsMenu(props: {
 function PanelHeader(props: {
   heading: string;
   onClose: () => void;
+  /** Returns to the records edited before these, when there were any. */
+  onBack?: () => void;
   menu?: ReactNode;
   children?: ReactNode;
 }): JSX.Element {
   return (
     <header className="border-edge flex items-center gap-1 border-b px-2 py-1.5">
+      {props.onBack && (
+        <button
+          type="button"
+          className="control text-ink-weak hover:text-ink hover:bg-hover -ml-1 flex shrink-0 items-center rounded pr-1.5 text-xs"
+          onClick={props.onBack}
+        >
+          <Icons.Back className="size-4" />
+          Go back
+        </button>
+      )}
       <h2 className="text-ink min-w-0 flex-1 truncate text-sm font-semibold">
         {props.heading}
       </h2>
@@ -241,8 +253,13 @@ function OpenPanel(props: {
   tabId: string;
   target: RecordEditorTarget;
 }): JSX.Element {
-  const { setRecordSidebarWidth, commitRecordSidebarWidth, closeRecordEditor } =
-    useAppActions();
+  const {
+    setRecordSidebarWidth,
+    commitRecordSidebarWidth,
+    closeRecordEditor,
+    popRecordEditor,
+  } = useAppActions();
+  const stores = useStores();
   const width = useApp((s) => s.recordSidebarWidth);
   const schemaJson = useApp((s) => s.schema.json);
   const minResultsWidth = usePersistentSidebar()
@@ -256,6 +273,23 @@ function OpenPanel(props: {
       ? `Edit ${records.length} ${names?.[1] ?? `${props.target.table} records`}`
       : `Edit ${names?.[0] ?? props.target.table}`;
   const onClose = () => closeRecordEditor(props.tabId);
+
+  /** "Go back" to the records edited before these — reloaded, unless they hold
+   * unsaved changes, since what was saved up here may well have been part of
+   * what they show. */
+  const back = props.target.back ?? [];
+  const previous = back[back.length - 1];
+  const onBack = previous
+    ? () => {
+        const form = selectFormFor(
+          stores.forms.store.getState(),
+          props.tabId,
+          identities(previous.records),
+        );
+        if (form && !selectFormModified(form.store.getState())) form.reset();
+        popRecordEditor(props.tabId);
+      }
+    : undefined;
 
   /** The records the form is for, compared by identity-in-the-database rather
    * than by object identity: the resyncing the sidebar does as the selection
@@ -272,6 +306,7 @@ function OpenPanel(props: {
         maxWidth: `calc(100% - ${minResultsWidth}px)`,
       }}
       aria-label={`Edit ${names?.[0] ?? props.target.table}`}
+      data-record-editor
     >
       <SidebarResizeHandle
         edge="left"
@@ -287,7 +322,7 @@ function OpenPanel(props: {
           the panel is its frame alone. */}
       {schemaJson === undefined ? (
         <>
-          <PanelHeader heading={heading} onClose={onClose} />
+          <PanelHeader heading={heading} onClose={onClose} onBack={onBack} />
           <div className="min-h-0 flex-1" />
         </>
       ) : (
@@ -299,6 +334,7 @@ function OpenPanel(props: {
           schemaJson={schemaJson}
           heading={heading}
           onClose={onClose}
+          onBack={onBack}
         />
       )}
     </aside>
@@ -320,6 +356,7 @@ function PanelForm(props: {
   schemaJson: string;
   heading: string;
   onClose: () => void;
+  onBack?: () => void;
 }): JSX.Element {
   const stores = useStores();
   const tables = useApp((s) => s.schema.tables);
@@ -369,6 +406,7 @@ function PanelForm(props: {
       <PanelHeader
         heading={props.heading}
         onClose={props.onClose}
+        onBack={props.onBack}
         menu={<FormActionsMenu model={model} table={props.table} />}
       >
         {modified && (

@@ -170,7 +170,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   const {
     beginRowDrag,
     clickRow,
-    doubleClickRow,
+    openRow,
     editSelectedRows,
     endRowDrag,
     hoverRowDrag,
@@ -205,6 +205,8 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridRef = useRef<CanvasGrid | undefined>(undefined);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  /** The last row reveal this pane made (its `seq`). */
+  const revealed = useRef(0);
   const [rowMenu, setRowMenu] = useState<RowMenu | undefined>(undefined);
   const closeMenu = useCallback(() => setRowMenu(undefined), []);
   // The drag chip, and where the pointer last was: the chip mounts a render
@@ -304,7 +306,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         if (mods.alt) toggleQueuedRow(tabId, index);
         else clickRow(tabId, index, mods);
       },
-      onRowDoubleClick: (index) => doubleClickRow(tabId, index),
+      onRowDoubleClick: (index) => openRow(tabId, index),
       onRowContextMenu: raiseMenu,
       // From the keyboard, the menu is for the selection, and hangs from its
       // lead row (the one the arrow keys last moved to), brought into view.
@@ -465,16 +467,6 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
           if (patch?.tabId === tabId) grid.redraw();
         },
       ),
-      // The now-playing bar's "Locate" asks the grid to scroll a row into view.
-      // Fires immediately as well as on request: a Locate into a *different*
-      // tab lands in the store before that tab's grid is subscribed.
-      store.subscribe(
-        (s) => s.rowReveal,
-        (reveal) => {
-          if (reveal?.tabId === tabId) grid.revealRow(reveal.row);
-        },
-        { fireImmediately: true },
-      ),
       subscribeModifiedRows(stores, tabId, (rows) =>
         grid.setModifiedRows(rows),
       ),
@@ -486,6 +478,28 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     // restored over it. A tab that
     // has never been scrolled restores a harmless 0.
     grid.setScrollOffset(selectResultsScroll(store.getState(), tabId));
+
+    // The now-playing bar's "Locate" (and the arrow keys) ask the grid to
+    // scroll a row into view. After the scroll is restored, not among the
+    // subscriptions above: a Locate into a *different* tab lands in the store
+    // before that tab's grid is subscribed, so it fires immediately here — and
+    // restoring the tab's old place in its rows after it would scroll the row
+    // straight back out of view. A reveal this pane has already made isn't
+    // made again each time the tab comes back: the place the user scrolled to
+    // since is the one to restore then.
+    subscriptions.push(
+      store.subscribe(
+        (s) => s.rowReveal,
+        (reveal) => {
+          if (reveal?.tabId !== tabId || reveal.seq === revealed.current) {
+            return;
+          }
+          revealed.current = reveal.seq;
+          grid.revealRow(reveal.row);
+        },
+        { fireImmediately: true },
+      ),
+    );
 
     return () => {
       // Leaving the tab: hand its scroll offset back to the store, since the
@@ -506,7 +520,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     stores,
     beginRowDrag,
     clickRow,
-    doubleClickRow,
+    openRow,
     editSelectedRows,
     endRowDrag,
     hoverRowDrag,

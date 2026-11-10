@@ -163,6 +163,10 @@ import {
 } from "../../query/relatedRecords";
 import { childRecordsTabQuery, embedSpec } from "../../query/embeddedRecord";
 import {
+  openNavigationFor,
+  type RecordNavigationId,
+} from "../../query/recordNavigation";
+import {
   buildFormFields,
   fieldRef,
   type RecordQuery,
@@ -600,11 +604,17 @@ export interface AppActions {
     index: number,
     mods: { shift: boolean; ctrl: boolean },
   ) => void;
-  /** Handle a double-click on result row `index`. On a query of albums, opens
-   * the row's album's tracks in a new tab, and on a query of artists, the row's
-   * artist's albums. Otherwise, if the query's rows are tracks, plays that row's
-   * track (queuing the rows after it). */
-  doubleClickRow: (tabId: string, index: number) => void;
+  /** Open result row `index` — what a double click on it does, and Enter on
+   * the selection (`openSelectedRow`), so the two can't drift apart. On a
+   * query of albums, opens the row's album's tracks in a new tab, and on a
+   * query of artists, the row's artist's albums (`openNavigationFor`).
+   * Otherwise, if the query's rows are tracks, plays that row's track (queuing
+   * the rows after it). */
+  openRow: (tabId: string, index: number) => void;
+  /** {@link AppActions.openRow} on the row the arrow keys last moved to — the
+   * selection's lead, or its first row when the lead has left it. Backs the
+   * `results.open_selected` command. Does nothing with no row selected. */
+  openSelectedRow: (tabId: string) => void;
   /** Move the result-row selection one row down (`forward`) or up. With
    * `extend`, grow the selection from the anchor to the new row (Shift+Arrow);
    * otherwise select just the new row. Clamps at the ends and scrolls the row
@@ -625,17 +635,42 @@ export interface AppActions {
     table: string,
     records: readonly RecordRef[],
   ) => void;
-  /** Puts `tabId`'s record-editor sidebar on the selected rows' records: the
-   * first of them picks the table (context-menu order — a row's "primary"
-   * table), and the rest of the selection is filtered down to records of that
-   * same table, mirroring the "Dynamic updates" resync. Does nothing when the
-   * selection identifies no record. */
+  /** Opens `tabId`'s record editor on these `records` of `table` — a user
+   * asking to edit them, so the form takes the keyboard focus as it opens (its
+   * first field's label). {@link AppActions.setRecordEditorRecords} with the
+   * focus request; an empty list closes the editor and asks for nothing. */
+  openRecordEditor: (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => void;
+  /** Opens `tabId`'s record editor on the selected rows' records
+   * (`openRecordEditor`): the first of them picks the table (context-menu
+   * order — a row's "primary" table), and the rest of the selection is
+   * filtered down to records of that same table, mirroring the "Dynamic
+   * updates" resync. Does nothing when the selection identifies no record. */
   editSelectedRows: (tabId: string) => void;
+  /** Puts `records` of `table` — records the editor is showing embedded in
+   * the ones it's on — at the top level of `tabId`'s record editor, keeping
+   * what it was on to go back to (`RecordEditorTarget.back`), as deep as the
+   * user goes. Opens the editor as `openRecordEditor` does when it's closed. */
+  pushRecordEditor: (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => void;
+  /** "Go back": returns `tabId`'s record editor to the records it was on
+   * before the last {@link AppActions.pushRecordEditor}. Does nothing when
+   * there are none. */
+  popRecordEditor: (tabId: string) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
-  /** Close `tabId`'s record editor if it's open, else open it on the current
-   * row selection (`editSelectedRows`) — the `results.edit_selected` command. */
-  toggleRecordEditor: (tabId: string) => void;
+  /** The `results.edit_selected` command: closes `tabId`'s record editor when
+   * the user is working in it (`editorFocused` — the keyboard focus is
+   * somewhere inside it), and otherwise brings the user to it — opening it on
+   * the row selection when it's closed, and putting the focus on its first
+   * field either way (`focusRecordEditor`). */
+  toggleRecordEditor: (tabId: string, editorFocused: boolean) => void;
   /** Ask `tabId`'s record editor form to take the keyboard focus, opening the
    * editor on the row selection first when it's closed — the `record.focus`
    * command. Nothing happens when there's no editor to open. */
@@ -872,6 +907,14 @@ export interface AppActions {
     tabId: string,
     artists: readonly RecordRef[],
     table: "track" | "album",
+  ) => void;
+  /** Take way `id` out of `records` (`query/recordNavigation.ts`): open the
+   * records it leads to in a new query tab beside `tabId`. The one way every
+   * menu offering these runs them. */
+  navigateRecords: (
+    tabId: string,
+    id: RecordNavigationId,
+    records: readonly RecordRef[],
   ) => void;
 
   /** Begin renaming open query or playlist `id`, seeding the buffer with its
@@ -2748,22 +2791,35 @@ export function createAppActions(
    * Each record appears once, however many selected rows carry it: several
    * tracks of one album identify that album over and over, and the editor is on
    * one album, not on three copies of it. */
-  const setRecordEditorRecords = (
-    tabId: string,
-    table: string,
-    records: readonly RecordRef[],
-  ) => {
+  /** `records`, each taken once. */
+  const distinctRecords = (records: readonly RecordRef[]): RecordRef[] => {
     const distinct: RecordRef[] = [];
     for (const record of records) {
       if (!distinct.some((seen) => sameRecord(seen, record))) {
         distinct.push(record);
       }
     }
+    return distinct;
+  };
+
+  const setRecordEditorRecords = (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => {
+    const distinct = distinctRecords(records);
     set((s) => {
       pageDraft(s, tabId).recordEditor =
         distinct.length === 0 ? null : castDraft({ table, records: distinct });
     });
   };
+
+  /** Asks `tabId`'s record editor form to put the focus on its first item,
+   * once it's on screen (see `RecordEditorFocus`). */
+  const requestRecordEditorFocus = (tabId: string) =>
+    set((s) => {
+      s.recordEditorFocus = { tabId, seq: ++recordEditorFocusSeq };
+    });
 
   /** Dynamic updates: while a tab's sidebar is open, keep it pointed at the
    * tab's current result-row selection rather than the row(s) it was opened
@@ -2786,7 +2842,9 @@ export function createAppActions(
       // Selecting rows again ends the sweep: emptying *this* selection is the
       // user's doing.
       if (selection.size !== 0) sweptSelections.delete(tabId);
-      const current = page.recordEditor;
+      // The selection keeps the editor on the records it was first opened on
+      // — beneath any the user has since opened at its top level.
+      const current = page.recordEditor?.back?.[0] ?? page.recordEditor;
       if (!current) continue;
       if (selection.size === 0) {
         // A re-run took the rows the editor was opened from, which is no
@@ -2814,6 +2872,15 @@ export function createAppActions(
       // out from under a still-open editor, which a refresh can do at any
       // moment.
       if (records.length === 0) continue;
+      // The same records it's on already (a re-run, the lineage landing) leave
+      // the editor where the user has taken it.
+      const distinct = distinctRecords(records);
+      if (
+        distinct.length === current.records.length &&
+        distinct.every((record, i) => sameRecord(record, current.records[i]))
+      ) {
+        continue;
+      }
       setRecordEditorRecords(tabId, current.table, records);
     }
   };
@@ -3854,20 +3921,27 @@ export function createAppActions(
         pageDraft(s, tabId).selection = castDraft(next);
       });
     },
-    doubleClickRow: (tabId, index) => {
+    openRow: (tabId, index) => {
       const state = get();
       const base = selectResultBase(state, tabId);
       const record = selectRowRecords(state, tabId, index).find(
         (r) => r.table === base,
       );
-      if (record && base === "album") {
-        actions.showChildRecords(tabId, "album", [record], "track");
-      } else if (record && base === "artist") {
-        actions.showArtistRecords(tabId, [record], "album");
+      const navigation = openNavigationFor(base);
+      if (record && navigation) {
+        actions.navigateRecords(tabId, navigation, [record]);
       } else {
         // Only track-based rows carry an id; on any other row this does nothing.
         playRow(tabId, index);
       }
+    },
+    openSelectedRow: (tabId) => {
+      const selection = get().pages[tabId]?.selection;
+      if (!selection || selection.rows.size === 0) return;
+      const row = selection.rows.has(selection.lead)
+        ? selection.lead
+        : Math.min(...selection.rows);
+      actions.openRow(tabId, row);
     },
     moveRowSelection: (tabId, forward, extend) => {
       const page = get().pages[tabId];
@@ -3901,6 +3975,11 @@ export function createAppActions(
     },
 
     setRecordEditorRecords,
+    openRecordEditor: (tabId, table, records) => {
+      setRecordEditorRecords(tabId, table, records);
+      if (!get().pages[tabId]?.recordEditor) return;
+      requestRecordEditorFocus(tabId);
+    },
     editSelectedRows: (tabId) => {
       const state = get();
       const rows = [...selectRowSelection(state, tabId)].sort((a, b) => a - b);
@@ -3909,27 +3988,61 @@ export function createAppActions(
       );
       const table = records[0]?.table;
       if (table === undefined) return;
-      setRecordEditorRecords(
+      actions.openRecordEditor(
         tabId,
         table,
         records.filter((record) => record.table === table),
       );
+    },
+    pushRecordEditor: (tabId, table, records) => {
+      const current = get().pages[tabId]?.recordEditor;
+      const distinct = distinctRecords(records);
+      if (!current) {
+        actions.openRecordEditor(tabId, table, distinct);
+        return;
+      }
+      if (distinct.length === 0) return;
+      set((s) => {
+        pageDraft(s, tabId).recordEditor = castDraft({
+          table,
+          records: distinct,
+          back: [
+            ...(current.back ?? []),
+            { table: current.table, records: current.records },
+          ],
+        });
+      });
+      requestRecordEditorFocus(tabId);
+    },
+    popRecordEditor: (tabId) => {
+      const current = get().pages[tabId]?.recordEditor;
+      const back = current?.back ?? [];
+      const previous = back[back.length - 1];
+      if (!previous) return;
+      set((s) => {
+        pageDraft(s, tabId).recordEditor = castDraft({
+          ...previous,
+          back: back.slice(0, -1),
+        });
+      });
+      requestRecordEditorFocus(tabId);
     },
     closeRecordEditor: (tabId) =>
       set((s) => {
         const page = s.pages[tabId];
         if (page) page.recordEditor = null;
       }),
-    toggleRecordEditor: (tabId) => {
-      if (get().pages[tabId]?.recordEditor) actions.closeRecordEditor(tabId);
-      else actions.editSelectedRows(tabId);
+    toggleRecordEditor: (tabId, editorFocused) => {
+      if (get().pages[tabId]?.recordEditor && editorFocused) {
+        actions.closeRecordEditor(tabId);
+      } else {
+        actions.focusRecordEditor(tabId);
+      }
     },
     focusRecordEditor: (tabId) => {
       if (!get().pages[tabId]?.recordEditor) actions.editSelectedRows(tabId);
       if (!get().pages[tabId]?.recordEditor) return;
-      set((s) => {
-        s.recordEditorFocus = { tabId, seq: ++recordEditorFocusSeq };
-      });
+      requestRecordEditorFocus(tabId);
     },
     clearRecordEditorFocus: () =>
       set((s) => {
@@ -4291,6 +4404,20 @@ export function createAppActions(
         name: relatedRecordsTabName(table, undefined),
       });
       nameTabForRecord(newId, "artist", artists, table);
+    },
+
+    navigateRecords: (tabId, id, records) => {
+      switch (id) {
+        case "album_tracks":
+          actions.showChildRecords(tabId, "album", records, "track");
+          break;
+        case "artist_tracks":
+          actions.showArtistRecords(tabId, records, "track");
+          break;
+        case "artist_albums":
+          actions.showArtistRecords(tabId, records, "album");
+          break;
+      }
     },
 
     // A settings tab's handle text is fixed, so the rename affordances stand

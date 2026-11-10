@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { ContextMenu } from "../ui/ContextMenu";
 import { MenuItem } from "../ui/Menu";
 import { Icons, type IconComponent } from "../../icons";
+import RecordNavigationItems from "../RecordNavigationItems";
 import {
   isShared,
   selectFieldOf,
@@ -9,9 +10,10 @@ import {
   selectSharedValue,
   type FormMenu,
   type RecordFormModel,
+  type RecordSet,
   type SharedValue,
 } from "../../stores/recordForm";
-import { selectTableMetadata } from "../../stores/app";
+import { selectTableMetadata, type RecordRef } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { isFieldHidden } from "../../query/fieldMetadata";
 import { fieldRef, type FormField } from "../../query/recordForm";
@@ -70,7 +72,9 @@ function menuEntries(
     run: () => model.clearField(recordId, field),
   };
 
-  if (open.target.kind === "childRecords" && field.kind === "multiRecord") {
+  if (open.target.kind === "childRecords") {
+    // What a contextual query found isn't the record's to delete.
+    if (field.kind !== "multiRecord") return [];
     const ids = open.target.ids;
     return [
       {
@@ -124,10 +128,12 @@ function menuEntries(
         disabled: field.keyColumns.length === 0,
         run: () => model.openEmbedEditor(recordId, field, "display"),
       },
+      // Nor is there one to sort for records kept in an order of the user's
+      // own: that order is the one they're listed in.
       {
         icon: Icons.Sort,
         label: "Sorting",
-        disabled: field.keyColumns.length === 0,
+        disabled: field.keyColumns.length === 0 || field.ordered,
         run: () => model.openEmbedEditor(recordId, field, "sorting"),
       },
       {
@@ -183,12 +189,24 @@ function menuEntries(
   ];
 }
 
+/** Some records as the rest of the app refers to them. */
+function recordRefs(set: RecordSet): RecordRef[] {
+  return set.keys.map((key) => ({ table: set.table, key }));
+}
+
 /** The record editor's open context menu, or nothing when none is open.
- * Rendered once, at the form's root. */
+ * Rendered once, at the form's root.
+ *
+ * A menu raised on embedded records leads with what can be done with the
+ * records themselves, outside the record they're in: "Edit", which puts them at
+ * the top of the editor (with a way back), and the ways on from them that a
+ * result row's menu offers too (`RecordNavigationItems`). */
 export default function RecordContextMenu(props: {
   model: RecordFormModel;
+  /** The tab whose editor the form is in. */
+  tabId: string;
 }): JSX.Element | null {
-  const { model } = props;
+  const { model, tabId } = props;
   const actions = useAppActions();
   const open = useFormState(model, (s) => s.menu);
   const table = useFormState(model, (s) =>
@@ -246,8 +264,26 @@ export default function RecordContextMenu(props: {
           },
     );
   }
+  const edit = open.records?.edit;
+  const navigate = open.records?.navigate;
+  if (!edit && !navigate && entries.length === 0) return null;
   return (
     <ContextMenu x={open.x} y={open.y} onClose={() => model.closeMenu()}>
+      {edit && (
+        <MenuItem
+          icon={Icons.Edit}
+          label="Edit"
+          onClick={() =>
+            actions.pushRecordEditor(tabId, edit.table, recordRefs(edit))
+          }
+        />
+      )}
+      {navigate && (
+        <RecordNavigationItems
+          tabId={tabId}
+          groups={[{ table: navigate.table, records: recordRefs(navigate) }]}
+        />
+      )}
       {entries.map((entry) => (
         <MenuItem
           key={entry.label}

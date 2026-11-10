@@ -77,6 +77,9 @@ export interface FormsState {
    * (`null` while the editor is closed), as `retain` last reported it. A tab
    * missing here hasn't been reported yet, and nothing of it is released. */
   targets: Readonly<Record<string, string | null>>;
+  /** Each open tab → the `formKey`s of the records its editor will go back to
+   * (`RecordEditorTarget.back`), which keep their forms as its target does. */
+  behind: Readonly<Record<string, readonly string[]>>;
 }
 
 /** One open tab, as `retain` wants it: its id, and the identities of the
@@ -84,6 +87,9 @@ export interface FormsState {
 export interface FormRetention {
   tabId: string;
   target: readonly string[] | null;
+  /** The identities of the records the editor will go back to, each set of
+   * them a form to keep. Absent for none. */
+  behind?: readonly (readonly string[])[];
 }
 
 /** A record's identity as a string — table plus key — so two references to the
@@ -110,7 +116,7 @@ function findEntry(
 }
 
 function initialFormsState(): FormsState {
-  return { entries: [], targets: {} };
+  return { entries: [], targets: {}, behind: {} };
 }
 
 function createFormsVanillaStore() {
@@ -125,12 +131,18 @@ export type FormsVanillaStore = ReturnType<typeof createFormsVanillaStore>;
  * either its editor is on it, it holds unsaved changes, or something still
  * has it mounted (a sidebar that is about to re-render onto its new target
  * still holds the old model for one commit). */
-function isRetained(entry: FormEntry, targets: FormsState["targets"]): boolean {
+function isRetained(
+  entry: FormEntry,
+  targets: FormsState["targets"],
+  behind: FormsState["behind"],
+): boolean {
   const target = targets[entry.tabId];
   // Not reported yet: keep it until there's word on its tab.
   if (target === undefined) return true;
+  const key = formKey(entry.identities);
   return (
-    target === formKey(entry.identities) ||
+    target === key ||
+    (behind[entry.tabId]?.includes(key) ?? false) ||
     entry.summary.modified ||
     entry.mounted > 0
   );
@@ -214,7 +226,7 @@ export interface FormsActions {
    * its editor is on — and lets go of (disposing) every form nothing retains
    * any longer: every form of a tab not listed (a closed tab's unsaved
    * changes go with it), and an unmodified form its editor has moved off or
-   * closed. Keeping every record the user has merely *looked* at would grow
+   * closed — unless it's one the editor will go back to. Keeping every record the user has merely *looked* at would grow
    * with the number of rows they click through; what has to survive is the
    * open form and the changes.
    *
@@ -264,8 +276,8 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
    * to. Run whenever one of its inputs changes: the targets, a form's mount
    * count, or a form's modified flag. */
   function sweep() {
-    const { entries, targets } = store.getState();
-    const dropped = entries.filter((e) => !isRetained(e, targets));
+    const { entries, targets, behind } = store.getState();
+    const dropped = entries.filter((e) => !isRetained(e, targets, behind));
     if (dropped.length === 0) return;
     for (const entry of dropped) disposeEntry(entry);
     store.setState({ entries: entries.filter((e) => !dropped.includes(e)) });
@@ -318,8 +330,10 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
     },
     retain(tabs) {
       const targets: Record<string, string | null> = {};
-      for (const { tabId, target } of tabs) {
+      const behind: Record<string, string[]> = {};
+      for (const { tabId, target, behind: held } of tabs) {
         targets[tabId] = target === null ? null : formKey(target);
+        behind[tabId] = (held ?? []).map(formKey);
       }
       const { entries } = store.getState();
       // A tab that isn't listed is closed: everything of it goes, modified
@@ -330,6 +344,7 @@ function createFormsActions(store: FormsVanillaStore): FormsActions {
       store.setState({
         entries: entries.filter((e) => e.tabId in targets),
         targets,
+        behind,
       });
       sweep();
     },

@@ -1999,7 +1999,7 @@ export const STORIES: Record<string, Story> = {
   // below its label, a multi-record field listing its records, and one of those
   // expanded into its own form.
   "record-editor/items-expanded": recordEditor([3]),
-  // Mid-edit: an edited field and a record being created under `credit`, each
+  // Mid-edit: an edited field and a record being created under `play`, each
   // starred. On track 5, whose title is short — track 3's is the long one the
   // expansion story is about, and this story wants a plain single-line edit.
   "record-editor/modified": recordEditor([5]),

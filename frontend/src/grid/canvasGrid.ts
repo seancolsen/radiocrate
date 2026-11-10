@@ -60,6 +60,7 @@ import {
   swipeAxis,
   type SwipeSample,
 } from "../gestures/swipe";
+import type { Truncate } from "../query/columns";
 import { colSizesOf, type QueryResult } from "../query/result";
 import { createLayoutMemo, type Placement } from "../query/fieldLayout";
 import {
@@ -1839,6 +1840,7 @@ export class CanvasGrid {
         lineH,
         color,
         col.meta.text_align,
+        col.meta.truncate,
       );
     }
 
@@ -1853,6 +1855,7 @@ export class CanvasGrid {
     lineH: number,
     color: string,
     align: "left" | "right" | "center",
+    truncate: Truncate,
   ): void {
     if (!text) return;
     const ctx = this.ctx;
@@ -1861,7 +1864,7 @@ export class CanvasGrid {
     // glyphs render crisply (see `snap`). The anchor is snapped *after* the align
     // math so the rounded edge is the one text actually grows from.
     const cy = this.centeredBaseline(cellY + lineH / 2);
-    const fitted = this.fitText(text, cellW);
+    const fitted = this.fitText(text, cellW, truncate);
     if (align === "right") {
       ctx.textAlign = "right";
       ctx.fillText(fitted, this.snap(cellX + cellW), cy);
@@ -1966,21 +1969,29 @@ export class CanvasGrid {
     ctx.restore();
   }
 
-  /** Truncates `text` with an ellipsis so it fits within `maxWidth`. Assumes the
-   * caller has already set `ctx.font`. */
-  private fitText(text: string, maxWidth: number): string {
+  /** Truncates `text` with an ellipsis so it fits within `maxWidth` — at its
+   * end, keeping as much of its beginning as fits, or with `truncate` at
+   * `start`, the other way about. Assumes the caller has already set
+   * `ctx.font`. */
+  private fitText(text: string, maxWidth: number, truncate: Truncate): string {
     const ctx = this.ctx;
     if (maxWidth <= 0) return "";
     if (ctx.measureText(text).width <= maxWidth) return text;
     const ell = "…";
+    /** `n` characters of the text, from the end that's kept, with the ellipsis
+     * where the rest was. */
+    const keep = (n: number) =>
+      truncate === "start"
+        ? ell + text.slice(text.length - n)
+        : text.slice(0, n) + ell;
     let lo = 0;
     let hi = text.length;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (ctx.measureText(text.slice(0, mid) + ell).width <= maxWidth) lo = mid;
+      if (ctx.measureText(keep(mid)).width <= maxWidth) lo = mid;
       else hi = mid - 1;
     }
-    return lo === 0 ? ell : text.slice(0, lo) + ell;
+    return lo === 0 ? ell : keep(lo);
   }
 
   /** The grid's colors, from app.css's tokens. A token's own text can be

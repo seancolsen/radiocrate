@@ -136,6 +136,8 @@ export const Icons = {
   ExpandClosed, // collapsed section chevron
   PagePrevious, // a pager: the page before
   PageNext: ExpandClosed, // a pager: the page after
+  Back: PagePrevious, // record editor: go back to the record edited before
+  Record: Table, // record editor: records in hand, being dragged
   Settings, // static Settings footer
   Save, // toolbar save (shown while unsaved, or after a failed save)
   Undo, // toolbar undo (step the query back)

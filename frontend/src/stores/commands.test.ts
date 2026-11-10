@@ -121,7 +121,7 @@ describe("commands store", () => {
   });
 
   describe("results.edit_selected", () => {
-    it("toggles the record editor", () => {
+    it("opens the record editor, and closes it only from inside it", () => {
       app.actions.openTab({ id: "t", name: "t", definition: "{}" });
       app.actions.selectTab("t");
       const edit = vi.spyOn(app.actions, "editSelectedRows");
@@ -130,12 +130,51 @@ describe("commands store", () => {
       commands.actions.run("results.edit_selected");
       expect(edit).toHaveBeenCalledWith("t");
 
+      // Open, with the focus elsewhere: it stays open, and takes the focus.
       app.actions.setRecordEditorRecords("t", "track", [
         { table: "track", key: [{ column: "id", value: "x" }] },
       ]);
+      const before = app.store.getState().recordEditorFocus?.seq ?? 0;
+      commands.actions.run("results.edit_selected");
+      expect(close).not.toHaveBeenCalled();
+      expect(app.store.getState().pages.t?.recordEditor).not.toBeNull();
+      expect(app.store.getState().recordEditorFocus).toEqual({
+        tabId: "t",
+        seq: before + 1,
+      });
+
+      // With the focus in its form, it closes.
+      mountFocusedForm(forms, "t");
       commands.actions.run("results.edit_selected");
       expect(close).toHaveBeenCalledWith("t");
       expect(app.store.getState().pages.t?.recordEditor).toBeNull();
+    });
+  });
+
+  describe("results.open_selected", () => {
+    it("opens the selection's lead row, as a double click does", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      app.actions.setResults(
+        "t",
+        buildResultFromStringRows([["a"], ["b"], ["c"]]),
+      );
+      const open = vi.spyOn(app.actions, "openRow");
+
+      commands.actions.run("results.open_selected");
+      expect(open).not.toHaveBeenCalled();
+
+      app.actions.clickRow("t", 0, { shift: false, ctrl: false });
+      app.actions.clickRow("t", 2, { shift: true, ctrl: false });
+      commands.actions.run("results.open_selected");
+      expect(open).toHaveBeenCalledWith("t", 2);
+    });
+
+    it("is Enter, and stands down while the record form has focus", () => {
+      expect(commandDef("results.open_selected").defaultChord).toEqual(
+        parseChord("Enter"),
+      );
+      expect(commandDef("results.open_selected").when).toBe("resultsFocused");
     });
   });
 

@@ -415,7 +415,8 @@ test("switching tabs and back leaves the form exactly as it was", async ({
   await editor
     .getByRole("button", { name: /^Expand Jack White/ })
     .click({ timeout: delay * 3 });
-  await expect(editor.getByText("role", { exact: true })).toBeVisible({
+  // A credit opens onto its artist.
+  await expect(editor.getByText("name", { exact: true })).toBeVisible({
     timeout: delay * 3,
   });
 
@@ -429,7 +430,7 @@ test("switching tabs and back leaves the form exactly as it was", async ({
   const quick = { timeout: delay / 4 };
   await expect(editor.getByText(/Live at the Superdome/)).toBeVisible(quick);
   await expect(selectableRecords(editor)).toHaveCount(2, quick);
-  await expect(editor.getByText("role", { exact: true })).toBeVisible(quick);
+  await expect(editor.getByText("name", { exact: true })).toBeVisible(quick);
   await expect(
     editor.getByRole("button", { name: /^Collapse Jack White/ }),
   ).toBeVisible(quick);
@@ -756,10 +757,14 @@ test("editing inside a grouped row writes every record it stands for", async ({
   await extendSelectionTo(page, 4);
 
   await editor.getByRole("button", { name: "Expand credits" }).click();
-  await editor.getByRole("button", { name: /^Expand Beyoncé/ }).click();
-  // The `order` both of its credits hold, edited once in the row that stands
-  // for them. Enter on a focused label is the field's "do the thing" key.
-  await formItem(editor, "r##credit[0]:order").click();
+  // A credit opens onto its artist, so the row's own fields are edited at the
+  // top of the editor: the `order` both of its credits hold, edited once for
+  // the row that stands for them. Enter on a focused label is the field's "do
+  // the thing" key.
+  await selectableRecords(editor).first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  await expect(editor.getByRole("heading")).toHaveText("Edit 2 credits");
+  await formItem(editor, "r:order").click();
   await page.keyboard.press("Enter");
   await valueEditor(editor).fill("9");
   await page.keyboard.press("Escape");
@@ -828,35 +833,36 @@ test("the + on a multi-record field files one record under each record", async (
   await extendSelectionTo(page, 4);
 
   await editor.getByRole("button", { name: "Add credit" }).click();
-  // One row, standing for a credit on each of the three tracks.
-  await expect(selectableRecords(editor).first()).toHaveText("New");
+  // One row, at the end of the credits (which are kept in order), standing for
+  // a credit on each of the three tracks — and its artist to pick first.
+  await expect(selectableRecords(editor).last()).toHaveText("New");
   await expect(editor.getByLabel("3 records", { exact: true })).toBeVisible();
-  await expect(valueEditor(editor)).toBeFocused();
-  await page.keyboard.type("3");
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog").getByRole("textbox")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeHidden();
 
   await saveButton(editor).click();
   await expect(saveButton(editor)).toBeHidden();
   // A record can only be filed under one parent, so the row is three inserts —
-  // each carrying the track it belongs to.
+  // each carrying the track it belongs to, and the next place in its order.
   expect(calls[0]).toEqual([
     {
       operation: "insert",
       id: "op1",
       table: "credit",
-      values: { order: "3", track: "track-3" },
+      values: { artist: "artist-1", order: "3", track: "track-3" },
     },
     {
       operation: "insert",
       id: "op2",
       table: "credit",
-      values: { order: "3", track: "track-4" },
+      values: { artist: "artist-1", order: "3", track: "track-4" },
     },
     {
       operation: "insert",
       id: "op3",
       table: "credit",
-      values: { order: "3", track: "track-5" },
+      values: { artist: "artist-1", order: "3", track: "track-5" },
     },
   ]);
 });
@@ -1036,13 +1042,12 @@ test("expanding a multi-record field lists its records, each expandable in turn"
   await expect(credits.nth(1)).toContainText("Jack White");
   await expect(credits.nth(1)).toContainText("Featured");
 
-  // Expanding one loads that record's own form, without the `track` field it was
-  // reached through. "Featured" is on screen twice by then — in the preview
-  // above and in the form below — so this asks for the form's own copy.
+  // A credit only joins the track to an artist, so expanding one opens onto
+  // the artist's own form rather than the credit's.
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
-  await expect(editor.getByText("role", { exact: true })).toBeVisible();
-  await expect(editor.getByText("Featured").last()).toBeVisible();
-  await expect(editor.getByText("track", { exact: true })).toBeHidden();
+  await expect(editor.getByText("name", { exact: true })).toBeVisible();
+  await expect(editor.getByText("artist-2", { exact: true })).toBeVisible();
+  await expect(editor.getByText("role", { exact: true })).toBeHidden();
 });
 
 test("expanding a scalar linked record field loads that record's form", async ({
@@ -1178,7 +1183,7 @@ test("Enter activates the focused label: edit, pick, or add, by field kind", asy
 
   // A multi-record field: a fresh child record, open and ready to type into —
   // unlike double-click, which only expands the field.
-  await formItem(editor, "r:#credit").click();
+  await formItem(editor, "r:#play").click();
   await page.keyboard.press("Enter");
   await expect(selectableRecords(editor).first()).toHaveText("New");
   await expect(valueEditor(editor)).toBeFocused();
@@ -1319,16 +1324,15 @@ test("a change deep in the tree stars the collapsed field above it", async ({
 
   await editor.getByRole("button", { name: "Expand credits" }).click();
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
-  // The primitive edited deep in the tree is the credit's `order`: migration
-  // 0003 made `role` a link, whose label offers the record picker rather than a
-  // text box. Enter on a focused label is the field's "do the thing" key.
-  await formItem(editor, "r##credit[1]:order").click();
+  // The primitive edited deep in the tree is the name of the artist the credit
+  // opens onto. Enter on a focused label is the field's "do the thing" key.
+  await formItem(editor, "r##credit[1]>artist:name").click();
   await page.keyboard.press("Enter");
   await valueEditor(editor).fill("42");
   await page.keyboard.press("Escape");
 
   // The edited record wears a star, and so does the field holding it.
-  await expect(star(editor, "order")).toBeVisible();
+  await expect(star(editor, "name")).toBeVisible();
   await expect(star(editor, "credits")).toBeVisible();
 
   // Collapsing hides the field it was made in, not the fact that it was made —
@@ -1397,15 +1401,19 @@ test("the + button scaffolds a new record, open and ready to type into", async (
   await editor.getByRole("button", { name: "Add credit" }).click();
   const credits = selectableRecords(editor);
   await expect(credits).toHaveCount(3);
-  // It goes in at the top, previews as "New" (it has no values to preview yet),
-  // and the caret is already in its first editable field.
-  await expect(credits.first()).toHaveText("New");
-  await expect(valueEditor(editor)).toBeFocused();
-  await page.keyboard.type("3");
+  // Credits are kept in order, so it goes in at the end, previewing as "New"
+  // (it has no values to preview yet). Its first field is the artist it can't
+  // be saved without, so that's what it starts with: the picker.
+  await expect(credits.last()).toHaveText("New");
+  await expect(picker(page).getByRole("heading")).toHaveText("Pick artist");
+  await expect(picker(page).getByPlaceholder(/^Filter /)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toBeHidden();
 
-  // Its own form is open below it, and the field it was added to is starred and
-  // counts it.
+  // Its own form is open below it — less the `order` the form keeps for it —
+  // and the field it was added to is starred and counts it.
   await expect(editor.getByText("role", { exact: true })).toBeVisible();
+  await expect(editor.getByText("order", { exact: true })).toBeHidden();
   await expect(star(editor, "credits")).toBeVisible();
   await expect(editor.getByText("3", { exact: true }).first()).toBeVisible();
 });
@@ -1585,8 +1593,14 @@ test("a multi-record field's menu adds and deletes records", async ({
     "Delete all records",
     "Hide field",
   ]);
+  // Sorting is offered, but grayed: credits are kept in an order of their own.
+  await expect(page.getByRole("menuitem", { name: "Sorting" })).toBeDisabled();
   await page.getByRole("menuitem", { name: "New record" }).click();
-  await expect(selectableRecords(editor).first()).toHaveText("New");
+  // At the end, credits being kept in order — and the artist it needs picked
+  // first, which this leaves for later.
+  await expect(selectableRecords(editor).last()).toHaveText("New");
+  await expect(picker(page)).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await rightClick(formItem(editor, "r:#credit"));
   await page.getByRole("menuitem", { name: "Delete all records" }).click();
@@ -1639,6 +1653,9 @@ test("an embedded record's menu deletes it — or the whole selection", async ({
   await rightClick(credits.nth(1));
   await expect(credits.nth(1)).toHaveAttribute("data-selected", "true");
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Edit",
+    "Show artist tracks",
+    "Show artist albums",
     "Delete",
   ]);
   await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -1709,11 +1726,9 @@ test("the picker searches as the user types, and picking links the record", asyn
   await openGrid(page);
   await openEditor(page, "track", 2); // track-3: credits by Beyoncé and Jack White
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credits" }).click();
-  await editor.getByRole("button", { name: "Expand Jack White" }).click();
 
-  // The `artist` field of the second credit.
-  await formItem(editor, "r##credit[1]:artist").dblclick();
+  // A new credit's `artist`, which it starts by picking.
+  await editor.getByRole("button", { name: "Add credit" }).click();
   await expect(picker(page).getByRole("heading")).toHaveText("Pick artist");
   await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
 
@@ -1725,10 +1740,8 @@ test("the picker searches as the user types, and picking links the record", asyn
   // the form — the embedded record is filled in without another request.
   await pickerCanvas(page).click({ position: { x: 100, y: 15 } });
   await expect(picker(page)).toBeHidden();
-  await expect(editor.getByText("The Weeknd")).toBeVisible();
-  await expect(star(editor, "artist")).toBeVisible();
-  // Focus goes back to the field the picker was opened from.
-  await expect(formItem(editor, "r##credit[1]:artist")).toBeFocused();
+  await expect(selectableRecords(editor).last()).toHaveText("The Weeknd");
+  await expect(star(editor, "credits")).toBeVisible();
 });
 
 test("Up/Down and Enter drive the results without leaving the search box", async ({
@@ -1737,9 +1750,7 @@ test("Up/Down and Enter drive the results without leaving the search box", async
   await openGrid(page);
   await openEditor(page, "track", 2);
   const editor = editorPanel(page);
-  await editor.getByRole("button", { name: "Expand credits" }).click();
-  await editor.getByRole("button", { name: "Expand Beyoncé" }).click();
-  await formItem(editor, "r##credit[0]:artist").dblclick();
+  await editor.getByRole("button", { name: "Add credit" }).click();
 
   const search = picker(page).getByPlaceholder(/^Filter /);
   await expect(search).toBeFocused();
@@ -1754,7 +1765,7 @@ test("Up/Down and Enter drive the results without leaving the search box", async
 
   await page.keyboard.press("Enter");
   await expect(picker(page)).toBeHidden();
-  await expect(editor.getByText("The Weeknd")).toBeVisible();
+  await expect(selectableRecords(editor).last()).toHaveText("The Weeknd");
 });
 
 test("closing the picker leaves the field as it was", async ({ page }) => {
@@ -1952,10 +1963,12 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
   await editor.getByRole("button", { name: "Expand credits" }).click();
   await selectableRecords(editor).first().click(); // Beyoncé
   await page.keyboard.press("Delete");
+  // Credited again, afresh: a new credit, its artist picked (the first,
+  // Beyoncé), and its place the next after Jack White's.
   await editor.getByRole("button", { name: "Add credit" }).click();
-  await expect(valueEditor(editor)).toBeFocused();
-  await page.keyboard.type("3");
-  await page.keyboard.press("Escape");
+  await expect(picker(page).getByPlaceholder(/^Filter /)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeHidden();
 
   await saveButton(editor).click();
   await expect(saveButton(editor)).toBeHidden();
@@ -1974,7 +1987,7 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
       table: "credit",
       // `track` is the field the list is filtered on: hidden in the form,
       // supplied by the save.
-      values: { order: "3", track: "track-3" },
+      values: { artist: "artist-1", order: "3", track: "track-3" },
     },
   ]);
 });
@@ -2049,4 +2062,159 @@ test("the X on a failed save's error dismisses it, keeping the changes", async (
   await expect(editor.getByRole("alert")).toBeHidden();
   await expect(editor.getByText("Renamed", { exact: true })).toBeVisible();
   await expect(saveButton(editor)).toBeEnabled();
+});
+
+/** The `data-item-id` of whatever holds the focus. */
+const focusedItem = (page: Page) =>
+  page.evaluate(() =>
+    document.activeElement
+      ?.closest("[data-item-id]")
+      ?.getAttribute("data-item-id"),
+  );
+
+test("opening the editor puts the focus on its first field's label", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  await expect.poll(() => focusedItem(page)).toBe("r:id");
+});
+
+test("Ctrl+E closes the editor only from inside it, and otherwise goes to it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await page.locator("canvas:visible").click({ position: { x: 200, y: 18 } });
+  await page.keyboard.press("Control+e");
+  const editor = editorPanel(page);
+  await expect(editor).toBeVisible();
+  await expect.poll(() => focusedItem(page)).toBe("r:id");
+
+  // Back on the rows, with the editor still open: it stays, and takes the
+  // focus again.
+  await page.locator("canvas:visible").click({ position: { x: 200, y: 18 } });
+  await expect.poll(() => focusedItem(page)).toBeFalsy();
+  await page.keyboard.press("Control+e");
+  await expect(editor).toBeVisible();
+  await expect.poll(() => focusedItem(page)).toBe("r:id");
+
+  // From inside it, it closes.
+  await page.keyboard.press("Control+e");
+  await expect(editor).toBeHidden();
+});
+
+test("an embedded record's menu goes on from it, as a result row's does", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand credits" }).click();
+  await selectableRecords(editor).first().click({ button: "right" });
+  // A credit stands for its artist: the artist's ways on, between editing the
+  // credit and deleting it.
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Edit",
+    "Show artist tracks",
+    "Show artist albums",
+    "Delete",
+  ]);
+  await page.keyboard.press("Escape");
+
+  // The album a track points at offers the album's.
+  await embeddedRecords(editor)
+    .filter({ hasText: "album-1" })
+    .click({ button: "right" });
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Edit",
+    "Show album tracks",
+    "Clear",
+  ]);
+});
+
+test("Edit on an embedded record puts it on top, with the way back", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+  await expect(editor.getByRole("button", { name: "Go back" })).toBeHidden();
+
+  await embeddedRecords(editor)
+    .filter({ hasText: "album-1" })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  await expect(editor.getByRole("heading")).toHaveText("Edit album");
+  await expect(editor).toContainText("album-1");
+  await expect.poll(() => focusedItem(page)).toBe("r:id");
+
+  // And on from there, as deep as it goes.
+  await editor.getByRole("button", { name: "Expand tracks" }).click();
+  await selectableRecords(editor).first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  await expect(editor.getByRole("heading")).toHaveText("Edit track");
+
+  await editor.getByRole("button", { name: "Go back" }).click();
+  await expect(editor.getByRole("heading")).toHaveText("Edit album");
+  await editor.getByRole("button", { name: "Go back" }).click();
+  await expect(editor.getByRole("heading")).toHaveText("Edit track");
+  await expect(editor).toContainText("track-1");
+  await expect(editor.getByRole("button", { name: "Go back" })).toBeHidden();
+});
+
+test("an ordered field's records are dragged into a new order", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const calls = await mockDml(page);
+  await openEditor(page, "track", 2); // track-3: Beyoncé, then Jack White
+  const editor = editorPanel(page);
+  await expect(editor.getByText("(ordered)")).toBeVisible();
+  await editor.getByRole("button", { name: "Expand credits" }).click();
+  const credits = selectableRecords(editor);
+  await expect(credits.first()).toHaveText("Beyoncé");
+
+  const from = (await credits.nth(1).boundingBox())!;
+  const to = (await credits.first().boundingBox())!;
+  await page.mouse.move(from.x + 40, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 40, from.y - 10, { steps: 4 });
+  await page.mouse.move(to.x + 40, to.y + 2, { steps: 4 });
+  // Nothing moves until the drop.
+  await expect(credits.first()).toHaveText("Beyoncé");
+  await page.mouse.up();
+  await expect(credits.first()).toContainText("Jack White");
+
+  await saveButton(editor).click();
+  await expect.poll(() => calls.length).toBe(1);
+  expect(
+    calls[0].map((op) => [op.operation, op.where?.artist, op.values]),
+  ).toEqual([
+    ["update", "artist-2", { order: "1" }],
+    ["update", "artist-1", { order: "2" }],
+  ]);
+});
+
+test("a join table's records open onto what they join, and are added by picking it", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await openEditor(page, "track", 2);
+  const editor = editorPanel(page);
+  await editor.getByRole("button", { name: "Expand track tags" }).click();
+  const tags = selectableRecords(editor);
+  await expect(tags.first()).toHaveText("R&B");
+
+  // Opening a tag's record shows the tag, not a `tag` field to open in turn.
+  await editor.getByRole("button", { name: "Expand R&B" }).click();
+  await expect(editor.getByText("tag-rnb")).toBeVisible();
+
+  // A new one starts by picking its tag.
+  await editor.getByRole("button", { name: "Add track tag" }).first().click();
+  const picker = page.getByRole("dialog");
+  await expect(picker.getByRole("textbox")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(picker).toBeHidden();
+  // Tags aren't kept in order: it goes in at the top.
+  await expect(tags.first()).toHaveText("Neo soul");
 });

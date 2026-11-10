@@ -14,6 +14,7 @@ import {
   type RecordRef,
 } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
+import RecordNavigationItems from "./RecordNavigationItems";
 import {
   MenuItem,
   MenuLoader,
@@ -128,15 +129,8 @@ function RecordActions(props: {
   tabId: string;
   groups: readonly RecordGroup[];
 }): JSX.Element {
-  const {
-    rateTracks,
-    setRecordEditorRecords,
-    showArtistRecords,
-    showChildRecords,
-  } = useAppActions();
+  const { rateTracks, openRecordEditor } = useAppActions();
   const { tabId, groups } = props;
-  const albums = groups.find((group) => group.table === "album")?.records;
-  const artists = groups.find((group) => group.table === "artist")?.records;
   const tracks = groups.find((group) => group.table === "track")?.records;
   return (
     <>
@@ -145,32 +139,10 @@ function RecordActions(props: {
           key={group.table}
           icon={Icons.Edit}
           label={`Edit ${group.table}`}
-          onClick={() =>
-            setRecordEditorRecords(tabId, group.table, group.records)
-          }
+          onClick={() => openRecordEditor(tabId, group.table, group.records)}
         />
       ))}
-      {albums && (
-        <MenuItem
-          icon={Icons.Query}
-          label="Show album tracks"
-          onClick={() => showChildRecords(tabId, "album", albums, "track")}
-        />
-      )}
-      {artists && (
-        <>
-          <MenuItem
-            icon={Icons.Query}
-            label="Show artist tracks"
-            onClick={() => showArtistRecords(tabId, artists, "track")}
-          />
-          <MenuItem
-            icon={Icons.Query}
-            label="Show artist albums"
-            onClick={() => showArtistRecords(tabId, artists, "album")}
-          />
-        </>
-      )}
+      <RecordNavigationItems tabId={tabId} groups={groups} />
       {tracks && <RateSubmenu onRate={(id) => rateTracks(tabId, tracks, id)} />}
     </>
   );

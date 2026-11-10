@@ -77,14 +77,16 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // Mid-edit: an edited field and a record being created under `credit`, each
+  // Mid-edit: an edited field and a record being created under `play`, each
   // starred, and the "+" buttons that put it there.
   test(`record-editor/modified - ${colorScheme}`, async ({ page }) => {
+    // A new play's timestamp starts at now: a fixed now, for a steady snapshot.
+    await page.clock.setFixedTime("2016-04-24T08:12:00");
     const stage = await openStory(page, "record-editor/modified", colorScheme);
     await stage.getByText("6 Inch", { exact: true }).click();
     await valueEditor(stage).fill("6 Inch (Live)");
     await page.keyboard.press("Escape");
-    await stage.getByRole("button", { name: "Add credit" }).click();
+    await stage.getByRole("button", { name: "Add play" }).click();
     await expect(stage.locator("[data-selectable]").first()).toHaveText("New");
     await expect(valueEditor(stage)).toBeFocused();
     await expect(stage).toHaveScreenshot(
@@ -324,8 +326,8 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
-    await openEmbedEditor(page, stage, "credits", "Display");
-    await openEmbedEditor(page, stage, "credits", "Sorting");
+    await openEmbedEditor(page, stage, "track tags", "Display");
+    await openEmbedEditor(page, stage, "track tags", "Sorting");
     await expect(stage.locator("[data-selectable]")).toHaveCount(2);
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/embed-sorting", colorScheme),
@@ -575,15 +577,15 @@ test.describe("customizing embedded records", () => {
     const rows = stage.locator("[data-selectable]");
     await expect(rows).toHaveCount(0);
 
-    await openEmbedEditor(page, stage, "credits", "Display");
+    await openEmbedEditor(page, stage, "track tags", "Display");
     await expect(rows).toHaveCount(2);
-    await rewrite(page, "$order");
-    await expect(rows).toHaveText(["1", "2"]);
+    await rewrite(page, "$tag");
+    await expect(rows).toHaveText(["tag-rnb", "tag-rock"]);
 
-    await openEmbedEditor(page, stage, "credits", "Sorting");
-    await expect(embedEditor(stage, "Sorting of credits")).toBeFocused();
-    await rewrite(page, "\\\\order \\d");
-    await expect(rows).toHaveText(["2", "1"]);
+    await openEmbedEditor(page, stage, "track tags", "Sorting");
+    await expect(embedEditor(stage, "Sorting of track tags")).toBeFocused();
+    await rewrite(page, "\\\\tag \\d");
+    await expect(rows).toHaveText(["tag-rock", "tag-rnb"]);
 
     await stage.getByRole("button", { name: "Close sorting editor" }).click();
     await expect
@@ -594,13 +596,16 @@ test.describe("customizing embedded records", () => {
           params: {
             tableName: "track",
             field: {
-              multiLink: { relatedTableName: "credit", fkColumnName: "track" },
+              multiLink: {
+                relatedTableName: "track_tag",
+                fkColumnName: "track",
+              },
             },
-            sorting: "\\\\order \\d",
+            sorting: "\\\\tag \\d",
           },
         },
       ]);
-    await expect(embedEditor(stage, "Display of credits")).toBeVisible();
+    await expect(embedEditor(stage, "Display of track tags")).toBeVisible();
   });
 
   test("Querydown that won't compile says so, and the records stay as they were", async ({
@@ -1084,25 +1089,23 @@ test.describe("rearranging fields", () => {
 // The tree stays open from one form to the next, and from one visit to the next,
 // by the path to each item: the same place on another record, and nowhere else.
 test("the record editor reopens what was left expanded", async ({ page }) => {
-  // Track 3's: its second credit stays closed, so only the first is remembered.
+  // Track 3's: its second credit stays closed, so only the first is remembered
+  // — open onto its artist, and that artist's own credits open in turn.
   let stage = await openStory(page, "record-editor/items-expanded", "light");
   await stage.getByRole("button", { name: "Expand credits" }).click();
   await stage.getByRole("button", { name: /^Expand Beyoncé/ }).click();
-  await stage.getByRole("button", { name: "Expand artist" }).click();
+  await stage.getByRole("button", { name: "Expand credits" }).click();
   await expect(
-    stage.getByRole("button", { name: "Collapse artist" }),
-  ).toBeVisible();
+    stage.getByRole("button", { name: "Collapse credits" }),
+  ).toHaveCount(2);
 
   // Track 5, which the user hasn't opened anything on, on a new visit.
   stage = await openStory(page, "record-editor/modified", "light");
   await expect(
     stage.getByRole("button", { name: "Collapse credits" }),
-  ).toBeVisible();
+  ).toHaveCount(2);
   await expect(
     stage.getByRole("button", { name: /^Collapse Beyoncé/ }),
-  ).toBeVisible();
-  await expect(
-    stage.getByRole("button", { name: "Collapse artist" }),
   ).toBeVisible();
   await expect(
     stage.getByRole("button", { name: /^Expand The Weeknd/ }),

@@ -46,6 +46,7 @@ export type CommandId =
   | "results.select_previous"
   | "results.extend_selection_down"
   | "results.extend_selection_up"
+  | "results.open_selected"
   | "results.edit_selected"
   | "results.go_to_playing_track"
   | "results.focus"
@@ -295,6 +296,16 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Selection: Extend selection up",
     when: "results",
     defaultChord: chordOf("shift+Up"),
+  },
+  {
+    // The keyboard's double click, through the same action: opens the row the
+    // arrow keys are on — plays its track, or opens an album's tracks or an
+    // artist's albums. Stands down while the record editor form has focus,
+    // where Enter acts on the focused field instead.
+    id: "results.open_selected",
+    title: "Results: Open selected row",
+    when: "resultsFocused",
+    defaultChord: chordOf("Enter"),
   },
   {
     // Opens the record editor on the current row selection — the keyboard/

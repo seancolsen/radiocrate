@@ -62,6 +62,9 @@ export interface ChildGroup {
    * {@link ChildGroup.keys}: which base record each one hangs off. What keeps a
    * field's per-record counts honest as rows come and go. */
   links: readonly (string | null)[];
+  /** Every column of the first of those records, by name — which, the link
+   * apart, is every column of all of them. */
+  values: Readonly<Record<string, string | null>>;
 }
 
 /** One row's mutable form while it's being filled in. */
@@ -69,6 +72,7 @@ interface Building {
   keys: RecordKey[];
   cells: readonly (string | null)[];
   links: (string | null)[];
+  values: Readonly<Record<string, string | null>>;
 }
 
 /** Collapses the records of a multi-record field into the rows the form lists,
@@ -100,6 +104,9 @@ export function groupChildRows(
         keys: [],
         cells: row.slice(keyColumns.length, at),
         links: [],
+        values: Object.fromEntries(
+          columns.map((column, i) => [column, row[at + i] ?? null]),
+        ),
       };
       byValues.set(signature, group);
       groups.push(group);

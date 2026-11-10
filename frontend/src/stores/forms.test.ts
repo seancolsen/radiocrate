@@ -156,6 +156,24 @@ describe("forms store", () => {
     expect(dirty.dispose).not.toHaveBeenCalled();
   });
 
+  it("keeps the forms the editor will go back to, until it won't", () => {
+    const parent = stubModel(IDLE);
+    forms.actions.retain([{ tabId: "tab-a", target: ["track"] }]);
+    forms.actions.stashedForm("tab-a", ["track"], () => parent.model);
+
+    // An embedded record opened on top of it.
+    forms.actions.retain([
+      { tabId: "tab-a", target: ["tag"], behind: [["track"]] },
+    ]);
+    expect(selectFormFor(forms.store.getState(), "tab-a", ["track"])).toBe(
+      parent.model,
+    );
+
+    // The selection moved on, and the way back with it.
+    forms.actions.retain([{ tabId: "tab-a", target: ["other"] }]);
+    expect(parent.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for a still-mounted form to unmount before dropping it", () => {
     const clean = stubModel(IDLE);
     forms.actions.retain([{ tabId: "tab-a", target: ["r1"] }]);

@@ -111,7 +111,60 @@ describe("buildFormFields", () => {
       table: "credit",
       column: "track",
       keyColumns: ["track", "artist"],
+      ordered: false,
+      join: { column: "artist", table: "artist", keyColumn: "id" },
     });
+  });
+
+  it("marks the records of a table with an `order` column as ordered", () => {
+    const tables: SchemaTable[] = [
+      ...TABLES.filter((t) => t.name !== "credit"),
+      {
+        name: "credit",
+        columns: [
+          col("track", "UUID"),
+          col("artist", "UUID"),
+          col("order", "FLOAT", true),
+        ],
+        uniqueConstraints: [["track", "artist"]],
+      },
+    ];
+    const ordered = (table: string, key: string) => {
+      const field = buildFormFields(tables, table).find((f) => f.key === key);
+      return field?.kind === "multiRecord" && field.ordered;
+    };
+    expect(ordered("track", "#credit")).toBe(true);
+    expect(ordered("track", "#play")).toBe(false);
+  });
+
+  it("finds a join table: two required columns, both links", () => {
+    const joinOf = (tables: SchemaTable[], table: string, key: string) => {
+      const field = buildFormFields(tables, table).find((f) => f.key === key);
+      return field?.kind === "multiRecord" ? field.join : undefined;
+    };
+    // Seen from either side, the join is to the other one.
+    expect(joinOf(TABLES, "artist", "#credit")).toEqual({
+      column: "track",
+      table: "track",
+      keyColumn: "id",
+    });
+    // `play`'s other required column is a timestamp, not a link.
+    expect(joinOf(TABLES, "track", "#play")).toBeUndefined();
+    // A third required column (here, its own id) makes it a table of its own.
+    const withId: SchemaTable[] = [
+      ...TABLES,
+      {
+        name: "tag",
+        columns: [col("id", "UUID"), col("name", "VARCHAR")],
+        uniqueConstraints: [["id"]],
+      },
+      {
+        name: "track_tag",
+        columns: [col("id", "UUID"), col("track", "UUID"), col("tag", "UUID")],
+        uniqueConstraints: [["id"]],
+      },
+    ];
+    expect(joinOf(withId, "track", "#track_tag")).toBeUndefined();
   });
 
   it("classifies every other column as a primitive field", () => {

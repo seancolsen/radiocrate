@@ -365,7 +365,16 @@ export interface RecordRef {
  * the ordinary case; more than one is the multi-row "bulk" case, which the form
  * edits as one (see `record/formValues.ts`). The sidebar stays open and resyncs
  * to the selection as it changes (the "Dynamic updates" behavior). */
-export interface RecordEditorTarget {
+export interface RecordEditorTarget extends RecordEditorEntry {
+  /** What the editor was on before the user opened an embedded record at its
+   * top level ("Edit" on the record's menu), oldest first: "Go back" returns to
+   * the last of them. The first is what the result-row selection keeps the
+   * editor on. Absent (or empty) until the user has done that. */
+  back?: readonly RecordEditorEntry[];
+}
+
+/** Some records of one table, as the record editor is on them. */
+export interface RecordEditorEntry {
   table: string;
   records: readonly RecordRef[];
 }

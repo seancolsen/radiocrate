@@ -1,7 +1,12 @@
 import { onRequest, onRpcFailure } from "api-client";
 import { shallow } from "zustand/vanilla/shallow";
 import { browserEnv, type AppEnv } from "./env";
-import { createAppStore, type AppState, type AppStoreBundle } from "./app";
+import {
+  createAppStore,
+  type AppState,
+  type AppStoreBundle,
+  type RecordRef,
+} from "./app";
 import { createCommandsStore, type CommandsStoreBundle } from "./commands";
 import {
   createFormsStore,
@@ -50,11 +55,12 @@ export interface Stores {
 function selectFormRetention(s: AppState): FormRetention[] {
   return s.tabs.map((t) => {
     const target = s.pages[t.id]?.recordEditor;
+    const identities = (records: readonly RecordRef[]) =>
+      records.map((r) => recordIdentity(r.table, r.key));
     return {
       tabId: t.id,
-      target: target
-        ? target.records.map((r) => recordIdentity(r.table, r.key))
-        : null,
+      target: target ? identities(target.records) : null,
+      behind: (target?.back ?? []).map((entry) => identities(entry.records)),
     };
   });
 }
@@ -72,7 +78,9 @@ function sameRetention(
         x.tabId === b[i].tabId &&
         (x.target === null || b[i].target === null
           ? x.target === b[i].target
-          : shallow(x.target, b[i].target)),
+          : shallow(x.target, b[i].target)) &&
+        (x.behind ?? []).length === (b[i].behind ?? []).length &&
+        (x.behind ?? []).every((held, j) => shallow(held, b[i].behind?.[j])),
     )
   );
 }

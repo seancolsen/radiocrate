@@ -21,6 +21,9 @@ export type FontColor = "default" | "light";
 export type FontSize = "normal" | "small";
 /** Horizontal alignment of a column's text within its cell. */
 export type TextAlign = "left" | "right" | "center";
+/** Which end of a value too long for its cell gives way to the ellipsis:
+ * `end` keeps its beginning, `start` its end (a file path's file name). */
+export type Truncate = "end" | "start";
 /** Text after a column's values: the same for all of them, or `[singular,
  * plural]`, chosen by the value (see `displayText`). */
 export type Suffix = string | readonly [string, string];
@@ -34,6 +37,7 @@ export interface ColumnMetadata {
   font_color: FontColor;
   font_size: FontSize;
   text_align: TextAlign;
+  truncate: Truncate;
   prefix: string;
   suffix: Suffix;
   formatter: Formatter | undefined;
@@ -47,6 +51,7 @@ export function defaultColumnMetadata(): ColumnMetadata {
     font_color: "default",
     font_size: "normal",
     text_align: "left",
+    truncate: "end",
     prefix: "",
     suffix: "",
     formatter: undefined,
@@ -167,6 +172,7 @@ export function columnMetadataFromAnnotation(
     font_color: resolveFontColor(asString(raw.color)),
     font_size: resolveFontSize(asString(raw.size)),
     text_align: resolveTextAlign(asString(raw.align)),
+    truncate: asString(raw.truncate) === "start" ? "start" : "end",
     prefix: asString(raw.prefix) ?? "",
     suffix: resolveSuffix(raw.suffix),
     formatter: parseFormatter(raw.formatter),
@@ -202,6 +208,11 @@ export const ANNOTATION_SCHEMA: AnnotationSchema = {
     size: {
       enum: ["normal", "small"],
       description: "The text size.",
+    },
+    truncate: {
+      enum: ["end", "start"],
+      description:
+        "Which end of a value too long for its cell gives way to the ellipsis: `start` keeps the end in view, as a file path's file name. Unset, `end`.",
     },
     prefix: {
       type: "string",

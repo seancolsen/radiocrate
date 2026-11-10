@@ -18,7 +18,7 @@
 
 import type { ColumnMetadata } from "../../query/columns";
 import type { Section } from "../../query/definition";
-import type { FormField, RecordKey } from "../../query/recordForm";
+import type { FormField, JoinLink, RecordKey } from "../../query/recordForm";
 import type { ColumnValues } from "../../record/formValues";
 
 /** Where a node is in its load cycle. `unloaded` means "known to exist, nothing
@@ -56,6 +56,13 @@ export interface RecordNode {
   /** Whether this record is being *created* by the form rather than edited: it
    * has no key, nothing to load, and counts as modified in its entirety. */
   isNew: boolean;
+  /** Columns whose fields the form keeps — loads, edits, saves — without
+   * showing them: the `order` of a record in a field whose records are kept in
+   * order, which the form numbers itself (`MultiRecordField.ordered`). */
+  concealed?: readonly string[];
+  /** Set on a record of a join table's field (`MultiRecordField.join`): the
+   * link to the record it stands for, which is what opening it shows. */
+  join?: JoinLink;
 }
 
 /** The children of one expanded multi-record field — or of a contextual query's
@@ -109,11 +116,30 @@ export type MenuTarget =
       ids: readonly string[];
     };
 
+/** Some records of one table, by key. */
+export interface RecordSet {
+  table: string;
+  keys: readonly RecordKey[];
+}
+
+/** The records a menu raised on embedded records can take the user to, worked
+ * out as it opens (`RecordFormActions.openMenu`): the ones "Edit" puts at the
+ * top of the editor, and the ones the navigation entries ("Show artist
+ * tracks", …) lead on from — the same records, except under a join table's
+ * field, whose records stand for the records they join to. Either is null when
+ * there's none to be had: a record still being created has no key yet. */
+export interface MenuRecords {
+  edit: RecordSet | null;
+  navigate: RecordSet | null;
+}
+
 /** An open context menu: what it acts on, and where it was raised. */
 export interface FormMenu {
   target: MenuTarget;
   x: number;
   y: number;
+  /** For a menu on embedded records, the records it can take the user to. */
+  records?: MenuRecords;
 }
 
 /** The scalar linked record field the modal record picker is open for. */

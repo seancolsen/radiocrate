@@ -82,7 +82,9 @@ import {
   type EmbedSpec,
 } from "../../query/embeddedRecord";
 import {
+  arrangeFields,
   fieldRefKey,
+  NO_TABLE_METADATA,
   type EmbedChange,
   type EmbedSection,
   type MetadataByTable,
@@ -132,6 +134,13 @@ import {
   variedChildId,
   variedChildIds,
 } from "../../record/formIds";
+import {
+  movedTo,
+  nextOrder,
+  ORDER_COLUMN,
+  reorderedValues,
+  sortByOrder,
+} from "../../record/childOrder";
 import { planSave, type SavePlan } from "../../record/formSave";
 import type { RecordFormSummary } from "../forms";
 import type { ExpansionMemory } from "./expansionMemory";
@@ -154,7 +163,10 @@ import {
   type ItemHandle,
   type ListNode,
   type LoadStatus,
+  type MenuRecords,
+  type MenuTarget,
   type RecordNode,
+  type RecordSet,
 } from "./state";
 
 function createFormVanillaStore(initial: FormState) {
@@ -397,11 +409,22 @@ export interface RecordFormActions {
   ) => void;
 
   /** Scaffold a new record within a multi-record field: it goes in at the top of
-   * the list, expanded, with its first editable field activated so the user can
-   * type straight into it. A record can only be filed under one parent, so on
+   * the list (at the bottom of one kept in order), expanded, with its first
+   * editable field activated so the user can type straight into it — or, when
+   * its first field is a required link, the record picker open on that. A record can only be filed under one parent, so on
    * several base records this scaffolds one apiece — a single row saying the
    * same thing about each of them. */
   addChild: (recordId: string, field: MultiRecordField) => void;
+  /** Moves records of a multi-record field kept in order (`ordered`) to gap
+   * `gap` of its list (0 before the first record, the list's length after the
+   * last), in the order they were in — renumbering their `order`, in the form
+   * only until it's saved. Returns whether anything moved. */
+  reorderChildren: (
+    recordId: string,
+    field: MultiRecordField,
+    ids: readonly string[],
+    gap: number,
+  ) => boolean;
   /** Hand the records under a multi-record field to `openRecords`, as a query
    * with the same filter, sort and preview columns the field lists them with —
    * the records of every base record the form is on, as the rows they are
@@ -942,6 +965,22 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     return (preferText ? text : undefined) ?? editable[0];
   };
 
+  /** The field a record's form shows first, as the user has arranged its
+   * table's fields. */
+  const firstShownField = (recordId: string): FormField | undefined => {
+    const node = get().records[recordId];
+    if (!node) return undefined;
+    const shown = node.fields.filter(
+      (field) =>
+        !(
+          (field.kind === "primitive" || field.kind === "scalarLink") &&
+          node.concealed?.includes(field.column)
+        ),
+    );
+    const metadata = opts.fieldMetadata?.()[node.table] ?? NO_TABLE_METADATA;
+    return arrangeFields(shown, metadata, false)[0];
+  };
+
   /** Puts the caret in a newly scaffolded record's first editable field, so the
    * user can begin typing immediately, optionally with `seed` already in it. The
    * input focuses itself as it mounts, so this holds whether or not the row is
@@ -1014,7 +1053,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const value = selectSharedValue(s, recordId, field.column);
       if (!isShared(value) || value == null || value === "") continue;
       const id = scalarChildId(recordId, field.key);
-      if (s.embeds[id]) continue;
+      // A record already loading in full — the one a join table's record
+      // opened onto — shares the id, and its load mustn't be superseded.
+      if (s.embeds[id] || s.records[id]) continue;
       void loadEmbed(
         id,
         field.table,
@@ -1078,7 +1119,15 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           if (field.kind === "multiRecord") {
             n.counts[field.key] = cells.map((c) => Number(c ?? 0) || 0);
           } else {
-            n.values[field.column] = cells;
+            // A value changed before the record was opened — a row dragged to
+            // a new place in its list — stays changed.
+            const was = n.values[field.column];
+            const base = n.original[field.column];
+            const edited =
+              was !== undefined &&
+              base !== undefined &&
+              was.some((value, i) => value !== base[i]);
+            if (!edited) n.values[field.column] = cells;
             n.original[field.column] = [...cells];
           }
         });
@@ -1137,8 +1186,50 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     );
     node.values[field.column] = [...group.links];
     node.original[field.column] = [...group.links];
-    s.records[child] = castDraft(node);
+    // So are the columns the row itself needs before the record is opened: its
+    // place in an ordered list, and the record a join table's stands for.
+    for (const column of rowColumns(field)) {
+      const value = group.values[column] ?? null;
+      node.values[column] = group.keys.map(() => value);
+      node.original[column] = group.keys.map(() => value);
+    }
+    s.records[child] = castDraft({ ...node, ...childTraits(field) });
     s.embeds[child] = castDraft(childEmbed(group, previewColumns));
+  };
+
+  /** The columns of a multi-record field's records that its rows read without
+   * opening them (see `writeChild`). */
+  const rowColumns = (field: MultiRecordField): string[] => [
+    ...(field.ordered ? [ORDER_COLUMN] : []),
+    ...(field.join ? [field.join.column] : []),
+  ];
+
+  /** What a record of a multi-record field takes from the field: the `order` it
+   * doesn't show, and the record a join table's stands for. */
+  const childTraits = (
+    field: MultiRecordField,
+  ): Pick<RecordNode, "concealed" | "join"> => ({
+    ...(field.ordered ? { concealed: [ORDER_COLUMN] } : {}),
+    ...(field.join ? { join: field.join } : {}),
+  });
+
+  /** A child's `order`, as the list sorts by it. */
+  const orderOf = (s: FormState, child: string): string | null =>
+    s.records[child]?.values[ORDER_COLUMN]?.[0] ?? null;
+
+  /** Gives every record the form is creating in an ordered list, and that has
+   * no place in it yet, the next place at its end — what a record added before
+   * the list had arrived waits for. */
+  const numberCreated = (recordId: string, field: MultiRecordField) => {
+    if (!field.ordered) return;
+    const s = get();
+    const childIds = s.lists[listId(recordId, field.key)]?.childIds ?? [];
+    const values = childIds.map((child) => orderOf(s, child));
+    childIds.forEach((child, i) => {
+      if (!s.records[child]?.isNew || values[i] !== null) return;
+      values[i] = nextOrder(values);
+      setColumn(child, ORDER_COLUMN, values[i]);
+    });
   };
 
   /** Loads the records behind a multi-record field: one query for all of them,
@@ -1187,8 +1278,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           (child) => s.records[child]?.isNew,
         );
         list.status = "loaded";
-        list.childIds = [...created, ...childIds];
+        // In a list kept in order, it goes at the end instead, as every record
+        // added to one does — and the list is in that order, whatever it's
+        // sorted by for show elsewhere.
+        list.childIds = field.ordered
+          ? [...sortByOrder(childIds, (child) => orderOf(s, child)), ...created]
+          : [...created, ...childIds];
       });
+      numberCreated(recordId, field);
       // What came back may be fewer records than the counts said (a base record
       // the field is empty for), or more rows than one apiece.
       recountField(recordId, field);
@@ -1257,13 +1354,17 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         }
         placed.push(child);
       }
-      list.childIds = [
+      const childIds = [
         ...list.childIds.filter((child) => s.records[child]?.isNew),
         ...placed,
         ...list.childIds.filter(
           (child) => !s.records[child]?.isNew && !placed.includes(child),
         ),
       ];
+      // A list kept in order stays in the order the user has it in.
+      list.childIds = field.ordered
+        ? sortByOrder(childIds, (child) => orderOf(s, child))
+        : childIds;
     });
     recountField(recordId, field);
   };
@@ -1896,10 +1997,24 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
   };
 
-  /** Opens a record within a multi-record field, loading it the first time. */
+  /** Opens a record within a multi-record field, loading it the first time.
+   * A join table's record opens onto the record it stands for (see
+   * `ensureJoinTarget`). */
   const openChild = (id: string) => {
     setExpandedItem(id, true);
     if (get().records[id]?.status === "unloaded") void loadRecord(id);
+    ensureJoinTarget(id);
+  };
+
+  /** Creates and loads the record a join table's record stands for — what
+   * opening it shows, in place of its own fields — once it points at one. */
+  const ensureJoinTarget = (id: string) => {
+    const node = get().records[id];
+    const link = node?.fields.find(
+      (field): field is ScalarLinkField =>
+        field.kind === "scalarLink" && field.column === node.join?.column,
+    );
+    if (link) ensureScalarChild(id, link);
   };
 
   /** Whether the user left an item expanded in an earlier form on this table.
@@ -1989,6 +2104,58 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       s.editing = itemId;
       s.editingSelectAll = false;
     });
+  };
+
+  /** The records a menu raised on embedded records can take the user to (see
+   * `MenuRecords`), or `undefined` for a field's own menu. */
+  const menuRecords = (target: MenuTarget): MenuRecords | undefined => {
+    const s = get();
+    const field = selectFieldOf(s, target.recordId, target.fieldKey);
+    if (target.kind === "scalarEmbed") {
+      if (field?.kind !== "scalarLink") return undefined;
+      const value = selectSharedValue(s, target.recordId, field.column);
+      const child = s.records[scalarChildId(target.recordId, field.key)];
+      const linked: RecordSet | null =
+        isShared(value) && value != null && value !== "" && !child?.isNew
+          ? { table: field.table, keys: [[{ column: field.keyColumn, value }]] }
+          : null;
+      return { edit: linked, navigate: linked };
+    }
+    if (target.kind !== "childRecords") return undefined;
+    if (field?.kind !== "multiRecord" && field?.kind !== "contextQuery") {
+      return undefined;
+    }
+    const nodes = target.ids.flatMap((id) => {
+      const node = s.records[id];
+      return node ? [node] : [];
+    });
+    const keys = nodes.flatMap((node) =>
+      node.isNew ? [] : node.keys.filter((key) => key.length > 0),
+    );
+    const edit = keys.length > 0 ? { table: field.table, keys } : null;
+    const join = field.kind === "multiRecord" ? field.join : undefined;
+    if (!join) return { edit, navigate: edit };
+    // What the join table's records point at — a record just picked into a new
+    // one as much as any other.
+    const values = new Set(
+      nodes.flatMap((node) =>
+        (node.values[join.column] ?? []).filter(
+          (value): value is string => value != null && value !== "",
+        ),
+      ),
+    );
+    return {
+      edit,
+      navigate:
+        values.size > 0
+          ? {
+              table: join.table,
+              keys: [...values].map((value) => [
+                { column: join.keyColumn, value },
+              ]),
+            }
+          : null,
+    };
   };
 
   /** The edit to a distinct value in progress, if one is. */
@@ -2517,10 +2684,18 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       // thing about all of them, which is what every other row here is.
       const records = get().records[recordId]?.keys.length ?? 1;
       addNewRecord(child, field.table, [field.column], records);
+      set((s) => {
+        Object.assign(s.records[child], castDraft(childTraits(field)));
+      });
+      // A record added to a list kept in order goes at its end, numbered next
+      // — or, before the list has arrived, once it has (`loadChildren`).
       patchList(id, {
-        childIds: [child, ...list.childIds],
+        childIds: field.ordered
+          ? [...list.childIds, child]
+          : [child, ...list.childIds],
         expected: list.expected + records,
       });
+      if (get().lists[id]?.status === "loaded") numberCreated(recordId, field);
       // Adding to a field the user never opened leaves nothing to tally — the
       // counts its own load reported still stand, plus the record just filed
       // under each. The load that is on its way will count the lot.
@@ -2529,7 +2704,33 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set((s) => {
         s.expanded[child] = true;
       });
-      activateNewRecord(child);
+      // A record whose first field is a link it can't be saved without starts
+      // by choosing what it links to — a track's new tag, say.
+      const first = firstShownField(child);
+      if (first?.kind === "scalarLink" && !first.nullable) {
+        model.openPicker(child, first.key);
+      } else {
+        activateNewRecord(child);
+      }
+    },
+    reorderChildren: (recordId, field, ids, gap) => {
+      if (!field.ordered) return false;
+      const id = listId(recordId, field.key);
+      const list = get().lists[id];
+      if (!list) return false;
+      const next = movedTo(list.childIds, ids, gap);
+      if (next.every((child, i) => child === list.childIds[i])) return false;
+      patchList(id, { childIds: next });
+      // The records take the places they now have, as few of them changing
+      // their `order` as can be.
+      const s = get();
+      const values = reorderedValues(next.map((child) => orderOf(s, child)));
+      next.forEach((child, i) => {
+        if (orderOf(s, child) !== values[i]) {
+          setColumn(child, ORDER_COLUMN, values[i]);
+        }
+      });
+      return true;
     },
     addLinkedRecord: (recordId, field, seed) => {
       if (beyondBulk(recordId, field)) return;
@@ -2547,10 +2748,12 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       activateNewRecord(id, seed);
     },
 
-    openMenu: (menu) =>
+    openMenu: (menu) => {
+      const records = menuRecords(menu.target);
       set((s) => {
-        s.menu = castDraft(menu);
-      }),
+        s.menu = castDraft(records ? { ...menu, records } : menu);
+      });
+    },
     closeMenu: () =>
       set((s) => {
         s.menu = null;
@@ -2592,6 +2795,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         s.embeds[id] = castDraft({ status: "loaded", cells, columns });
         s.picker = null;
       });
+      // An open join table's record shows what it stands for, now it has one.
+      const node = get().records[recordId];
+      if (node?.join?.column === field.column && get().expanded[recordId]) {
+        ensureJoinTarget(recordId);
+      }
     },
     useValueForAll: (recordId, field, value) =>
       takeValueForAll(recordId, field, value),

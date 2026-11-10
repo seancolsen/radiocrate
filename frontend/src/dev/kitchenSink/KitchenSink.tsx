@@ -208,6 +208,7 @@ const FIELDS: readonly { caption: string; field: FormField }[] = [
       table: "credit",
       column: "track",
       keyColumns: ["track", "artist"],
+      ordered: false,
     },
   },
   {

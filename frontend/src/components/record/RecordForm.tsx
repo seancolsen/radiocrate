@@ -113,7 +113,7 @@ export default function RecordForm(props: {
   return (
     <div ref={rootRef}>
       <RecordNodeView model={model} recordId={ROOT_ID} />
-      <RecordContextMenu model={model} />
+      <RecordContextMenu model={model} tabId={tabId} />
       <FieldRecordPicker model={model} schemaJson={props.schemaJson} />
       <ContextQueryRemoveModal model={model} />
     </div>

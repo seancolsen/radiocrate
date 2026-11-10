@@ -81,6 +81,25 @@ export interface MultiRecordField extends FieldBase {
   /** The columns identifying one record of `table` (empty when it has no unique
    * constraint at all — such a field can be counted but not listed). */
   keyColumns: readonly string[];
+  /** Whether the records are in an order the user keeps by hand: `table` has a
+   * column named `order`, which the form numbers for them as they're added and
+   * rearranged rather than showing it as a field. */
+  ordered: boolean;
+  /** Set when `table` is a *join table* — its only two required columns are
+   * links, `column` and this one — whose records stand for the records this
+   * link points at (a track's tags, through `track_tag`). It's those records a
+   * row of the field shows when it's opened. */
+  join?: JoinLink;
+}
+
+/** The other side of a join table's records (see `MultiRecordField.join`). */
+export interface JoinLink {
+  /** The join table's column pointing at it. */
+  column: string;
+  /** The table it points at. */
+  table: string;
+  /** The column identifying a record there. */
+  keyColumn: string;
 }
 
 /** A field standing for a contextual query (`query/contextualQuery.ts`): the
@@ -214,6 +233,7 @@ export function buildFormFields(
   for (const link of referencing) {
     const child = byName.get(link.fromTable);
     if (!child) continue;
+    const join = joinLink(tables, child, link.fromColumn);
     fields.push({
       kind: "multiRecord",
       key: `#${link.fromTable}`,
@@ -221,9 +241,36 @@ export function buildFormFields(
       table: link.fromTable,
       column: link.fromColumn,
       keyColumns: identifyingColumns(child),
+      ordered: child.columns.some((c) => c.name === "order"),
+      ...(join ? { join } : {}),
     });
   }
   return fields;
+}
+
+/** The far side of `table`, when it's a join table as seen from the records its
+ * `column` points at: it has two required columns and no more, and both are
+ * links — `column`, and the one returned. `undefined` for any other table. */
+export function joinLink(
+  tables: readonly SchemaTable[],
+  table: SchemaTable,
+  column: string,
+): JoinLink | undefined {
+  const required = table.columns.filter((c) => !c.nullable);
+  if (required.length !== 2) return undefined;
+  if (!required.some((c) => c.name === column)) return undefined;
+  const links = inferLinks(tables).filter((l) => l.fromTable === table.name);
+  const linked = (name: string) => links.find((l) => l.fromColumn === name);
+  if (!linked(column)) return undefined;
+  const other = required.find((c) => c.name !== column);
+  const link = other && linked(other.name);
+  const target = link && tables.find((t) => t.name === link.toTable);
+  if (!link || !target) return undefined;
+  return {
+    column: link.fromColumn,
+    table: link.toTable,
+    keyColumn: primaryKey(target) ?? "id",
+  };
 }
 
 /** Which field `field` is, in the terms the database stores what's customized about

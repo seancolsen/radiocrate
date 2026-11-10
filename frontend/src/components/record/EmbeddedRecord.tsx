@@ -1,4 +1,10 @@
-import { useMemo, useRef, type JSX, type MouseEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  type JSX,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import type { ColumnMetadata } from "../../query/columns";
 import { visibleCells } from "../../query/embedPreview";
 import { computeFieldLayout } from "../../query/fieldLayout";
@@ -63,6 +69,9 @@ export default function EmbeddedRecord(props: {
   onDblClick?: () => void;
   onFocus?: () => void;
   onContextMenu?: (e: MouseEvent<HTMLDivElement>) => void;
+  /** A press that may pick the record up, to drag it to a new place. Given, the
+   * widget keeps the browser's own long-press callout away. */
+  onPointerDown?: (e: PointerEvent<HTMLDivElement>) => void;
 }): JSX.Element {
   // The available width decides the layout, so it's measured rather than
   // assumed: the sidebar is resizable and the widget is nested arbitrarily deep.
@@ -96,7 +105,10 @@ export default function EmbeddedRecord(props: {
   return (
     <div
       ref={ref}
-      className="rc-embedded text-ink focus:outline-accent relative min-w-0 flex-1 cursor-default text-xs outline-none select-none focus:outline-2 focus:outline-offset-0"
+      className={cx(
+        "rc-embedded text-ink focus:outline-accent relative min-w-0 flex-1 cursor-default text-xs outline-none select-none focus:outline-2 focus:outline-offset-0",
+        props.onPointerDown && "[-webkit-touch-callout:none]",
+      )}
       style={{ height: `${height}px`, borderRadius: `${RADIUS}px` }}
       data-selected={props.selected ? "true" : undefined}
       data-form-item={props.focusable ? "" : undefined}
@@ -107,6 +119,7 @@ export default function EmbeddedRecord(props: {
       onDoubleClick={() => props.onDblClick?.()}
       onFocus={() => props.onFocus?.()}
       onContextMenu={(e) => props.onContextMenu?.(e)}
+      onPointerDown={props.onPointerDown}
     >
       {props.modifiedLabel ? (
         <ModifiedStar label={props.modifiedLabel} />
@@ -135,9 +148,17 @@ export default function EmbeddedRecord(props: {
               width: `${placement.width}px`,
               lineHeight: `${LINE_H}px`,
               textAlign: meta.text_align,
+              // A value cut off at its start: laid out right to left, the
+              // ellipsis lands on the left, and the text itself, isolated,
+              // still reads left to right.
+              direction: meta.truncate === "start" ? "rtl" : undefined,
             }}
           >
-            {displayText(meta, value, now)}
+            {meta.truncate === "start" ? (
+              <bdi>{displayText(meta, value, now)}</bdi>
+            ) : (
+              displayText(meta, value, now)
+            )}
           </span>
         );
       })}

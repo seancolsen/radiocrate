@@ -114,11 +114,22 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** Whether the keyboard focus is somewhere in a record editor — its form, or
+ * its toolbar's buttons (the panel marks itself `data-record-editor`). */
+function focusInRecordEditor(): boolean {
+  if (typeof document === "undefined") return false;
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLElement &&
+    active.closest("[data-record-editor]") !== null
+  );
+}
+
 /** How far the seek shortcuts move the playhead. */
 const SEEK_STEP_SECONDS = 10;
 
-/** Whether the focused control uses this plain key itself — Space presses a
- * button, Left/Right step a slider, tab or tree row — so the global pass leaves
+/** Whether the focused control uses this plain key itself — Space and Enter
+ * press a button, Left/Right step a slider, tab or tree row — so the global pass leaves
  * it alone rather than turning it into a transport command. */
 function claimsKey(target: EventTarget | null, chord: Chord): boolean {
   if (chord.mod || chord.alt || chord.shift || !(target instanceof HTMLElement))
@@ -127,6 +138,15 @@ function claimsKey(target: EventTarget | null, chord: Chord): boolean {
     return (
       target.closest(
         "button, a[href], summary, [role=button], [role=menuitem], [role=checkbox], [role=switch], [role=tab], [role=treeitem]",
+      ) !== null
+    );
+  // Enter presses a button, follows a link and acts on the tree row, tab or
+  // form item that has focus — anything focusable but the result rows' own
+  // canvas, which leaves it to the rows.
+  if (chord.key === "Enter")
+    return (
+      target.closest(
+        "button, a[href], summary, select, [role=button], [role=link], [role=menuitem], [role=option], [role=checkbox], [role=switch], [role=tab], [role=treeitem], [data-form-item], [tabindex]:not(canvas)",
       ) !== null
     );
   // The explorer's rows rename their own item on F2.
@@ -492,6 +512,9 @@ export function createCommandsStore(
       case "results.extend_selection_up":
         if (tabId) app.actions.moveRowSelection(tabId, false, true);
         break;
+      case "results.open_selected":
+        if (tabId) app.actions.openSelectedRow(tabId);
+        break;
       case "results.select_all":
         if (tabId) app.actions.selectAllRows(tabId);
         break;
@@ -503,7 +526,12 @@ export function createCommandsStore(
         selectAutocompleteForm(forms.store.getState())?.toggleAutocomplete();
         break;
       case "results.edit_selected":
-        if (tabId) app.actions.toggleRecordEditor(tabId);
+        if (tabId) {
+          app.actions.toggleRecordEditor(
+            tabId,
+            form !== undefined || focusInRecordEditor(),
+          );
+        }
         break;
       case "results.go_to_playing_track":
         app.actions.locateCurrentTrack();

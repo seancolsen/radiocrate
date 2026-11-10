@@ -96,6 +96,7 @@ describe("fieldRef", () => {
         table: "credit",
         column: "track",
         keyColumns: ["id"],
+        ordered: false,
       }),
     ).toEqual(link("credit", "track"));
   });

@@ -246,6 +246,72 @@ test("the bar's Locate action returns to the playing track's row", async ({
   expect(selected).toEqual([0]);
 });
 
+test("Enter plays the selected row, as a double click does", async ({
+  page,
+}) => {
+  const streamed = await mockBackend(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tabs=Lemonade&grid=lemonade&tracks=track-a,track-b");
+  const canvas = page.locator("canvas[data-rows]");
+  await expect(canvas).toBeVisible();
+  await canvas.click({ position: { x: 200, y: 10 } });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("now-playing")).toBeVisible();
+  await expect.poll(() => streamed).toEqual(["track-b"]);
+});
+
+test("Locate from another tab scrolls the playing row into view", async ({
+  page,
+}) => {
+  await mockBackend(page);
+  // Short enough that the results pane shows only the first rows.
+  await page.setViewportSize({ width: 1280, height: 250 });
+  await page.goto(
+    "/?tabs=Lemonade,Deep%20Cuts&grid=lemonade&tracks=track-a,track-b,track-c,track-d,track-e&expose=1",
+  );
+  const canvas = page.locator("canvas[data-rows]:visible");
+  await expect(canvas).toBeVisible();
+  const store = () =>
+    page.evaluate(() => {
+      const s = (window as unknown as AppWindow).__appStore.state;
+      return {
+        active: s.activeTabId,
+        scroll: Object.fromEntries(
+          Object.entries(s.pages).map(([id, p]) => [id, p.scrollOffset ?? 0]),
+        ),
+      };
+    });
+  const playingTab = (await store()).active!;
+
+  // Play the last row (the arrow keys bring it into view), then scroll back to
+  // the top, which takes it out of view again.
+  await canvas.click({ position: { x: 200, y: 10 } });
+  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("now-playing")).toBeVisible();
+  await canvas.hover({ position: { x: 200, y: 20 } });
+  await page.mouse.wheel(0, -2000);
+
+  // Away to the other tab: the playing tab's place is the top of its rows.
+  await page.locator("[data-tab-id]").nth(1).click();
+  await expect.poll(async () => (await store()).active).not.toBe(playingTab);
+  expect((await store()).scroll[playingTab]).toBe(0);
+
+  await page
+    .getByTestId("now-playing")
+    .getByRole("button", { name: "Playback actions" })
+    .click();
+  await page.getByRole("menuitem", { name: "Locate" }).click();
+  await expect.poll(async () => (await store()).active).toBe(playingTab);
+
+  // Leaving again hands the tab's place back to the store: scrolled down to
+  // the playing row, not back at the top.
+  await page.locator("[data-tab-id]").nth(1).click();
+  await expect.poll(async () => (await store()).active).not.toBe(playingTab);
+  expect((await store()).scroll[playingTab]).toBeGreaterThan(0);
+});
+
 test("the bar's Close action dismisses playback", async ({ page }) => {
   await mockBackend(page);
   await page.setViewportSize({ width: 1280, height: 800 });

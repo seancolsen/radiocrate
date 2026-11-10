@@ -44,6 +44,16 @@ describe("columnMetadataFromAnnotation", () => {
     expect(m.suffix).toBe(" kg");
   });
 
+  it("truncates at the end unless asked to at the start", () => {
+    expect(defaultColumnMetadata().truncate).toBe("end");
+    expect(
+      columnMetadataFromAnnotation(obj({ truncate: "start" })).truncate,
+    ).toBe("start");
+    expect(
+      columnMetadataFromAnnotation(obj({ truncate: "middle" })).truncate,
+    ).toBe("end");
+  });
+
   it("suffix can be a singular and a plural", () => {
     expect(
       columnMetadataFromAnnotation(obj({ suffix: [" play", " plays"] })).suffix,
@@ -162,6 +172,7 @@ describe("ANNOTATION_SCHEMA", () => {
         "prefix",
         "size",
         "suffix",
+        "truncate",
         "width",
       ].sort(),
     );
@@ -184,6 +195,10 @@ describe("ANNOTATION_SCHEMA", () => {
     expect(offered(["size"], "value")).toEqual(["normal", "small"]);
     for (const v of offered(["size"], "value")) {
       expect(meta("size", v).font_size).toBe(v);
+    }
+    expect(offered(["truncate"], "value")).toEqual(["end", "start"]);
+    for (const v of offered(["truncate"], "value")) {
+      expect(meta("truncate", v).truncate).toBe(v);
     }
     expect(offered(["hide"], "value")).toEqual(["yes"]);
     expect(meta("hide", "yes").hide).toBe(true);
