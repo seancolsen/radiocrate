@@ -17,7 +17,7 @@ reconstruct progress from `git log`.
 | Phase | Status |
 | ----- | ------ |
 | 1 — Playback logging | done (items 1–5; item 6 lands with phase 2; device checks for items 1 and 5 still owed) |
-| 2 — Fixed layout, whole stream with `Content-Length` | not started |
+| 2 — Fixed layout, whole stream with `Content-Length` | done (with phase 1's item 6, the server-side log) |
 | 3 — Range requests | not started |
 | 4 — Client cleanup | not started |
 | 5 — Stress testing on the phone | not started (the user does this; see "Validation") |
@@ -287,10 +287,13 @@ after it, sounding the same as a from-the-start encode at the same positions:
    which can be a whole FLAC block (up to 4096 frames) early. Discard the
    decoded frames before `required_ts`. Today's `start=` path doesn't do this,
    so it lands up to about 90 ms off.
-4. **Resampler delay.** Discard the first `output_delay()` frames rubato
-   produces, in *every* encode, from-the-start included, so output sample `o`
-   means the same thing however the encode started. Flush the resampler at the
-   end (`process_partial`) so no tail is lost.
+4. **Resampler delay.** Flush the resampler at the end (`process_partial`)
+   so no tail is lost. *Found in phase 2:* rubato's `output_delay()` is
+   latency, not an offset in its output. Its sinc resampler keeps output
+   sample `o` on the input's timeline (source frame `o × rate / 48000`), so
+   nothing is discarded; discarding the delay put the audio that many samples
+   early. The test `a_resampled_stream_decodes_to_the_source` measures the
+   alignment.
 
 **A splice can glitch for one frame.** When Chrome retries a dropped
 connection, it asks for `bytes=<where it stopped>-`, which can fall mid-page.

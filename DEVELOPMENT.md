@@ -264,6 +264,11 @@ logs`, or a file, and it means `grep` sees whole records.
 (method, path, status, latency). It's off by default because streaming audio
 generates a lot of requests; server errors are logged at `WARN` either way.
 
+`RUST_LOG=backend::stream=debug` logs each transcoded stream as it ends: the
+track, the range asked for, the bytes sent, and how it ended (completed, the
+client went away, or an error). A client going away is routine — every skip
+is one — so only a real failure is logged at `ERROR`.
+
 ### Adding log statements
 
 Put the constant part in the message and the variable part in fields:
