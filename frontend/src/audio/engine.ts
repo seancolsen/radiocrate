@@ -37,19 +37,23 @@
 // prime still in flight. A boundary reached before the prime is ready falls back
 // to a fresh load.
 //
-// ## A transcode cut off mid-track
+// ## A stream cut off mid-track
 //
-// A transcode is streamed as it's encoded: no `Content-Length`, no range
-// support. Chrome reads a stream like that a megabyte or two ahead of
-// playback, then stops reading and holds the connection open until it wants
-// more. A primed track's connection can sit like that for the whole of the
-// track before it, minutes at a time. If something along the way (the
-// server, a tunnel, a proxy, the phone's network) drops a connection
-// while it's held, Chrome can't ask for the rest by range. It plays what it
-// has and fires `ended`, the same as at the real end. The engine checks that
-// against the library's length, and if the track stopped well short, it
-// restarts the transcode where it stopped (`resumeCutShort`). The listener
-// hears a short gap, not a skip to the next track.
+// A transcode is served with a `Content-Length` and range support, like a
+// file, so Chrome seeks it by range and re-requests the rest of a dropped
+// download from where it stopped. The exception is a stream without a known
+// length (a transcode of a file whose length isn't recorded), which is sent
+// as it's encoded: no `Content-Length`, no range support. Chrome reads a
+// stream like that a megabyte or two ahead of playback, then stops reading
+// and holds the connection open until it wants more. A primed track's
+// connection can sit like that for the whole of the track before it, minutes
+// at a time. If something along the way (the server, a tunnel, a proxy, the
+// phone's network) drops a connection while it's held, Chrome can't ask for
+// the rest by range. It plays what it has and fires `ended`, the same as at
+// the real end. The engine checks that against the library's length, and if
+// the track stopped well short, it restarts the stream where it stopped
+// (`resumeCutShort`). The listener hears a short gap, not a skip to the next
+// track.
 //
 // ## Why a keep-alive (Android)
 //
@@ -366,10 +370,10 @@ const NETWORK_LOADING = 2;
  * fire for a connection that died while a primed track was held. */
 const STALL_SECS = 10;
 
-/** How far short of the library's length a transcode can end and still count
- * as having reached its end. A whole transcode ends within a fraction of a
- * second of that length (its last Opus frame is padded out with silence), so
- * stopping any earlier than this means the stream was cut off. */
+/** How far short of the library's length a stream can end and still count as
+ * having reached its end. A whole transcode ends within a fraction of a
+ * second of that length, so stopping any earlier than this means the stream
+ * was cut off. */
 const CUT_SHORT_SECS = 2;
 
 /** A stretch of the current track that has been downloaded, as `[start, end]`
@@ -532,13 +536,15 @@ export class AudioEngine {
    * counts from zero again, so everything it reports is shifted by this much. */
   private offset = 0;
   /** The current track's length according to the library, from
-   * {@link setMetadata}. A transcode is streamed as it's encoded — no
+   * {@link setMetadata}. A stream without a known length (a transcode of a
+   * file whose length isn't recorded) is sent as it's encoded — no
    * `Content-Length`, no range support — so its element reports an infinite
    * duration, and this is the only length it has. */
   private knownDuration: number | null = null;
-  /** The elements whose current stream has no length: a transcode. Noted when
-   * the metadata loads, because once such a stream has ended, the element may
-   * report the length it played as its duration. */
+  /** The elements whose current stream has no known length (a transcode of a
+   * file whose length isn't recorded). Noted when the metadata loads, because
+   * once such a stream has ended, the element may report the length it played
+   * as its duration. */
   private readonly unbounded = new WeakSet<HTMLAudioElement>();
   /** Where the current track was last restarted after its stream was cut off
    * (see {@link resumeCutShort}), so a restart that gets no further isn't
@@ -1121,10 +1127,12 @@ export class AudioEngine {
 
   /** Moves the playhead to `seconds`, clamped to the track.
    *
-   * A file served whole seeks in place: the browser range-requests whatever it
-   * needs. A transcode can't — it has no length and no range support — so it
-   * seeks in place only within what it has already buffered. Anywhere else the
-   * stream is restarted from the target (see {@link restartAt}). */
+   * A stream with a known length (a file served whole, or a transcode of a
+   * file whose length is recorded) seeks in place: the browser range-requests
+   * whatever it needs. A stream without one can't — no length, no range
+   * support — so it seeks in place only within what it has already buffered.
+   * Anywhere else the stream is restarted from the target (see
+   * {@link restartAt}). */
   seek(seconds: number): void {
     this.log(`Asked to seek to ${formatSeconds(seconds, true)}`);
     this.resumedFrom = null;
@@ -1178,11 +1186,12 @@ export class AudioEngine {
    * Returns whether it did, in which case the `ended` being handled isn't the
    * track's end and nothing moves on.
    *
-   * Only a transcode can end early without anyone noticing (see "A transcode
-   * cut off mid-track" above). A file served whole has a length, and Chrome
-   * asks for any missing part by range. A transcode that's restarted and then
-   * ends again without getting any further is let go: the library's length is
-   * probably wrong, or the file can't be decoded past that point. */
+   * Only a stream without a known length (a transcode of a file whose length
+   * isn't recorded) can end early without anyone noticing (see "A stream cut
+   * off mid-track" above). A stream with a length is treated like a file:
+   * Chrome asks for any missing part by range. A stream that's restarted and
+   * then ends again without getting any further is let go: the library's
+   * length is probably wrong, or the file can't be decoded past that point. */
   private resumeCutShort(): boolean {
     const length = this.knownDuration;
     if (this.current === undefined || length === null) return false;
@@ -1349,8 +1358,8 @@ export class AudioEngine {
       // browser's media-event dispatch, so it keeps working while the app is
       // backgrounded or the screen is locked. `goNext(true)` logs the finished
       // track as a completed play whether or not there's a next one. A
-      // transcode can fire `ended` mid-track when its download is cut off.
-      // That one is picked back up instead.
+      // stream without a known length can fire `ended` mid-track when its
+      // download is cut off. That one is picked back up instead.
       el.addEventListener("ended", () => {
         if (!active()) return;
         this.noteEarlyEnd(el);

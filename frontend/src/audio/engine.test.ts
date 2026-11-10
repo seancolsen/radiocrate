@@ -355,6 +355,46 @@ describe("a transcoded stream", () => {
   });
 });
 
+describe("a transcode with a known length", () => {
+  /** Plays track `t1` as a transcode the server has given a length: metadata
+   * loaded, a finite duration, the first 30 s buffered. */
+  function playRangedTranscode(engine: AudioEngine): FakeAudio {
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 200;
+    el.bufferedRanges = [[0, 30]];
+    el.dispatchEvent(new Event("loadedmetadata"));
+    return el;
+  }
+
+  it("seeks in place beyond its buffer, without restarting the stream", () => {
+    const { engine, events } = setup();
+    const el = playRangedTranscode(engine);
+    engine.setMetadata(null, null, 200);
+    events.onStreamRequest.mockClear();
+
+    engine.seek(120.25);
+
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128");
+    expect(el.currentTime).toBe(120.25);
+    expect(engine.position).toBe(120.25);
+    expect(events.onStreamRequest).not.toHaveBeenCalled();
+  });
+
+  it("moves on when it ends short of the library's length, like a file", () => {
+    const { engine, events } = setup();
+    const el = playRangedTranscode(engine);
+    engine.setMetadata(null, null, 376);
+
+    endAt(el, 200);
+
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128");
+    expect(events.onPlayCompleted).toHaveBeenCalledWith("t1");
+    expect(events.onQueueDry).toHaveBeenCalled();
+  });
+});
+
 describe("a transcode that ends before the track does", () => {
   it("is restarted where it stopped, without moving on", () => {
     const { engine, events } = setup();

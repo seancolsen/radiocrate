@@ -6,8 +6,9 @@ the transcode's byte layout predictable: hard constant-bitrate Opus, one packet
 per Ogg page, so every page is the same size and byte N always belongs to a
 known 20 ms frame.
 
-Status: **proposed**, 2026-11-10. Nothing implemented yet. The stopgap that
-prompted it, `resumeCutShort` in the audio engine, landed in 3a44c72.
+Status: **implemented** through phase 4, 2026-11-10; phase 5 (the phone)
+is still to do. The stopgap that prompted it, `resumeCutShort` in the audio
+engine, landed in 3a44c72 and stays for the unranged fallback.
 
 ## Status
 
@@ -19,7 +20,7 @@ reconstruct progress from `git log`.
 | 1 — Playback logging | done (items 1–5; item 6 lands with phase 2; device checks for items 1 and 5 still owed) |
 | 2 — Fixed layout, whole stream with `Content-Length` | done (with phase 1's item 6, the server-side log) |
 | 3 — Range requests | done; checked with curl locally (not yet through the tunnel) |
-| 4 — Client cleanup | not started |
+| 4 — Client cleanup | done |
 | 5 — Stress testing on the phone | not started (the user does this; see "Validation") |
 
 ## For the implementing agent
