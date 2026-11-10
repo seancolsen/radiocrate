@@ -107,7 +107,25 @@ function playTranscode(engine: AudioEngine): FakeAudio {
   el.readyState = 4;
   el.duration = Number.POSITIVE_INFINITY;
   el.bufferedRanges = [[0, 30]];
+  el.dispatchEvent(new Event("loadedmetadata"));
   return el;
+}
+
+/** Stages `el` as a browser reports a stream that has played out: stopped at
+ * `at` seconds into the stream, then `ended`. */
+function endAt(el: FakeAudio, at: number): void {
+  el.currentTime = at;
+  el.paused = true;
+  el.ended = true;
+  el.dispatchEvent(new Event("ended"));
+}
+
+/** Stages a restarted transcode on `el` as the browser reports its metadata. */
+function restreamed(el: FakeAudio): void {
+  el.ended = false;
+  el.readyState = 4;
+  el.duration = Number.POSITIVE_INFINITY;
+  el.dispatchEvent(new Event("loadedmetadata"));
 }
 
 /** Stages `el` as a browser reports a stream it couldn't load: the error, then
@@ -337,7 +355,105 @@ describe("a transcoded stream", () => {
   });
 });
 
+describe("a transcode that ends before the track does", () => {
+  it("is restarted where it stopped, without moving on", () => {
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", ["t2"]);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = Number.POSITIVE_INFINITY;
+    el.dispatchEvent(new Event("loadedmetadata"));
+    engine.setMetadata(null, null, 376);
+    // Played out, a stream may report what it played as its duration.
+    el.duration = 127.6;
+
+    endAt(el, 127.6);
+
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128&start=127.6");
+    expect(el.paused).toBe(false);
+    expect(engine.position).toBe(127.6);
+    expect(events.onTrackChange).not.toHaveBeenCalled();
+    expect(events.onPlayCompleted).not.toHaveBeenCalled();
+  });
+
+  it("is restarted again each time it gets further", () => {
+    const { engine, events } = setup();
+    const el = playTranscode(engine);
+    engine.setMetadata(null, null, 376);
+    endAt(el, 127.6);
+    restreamed(el);
+
+    endAt(el, 60); // 187.6 s into the track
+
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128&start=187.6");
+    expect(events.onQueueDry).not.toHaveBeenCalled();
+  });
+
+  it("is let go when a restart gets no further", () => {
+    const { engine, events } = setup();
+    const el = playTranscode(engine);
+    engine.setMetadata(null, null, 376);
+    endAt(el, 127.6);
+    restreamed(el);
+
+    endAt(el, 0.5);
+
+    expect(events.onPlayCompleted).toHaveBeenCalledWith("t1");
+    expect(events.onQueueDry).toHaveBeenCalled();
+  });
+
+  it("is restarted after a seek, though it had got no further", () => {
+    const { engine, events } = setup();
+    const el = playTranscode(engine);
+    engine.setMetadata(null, null, 376);
+    endAt(el, 127.6);
+    restreamed(el);
+    engine.seek(100); // before the restart point: a new stream from 100 s
+    restreamed(el);
+
+    endAt(el, 0.5); // no further than the cut, but after a seek
+
+    expect(el.src).toBe("/api/tracks/t1/stream?quality=opus128&start=100.5");
+    expect(events.onQueueDry).not.toHaveBeenCalled();
+  });
+
+  it("moves on as usual when it ends at the track's length", () => {
+    const { engine, events } = setup();
+    const el = playTranscode(engine);
+    engine.setMetadata(null, null, 376);
+
+    endAt(el, 375.2);
+
+    expect(events.onPlayCompleted).toHaveBeenCalledWith("t1");
+    expect(events.onQueueDry).toHaveBeenCalled();
+  });
+
+  it("moves on when the library has no length for the track", () => {
+    const { engine, events } = setup();
+    const el = playTranscode(engine);
+
+    endAt(el, 127.6);
+
+    expect(events.onQueueDry).toHaveBeenCalled();
+  });
+});
+
 describe("a file served whole", () => {
+  it("moves on when it ends, even short of the library's length", () => {
+    const { engine, events } = setup();
+    engine.setQueue([], "t1", []);
+    const el = created[0]!;
+    el.readyState = 4;
+    el.duration = 300;
+    el.dispatchEvent(new Event("loadedmetadata"));
+    engine.setMetadata(null, null, 376);
+
+    endAt(el, 300);
+
+    expect(events.onPlayCompleted).toHaveBeenCalledWith("t1");
+    expect(events.onQueueDry).toHaveBeenCalled();
+  });
+
   it("seeks in place, even outside its buffer", () => {
     quality = "higher";
     const { engine } = setup();

@@ -37,6 +37,20 @@
 // prime still in flight. A boundary reached before the prime is ready falls back
 // to a fresh load.
 //
+// ## A transcode cut off mid-track
+//
+// A transcode is streamed as it's encoded: no `Content-Length`, no range
+// support. Chrome reads a stream like that a megabyte or two ahead of
+// playback, then stops reading and holds the connection open until it wants
+// more. A primed track's connection can sit like that for the whole of the
+// track before it, minutes at a time. If something along the way (the
+// server, a tunnel, a proxy, the phone's network) drops a connection
+// while it's held, Chrome can't ask for the rest by range. It plays what it
+// has and fires `ended`, the same as at the real end. The engine checks that
+// against the library's length, and if the track stopped well short, it
+// restarts the transcode where it stopped (`resumeCutShort`). The listener
+// hears a short gap, not a skip to the next track.
+//
 // ## Why a keep-alive (Android)
 //
 // A third element loops ten seconds of silence for as long as playback is meant
@@ -314,6 +328,12 @@ const HAVE_FUTURE_DATA = 3;
  * fetching any of it right now. */
 const NETWORK_IDLE = 1;
 
+/** How far short of the library's length a transcode can end and still count
+ * as having reached its end. A whole transcode ends within a fraction of a
+ * second of that length (its last Opus frame is padded out with silence), so
+ * stopping any earlier than this means the stream was cut off. */
+const CUT_SHORT_SECS = 2;
+
 /** A stretch of the current track that has been downloaded, as `[start, end]`
  * in seconds into the track. */
 export type LoadedRange = readonly [number, number];
@@ -478,6 +498,14 @@ export class AudioEngine {
    * `Content-Length`, no range support — so its element reports an infinite
    * duration, and this is the only length it has. */
   private knownDuration: number | null = null;
+  /** The elements whose current stream has no length: a transcode. Noted when
+   * the metadata loads, because once such a stream has ended, the element may
+   * report the length it played as its duration. */
+  private readonly unbounded = new WeakSet<HTMLAudioElement>();
+  /** Where the current track was last restarted after its stream was cut off
+   * (see {@link resumeCutShort}), so a restart that gets no further isn't
+   * tried again. `null` until one has been. */
+  private resumedFrom: number | null = null;
   /** Why the current track failed to load, as the bar says it; `null` while
    * it hasn't. Set once {@link diagnose} has found out. */
   private failure: string | null = null;
@@ -783,6 +811,7 @@ export class AudioEngine {
     // metadata fetch already supplied.
     if (id !== this.current) this.knownDuration = null;
     this.offset = 0;
+    this.resumedFrom = null;
     this.clearFailure();
     // A prime that failed under the last track gets another chance under this
     // one: it may have been a dropped connection rather than a missing file.
@@ -804,6 +833,7 @@ export class AudioEngine {
 
   /** Points `el` at the stream `url` and starts fetching it. */
   private fetchStream(el: HTMLAudioElement, url: string): void {
+    this.unbounded.delete(el); // until the new stream's metadata says
     el.src = url;
     el.load();
     this.events.onStreamRequest();
@@ -869,6 +899,7 @@ export class AudioEngine {
     this.activeIndex = this.activeIndex === 0 ? 1 : 0;
     this.activeQuality = this.primedQuality;
     this.offset = 0;
+    this.resumedFrom = null;
     this.knownDuration = null;
     this.clearFailure();
     this.primeFailed = undefined;
@@ -1043,6 +1074,7 @@ export class AudioEngine {
    * stream is restarted from the target (see {@link restartAt}). */
   seek(seconds: number): void {
     this.log(`Asked to seek to ${formatSeconds(seconds, true)}`);
+    this.resumedFrom = null;
     const duration = this.duration;
     let target = Math.max(seconds, 0);
     if (duration !== null) target = Math.min(target, duration);
@@ -1056,13 +1088,17 @@ export class AudioEngine {
         Number.isFinite(el.duration) ||
         inRanges(el.buffered, local));
     if (inPlace) el.currentTime = local;
-    else this.restartAt(target);
+    else
+      this.restartAt(
+        target,
+        "a transcode can only seek within what it has buffered",
+      );
   }
 
   /** Re-requests the current track's transcode starting at `target` seconds,
    * via the backend's `start` param. The new stream's timeline begins at zero,
-   * which {@link offset} accounts for. */
-  private restartAt(target: number): void {
+   * which {@link offset} accounts for. `why` says why, for the log. */
+  private restartAt(target: number, why: string): void {
     const id = this.current;
     if (id === undefined) return;
     const duration = this.duration;
@@ -1074,7 +1110,7 @@ export class AudioEngine {
     const start = Math.round(target * 1000) / 1000;
     const el = this.audio;
     this.log(
-      `Restarting the stream of ${trackName(id)} at ${formatSeconds(start, true)}: a transcode can only seek within what it has buffered`,
+      `Restarting the stream of ${trackName(id)} at ${formatSeconds(start, true)}: ${why}`,
     );
     this.offset = start;
     this.clearFailure();
@@ -1083,6 +1119,38 @@ export class AudioEngine {
     if (this.wantPlaying) void this.startPlaying(el, "restart").catch(() => {});
     this.updatePositionState();
     this.events.onTransport();
+  }
+
+  /** Restarts the current track where it stopped if its stream ended early.
+   * Returns whether it did, in which case the `ended` being handled isn't the
+   * track's end and nothing moves on.
+   *
+   * Only a transcode can end early without anyone noticing (see "A transcode
+   * cut off mid-track" above). A file served whole has a length, and Chrome
+   * asks for any missing part by range. A transcode that's restarted and then
+   * ends again without getting any further is let go: the library's length is
+   * probably wrong, or the file can't be decoded past that point. */
+  private resumeCutShort(): boolean {
+    const length = this.knownDuration;
+    if (this.current === undefined || length === null) return false;
+    if (!this.unbounded.has(this.audio)) return false;
+    const reached = this.position;
+    const short = length - reached;
+    if (short <= CUT_SHORT_SECS) return false;
+    const stuck =
+      this.resumedFrom !== null && reached <= this.resumedFrom + CUT_SHORT_SECS;
+    if (stuck) {
+      this.log(
+        `${trackName(this.current)} ended ${formatSeconds(short)} before its end again, without getting any further than the restart. Moving on`,
+      );
+      return false;
+    }
+    this.resumedFrom = reached;
+    this.restartAt(
+      reached,
+      `it ended ${formatSeconds(short)} before the track's end (${formatSeconds(length)}), so its download was cut off`,
+    );
+    return true;
   }
 
   /** Finds out why `id`'s stream from `src` failed, and reports it as the
@@ -1157,6 +1225,12 @@ export class AudioEngine {
       el.addEventListener("pause", () => {
         if (active()) transport();
       });
+      // Whether the new stream is a transcode, for `resumeCutShort`. Recorded
+      // now, while the duration still says so.
+      el.addEventListener("loadedmetadata", () => {
+        if (Number.isFinite(el.duration)) this.unbounded.delete(el);
+        else this.unbounded.add(el);
+      });
       el.addEventListener("durationchange", () => {
         if (!active()) return;
         this.updatePositionState();
@@ -1196,9 +1270,12 @@ export class AudioEngine {
       // Auto-advance when the current track finishes. This fires from the
       // browser's media-event dispatch, so it keeps working while the app is
       // backgrounded or the screen is locked. `goNext(true)` logs the finished
-      // track as a completed play whether or not there's a next one.
+      // track as a completed play whether or not there's a next one. A
+      // transcode can fire `ended` mid-track when its download is cut off.
+      // That one is picked back up instead.
       el.addEventListener("ended", () => {
         if (!active()) return;
+        if (this.resumeCutShort()) return;
         if (!this.goNext(true)) this.events.onQueueDry();
       });
 
