@@ -203,8 +203,22 @@ export function createUpdateStore(
 
   /** A new client has finished downloading and is waiting. Apply it right
    * away if the session can absorb a reload; otherwise leave it to the
-   * banner. */
+   * banner.
+   *
+   * Unless no worker controls this page. Then the page came straight from the
+   * network (a hard reload, or any load that bypassed the worker), so it is
+   * already running what the server serves and the waiting worker has nothing
+   * to offer it. Nor could applying it work: `updateSW` reloads on
+   * `controllerchange`, which fires only in pages the old worker controls, so
+   * the banner would sit there over a button that does nothing. A worker can
+   * only be left waiting in that state because some *other* window still runs
+   * on the old one, and skipping it past `waiting` from here would reload
+   * that window out from under whatever it is playing. That window raises its
+   * own banner, and the worker takes over once it closes. If the server has
+   * moved past this page as well, the stale check says so, and its "Reload
+   * fresh copy" works with or without a worker. */
   const onNeedRefresh = () => {
+    if (!navigator.serviceWorker.controller) return;
     store.setState({ ready: true });
     if (shouldApplyNow(sessionFor(app, forms))) applyUpdate();
   };
