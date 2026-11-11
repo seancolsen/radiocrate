@@ -1482,7 +1482,6 @@ mod tests {
     use super::*;
     use audiopus::coder::Decoder as OpusDecoder;
     use audiopus::{MutSignals, packet::Packet};
-    use ogg::writing::{PacketWriteEndInfo, PacketWriter};
     use std::time::Duration;
 
     #[test]
@@ -1682,29 +1681,17 @@ mod tests {
 
     // ── Pages ───────────────────────────────────────────────────────────────
 
+    /// A page as the `ogg` crate wrote it (before that dependency was dropped),
+    /// so the hand-written CRC and header have an independent check.
     #[test]
-    fn a_page_matches_the_ogg_crates() {
+    fn a_page_matches_a_reference_writer() {
+        const REFERENCE: &str = "4f67675300020000000000000000efbeadde00000000459617b501134f707573486561640102380144ac0000000000";
+        let expected: Vec<u8> = (0..REFERENCE.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&REFERENCE[i..i + 2], 16).unwrap())
+            .collect();
         let head = build_opus_head(2, 312, 44_100);
-        let mut writer = PacketWriter::new(Vec::new());
-        writer
-            .write_packet(head.clone(), 0xdead_beef, PacketWriteEndInfo::EndPage, 0)
-            .unwrap();
-        assert_eq!(
-            writer.into_inner(),
-            ogg_page(OGG_BOS, 0, 0xdead_beef, 0, &head)
-        );
-
-        let packet: Vec<u8> = (0..OPUS_PACKET_BYTES).map(|i| i as u8).collect();
-        let mut writer = PacketWriter::new(Vec::new());
-        writer
-            .write_packet(head, 7, PacketWriteEndInfo::EndPage, 0)
-            .unwrap();
-        writer
-            .write_packet(packet.clone(), 7, PacketWriteEndInfo::EndStream, 960)
-            .unwrap();
-        let both = writer.into_inner();
-        let theirs = &both[both.len() - AUDIO_PAGE_BYTES as usize..];
-        assert_eq!(theirs, ogg_page(OGG_EOS, 960, 7, 1, &packet));
+        assert_eq!(ogg_page(OGG_BOS, 0, 0xdead_beef, 0, &head), expected);
     }
 
     #[test]
