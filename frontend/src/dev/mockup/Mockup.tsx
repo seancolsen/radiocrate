@@ -26,6 +26,10 @@ const TRACKS = ["track-1", "track-2", "track-3", "track-4", "track-5"];
 function seed(stores: Stores): void {
   const { actions } = stores.app;
   actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+  // The timeline's cached-audio overlay only draws while logging is on.
+  stores.app.store.setState((s) => {
+    s.logging = true;
+  });
   installRecordFixture(0);
 
   // A playlist tab behind the active one, and the active one's filter open

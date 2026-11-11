@@ -116,6 +116,8 @@ function Timeline(): JSX.Element {
   const position = useApp((s) => s.playback.position);
   const duration = useApp((s) => s.playback.duration);
   const buffered = useApp((s) => s.playback.buffered);
+  // The cached-audio overlay is a troubleshooting aid: only with logging on.
+  const logging = useApp((s) => s.logging);
   const { seek } = useAppActions();
   // The fraction of the track under the pointer while a scrub is in progress.
   const [scrub, setScrub] = useState<number | null>(null);
@@ -156,7 +158,7 @@ function Timeline(): JSX.Element {
   const remainingText =
     total === null ? null : `−${formatSeconds(total - elapsed)}`;
   const loaded: LoadedRange[] =
-    duration === null
+    duration === null || !logging
       ? []
       : buffered.map(([start, end]) => [
           clamp01(start / duration),

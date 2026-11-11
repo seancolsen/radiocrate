@@ -1085,12 +1085,17 @@ export const STORIES: Record<string, Story> = {
     render: () => <NowPlaying />,
   },
   // A track just started, waiting on its first bytes: the play button's
-  // spinner ring, and the stretch of the timeline downloaded so far.
+  // spinner ring, and the stretch of the timeline downloaded so far (shown
+  // only while logging is on).
   "now-playing/loading": {
     width: 1280,
     frame: "flex flex-col",
-    setup: (stores) =>
-      seedPlayback(stores, { position: 0, loading: true, buffered: [[0, 40]] }),
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.logging = true;
+      });
+      seedPlayback(stores, { position: 0, loading: true, buffered: [[0, 40]] });
+    },
     render: () => <NowPlaying />,
   },
   // A track whose file is missing: the reason in the timeline's place, and
