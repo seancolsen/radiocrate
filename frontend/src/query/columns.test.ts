@@ -58,14 +58,6 @@ describe("columnMetadataFromAnnotation", () => {
     expect(
       columnMetadataFromAnnotation(obj({ suffix: [" play", " plays"] })).suffix,
     ).toEqual([" play", " plays"]);
-    // As the compiler hands it over: inside a `Map`.
-    expect(
-      columnMetadataFromAnnotation(
-        new Map([
-          ["suffix", [" play", " plays"]],
-        ]) as unknown as AnnotationValue,
-      ).suffix,
-    ).toEqual([" play", " plays"]);
   });
 
   it("any other suffix is none", () => {
@@ -127,31 +119,6 @@ describe("columnMetadataFromAnnotation", () => {
     );
     expect(m.formatter).toBeUndefined();
     expect(m.text_align).toBe("right");
-  });
-
-  // querydown-js (serde-wasm-bindgen) hands back objects as JS `Map`s, not plain
-  // objects. Reading them by property access silently yields all-defaults — the
-  // bug that made every real column render the same. Resolution must normalize
-  // `Map`s (including the nested `formatter` blob).
-  it("resolves Map-shaped annotations (serde-wasm-bindgen)", () => {
-    const meta = new Map<string, AnnotationValue>([
-      ["hide", "yes"],
-      ["align", "right"],
-      ["size", "small"],
-      ["width", [40, 60]],
-      ["prefix", "#"],
-      [
-        "formatter",
-        new Map([["type", "duration"]]) as unknown as AnnotationValue,
-      ],
-    ]) as unknown as AnnotationValue;
-    const m = columnMetadataFromAnnotation(meta);
-    expect(m.hide).toBe(true);
-    expect(m.text_align).toBe("right");
-    expect(m.font_size).toBe("small");
-    expect([m.min_width, m.max_width]).toEqual([40, 60]);
-    expect(m.prefix).toBe("#");
-    expect(m.formatter).toEqual({ type: "duration" });
   });
 });
 

@@ -58,34 +58,6 @@ export function defaultColumnMetadata(): ColumnMetadata {
   };
 }
 
-/** Recursively converts a raw annotation value into plain JS. `querydown-js`
- * (serde-wasm-bindgen) serializes Rust map-like `AnnotationValue::Object`s as JS
- * **`Map`s**, not plain objects — so reading `raw.width` by property access would
- * always be `undefined` and every column would fall back to defaults. Normalize
- * `Map`s (and nested ones, e.g. the `formatter` blob) to objects here so the rest
- * of the resolution reads them uniformly; plain objects (the fixture/test path)
- * pass through unchanged. */
-function normalizeAnnotation(v: unknown): AnnotationValue | null {
-  if (v instanceof Map) {
-    const obj: Record<string, AnnotationValue> = {};
-    for (const [k, val] of v as Map<unknown, unknown>) {
-      obj[String(k)] = normalizeAnnotation(val) as AnnotationValue;
-    }
-    return obj;
-  }
-  if (Array.isArray(v)) {
-    return v.map((x) => normalizeAnnotation(x) as AnnotationValue);
-  }
-  if (v !== null && typeof v === "object") {
-    const obj: Record<string, AnnotationValue> = {};
-    for (const [k, val] of Object.entries(v)) {
-      obj[k] = normalizeAnnotation(val) as AnnotationValue;
-    }
-    return obj;
-  }
-  return (v ?? null) as AnnotationValue | null;
-}
-
 /** Reads a field as a string, or `undefined` when it is absent or not a string. */
 function asString(v: AnnotationValue | undefined): string | undefined {
   return typeof v === "string" ? v : undefined;
@@ -155,15 +127,10 @@ function resolveTextAlign(v: string | undefined): TextAlign {
 export function columnMetadataFromAnnotation(
   meta: AnnotationValue | null,
 ): ColumnMetadata {
-  const normalized = normalizeAnnotation(meta);
-  if (
-    normalized === null ||
-    typeof normalized !== "object" ||
-    Array.isArray(normalized)
-  ) {
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
     return defaultColumnMetadata();
   }
-  const raw = normalized;
+  const raw = meta;
   const [minWidth, maxWidth] = resolveWidth(raw.width);
   return {
     hide: asString(raw.hide) === "yes",

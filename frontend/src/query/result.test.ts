@@ -3,10 +3,9 @@ import * as arrow from "apache-arrow";
 import type { AnnotationValue } from "querydown-js";
 import { buildResultFromArrow, reannotateResult } from "./result";
 
-// Guards the full decode path against the two real-backend regressions: (1)
-// annotations arriving as JS `Map`s (serde-wasm-bindgen), and (2) DuckDB list
-// columns that apache-arrow can't classify by type. Builds a real Arrow table so
-// the test exercises `getChildAt`/`.get()` exactly as production does.
+// Guards the full decode path against DuckDB list columns that apache-arrow
+// can't classify by type. Builds a real Arrow table so the test exercises
+// `getChildAt`/`.get()` exactly as production does.
 
 function listColumn(rows: string[][]): arrow.Vector {
   const type = new arrow.List(
@@ -19,9 +18,9 @@ function listColumn(rows: string[][]): arrow.Vector {
   return b.finish().toVector();
 }
 
-/** A Map-shaped annotation, mirroring what querydown-js actually returns. */
-const mapAnno = (entries: [string, AnnotationValue][]): AnnotationValue =>
-  new Map(entries) as unknown as AnnotationValue;
+/** An annotation object, as querydown-js returns one. */
+const anno = (entries: [string, AnnotationValue][]): AnnotationValue =>
+  Object.fromEntries(entries);
 
 describe("buildResultFromArrow", () => {
   const table = new arrow.Table({
@@ -31,14 +30,11 @@ describe("buildResultFromArrow", () => {
   });
 
   const annotations: (AnnotationValue | null)[] = [
-    mapAnno([["hide", "yes"]]), // id: hidden
+    anno([["hide", "yes"]]), // id: hidden
     null, // artists: no annotation → list detected from the value
-    mapAnno([
+    anno([
       ["align", "right"],
-      [
-        "formatter",
-        new Map([["type", "duration"]]) as unknown as AnnotationValue,
-      ],
+      ["formatter", { type: "duration" }],
     ]),
   ];
 
@@ -66,11 +62,11 @@ describe("buildResultFromArrow", () => {
     expect(result.pills(1, artists)).toEqual(["Beyoncé", "Jack White"]);
   });
 
-  it("applies the formatter from a Map-shaped annotation", () => {
+  it("applies the formatter from an annotation", () => {
     const result = buildResultFromArrow(table, annotations);
     const duration = result.visible[1];
     expect(duration.meta.text_align).toBe("right");
-    // 196s → 3:16, 234s → 3:54 (formatter resolved despite the Map annotation).
+    // 196s → 3:16, 234s → 3:54.
     expect(result.text(0, duration)).toBe("3:16");
     expect(result.text(1, duration)).toBe("3:54");
   });
@@ -94,15 +90,7 @@ describe("buildResultFromArrow with a Timestamp column", () => {
       played_at: arrow.vectorFromArray([oneDayAgoMs], type),
     });
     const annotations: (AnnotationValue | null)[] = [
-      mapAnno([
-        [
-          "formatter",
-          new Map<string, unknown>([
-            ["type", "relativeTime"],
-            ["units", ["days"]],
-          ]) as unknown as AnnotationValue,
-        ],
-      ]),
+      anno([["formatter", { type: "relativeTime", units: ["days"] }]]),
     ];
     const result = buildResultFromArrow(played, annotations);
     // Exact wording can land on either side of a day boundary depending on
@@ -116,7 +104,7 @@ describe("buildResultFromArrow with a Timestamp column", () => {
       plays: arrow.vectorFromArray([1, 2, null], new arrow.Int32()),
     });
     const result = buildResultFromArrow(plays, [
-      mapAnno([
+      anno([
         ["prefix", "#"],
         ["suffix", [" play", " plays"]],
       ]),
@@ -137,14 +125,8 @@ describe("buildResultFromArrow with a Timestamp column", () => {
       played_at: arrow.vectorFromArray([oneMinuteAgoMs], type),
     });
     const annotations: (AnnotationValue | null)[] = [
-      mapAnno([
-        [
-          "formatter",
-          new Map<string, unknown>([
-            ["type", "relativeTime"],
-            ["units", ["minutes", "hours"]],
-          ]) as unknown as AnnotationValue,
-        ],
+      anno([
+        ["formatter", { type: "relativeTime", units: ["minutes", "hours"] }],
       ]),
     ];
     const result = buildResultFromArrow(played, annotations);
@@ -170,7 +152,7 @@ describe("QueryResult.patchRow", () => {
     title: arrow.vectorFromArray(["Pray You Catch Me", "Hold Up", "Sorry"]),
   });
   const annotations: (AnnotationValue | null)[] = [
-    mapAnno([["hide", "yes"]]),
+    anno([["hide", "yes"]]),
     null,
   ];
 
@@ -205,7 +187,7 @@ describe("QueryResult.reordered", () => {
     title: arrow.vectorFromArray(["Pray You Catch Me", "Hold Up", "Sorry"]),
   });
   const annotations: (AnnotationValue | null)[] = [
-    mapAnno([["hide", "yes"]]),
+    anno([["hide", "yes"]]),
     null,
   ];
   const ids = (result: ReturnType<typeof buildResultFromArrow>) =>
@@ -248,13 +230,13 @@ describe("reannotateResult", () => {
     title: arrow.vectorFromArray(["Pray You Catch Me", "Hold Up", "Sorry"]),
   });
   const annotations: (AnnotationValue | null)[] = [
-    mapAnno([["hide", "yes"]]),
+    anno([["hide", "yes"]]),
     null,
   ];
 
   it("shows the same rows the new annotations' way", () => {
     const result = buildResultFromArrow(table, annotations);
-    const next = reannotateResult(result, [null, mapAnno([["prefix", "♪ "]])]);
+    const next = reannotateResult(result, [null, anno([["prefix", "♪ "]])]);
     expect(next).not.toBe(result);
     expect(next.visible.map((c) => c.index)).toEqual([0, 1]);
     expect(next.text(2, next.visible[1])).toBe("♪ Sorry");
@@ -272,8 +254,8 @@ describe("reannotateResult", () => {
       0,
     );
     const next = reannotateResult(result.reordered([1, 2, 0]), [
-      mapAnno([["hide", "yes"]]),
-      mapAnno([["align", "right"]]),
+      anno([["hide", "yes"]]),
+      anno([["align", "right"]]),
     ]);
     expect(next.visible[0]?.meta.text_align).toBe("right");
     expect(next.text(0, next.visible[0])).toBe("Hold Up (refreshed)");
@@ -282,7 +264,7 @@ describe("reannotateResult", () => {
 
   it("is the result itself when nothing would look different", () => {
     const result = buildResultFromArrow(table, annotations);
-    expect(reannotateResult(result, [mapAnno([["hide", "yes"]]), null])).toBe(
+    expect(reannotateResult(result, [anno([["hide", "yes"]]), null])).toBe(
       result,
     );
   });
@@ -317,12 +299,7 @@ describe("buildResultFromArrow with an INTERVAL column", () => {
 
   it("stays scalar and formats as a duration", () => {
     const result = buildResultFromArrow(table, [
-      mapAnno([
-        [
-          "formatter",
-          new Map([["type", "duration"]]) as unknown as AnnotationValue,
-        ],
-      ]),
+      anno([["formatter", { type: "duration" }]]),
     ]);
     const column = result.columns[0];
     expect(column.isList).toBe(false);
