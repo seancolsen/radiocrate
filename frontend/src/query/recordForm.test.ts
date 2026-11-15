@@ -241,8 +241,15 @@ describe("buildFormFields", () => {
 });
 
 describe("Querydown generation", () => {
-  it("escapes quotes and backslashes in a value", () => {
-    expect(quoteValue(`a"b\\c`)).toBe(`"a\\"b\\\\c"`);
+  it("quotes a value raw, with a quote it doesn't contain", () => {
+    expect(quoteValue(`a\\b`)).toBe(`"a\\b"`);
+    expect(quoteValue(`a"b\\c`)).toBe(`'a"b\\c'`);
+    expect(quoteValue(`it's`, "'")).toBe(`"it's"`);
+  });
+
+  it("escapes a value containing both quotes as a flagged string", () => {
+    expect(quoteValue(`a"b'c\\d`)).toBe(`^e"a\\"b'c\\\\d"`);
+    expect(quoteValue(`a"b'c`, "'")).toBe(`^e'a"b\\'c'`);
   });
 
   it("matches a record on every column of its key, exactly", () => {

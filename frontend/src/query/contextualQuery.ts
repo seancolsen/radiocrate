@@ -17,7 +17,11 @@ import {
   type Section,
 } from "./definition";
 import { defaultEmbedSections, embedSpec } from "./embeddedRecord";
-import type { ContextQueryField, RecordQuery } from "./recordForm";
+import {
+  quoteValue,
+  type ContextQueryField,
+  type RecordQuery,
+} from "./recordForm";
 import {
   identifyingColumns,
   inferLinks,
@@ -93,16 +97,11 @@ export function listableTables(
   return tables.filter((t) => identifyingColumns(t).length > 0);
 }
 
-/** `value` as a single-quoted Querydown string, backslash-escaped. */
-function quoteSingle(value: string): string {
-  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-}
-
 /** The definitions a contextual query runs under, on the record whose key is
  * `value`: the user's prelude, then `@id`. Defined last, so that it wins over a
  * prelude defining an `@id` of its own. */
 export function contextDefinitions(prelude: string, value: string): string {
-  const id = `${ID_VARIABLE} = ${quoteSingle(value)}`;
+  const id = `${ID_VARIABLE} = ${quoteValue(value, "'")}`;
   return prelude.trim() === "" ? id : `${prelude}\n${id}`;
 }
 

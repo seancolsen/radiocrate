@@ -24,7 +24,7 @@ describe("suggestionsQuery", () => {
 
   it("searches a text column in the query, with what's typed quoted", () => {
     expect(suggestionsQuery("album", TEXT, 'a "b"').filter).toBe(
-      'title:"a \\"b\\""',
+      `title:'a "b"'`,
     );
   });
 

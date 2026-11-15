@@ -80,8 +80,16 @@ vi.mock("../../query/querydown", () => ({
   querydownLoaded: vi.fn(() => true),
 }));
 vi.mock("../../query/compile", () => ({
-  compileSavedQuery: vi.fn(() => ({ sql: "select 1", columnAnnotations: [] })),
-  compilePlaylist: vi.fn(() => ({ sql: "select 2", columnAnnotations: [] })),
+  compileSavedQuery: vi.fn(() => ({
+    sql: "select 1",
+    columnAnnotations: [],
+    queryAnnotation: null,
+  })),
+  compilePlaylist: vi.fn(() => ({
+    sql: "select 2",
+    columnAnnotations: [],
+    queryAnnotation: null,
+  })),
 }));
 vi.mock("../../api/query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/query")>();
@@ -1240,6 +1248,7 @@ describe("editing a preset", () => {
       vi.mocked(compileSavedQuery).mockReturnValue({
         sql: "select 1 where title like '%new%'",
         columnAnnotations: [],
+        queryAnnotation: null,
       });
       bundle.actions.patchPreset(added().id, { definition: "title:new" });
       await vi.advanceTimersByTimeAsync(300);
@@ -1247,6 +1256,7 @@ describe("editing a preset", () => {
       vi.mocked(compileSavedQuery).mockReturnValue({
         sql: "select 1",
         columnAnnotations: [],
+        queryAnnotation: null,
       });
       await vi.advanceTimersByTimeAsync(IDLE);
       expect(presetUpdate).not.toHaveBeenCalled();
@@ -2157,9 +2167,11 @@ describe("a problem with the query", () => {
       throw new DiagnosticError(problem(reason));
     });
   const compiles = () =>
-    vi
-      .mocked(compileSavedQuery)
-      .mockImplementation(() => ({ sql: "select 1", columnAnnotations: [] }));
+    vi.mocked(compileSavedQuery).mockImplementation(() => ({
+      sql: "select 1",
+      columnAnnotations: [],
+      queryAnnotation: null,
+    }));
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -2379,6 +2391,7 @@ describe("a refresh", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 1",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     vi.mocked(buildResultFromArrow).mockReturnValue(
       buildResultFromStringRows([["1"], ["2"], ["3"]]),
@@ -2430,6 +2443,7 @@ describe("a refresh", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 2",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     await run(bundle, "a");
 
@@ -2468,6 +2482,7 @@ describe("a refresh", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 2",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     await run(bundle, "a");
     bundle.actions.resyncRecordEditors();
@@ -2506,6 +2521,7 @@ describe("an edit that compiles to the same SQL", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 1",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     vi.mocked(buildResultFromArrow).mockReturnValue(
       buildResultFromStringRows([["1"], ["2"], ["3"]]),
@@ -2536,6 +2552,7 @@ describe("an edit that compiles to the same SQL", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 1",
       columnAnnotations: [{ align: "right" }],
+      queryAnnotation: null,
     });
     bundle.actions.clearFilterCustom("a");
     await settled(bundle);
@@ -2569,6 +2586,7 @@ describe("an edit that compiles to the same SQL", () => {
     vi.mocked(compileSavedQuery).mockReturnValueOnce({
       sql: "select 2",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     bundle.actions.clearFilterCustom("a");
     await vi.waitFor(() => expect(runSql).toHaveBeenCalledTimes(1));
@@ -2577,6 +2595,7 @@ describe("an edit that compiles to the same SQL", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 1",
       columnAnnotations: [{ align: "right" }],
+      queryAnnotation: null,
     });
     bundle.actions.clearFilterCustom("a");
     await vi.waitFor(() =>
@@ -3077,6 +3096,7 @@ describe("undo steps with entry writes", () => {
     vi.mocked(compileSavedQuery).mockReturnValue({
       sql: "select 1",
       columnAnnotations: [],
+      queryAnnotation: null,
     });
     vi.mocked(buildResultFromArrow).mockReturnValue(
       buildResultFromStringRows([["1"], ["2"]]),
@@ -3836,6 +3856,7 @@ describe("removing tracks and committing conditions", () => {
       (_id, _def, _presets, _schema, _prelude, options) => ({
         sql: options?.withFilter === false ? "sorted" : "page",
         columnAnnotations: [],
+        queryAnnotation: null,
       }),
     );
     vi.mocked(runSql).mockImplementation((sql) =>
@@ -4582,6 +4603,7 @@ describe("rearranging a playlist's rows", () => {
       (_id, _def, _presets, _schema, _prelude, options) => ({
         sql: options?.withFilter === false ? "sorted" : "page",
         columnAnnotations: [],
+        queryAnnotation: null,
       }),
     );
     vi.mocked(runSql).mockImplementation((sql) =>

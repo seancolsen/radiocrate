@@ -121,9 +121,9 @@ describe("contextDefinitions", () => {
     expect(contextDefinitions("  ", "a1")).toBe("@id = 'a1'");
   });
 
-  it("escapes quotes and backslashes in the value", () => {
+  it("quotes a value containing a single quote with double quotes", () => {
     expect(contextDefinitions("", "it's a \\ value")).toBe(
-      "@id = 'it\\'s a \\\\ value'",
+      '@id = "it\'s a \\ value"',
     );
   });
 });

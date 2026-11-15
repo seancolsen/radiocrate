@@ -249,20 +249,32 @@ interface Condition {
   exact: boolean;
 }
 
+/** A Querydown string literal as `quoteValue` writes them: raw in either quote,
+ * or `^e`-flagged with backslash escapes when the value holds both quotes. */
+const STRING_LITERAL = String.raw`\^e"(?:[^"\\]|\\.)*"|\^e'(?:[^'\\]|\\.)*'|"[^"]*"|'[^']*'`;
+
+/** The text of a literal {@link STRING_LITERAL} matched. */
+function unquote(literal: string): string {
+  return literal.startsWith("^e")
+    ? literal.slice(3, -1).replace(/\\(.)/g, "$1")
+    : literal.slice(1, -1);
+}
+
 /** One condition per line: `col:="value"` as `keyConditions` writes them (or
  * `link.col:="value"`, one hop through a link), and
  * the looser `col:value` / `col:"value"` substring form a user types into the
  * record picker's search box. */
 function parseConditions(filter: string): Condition[] {
   const conditions: Condition[] = [];
+  const pattern = new RegExp(
+    String.raw`^([\w.]+):(=?)\s*(?:(${STRING_LITERAL})|(\S+))$`,
+  );
   for (const line of filter.split("\n")) {
-    const match = /^([\w.]+):(=?)\s*(?:"((?:[^"\\]|\\.)*)"|(\S+))$/.exec(
-      line.trim(),
-    );
+    const match = pattern.exec(line.trim());
     if (!match) continue;
     conditions.push({
       path: match[1],
-      value: (match[3] ?? match[4]).replace(/\\(.)/g, "$1"),
+      value: match[3] !== undefined ? unquote(match[3]) : match[4],
       exact: match[2] === "=",
     });
   }
@@ -274,13 +286,10 @@ function parseConditions(filter: string): Condition[] {
  * resolves the same way. */
 function substituteVariables(filter: string, definitions = ""): string {
   let text = filter;
-  for (const [, name, value] of definitions.matchAll(
-    /^@(\w+) = '((?:[^'\\]|\\.)*)'$/gm,
+  for (const [, name, literal] of definitions.matchAll(
+    new RegExp(String.raw`^@(\w+) = (${STRING_LITERAL})$`, "gm"),
   )) {
-    text = text.replaceAll(
-      new RegExp(`@${name}\\b`, "g"),
-      `"${value.replace(/\\(.)/g, "$1")}"`,
-    );
+    text = text.replaceAll(new RegExp(`@${name}\\b`, "g"), literal);
   }
   return text;
 }

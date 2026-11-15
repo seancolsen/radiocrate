@@ -306,10 +306,20 @@ export interface RecordQuery {
   definitions?: string;
 }
 
-/** A value as a Querydown string literal. Backslashes and quotes are escaped;
- * the compiler emits a properly quoted SQL literal from it. */
-export function quoteValue(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+/** A value as a Querydown string literal; the compiler emits a properly quoted
+ * SQL literal from it. Querydown strings are raw — a backslash is an ordinary
+ * character — and can't contain their own quote, so this quotes with `quote`,
+ * or the other kind when the value contains `quote`. A value containing both
+ * kinds becomes an escaped flagged string (`^e"…"`), the one form that takes
+ * escapes. */
+export function quoteValue(value: string, quote: '"' | "'" = '"'): string {
+  const other = quote === '"' ? "'" : '"';
+  if (!value.includes(quote)) return `${quote}${value}${quote}`;
+  if (!value.includes(other)) return `${other}${value}${other}`;
+  const escaped = value
+    .replaceAll("\\", "\\\\")
+    .replaceAll(quote, `\\${quote}`);
+  return `^e${quote}${escaped}${quote}`;
 }
 
 /** Querydown conditions matching exactly the records `keys` identifies. `:=` is
