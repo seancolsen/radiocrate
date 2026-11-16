@@ -125,9 +125,12 @@ describe("columnMetadataFromAnnotation", () => {
 describe("ANNOTATION_SCHEMA", () => {
   /** What the editor offers at `path`, for a key or a value. */
   const offered = (path: (string | number)[], slot: "key" | "value") =>
-    annotationOptions(ANNOTATION_SCHEMA, { path, slot, keys: [] }).map(
-      (option) => option.label,
-    );
+    annotationOptions(ANNOTATION_SCHEMA, {
+      target: "column",
+      path,
+      slot,
+      keys: [],
+    }).map((option) => option.label);
 
   it("offers every key the metadata reads", () => {
     expect(offered([], "key").sort()).toEqual(
