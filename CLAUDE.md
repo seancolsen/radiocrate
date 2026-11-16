@@ -21,9 +21,18 @@ notice:
 2. `cargo clippy`
 3. `cargo fmt`
 
-**Do not ever run `cargo build`** (I run release/WASM builds myself), and don't
-run the full `cargo test` across the workspace — scope test runs to the crate
-you're working on.
+**Do not ever run `cargo build`** on this workspace (I run release builds
+myself), and don't run the full `cargo test` across the workspace — scope test
+runs to the crate you're working on.
+
+### Vendoring Querydown (do run this yourself)
+
+`cargo xtask vendor-querydown` is allowed, and you should run it whenever you
+bump `QUERYDOWN_REV` in `xtask/src/main.rs`, then verify against the result.
+It runs `wasm-pack build` (a WASM cargo build), but only in Querydown's own
+checkout under `target/querydown-src/`. It never touches `duckdb-sys`, and it
+finishes quickly. The ban on `cargo build` above is about the DuckDB rebuild,
+not about WASM builds like this one.
 
 ### The production frontend (`frontend/`) is pure JS — cargo rules don't apply
 
