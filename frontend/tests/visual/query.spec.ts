@@ -278,8 +278,8 @@ for (const colorScheme of SCHEMES) {
   });
 
   // Presets each on a line under the custom input: closed ones with Remove
-  // beside the name, an open one with Inline in its editor, and its usage at the
-  // far right.
+  // beside the name, an open one with Inline in its editor, and its usage and
+  // Remove at the far right.
   test(`filter-builder/presets - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "filter-builder/presets", colorScheme);
     await expect(stage.getByText("in 1 query")).toBeVisible();
@@ -288,7 +288,7 @@ for (const colorScheme of SCHEMES) {
     ).toHaveCount(1);
     await expect(
       stage.getByRole("button", { name: "Remove preset" }),
-    ).toHaveCount(2);
+    ).toHaveCount(3);
     await expect(stage).toHaveScreenshot(
       snapshot("filter-builder/presets", colorScheme),
     );

@@ -16,7 +16,8 @@ const TOGGLE = "preset-toggle";
 /** A preset's look, given what it shows: as wide as its heading (chevron, name,
  * "Default" badge, ✱ marker, then the caller's `actions`), unless it's open,
  * when it's as wide as its column and the rest of the heading toggles it too.
- * `usage` sits at the heading's far right, and `children` (its editor) below.
+ * An open preset's heading ends with `usage`, then `openActions` in its top
+ * right corner, and `children` (its editor) sit below.
  * `problem` outlines it in red: the error strip's problem is in this preset. */
 export function PresetRowView(props: {
   name: string;
@@ -27,6 +28,8 @@ export function PresetRowView(props: {
   onToggle: () => void;
   actions?: ReactNode;
   usage?: ReactNode;
+  /** Shown at the heading's far right while it's open. */
+  openActions?: ReactNode;
   children?: ReactNode;
 }): JSX.Element {
   const { expanded } = props;
@@ -99,6 +102,11 @@ export function PresetRowView(props: {
             {props.usage}
           </span>
         )}
+        {expanded && props.openActions && (
+          <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+            {props.openActions}
+          </div>
+        )}
       </div>
       {props.children}
     </div>
@@ -128,6 +136,8 @@ export default function PresetRow(props: {
   problem?: boolean;
   onToggle: () => void;
   actions?: ReactNode;
+  /** Shown at the open heading's far right. */
+  openActions?: ReactNode;
   /** Shown in the open editor, beside "Apply by default". */
   editorActions?: ReactNode;
 }): JSX.Element | null {
@@ -144,6 +154,7 @@ export default function PresetRow(props: {
       onToggle={props.onToggle}
       actions={props.actions}
       usage={<PresetUsage id={props.id} />}
+      openActions={props.openActions}
     >
       {props.expanded && (
         <PresetEditor presetId={props.id} actions={props.editorActions} />

@@ -12,8 +12,9 @@ import PresetRow, { PresetRowView } from "./PresetRow";
 
 /** A preset in a query's builder: what the preset manager shows, opening
  * independently of the page's other presets, with what a query can do about
- * one of its presets — remove it beside the name while it's closed, and fold it
- * into the custom Querydown from within its open editor. A reference to a preset that's been deleted
+ * one of its presets — remove it (beside the name while it's closed, in the
+ * heading's top right corner while it's open), and fold it into the custom
+ * Querydown from within its open editor. A reference to a preset that's been deleted
  * still gets a row, since removing it is how the query gets over it. */
 export default function QueryPresetRow(props: {
   tabId: string;
@@ -55,6 +56,7 @@ export default function QueryPresetRow(props: {
       problem={problem}
       onToggle={() => toggleExpandPreset(tabId, id)}
       actions={!expanded && remove}
+      openActions={remove}
       editorActions={
         <button
           type="button"
