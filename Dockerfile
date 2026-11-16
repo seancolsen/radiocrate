@@ -77,19 +77,22 @@ RUN npx --yes playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # DuckDB CLI — version must match the DuckDB bundled in backend/Cargo.toml
-# (libduckdb-sys crate version 1.10504.0 bundles DuckDB v1.5.4).
+# (libduckdb-sys crate version 1.20000.2 bundles DuckDB v2.0.0).
 # Update this version whenever the duckdb crate in backend/Cargo.toml is bumped.
-RUN DUCKDB_VERSION="v1.5.4" \
+# An older CLI can't open a database file DuckDB 2.0 created (storage version
+# 69), so a mismatch here shows up as an "IO Error: Trying to read a database
+# file with version number 69".
+#
+# From v2.0.0 the CLI ships as `duckdb-cli-linux-<arch>.tar.gz` (formerly
+# `duckdb_cli-linux-<arch>.zip`, with `aarch64` for arm64).
+RUN DUCKDB_VERSION="v2.0.0" \
     && ARCH=$(dpkg --print-architecture) \
     && case "$ARCH" in \
-         amd64)   DUCKDB_ARCH="amd64" ;; \
-         arm64)   DUCKDB_ARCH="aarch64" ;; \
+         amd64|arm64) DUCKDB_ARCH="$ARCH" ;; \
          *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
        esac \
-    && curl -fsSL "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${DUCKDB_ARCH}.zip" \
-         -o /tmp/duckdb.zip \
-    && unzip /tmp/duckdb.zip duckdb -d /usr/local/bin/ \
-    && rm /tmp/duckdb.zip \
+    && curl -fsSL "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb-cli-linux-${DUCKDB_ARCH}.tar.gz" \
+         | tar -xz -C /usr/local/bin/ duckdb \
     && chmod +x /usr/local/bin/duckdb
 
 # uv — the runner for the sample-data generator scripts (see sample-data/).

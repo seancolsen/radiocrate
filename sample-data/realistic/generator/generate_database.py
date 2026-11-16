@@ -4,9 +4,10 @@
 # dependencies = [
 #   # Must be the DuckDB version the backend links against, so that the file
 #   # this script writes into is the same storage format the app reads back.
-#   # The Rust side pins it as `duckdb = "1.10504.0"` in backend/Cargo.toml,
-#   # which bundles DuckDB v1.5.4; keep the two in step.
-#   "duckdb==1.5.4",
+#   # The Rust side pins it as `duckdb = "1.20000.2"` in backend/Cargo.toml,
+#   # which bundles DuckDB v2.0.0; keep the two in step. (A 1.x client can't
+#   # open the file at all: the 2.0 scanner creates it at storage version 69.)
+#   "duckdb==2.0.0",
 #   "pyyaml>=6.0.0",
 # ]
 # ///

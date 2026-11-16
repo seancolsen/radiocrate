@@ -16,7 +16,9 @@ workspace = true
 [dependencies]
 api-schema = { path = "../api-schema" }
 introspection = { path = "../introspection" }
-arrow-ipc = "58"
+# Must match the arrow major version the `duckdb` crate uses, since the
+# RecordBatches it returns are written straight into an IPC stream.
+arrow-ipc = "60"
 axum = "0.8"
 blake3 = "1"
 bytes = "1"
@@ -26,7 +28,14 @@ clap = { version = "4.5", features = ["derive"] }
 # back to autoloading the extension over the network at query time, which
 # fails outright on 32-bit ARM (DuckDB doesn't publish extension binaries for
 # that platform) and is undesirable anywhere for a self-hosted app regardless.
-duckdb = { version = "1.10504.0", features = ["bundled", "json"] }
+#
+# `default-features = false`: since 1.20000 the crate's defaults turn on
+# libduckdb-sys's `download-lib`/`vcpkg`/`pkg-config`, which only matter when
+# linking a prebuilt DuckDB. With `bundled` they're ignored, but `download-lib`
+# still compiles ureq + rustls into the build script.
+#
+# The minor version encodes DuckDB's: 1.20000.x bundles DuckDB v2.0.0.
+duckdb = { version = "1.20000.2", default-features = false, features = ["bundled", "json"] }
 jiff = "0.2"
 audiopus = "0.3.0-rc.0"
 rayon = "1"
