@@ -14,6 +14,15 @@ import type { QueryDiagnostic } from "../../query/diagnostics";
 import FieldLabel from "../../components/record/FieldLabel";
 import ModifiedStar from "../../components/record/ModifiedStar";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
+import {
+  FindReplacePanel,
+  ReplacePreview,
+} from "../../components/record/FindReplace";
+import {
+  compileFind,
+  DEFAULT_FIND_OPTIONS,
+  type FindOptions,
+} from "../../record/findReplace";
 import { PresetRowView } from "../../components/builder/PresetRow";
 import QuerydownEditor from "../../components/builder/QuerydownEditor";
 import DiagnosticMessage from "../../components/builder/DiagnosticMessage";
@@ -71,6 +80,7 @@ const TOKENS: readonly string[] = [
   "field-records",
   "field-other",
   "field-query",
+  "find-match",
 ];
 
 /** Re-reads on every hot update, so a swatch shows the value app.css holds
@@ -669,6 +679,78 @@ function Surfaces(): JSX.Element {
   );
 }
 
+/** "you", case-insensitively, as a preview finds it. */
+const FIND_YOU = compileFind("you", DEFAULT_FIND_OPTIONS);
+
+/** The record editor's find and replace: the panel, with its toggles and a
+ * pattern that doesn't parse, and values previewing what Replace makes of them. */
+function FindAndReplace(): JSX.Element {
+  const [options, setOptions] = useState<FindOptions>({
+    ...DEFAULT_FIND_OPTIONS,
+    wholeWord: true,
+  });
+  const toggle = (option: keyof FindOptions) =>
+    setOptions({ ...options, [option]: !options[option] });
+  const finder = FIND_YOU && "pattern" in FIND_YOU ? FIND_YOU : undefined;
+  return (
+    <Section title="Find and replace">
+      <Row>
+        <Specimen caption="panel">
+          <div className="w-72">
+            <FindReplacePanel
+              find="you"
+              replace="U"
+              options={options}
+              canReplace
+              onFindChange={noop}
+              onReplaceChange={noop}
+              onToggleOption={toggle}
+              onReplace={noop}
+              onClose={noop}
+            />
+          </div>
+        </Specimen>
+        <Specimen caption="panel, problem">
+          <div className="w-72">
+            <FindReplacePanel
+              find="(feat"
+              replace=""
+              options={{ ...DEFAULT_FIND_OPTIONS, regex: true }}
+              error="Unterminated group"
+              canReplace={false}
+              onFindChange={noop}
+              onReplaceChange={noop}
+              onToggleOption={noop}
+              onReplace={noop}
+              onClose={noop}
+            />
+          </div>
+        </Specimen>
+        {finder && (
+          <div className="w-56">
+            <Specimen caption="values, previewed" stretch>
+              <div className="flex flex-col">
+                <ReplacePreview
+                  value="Don't Hurt Yourself"
+                  finder={finder}
+                  replacement="U"
+                  nullable
+                />
+                <ReplacePreview
+                  value="Sorry"
+                  finder={finder}
+                  replacement="U"
+                  nullable
+                />
+              </div>
+            </Specimen>
+          </div>
+        )}
+      </Row>
+    </Section>
+  );
+}
+
 /** The now-playing bar's colored parts, in each of their states. */
 function NowPlayingParts(): JSX.Element {
   return (
@@ -794,6 +876,7 @@ export default function KitchenSink(props: { theme: Theme }): JSX.Element {
       <Inputs />
       <Menus />
       <Surfaces />
+      <FindAndReplace />
       <NowPlayingParts />
       <Messages />
     </div>

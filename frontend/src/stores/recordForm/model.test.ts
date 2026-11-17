@@ -42,6 +42,11 @@ vi.mock("../../query/recordData", () => {
 
 import { runRecordQuery } from "../../query/recordData";
 import {
+  compileFind,
+  DEFAULT_FIND_OPTIONS,
+  type FindOptions,
+} from "../../record/findReplace";
+import {
   createFormsStore,
   selectFocusedForm,
   selectModifiedRecords,
@@ -58,6 +63,7 @@ import {
   selectCountMax,
   selectCountMin,
   selectFieldExpandable,
+  selectFindReplace,
   selectQueryEditor,
   selectRunsContextQuery,
   distinctValues,
@@ -1225,6 +1231,105 @@ describe("a field the records disagree on", () => {
     expect(s.embeds[scalarChildId(ROOT_ID, "album")]?.cells).toEqual(["4"]);
     expect(s.records[a3]).toBeUndefined();
     expect(s.expanded[fieldItemId(ROOT_ID, "album")]).toBe(false);
+  });
+});
+
+describe("find and replace on a field the records disagree on", () => {
+  /** Three tracks with three genres between them, two sharing one. */
+  const serveGenres = () =>
+    serve({
+      track: [
+        trackRow("t1", "Same", "Pop", 0),
+        trackRow("t2", "Same", "Pop rock", 0),
+        trackRow("t3", "Same", "Pop rock", 0),
+      ],
+    });
+
+  const openGenre = async () => {
+    serveGenres();
+    const model = form([trackKey("t1"), trackKey("t2"), trackKey("t3")]);
+    model.start();
+    await flush();
+    const genre = fieldOf(model, ROOT_ID, "genre");
+    if (genre.kind !== "primitive") throw new Error("genre is a primitive");
+    model.toggleField(ROOT_ID, genre, true);
+    return { model, genre };
+  };
+
+  const finder = (find: string, options: Partial<FindOptions> = {}) => {
+    const f = compileFind(find, { ...DEFAULT_FIND_OPTIONS, ...options });
+    if (f === null || "error" in f) throw new Error(`no pattern for ${find}`);
+    return f;
+  };
+
+  it("opens on one field at a time, and closes as that field does", async () => {
+    const { model, genre } = await openGenre();
+    const itemId = fieldItemId(ROOT_ID, "genre");
+    model.toggleFindReplace(ROOT_ID, "genre");
+    model.editFindReplace("find", "rock");
+    expect(selectFindReplace(model.store.getState(), itemId)).toEqual({
+      itemId,
+      find: "rock",
+      replace: "",
+    });
+    model.toggleField(ROOT_ID, genre, false);
+    expect(model.store.getState().findReplace).toBeNull();
+  });
+
+  it("replaces in every value, keeping the field open on what they become", async () => {
+    const { model, genre } = await openGenre();
+    model.toggleChild(distinctItemId(ROOT_ID, "genre", "Pop rock"), true);
+    model.toggleFindReplace(ROOT_ID, "genre");
+    model.replaceInField(ROOT_ID, genre, finder("rock"), "Rock");
+
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["genre"]).toEqual([
+      "Pop",
+      "Pop Rock",
+      "Pop Rock",
+    ]);
+    expect(s.findReplace).toBeNull();
+    expect(selectFieldModified(s, ROOT_ID, "genre")).toBe(true);
+    expect(s.expanded[fieldItemId(ROOT_ID, "genre")]).toBe(true);
+    // The value that was expanded still is, under its new self.
+    expect(s.expanded[distinctItemId(ROOT_ID, "genre", "Pop rock")]).toBe(
+      undefined,
+    );
+    expect(s.expanded[distinctItemId(ROOT_ID, "genre", "Pop Rock")]).toBe(true);
+  });
+
+  it("names a regular expression's captures, and stores an emptied value as NULL", async () => {
+    const { model, genre } = await openGenre();
+    model.replaceInField(
+      ROOT_ID,
+      genre,
+      finder(String.raw`^(\w+) (\w+)$`, { regex: true }),
+      "$2/$1",
+    );
+    expect(model.store.getState().records[ROOT_ID]?.values["genre"]).toEqual([
+      "Pop",
+      "rock/Pop",
+      "rock/Pop",
+    ]);
+    model.replaceInField(
+      ROOT_ID,
+      genre,
+      finder("Pop", { wholeWord: true }),
+      "",
+    );
+    expect(model.store.getState().records[ROOT_ID]?.values["genre"]).toEqual([
+      null,
+      "rock/",
+      "rock/",
+    ]);
+  });
+
+  it("closes onto one value when the replacement brings the records into agreement", async () => {
+    const { model, genre } = await openGenre();
+    model.replaceInField(ROOT_ID, genre, finder(" rock"), "");
+    const s = model.store.getState();
+    expect(selectSharedValue(s, ROOT_ID, "genre")).toBe("Pop");
+    expect(s.expanded[fieldItemId(ROOT_ID, "genre")]).toBe(false);
   });
 });
 

@@ -49,6 +49,10 @@ import {
 // `selectRowRecords`, …) is documented as such below — wrap it in `useShallow`
 // or a component-level `useMemo` rather than subscribing to it directly.
 
+/** The record editor's find-and-replace toggles — a reference in state. */
+export const selectFindOptions = (s: AppState): AppState["findOptions"] =>
+  s.findOptions;
+
 export const selectTab = (s: AppState, tabId: string): Tab | undefined =>
   s.tabs.find((t) => t.id === tabId);
 

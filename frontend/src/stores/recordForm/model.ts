@@ -142,6 +142,7 @@ import {
   sortByOrder,
 } from "../../record/childOrder";
 import { planSave, type SavePlan } from "../../record/formSave";
+import { hasMatch, replaceMatches } from "../../record/findReplace";
 import type { RecordFormSummary } from "../forms";
 import type { ExpansionMemory } from "./expansionMemory";
 import {
@@ -516,6 +517,32 @@ export interface RecordFormActions {
     keyValue: string,
     cells: readonly (string | null)[],
     columns?: readonly ColumnMetadata[],
+  ) => void;
+
+  /** Open the find-and-replace panel on a field (closing it on any other — there
+   * is one at a time), or close it; `open` says which, rather than toggling.
+   * Opened, its boxes start empty. */
+  toggleFindReplace: (
+    recordId: string,
+    fieldKey: string,
+    open?: boolean,
+  ) => void;
+  /** Take what's typed into the open panel's Find or Replace box. */
+  editFindReplace: (box: "find" | "replace", text: string) => void;
+  /** Replace every match of `finder` in the values a text field's records hold
+   * with `replacement`, each record keeping whatever it holds that doesn't
+   * match, and close the panel. With the same NULL rule as
+   * {@link RecordFormActions.commitEdit} for a value replaced down to nothing.
+   *
+   * Ephemeral, like every other form modification: it reaches the database when
+   * the form is saved. The field stays open on the values they now hold —
+   * unless they now all hold the same one, when it closes onto that, as
+   * {@link RecordFormActions.commitDistinct} does. */
+  replaceInField: (
+    recordId: string,
+    field: PrimitiveField,
+    finder: { pattern: RegExp; literal: boolean },
+    replacement: string,
   ) => void;
 }
 
@@ -1976,6 +2003,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   const setExpandedItem = (itemId: string, open: boolean) => {
     set((s) => {
       s.expanded[itemId] = open;
+      // The panel sits between a field and what it expands into, and goes with
+      // them.
+      if (!open && s.findReplace?.itemId === itemId) s.findReplace = null;
     });
     if (!open) reconcileFocus(itemId);
   };
@@ -2904,6 +2934,71 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set((s) => {
         if (!s.embeds[next]) s.embeds[next] = castDraft(preview);
       });
+    },
+    toggleFindReplace: (recordId, fieldKey, open) => {
+      const itemId = fieldItemId(recordId, fieldKey);
+      const isOpen = get().findReplace?.itemId === itemId;
+      if ((open ?? !isOpen) === isOpen) return;
+      set((s) => {
+        s.findReplace = isOpen ? null : { itemId, find: "", replace: "" };
+      });
+    },
+    editFindReplace: (box, text) =>
+      set((s) => {
+        if (s.findReplace) s.findReplace[box] = text;
+      }),
+    replaceInField: (recordId, field, finder, replacement) => {
+      // A primary key is the database's to issue.
+      if (field.readOnly) return;
+      const values = get().records[recordId]?.values[field.column];
+      if (!values) return;
+      /** What each value the records held becomes — worked out once a value,
+       * however many records hold it. */
+      const becomes = new Map<string, string | null>();
+      const next = values.map((value) => {
+        if (value == null) return value;
+        if (!becomes.has(value)) {
+          becomes.set(
+            value,
+            hasMatch(value, finder.pattern)
+              ? storedValue(
+                  recordId,
+                  field.column,
+                  replaceMatches(value, finder, replacement),
+                )
+              : value,
+          );
+        }
+        return becomes.get(value) ?? null;
+      });
+      set((s) => {
+        const n = s.records[recordId];
+        if (n) n.values[field.column] = next;
+        // An expanded value stays expanded under what it has become, as an
+        // edited one does (see `commitDistinct`). Every value moves before any
+        // lands, since one may become what another was.
+        const landing: string[] = [];
+        for (const [from, to] of becomes) {
+          const fromId = distinctItemId(recordId, field.key, from);
+          if (from === to || !s.expanded[fromId]) continue;
+          delete s.expanded[fromId];
+          if (to != null && to !== "") {
+            landing.push(distinctItemId(recordId, field.key, to));
+          }
+        }
+        for (const id of landing) s.expanded[id] = true;
+        s.findReplace = null;
+        // An edit to one of those values in progress has been overtaken.
+        const edit = s.distinctEdit;
+        if (edit?.recordId === recordId && edit.column === field.column) {
+          s.editing = null;
+          s.distinctEdit = null;
+          s.autocomplete = null;
+        }
+      });
+      if (selectSharedValue(get(), recordId, field.column) !== VARIED) {
+        setExpandedItem(fieldItemId(recordId, field.key), false);
+      }
     },
   };
 

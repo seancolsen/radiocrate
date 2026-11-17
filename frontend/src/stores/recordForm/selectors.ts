@@ -36,6 +36,7 @@ import {
 import type { RecordFormSummary } from "../forms";
 import type {
   DistinctEdit,
+  FindReplace,
   EmbedNode,
   FormState,
   ListNode,
@@ -184,6 +185,14 @@ export function selectDistinctText(
     : value;
   return current ?? "";
 }
+
+/** The find-and-replace panel open on `itemId` (a field's), or null — a
+ * reference already in state. */
+export const selectFindReplace = (
+  s: FormState,
+  itemId: string,
+): FindReplace | null =>
+  s.findReplace?.itemId === itemId ? s.findReplace : null;
 
 /** Whether the field in edit mode can offer autocomplete, the same for a field's
  * own editor and a distinct value's. It has to be a plain column (a linked record

@@ -130,6 +130,7 @@
   --color-field-records: var(--field-records);
   --color-field-other: var(--field-other);
   --color-field-query: var(--field-query);
+  --color-find-match: var(--find-match);
 }
 
 /* The app's standard control height, 26px: a 20px line of text-sm, 2px of
@@ -236,6 +237,10 @@
     /* A contextual query's field: teal, the one hue the other pills leave
        open, so a query reads as neither a link nor a list of records. */
     --field-query: light-dark(#93e4dc, #00544e);
+    /* Find and replace's highlight on the text a Find matches, under --ink:
+       a highlighter yellow, and in dark a deep gold the white ink still reads
+       on. */
+    --find-match: light-dark(#ffe45c, #7a6200);
   }
   :root[data-theme="light"] {
     color-scheme: light;

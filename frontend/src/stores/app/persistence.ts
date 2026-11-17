@@ -11,6 +11,11 @@ import {
   playlistDefinitionToStored,
   type PlaylistDefinition,
 } from "../../query/playlist";
+import {
+  DEFAULT_FIND_OPTIONS,
+  parseFindOptions,
+  type FindOptions,
+} from "../../record/findReplace";
 import type { AppEnv } from "../env";
 import type { Tab } from "./state";
 import type { ThemePref } from "./theme";
@@ -78,6 +83,26 @@ export function persistAudioQuality(env: AppEnv, pref: AudioQualityPref): void {
   try {
     if (pref === "higher") env.storage.removeItem(AUDIO_QUALITY_KEY);
     else env.storage.setItem(AUDIO_QUALITY_KEY, pref);
+  } catch {
+    // ignore
+  }
+}
+
+const FIND_OPTIONS_KEY = "findOptions";
+
+/** The record editor's find-and-replace toggles, as the user last left them. */
+export function storedFindOptions(env: AppEnv): FindOptions {
+  try {
+    return parseFindOptions(env.storage.getItem(FIND_OPTIONS_KEY));
+  } catch {
+    // Private-mode localStorage denial — fall back to the defaults.
+  }
+  return DEFAULT_FIND_OPTIONS;
+}
+
+export function persistFindOptions(env: AppEnv, options: FindOptions): void {
+  try {
+    env.storage.setItem(FIND_OPTIONS_KEY, JSON.stringify(options));
   } catch {
     // ignore
   }

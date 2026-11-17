@@ -2038,6 +2038,11 @@ export const STORIES: Record<string, Story> = {
   // keeping its linebreak, and "Hold Up" in an open editor — an edit to the
   // one record holding it.
   "record-editor/varied-editing": recordEditor([1, 2, 3]),
+  // …and find and replace open on `title` (the test does the opening and the
+  // typing): the panel between the row and its values, and each value
+  // previewing what Replace would make of it — "you" highlighted in the two
+  // that hold it, over what they'd become, and "Hold Up" alone, unchanged.
+  "record-editor/find-replace": recordEditor([1, 2, 3]),
   // A value in edit mode with autocomplete on (the test does the opening): the
   // chevron in its box, and the titles `track` holds below it.
   "record-editor/autocomplete": recordEditor([5]),

@@ -170,6 +170,16 @@ export interface DistinctEdit {
   indices: readonly number[];
 }
 
+/** The find-and-replace panel open on a text field the records disagree on —
+ * what's been typed into its two boxes. The toggles beside them are the app's
+ * (`AppState.findOptions`), being the same for every form. */
+export interface FindReplace {
+  /** The field it's open on (`fieldItemId`). */
+  itemId: string;
+  find: string;
+  replace: string;
+}
+
 /** A contextual query the user has begun adding, before it is one: a name, and
  * — once they choose it — the table it lists, which is what makes it real (see
  * `RecordFormActions.addProvisional`). */
@@ -198,6 +208,8 @@ export interface FormState {
    * {@link FormState.editing} when that's what is being edited, and only
    * meaningful while it still names the same item (see `selectDistinctEdit`). */
   distinctEdit: DistinctEdit | null;
+  /** The one field whose find-and-replace panel is open, or null. */
+  findReplace: FindReplace | null;
   /** The {@link FormState.editing} id whose text box is in autocomplete mode —
    * showing the values its column holds, and searching them as the user types.
    * Only meaningful while it still names the same item (see
@@ -275,6 +287,7 @@ export function initialFormState(): FormState {
     editing: null,
     editingSelectAll: false,
     distinctEdit: null,
+    findReplace: null,
     autocomplete: null,
     focused: null,
     selection: [],

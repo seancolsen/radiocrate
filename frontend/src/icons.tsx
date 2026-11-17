@@ -89,6 +89,10 @@ import Log from "~icons/material-symbols/receipt-long";
 import StartLogging from "~icons/material-symbols/radio-button-checked";
 import StopLogging from "~icons/material-symbols/stop-circle";
 import PaintRoller from "~icons/material-symbols/imagesearch-roller";
+import Replace from "~icons/material-symbols/find-replace";
+import MatchCase from "~icons/material-symbols/match-case";
+import MatchWord from "~icons/material-symbols/match-word";
+import RegularExpression from "~icons/material-symbols/regular-expression";
 // The record editor's field-label glyphs, one per value category.
 import FieldText from "~icons/material-symbols/notes";
 import FieldNumber from "~icons/material-symbols/tag";
@@ -196,6 +200,11 @@ export const Icons = {
   StartLogging, // Logging page toolbar: "Start logging"
   StopLogging, // Logging page toolbar: "Stop logging"
   PaintRoller, // record editor: take one distinct value for every record
+  Find: Search, // record editor: a text field's find-and-replace toggle
+  Replace, // record editor: find and replace's "Replace" button
+  MatchCase, // find and replace: the "Match case" toggle
+  MatchWord, // find and replace: the "Match whole word" toggle
+  RegularExpression, // find and replace: the "Use regular expression" toggle
   FieldText, // record editor: a text field's label
   FieldNumber, // record editor: a numeric field's label
   FieldId, // record editor: a UUID field's label

@@ -28,6 +28,7 @@ import FieldValue, {
   type EditExit,
 } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
+import { FindReplacePanel, ReplacePreview } from "./FindReplace";
 import type { ValueAutocomplete } from "./ValueSuggestions";
 import {
   distinctItemId,
@@ -45,6 +46,7 @@ import {
   selectEmbedEditorOpen,
   selectFieldExpandable,
   selectFieldModified,
+  selectFindReplace,
   selectHasLinkedRecord,
   selectCanAutocomplete,
   selectIsAutocompleting,
@@ -62,12 +64,17 @@ import {
   type RecordFormModel,
   type SharedValue,
 } from "../../stores/recordForm";
-import { selectContextualQuery, selectTableMetadata } from "../../stores/app";
+import {
+  selectContextualQuery,
+  selectFindOptions,
+  selectTableMetadata,
+} from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { useChildDrag } from "../../gestures/useChildDrag";
 import { useFieldDrag } from "../../gestures/useFieldDrag";
 import { Icons } from "../../icons";
 import { embedText } from "../../query/embedPreview";
+import { compileFind, hasMatch } from "../../record/findReplace";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
 import {
@@ -376,6 +383,18 @@ function FieldRow(props: {
     varied ? selectDistinctCount(s, recordId, field.column) : 0,
   );
 
+  /** Whether the values the records disagree on can be found and replaced in:
+   * text the user may edit. */
+  const findable =
+    varied &&
+    field.kind === "primitive" &&
+    field.valueType === "text" &&
+    !field.readOnly;
+  const findOpen = useFormState(
+    model,
+    (s) => selectFindReplace(s, itemId) !== null,
+  );
+
   /** Whether a scalar linked record field has a record to show — one it points
    * at, or a new one the user is entering into it. What decides between an
    * embedded record and the pencil that offers to fill the field in. */
@@ -643,6 +662,25 @@ function FieldRow(props: {
         )}
 
         {field.kind === "multiRecord" && field.ordered && <OrderedNote />}
+
+        {/* Find and replace, on the far right of an opened-out text field's
+            row: a control on the field, like the toggle at its other end. */}
+        {expanded && findable && (
+          <div className="ml-auto flex">
+            <IconButton
+              icon={Icons.Find}
+              label="Find and replace"
+              size="sm"
+              tabIndex={-1}
+              pressed={findOpen}
+              onClick={() => {
+                model.toggleFindReplace(recordId, field.key);
+                // Closed, it takes the focus it held with it.
+                if (findOpen) model.focusItem(itemId);
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Between the row and what it expands into, so the records being changed
@@ -686,9 +724,13 @@ function FieldRow(props: {
         </Subtree>
       )}
 
-      {/* A field the records disagree on expands into the values they hold. */}
+      {/* A field the records disagree on expands into the values they hold —
+          under find and replace, when that's open on them. */}
       {expanded && varied && field.kind !== "multiRecord" && (
         <Subtree>
+          {findable && findOpen && field.kind === "primitive" && (
+            <FieldFindReplace model={model} recordId={recordId} field={field} />
+          )}
           <DistinctValues model={model} recordId={recordId} field={field} />
         </Subtree>
       )}
@@ -1107,6 +1149,7 @@ function DistinctValues(props: {
     () => distinctValues(listedValues(column, edit)),
     [column, edit],
   );
+  const preview = useReplacePreview(model, recordId, field);
   return (
     <>
       {values.map((distinct) => (
@@ -1116,9 +1159,114 @@ function DistinctValues(props: {
           recordId={recordId}
           field={field}
           distinct={distinct}
+          preview={preview}
         />
       ))}
     </>
+  );
+}
+
+/** What Replace would do, while the find-and-replace panel is open on a field
+ * with something to find: the pattern, and what it's replaced with. */
+interface ReplacePreviewSpec {
+  finder: { pattern: RegExp; literal: boolean };
+  replacement: string;
+}
+
+/** The field's find and replace, compiled — `undefined` while it's closed or
+ * finds nothing (nothing typed, or a pattern that doesn't parse), which is when
+ * the values show as ever. */
+function useFindReplace(
+  model: RecordFormModel,
+  recordId: string,
+  field: PrimitiveField | ScalarLinkField,
+) {
+  const itemId = fieldItemId(recordId, field.key);
+  const open = useFormState(
+    model,
+    (s) => selectFindReplace(s, itemId) !== null,
+  );
+  const find = useFormState(
+    model,
+    (s) => selectFindReplace(s, itemId)?.find ?? "",
+  );
+  const replacement = useFormState(
+    model,
+    (s) => selectFindReplace(s, itemId)?.replace ?? "",
+  );
+  const options = useApp(selectFindOptions);
+  const finder = useMemo(
+    () => (open ? compileFind(find, options) : null),
+    [open, find, options],
+  );
+  return { finder, replacement, find, options };
+}
+
+/** {@link useFindReplace}, as the list of values previews it. */
+function useReplacePreview(
+  model: RecordFormModel,
+  recordId: string,
+  field: PrimitiveField | ScalarLinkField,
+): ReplacePreviewSpec | undefined {
+  const { finder, replacement } = useFindReplace(model, recordId, field);
+  return useMemo(
+    () => (finder && "pattern" in finder ? { finder, replacement } : undefined),
+    [finder, replacement],
+  );
+}
+
+/** The find-and-replace panel, wired to the form: what's typed into it is the
+ * form's, the toggles are the app's (the same for every form), and Replace
+ * writes what the values preview into the records holding them — in the form,
+ * for the user to save. Either way out of it, focus goes back to the field. */
+function FieldFindReplace(props: {
+  model: RecordFormModel;
+  recordId: string;
+  field: PrimitiveField;
+}): JSX.Element {
+  const { model, recordId, field } = props;
+  const { setFindOption } = useAppActions();
+  const { finder, replacement, find, options } = useFindReplace(
+    model,
+    recordId,
+    field,
+  );
+  const column = useFormState(
+    model,
+    (s) => s.records[recordId]?.values[field.column],
+  );
+  const pattern = finder && "pattern" in finder ? finder : undefined;
+  const canReplace = useMemo(
+    () =>
+      pattern !== undefined &&
+      (column ?? []).some(
+        (value) => value != null && hasMatch(value, pattern.pattern),
+      ),
+    [pattern, column],
+  );
+  const itemId = fieldItemId(recordId, field.key);
+  const backToField = () => queueMicrotask(() => model.focusItem(itemId));
+  return (
+    <FindReplacePanel
+      find={find}
+      replace={replacement}
+      options={options}
+      error={finder && "error" in finder ? finder.error : undefined}
+      canReplace={canReplace}
+      focusOnMount
+      onFindChange={(text) => model.editFindReplace("find", text)}
+      onReplaceChange={(text) => model.editFindReplace("replace", text)}
+      onToggleOption={(option) => setFindOption(option, !options[option])}
+      onReplace={() => {
+        if (!pattern) return;
+        model.replaceInField(recordId, field, pattern, replacement);
+        backToField();
+      }}
+      onClose={() => {
+        model.toggleFindReplace(recordId, field.key, false);
+        backToField();
+      }}
+    />
   );
 }
 
@@ -1137,6 +1285,9 @@ function DistinctValueRow(props: {
   recordId: string;
   field: PrimitiveField | ScalarLinkField;
   distinct: DistinctValue;
+  /** What Replace would make of the value, which the row shows in place of
+   * the value alone while find and replace has something to find. */
+  preview?: ReplacePreviewSpec;
 }): JSX.Element {
   const { model, recordId, field } = props;
   const { value, count } = props.distinct;
@@ -1241,6 +1392,51 @@ function DistinctValueRow(props: {
     />
   );
 
+  /** A primary key is issued by the database, not the user: its values are
+   * worth reading side by side, but none of them is one to hand to the other
+   * records. */
+  const useForAll = !readOnly && (
+    <IconButton
+      icon={Icons.PaintRoller}
+      label="Use this value for all records"
+      size="sm"
+      tabIndex={-1}
+      onClick={() => model.useValueForAll(recordId, field, value)}
+    />
+  );
+
+  // Previewing a replacement: the whole value, wrapped, over what it would
+  // become — with nothing to expand into, since it's all on show already. The
+  // row's controls stay level with its first line.
+  if (props.preview) {
+    return (
+      <div className="flex items-start gap-1 py-0.5">
+        <span className="flex h-[26px] items-center">
+          <ExpansionToggle
+            expandable={false}
+            expanded={false}
+            label={label}
+            onToggle={() => {}}
+          />
+        </span>
+        <span className="flex h-[26px] items-center">
+          <span className={BUBBLE} aria-label={records}>
+            {count}
+          </span>
+        </span>
+        <ReplacePreview
+          value={value}
+          finder={props.preview.finder}
+          replacement={props.preview.replacement}
+          nullable={field.kind === "primitive" && field.nullable}
+        />
+        {useForAll && (
+          <span className="flex h-[26px] items-center">{useForAll}</span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="flex min-h-[30px] items-center gap-1 py-0.5">
@@ -1284,18 +1480,7 @@ function DistinctValueRow(props: {
             onClick={beginEdit}
           />
         )}
-        {/* A primary key is issued by the database, not the user: its values
-            are worth reading side by side, but none of them is one to hand to
-            the other records. */}
-        {!readOnly && (
-          <IconButton
-            icon={Icons.PaintRoller}
-            label="Use this value for all records"
-            size="sm"
-            tabIndex={-1}
-            onClick={() => model.useValueForAll(recordId, field, value)}
-          />
-        )}
+        {useForAll}
       </div>
       {/* Expanded text: the whole value, given the full width below the row,
           the way a field's expanded text is. */}

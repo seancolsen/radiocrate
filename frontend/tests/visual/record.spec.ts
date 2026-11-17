@@ -199,6 +199,29 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // Find and replace on the values a text field's records disagree on: the
+  // panel under the field's row, and each value previewing the replacement.
+  test(`record-editor/find-replace - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/find-replace",
+      colorScheme,
+    );
+    await expect(stage.getByRole("heading")).toHaveText("Edit 3 tracks");
+    await stage.getByRole("button", { name: "Expand title" }).click();
+    await stage.getByRole("button", { name: "Find and replace" }).click();
+    const find = stage.getByRole("textbox", { name: "Find", exact: true });
+    await expect(find).toBeFocused();
+    await find.fill("you");
+    await stage
+      .getByRole("textbox", { name: "Replace", exact: true })
+      .fill("U");
+    await expect(stage.getByText("Pray U Catch Me")).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/find-replace", colorScheme),
+    );
+  });
+
   // A value's autocomplete, up: the chevron in its box and the column's values
   // under it. The list portals out of the panel, but lands on top of the stage.
   test(`record-editor/autocomplete - ${colorScheme}`, async ({ page }) => {
@@ -1299,5 +1322,45 @@ test.describe("contextual queries", () => {
     await expect(stage.getByTestId("provisional-query")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(stage.getByTestId("provisional-query")).toHaveCount(0);
+  });
+});
+
+test.describe("find and replace", () => {
+  test("replaces in the form alone, keeping the field open, and remembers its toggles", async ({
+    page,
+  }) => {
+    const stage = await openStory(page, "record-editor/find-replace", "light");
+    await stage.getByRole("button", { name: "Expand title" }).click();
+    const toggle = stage.getByRole("button", { name: "Find and replace" });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await stage.getByRole("textbox", { name: "Find", exact: true }).fill("you");
+    await stage
+      .getByRole("textbox", { name: "Replace", exact: true })
+      .fill("U");
+
+    // "You" and "Yourself" are capitalized, so matching case finds neither,
+    // and the choice outlives the form.
+    const replace = stage.getByRole("button", { name: "Replace", exact: true });
+    await expect(replace).toBeEnabled();
+    await stage.getByRole("button", { name: "Match case" }).click();
+    await expect(replace).toBeDisabled();
+    expect(await page.evaluate(() => localStorage.getItem("findOptions"))).toBe(
+      '{"matchCase":true,"wholeWord":false,"regex":false}',
+    );
+    await stage.getByRole("button", { name: "Match case" }).click();
+
+    await replace.click();
+    await expect(
+      stage.getByRole("textbox", { name: "Find", exact: true }),
+    ).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    const values = stage.getByRole("textbox", { name: "title", exact: true });
+    await expect(values).toHaveCount(3);
+    await expect(values.nth(0)).toHaveValue(/^Don't Hurt Urself — Live/);
+    await expect(values.nth(1)).toHaveValue("Hold Up");
+    await expect(values.nth(2)).toHaveValue("Pray U Catch Me");
+    // Only in the form: the field is starred until it's saved.
+    await expect(stage.locator('[aria-label="title modified"]')).toBeVisible();
   });
 });

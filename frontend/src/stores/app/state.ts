@@ -20,9 +20,11 @@ import type { SchemaTable } from "../../query/schema";
 import { loadLog, type LogEntry } from "../../log/log";
 import { SETTINGS, type SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
+import type { FindOptions } from "../../record/findReplace";
 import type { AppEnv } from "../env";
 import {
   storedAudioQuality,
+  storedFindOptions,
   storedExpandedFolders,
   storedExplorerWidth,
   storedRecordSidebarWidth,
@@ -660,6 +662,9 @@ export interface AppState {
   showHiddenFields: boolean;
   /** The audio-streaming quality preference (persisted, like theme). */
   audioQuality: AudioQualityPref;
+  /** The toggles beside the record editor's Find box — match case, whole
+   * word, regular expression — for every form, and persisted. */
+  findOptions: FindOptions;
   /** The record-editor sidebar's width in CSS px — app-level (shared by every
    * query page) and persisted, like the explorer's open state. */
   recordSidebarWidth: number;
@@ -812,6 +817,7 @@ export function initialState(env: AppEnv): AppState {
     contextualQueries: { status: "loading", data: [] },
     showHiddenFields: false,
     audioQuality: storedAudioQuality(env),
+    findOptions: storedFindOptions(env),
     recordSidebarWidth: storedRecordSidebarWidth(env),
     rowPatch: undefined,
     rowReveal: undefined,

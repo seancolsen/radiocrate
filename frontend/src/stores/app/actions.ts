@@ -207,6 +207,7 @@ import {
   type QueryResult,
 } from "../../query/result";
 import { runRowDml } from "../../query/rowDml";
+import type { FindOptions } from "../../record/findReplace";
 import {
   applyPlacements,
   buildTree,
@@ -223,6 +224,7 @@ import {
   clampExplorerWidth,
   clampRecordSidebarWidth,
   persistAudioQuality,
+  persistFindOptions,
   persistExpandedFolders,
   persistExplorerWidth,
   persistRecordSidebarWidth,
@@ -484,6 +486,9 @@ export interface AppActions {
   setTheme: (pref: ThemePref) => void;
   /** Sets the audio-streaming quality preference — the Settings menu's action. */
   setAudioQuality: (pref: AudioQualityPref) => void;
+  /** Turns one of the record editor's find-and-replace toggles on or off, for
+   * every form from now on. */
+  setFindOption: (option: keyof FindOptions, on: boolean) => void;
   /** Open (or focus) a saved source in a tab: a query tab, or a playlist tab
    * for a playlist (`kind: "playlist"` with its `playlistId`). */
   openTab: (source: {
@@ -3617,6 +3622,12 @@ export function createAppActions(
       });
       persistAudioQuality(env, pref);
       audio?.logSettings();
+    },
+    setFindOption: (option, on) => {
+      set((s) => {
+        s.findOptions[option] = on;
+      });
+      persistFindOptions(env, get().findOptions);
     },
     openTab: (source) => openSource(source),
     openShortcutsTab: () => {
