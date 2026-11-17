@@ -1,3 +1,4 @@
+use backend::duckdb_server::DuckdbServerArgs;
 use backend::log::LogArgs;
 use backend::{db, scanner, server};
 use clap::{Args, Parser, Subcommand};
@@ -58,6 +59,9 @@ struct ServeArgs {
     /// Port to listen on
     #[arg(short, long, default_value_t = 3000)]
     port: u16,
+
+    #[command(flatten)]
+    duckdb_server: DuckdbServerArgs,
 }
 
 fn get_collection_path(path_str: &String) -> Result<&Path, String> {
@@ -95,6 +99,9 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Serve(args) => {
             let (collection_path, conn) = open_collection(&args.collection)?;
+            // Before the scan, which can take a while: a server that can't
+            // start fails the launch at once, and clients can read during it.
+            args.duckdb_server.start_if_enabled(&conn)?;
             if !args.no_scan {
                 scanner::scan(collection_path, &conn)?;
             }

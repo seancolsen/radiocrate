@@ -28,6 +28,10 @@ Options:
 - `--db-dir <DIR>` — the directory holding the database, `radiocrate.db`
   (default `.radiocrate` in the collection root). It is created if it doesn't
   exist yet.
+- `--duckdb-server` — let DuckDB clients, such as the `duckdb` CLI, query the
+  database while the server runs. See [Connecting DuckDB
+  clients](#connecting-duckdb-clients).
+- `--duckdb-server-port <PORT>` (default `9494`) — the port for `--duckdb-server`
 
 To scan a collection into its database without serving anything, use `scan` in
 place of `serve`. It takes the collection path and `--db-dir`, and exits when
@@ -86,7 +90,7 @@ The resulting binary is at `target/release/radiocrate`.
 ```
 
 Subcommands and options match the dev API server (`serve` / `scan`, `--port`,
-`--no-scan`, `--db-dir`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
+`--no-scan`, `--db-dir`, `--duckdb-server`). The web UI is served at `http://localhost:<port>/`; the API at `http://localhost:<port>/api/*`.
 
 ### Build Querydown's JS packages
 
@@ -109,6 +113,144 @@ Run it after changing the pin. `build-release` runs it too.
 ```sh
 cargo xtask clean-web
 ```
+
+## Connecting DuckDB clients
+
+DuckDB lets only one process open a database file at a time. While RadioCrate
+is running, `duckdb .radiocrate/radiocrate.db` fails with `Could not set lock
+on file`, even with `-readonly`. To query the database anyway, start RadioCrate
+with `--duckdb-server`. It then serves its database over DuckDB's Quack
+protocol, and the DuckDB CLI, or any other DuckDB 2.0 client, can attach to
+it.
+
+### 1. Start RadioCrate with the server on
+
+Pick a token. Clients present it to connect, and it must be at least 4
+characters long.
+
+```sh
+export RADIOCRATE_DUCKDB_TOKEN='a-long-random-string'
+./target/release/radiocrate serve /path/to/music --duckdb-server
+```
+
+The dev server takes the same flag: `cargo run -p backend -- serve
+/path/to/music --duckdb-server`. Once it's up, the log says:
+
+```text
+… INFO  backend::duckdb_server: DuckDB server listening uri="quack:localhost:9494"
+```
+
+The server starts before the startup scan, so you can connect while the scan
+runs. If you don't set `RADIOCRATE_DUCKDB_TOKEN`, RadioCrate makes up a new
+token on every start and logs it on the next line (`generated a DuckDB server
+token … token="…"`). Setting the variable keeps the token stable across
+restarts, and out of the log.
+
+The server listens on port 9494, DuckDB's default for Quack. Pass
+`--duckdb-server-port <PORT>` for another. It only accepts connections from
+the same machine.
+
+### 2. Connect with the DuckDB CLI
+
+Use the DuckDB CLI 2.0 or later (`duckdb --version`). In a second terminal,
+start it with no database file:
+
+```sh
+duckdb
+```
+
+Then attach to RadioCrate and route your session there:
+
+```sql
+ATTACH 'quack:localhost:9494' AS radiocrate (TOKEN 'a-long-random-string');
+CONNECT radiocrate;
+```
+
+From then on every statement runs inside RadioCrate, against the live
+database:
+
+```sql
+SHOW TABLES;
+SELECT title FROM track ORDER BY title LIMIT 10;
+SELECT count(*) FROM play;
+```
+
+`DISCONNECT;` returns you to the CLI's own local, in-memory session. Without
+`CONNECT` you can still reach the attached database by name, as in `FROM
+radiocrate.track`.
+
+The first time you attach, the CLI downloads DuckDB's `quack` extension, so
+that once needs network access.
+
+### Save the token so you can skip the ATTACH
+
+A persistent secret stores the token and the address, so connecting becomes a
+single flag. Run this once in the CLI:
+
+```sql
+CREATE PERSISTENT SECRET radiocrate (
+    TYPE quack,
+    TOKEN 'a-long-random-string',
+    SCOPE 'quack:localhost:9494'
+);
+```
+
+After that you can connect from the shell, either interactively or for a single
+query:
+
+```sh
+duckdb -connect quack:radiocrate
+duckdb -connect quack:radiocrate -c "SELECT count(*) FROM track"
+duckdb -connect quack:radiocrate -csv -c "SELECT name FROM artist ORDER BY name" > artists.csv
+```
+
+DuckDB keeps persistent secrets unencrypted under `~/.duckdb/stored_secrets/`.
+If the token changes, run `DROP PERSISTENT SECRET radiocrate;` and create the
+secret again.
+
+### From another machine
+
+The server only listens on localhost. To use it from elsewhere, forward the
+port over SSH, then connect on your own machine exactly as above:
+
+```sh
+ssh -L 9494:localhost:9494 you@radiocrate-host
+```
+
+Don't open the port to the network. Quack serves plain HTTP on localhost, and
+the token is the only thing protecting the database.
+
+### Before you write anything
+
+A connected client has the same SQL access RadioCrate has, including
+`INSERT`, `UPDATE`, `DELETE` and DDL. Reading is always safe. Writing works,
+but keep these in mind:
+
+- **Leave the schema alone.** RadioCrate's migrations own the tables. A table
+  you alter or drop can break the app or its next migration.
+- **Writes can collide.** If you change rows while RadioCrate writes the same
+  ones (during a scan, say), DuckDB rejects one of the two with a transaction
+  conflict. That could be yours or the app's.
+- **Writes aren't checkpointed at once.** RadioCrate checkpoints after each of
+  its own writes, but a client's commits stay in the write-ahead log until
+  DuckDB checkpoints on its own, RadioCrate next writes, or the app shuts
+  down. They're durable either way.
+
+### When it won't start
+
+`--duckdb-server` stops RadioCrate at startup, with the reason in the log,
+rather than run without the server you asked for:
+
+- **The `quack` extension couldn't be loaded.** RadioCrate downloads the
+  extension from `extensions.duckdb.org` the first time and caches it under
+  `~/.duckdb/extensions/`, so the first start needs network access. DuckDB
+  publishes no extensions for 32-bit ARM, so the flag doesn't work in the
+  Raspberry Pi build (`cargo xtask build-release-pi`).
+- **Another program answers on the port.** RadioCrate queries its own server
+  once at startup, and stops if the answer comes from a different database or
+  doesn't come at all. This usually means another DuckDB process is serving
+  the same port. Choose a different one with `--duckdb-server-port`, and use
+  that port in your `ATTACH` or secret.
 
 ## Installing as an app
 
