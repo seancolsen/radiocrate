@@ -690,10 +690,22 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
 
   // Per-node load tokens: only the newest load for a node may write its result.
   const tokens = new Map<string, number>();
+  /** The same for embedded record previews. Kept apart from {@link tokens}
+   * because a record and its preview share an id, and load independently: the
+   * record behind a scalar linked record field starts loading the moment the
+   * field opens — which a restored expansion does while the preview is still on
+   * its way — and must not cancel the preview. */
+  const embedTokens = new Map<string, number>();
   /** Fetches of records that a *save* has to delete (see
    * `loadRemovedChildren`), which is why a save waits for them. */
   const pendingRemovals = new Set<Promise<void>>();
   let tokenSeq = 0;
+  /** Cancels whatever is loading for an id — the record and its preview both —
+   * for a caller that has just discarded them. */
+  const cancelLoads = (id: string) => {
+    tokens.set(id, ++tokenSeq);
+    embedTokens.set(id, ++tokenSeq);
+  };
   /** Distinguishes the records the form creates, whose ids can't come from a
    * position in a loaded list. */
   let newSeq = 0;
@@ -1048,20 +1060,20 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       return;
     }
     const token = ++tokenSeq;
-    tokens.set(id, token);
+    embedTokens.set(id, token);
     setEmbed(id, { status: "loading", cells: [] });
     try {
       const { rows, columns } = await runDisplayQuery(
         embeddedRecordQuery(table, key, spec),
         opts.schemaJson,
       );
-      if (tokens.get(id) !== token) return;
+      if (embedTokens.get(id) !== token) return;
       setEmbed(id, {
         status: "loaded",
         ...embedPreview(rows[0] ?? [], columns, keyCells),
       });
     } catch (err) {
-      if (tokens.get(id) !== token) return;
+      if (embedTokens.get(id) !== token) return;
       console.error("embedded record preview failed", errorMessage(err));
       setEmbed(id, { status: "error", cells: keyCells });
     }
@@ -1434,7 +1446,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     spec: EmbedSpec,
   ) => {
     const token = ++tokenSeq;
-    tokens.set(id, token);
+    embedTokens.set(id, token);
     const key = [{ column: keyColumn, value }];
     if (spec.display.length === 0) {
       setEmbed(id, { status: "loaded", cells: [value] });
@@ -1445,13 +1457,13 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         embeddedRecordQuery(table, key, spec),
         opts.schemaJson,
       );
-      if (tokens.get(id) !== token) return;
+      if (embedTokens.get(id) !== token) return;
       setEmbed(id, {
         status: "loaded",
         ...embedPreview(rows[0] ?? [], columns, [value]),
       });
     } catch (err) {
-      if (tokens.get(id) !== token) return;
+      if (embedTokens.get(id) !== token) return;
       if (get().embeds[id]?.status !== "loaded") {
         setEmbed(id, { status: "error", cells: [value] });
       }
@@ -1547,7 +1559,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       field.key,
       get().records[recordId]?.values[field.column],
     );
-    for (const id of ids) tokens.set(id, ++tokenSeq);
+    for (const id of ids) cancelLoads(id);
     set((s) => {
       for (const id of ids) {
         delete s.records[id];
@@ -2122,7 +2134,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         delete s.records[id];
         if (chosen) s.embeds[id] = castDraft(chosen);
       });
-      tokens.set(id, ++tokenSeq);
+      cancelLoads(id);
     }
     setColumn(recordId, field.column, value);
     // The list it was expanded into is gone, so the field closes — onto the
@@ -2210,6 +2222,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       for (const timer of contextRefreshes.values()) clearTimeout(timer);
       contextRefreshes.clear();
       tokens.clear();
+      embedTokens.clear();
       items.clear();
       root = undefined;
     },
@@ -2822,7 +2835,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         delete s.records[id];
         s.expanded[fieldItemId(recordId, field.key)] = false;
       });
-      tokens.set(id, ++tokenSeq);
+      cancelLoads(id);
       // Every record the form is on comes to point at the picked one.
       setColumn(recordId, field.column, keyValue);
       set((s) => {
@@ -2913,7 +2926,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           ? undefined
           : variedChildId(recordId, field.key, from);
       if (old) {
-        tokens.set(old, ++tokenSeq);
+        cancelLoads(old);
         set((s) => {
           delete s.records[old];
           delete s.embeds[old];

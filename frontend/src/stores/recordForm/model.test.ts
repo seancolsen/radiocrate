@@ -1819,6 +1819,18 @@ describe("remembered expansion", () => {
     expect(s.expanded[tracks]).toBe(true);
   });
 
+  it("still previews a linked record it reopens", async () => {
+    // The record behind the field starts loading while its preview is still on
+    // its way, under the same id — and mustn't cancel it.
+    serveTracks();
+    const { expansion } = memory();
+    expansion.set("track", fieldItemId(ROOT_ID, "album"), true);
+    const model = await opened(expansion);
+    expect(
+      model.store.getState().embeds[scalarChildId(ROOT_ID, "album")],
+    ).toEqual({ status: "loaded", cells: ["Lemonade"], columns: [] });
+  });
+
   it("forgets what the user closes, and only that", async () => {
     serveTracks();
     const { expansion } = memory();
