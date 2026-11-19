@@ -17,8 +17,8 @@ import IconButton from "../ui/IconButton";
 import { TreeName, TreeNode, useFocusOnReveal } from "./Tree";
 
 // The Querydown prelude, on the Data structure page: an item of the tree that
-// opens into the prelude's editor, under a toolbar of Reset to default · Save …
-// and, at the far right, a "?" whose tooltip says what the prelude is for.
+// opens into the prelude's editor, under a toolbar of Reset to default · Save ·
+// a "?" whose tooltip says what the prelude is for.
 //
 // Edits are held in the app store's `preludeDraft` until Save, so closing the
 // item or switching tabs keeps them, and closing the page's tab drops them.
@@ -80,12 +80,10 @@ function PreludeEditor(): JSX.Element {
             />
           )}
         </button>
-        <div className="flex-1" />
         <IconButton
           icon={Icons.Help}
           label="Help"
           description={PRELUDE.description}
-          tooltipAlign="end"
         />
       </div>
       {problem && (

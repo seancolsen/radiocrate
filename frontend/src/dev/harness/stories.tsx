@@ -302,7 +302,8 @@ const PRESET_LISTS = ["album", "track"].flatMap((table) =>
 const TRACK_FIELDS = [tableItemId("track"), fieldsItemId("track")];
 
 /** `track` as the field stories have it: a contextual query among its fields,
- * and `disc_number` and the credits hidden. */
+ * and `disc_number` and the credits hidden — and on show, since the user has
+ * asked to see the hidden fields. */
 function seedTrackFields(stores: Stores): void {
   stores.app.store.setState((s) => {
     s.contextualQueries = {
@@ -320,6 +321,7 @@ function seedTrackFields(stores: Stores): void {
         ]),
       ),
     };
+    s.showHiddenFields = true;
   });
 }
 
@@ -1606,7 +1608,7 @@ export const STORIES: Record<string, Story> = {
   "data-structure/tables": dataStructure({ height: 420 }, []),
   // A table's fields: its columns with their types and statistics, the tables
   // referring to it, and a contextual query — `disc_number` and the credits
-  // hidden, and so faded.
+  // hidden, listed faded under the pressed "Show hidden fields".
   "data-structure/fields": dataStructure(
     { height: 600 },
     TRACK_FIELDS,
@@ -1636,7 +1638,7 @@ export const STORIES: Record<string, Story> = {
   ),
   // A table's fields as the database gives them, for the test to act on: the
   // "Add field" menu (which it opens, and shoots), a contextual query being
-  // added, a field's context menu.
+  // added, a field's context menu hiding it.
   "data-structure/add-field": dataStructure({ height: 420 }, TRACK_FIELDS),
   // A long way down a table's fields: the rows of everything they're within
   // stuck to the top of the page. (The scrolling is the test's.)

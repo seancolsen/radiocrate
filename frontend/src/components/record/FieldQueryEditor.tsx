@@ -279,7 +279,11 @@ const QuerySectionsView = forwardRef<
             />
           ))}
         </div>
-        <div className="flex-1" />
+        {/* With a × to close it (the record editor's), that's at the far end
+            and the tools are by it; without one (the Data structure page's, a
+            page wide enough to lose them at that end), they follow the
+            sections. */}
+        {onClose && <div className="flex-1" />}
         {props.tools}
         {props.help !== undefined && (
           <IconButton
@@ -287,7 +291,7 @@ const QuerySectionsView = forwardRef<
             label="Help"
             description={props.help}
             size="sm"
-            tooltipAlign="end"
+            tooltipAlign={onClose ? "end" : undefined}
           />
         )}
         {onClose && (

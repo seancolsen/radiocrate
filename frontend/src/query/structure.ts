@@ -100,20 +100,9 @@ export function isFieldExpandable(field: FormField): boolean {
   return field.kind !== "scalarLink" && hasQueryEditor(field);
 }
 
-const count = (n: number, one: string, many: string): string =>
+/** A count of things: "12,509 rows", "1 column". */
+export const countLabel = (n: number, one: string, many: string): string =>
   `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-
-/** A table's size: "7 columns × 12,509 rows" — or the columns alone, until its
- * rows have been counted. */
-export function tableSizeLabel(
-  columns: number,
-  rowCount: number | undefined,
-): string {
-  const cols = count(columns, "column", "columns");
-  return rowCount === undefined
-    ? cols
-    : `${cols} × ${count(rowCount, "row", "rows")}`;
-}
 
 /** A percentage with no more digits than it needs: whole, unless that would
  * round a few NULLs away to "0%" or call "100%" on a column that has values. */

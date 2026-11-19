@@ -47,8 +47,12 @@ export function fieldAppearance(field: FormField): {
 /** A field's label as a picture of the field and nothing more: the same pill,
  * with nothing to click, focus or drag. What stands for a field wherever the
  * field itself isn't being worked on — a row of the Data structure page's tree,
- * which is the thing in hand there. */
-export function FieldPill(props: { field: FormField }): JSX.Element {
+ * which is the thing in hand there. `rename`, while the field's name is being
+ * typed in place of it. */
+export function FieldPill(props: {
+  field: FormField;
+  rename?: LabelRename;
+}): JSX.Element {
   const look = fieldAppearance(props.field);
   const Icon = look.icon;
   return (
@@ -56,7 +60,15 @@ export function FieldPill(props: { field: FormField }): JSX.Element {
       className={`text-ink flex shrink-0 items-center gap-1 rounded-md border-2 border-transparent px-1.5 py-px text-xs/5 ${look.tint}`}
     >
       <Icon className="size-3.5 shrink-0 opacity-70" />
-      <span className="max-w-40 truncate">{props.field.label}</span>
+      {props.rename ? (
+        <LabelNameInput
+          label={`Name of ${props.field.label}`}
+          name={props.field.label}
+          rename={props.rename}
+        />
+      ) : (
+        <span className="max-w-40 truncate">{props.field.label}</span>
+      )}
     </span>
   );
 }

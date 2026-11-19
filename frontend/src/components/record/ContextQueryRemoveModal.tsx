@@ -5,15 +5,16 @@ import type { RecordFormModel } from "../../stores/recordForm";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { Modal } from "../ui/Modal";
 
-/** The confirmation before removing a contextual query, raised from its field's
- * context menu (`RecordFormActions.requestRemove`). Removing it takes its field
- * from every record of its table, so it's asked about first; cancelling (button,
- * scrim, or Esc) leaves it. Rendered once, at the form's root. */
-export default function ContextQueryRemoveModal(props: {
-  model: RecordFormModel;
+/** The confirmation before removing contextual query `queryId`, or nothing
+ * while there's none to ask about. Removing it takes its field from every
+ * record of its table, so it's asked about first; cancelling (button, scrim, or
+ * Esc) leaves it. Raised from a contextual query's context menu: the record
+ * editor's (below) and the Data structure page's. */
+export function RemoveQueryModal(props: {
+  queryId: string | null;
+  onClose: () => void;
 }): JSX.Element | null {
-  const { model } = props;
-  const queryId = useFormState(model, (s) => s.removing);
+  const { queryId, onClose } = props;
   const query = useApp((s) =>
     queryId === null ? undefined : selectContextualQuery(s, queryId),
   );
@@ -23,7 +24,7 @@ export default function ContextQueryRemoveModal(props: {
   const noun = nounFor(query.tableName, 1) ?? query.tableName;
 
   return (
-    <Modal onClose={() => model.cancelRemove()} width="300px">
+    <Modal onClose={onClose} width="300px">
       <h2 className="text-ink mb-3 text-base font-semibold">Remove query</h2>
       <p className="text-ink text-sm">
         Remove <span className="font-medium">&ldquo;{query.name}&rdquo;</span>{" "}
@@ -33,7 +34,7 @@ export default function ContextQueryRemoveModal(props: {
         <button
           type="button"
           className="control text-ink hover:bg-hover rounded-md"
-          onClick={() => model.cancelRemove()}
+          onClick={onClose}
         >
           Cancel
         </button>
@@ -41,7 +42,7 @@ export default function ContextQueryRemoveModal(props: {
           type="button"
           className="control bg-danger rounded-md text-white"
           onClick={() => {
-            model.cancelRemove();
+            onClose();
             removeContextualQuery(queryId);
           }}
         >
@@ -49,5 +50,18 @@ export default function ContextQueryRemoveModal(props: {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** The record editor's confirmation, for the query its form was asked to
+ * remove (`RecordFormActions.requestRemove`). Rendered once, at the form's
+ * root. */
+export default function ContextQueryRemoveModal(props: {
+  model: RecordFormModel;
+}): JSX.Element | null {
+  const { model } = props;
+  const queryId = useFormState(model, (s) => s.removing);
+  return (
+    <RemoveQueryModal queryId={queryId} onClose={() => model.cancelRemove()} />
   );
 }

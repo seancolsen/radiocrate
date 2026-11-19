@@ -643,9 +643,10 @@ export interface AppState {
    * versions: an edit shows here at once and is written once the app goes quiet,
    * as a query's is. Loaded once, as raw SQL. */
   contextualQueries: ResourceState<readonly ContextualQuery[]>;
-  /** Whether record editors show the fields the user has hidden. For the whole
-   * app rather than for one form, since a form lasts only as long as the
-   * selection stays on its records. */
+  /** Whether record editors, and the Data structure page's lists of fields,
+   * show the fields the user has hidden. For the whole app rather than for one
+   * form, since a form lasts only as long as the selection stays on its
+   * records. */
   showHiddenFields: boolean;
   /** The audio-streaming quality preference (persisted, like theme). */
   audioQuality: AudioQualityPref;

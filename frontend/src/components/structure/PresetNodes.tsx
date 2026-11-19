@@ -12,7 +12,13 @@ import { useApp, useAppActions } from "../../stores/react";
 import PresetRow from "../builder/PresetRow";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
-import { TreeEmpty, TreeName, TreeNode, useTreeRowProps } from "./Tree";
+import {
+  TreeCount,
+  TreeEmpty,
+  TreeName,
+  TreeNode,
+  useTreeRowProps,
+} from "./Tree";
 
 // A table's query settings on the Data structure page: its presets, a list for
 // each section of a query. A preset is the same row, with the same editor, as in
@@ -84,8 +90,8 @@ function ManagedPresetRow(props: { id: string; name: string }): JSX.Element {
   );
 }
 
-/** One table's presets for one section of a query, under a row whose "+" starts
- * another. */
+/** One table's presets for one section of a query, under a row that counts
+ * them and whose "+" starts another. */
 function PresetSectionNode(props: {
   table: string;
   section: Section;
@@ -103,6 +109,7 @@ function PresetSectionNode(props: {
         <>
           <SectionIcon className="text-ink-weak size-4 shrink-0" />
           <TreeName>{noun} presets</TreeName>
+          <TreeCount n={props.presets.length} one="preset" many="presets" />
         </>
       }
       actions={

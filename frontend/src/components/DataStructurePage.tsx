@@ -4,8 +4,8 @@ import { usesPreset } from "../query/definition";
 import { groupPresets, type PresetTableGroup } from "../query/presetGroups";
 import {
   TABLES_ITEM,
+  countLabel,
   tableItemId,
-  tableSizeLabel,
   tableSummary,
 } from "../query/structure";
 import { useApp, useAppActions } from "../stores/react";
@@ -13,7 +13,7 @@ import PresetDeleteModal from "./PresetDeleteModal";
 import { FieldsNode } from "./structure/FieldNodes";
 import { PreludeNode } from "./structure/PreludeNode";
 import { QuerySettingsNode } from "./structure/PresetNodes";
-import { TreeEmpty, TreeName, TreeNode, TreeNote } from "./structure/Tree";
+import { TreeCount, TreeEmpty, TreeName, TreeNode } from "./structure/Tree";
 import IconButton from "./ui/IconButton";
 import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 
@@ -21,7 +21,7 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 // as one tree in one tab.
 //
 //   Tables
-//     <table>              how many columns and rows it has
+//     <table>              how many rows and columns it has
 //       Fields             every field of its record editor form
 //         <field>          a column (with its type and statistics), the records
 //                          of another table that refer to it, or a contextual
@@ -46,7 +46,9 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 // The numbers come from `table.summarize`, read as the page opens and again on
 // Refresh: DuckDB's `SUMMARIZE` of every table, in one call.
 
-/** One table: its name and size, and under it its fields and query settings. A
+/** One table: its name and size — "12,509 rows × 7 columns", each count in a
+ * bubble, as the counts of what's under other rows are — and under it its
+ * fields and query settings. A
  * table presets were written for that the database no longer has is listed for
  * those presets alone. */
 function TableNode(props: { group: PresetTableGroup }): JSX.Element {
@@ -65,8 +67,20 @@ function TableNode(props: { group: PresetTableGroup }): JSX.Element {
         <>
           <Icons.Table className="text-ink-weak size-4 shrink-0" />
           <TreeName>{table}</TreeName>
+          {rowCount !== undefined && (
+            <>
+              <span className={COUNT_BUBBLE_CLASS}>
+                {countLabel(rowCount, "row", "rows")}
+              </span>
+              {columns !== undefined && (
+                <span className="text-ink-weak shrink-0 text-xs">×</span>
+              )}
+            </>
+          )}
           {columns !== undefined && (
-            <TreeNote>{tableSizeLabel(columns, rowCount)}</TreeNote>
+            <span className={COUNT_BUBBLE_CLASS}>
+              {countLabel(columns, "column", "columns")}
+            </span>
           )}
         </>
       }
@@ -127,12 +141,7 @@ function TablesNode(): JSX.Element {
         <>
           <Icons.Tables className="text-ink-weak size-4 shrink-0" />
           <TreeName>Tables</TreeName>
-          <span
-            className={COUNT_BUBBLE_CLASS}
-            aria-label={`${groups.length} ${groups.length === 1 ? "table" : "tables"}`}
-          >
-            {groups.length}
-          </span>
+          <TreeCount n={groups.length} one="table" many="tables" />
         </>
       }
       actions={

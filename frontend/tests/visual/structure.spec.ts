@@ -48,7 +48,7 @@ for (const colorScheme of SCHEMES) {
   // and the prelude closed under them.
   test(`data-structure/tables - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "data-structure/tables", colorScheme);
-    await expect(row(stage, "track 7 columns × 12,509 rows")).toHaveAttribute(
+    await expect(row(stage, "track 12,509 rows × 7 columns")).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -62,8 +62,8 @@ for (const colorScheme of SCHEMES) {
   });
 
   // A table's fields, scrolled up under its row: columns with their types and
-  // statistics, the hidden ones faded, then the related records and a
-  // contextual query, which have neither.
+  // statistics, the hidden ones faded under a pressed "Show hidden fields",
+  // then the related records and a contextual query, which have neither.
   test(`data-structure/fields - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "data-structure/fields", colorScheme);
     await scrollToTop(row(stage, /^track \d/));
@@ -71,6 +71,9 @@ for (const colorScheme of SCHEMES) {
       "11,876 distinct, 0% NULL",
     );
     await expect(row(stage, "featured Query")).toBeVisible();
+    await expect(
+      row(stage, "Fields").getByRole("button", { name: "Show hidden fields" }),
+    ).toHaveAttribute("aria-pressed", "true");
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/fields", colorScheme),
     );
@@ -460,9 +463,15 @@ test("a field's context menu hides it, and brings it back", async ({
   page,
 }) => {
   const stage = await openStory(page, "data-structure/add-field", "light");
+  const fields = row(stage, "Fields");
+  const showHidden = fields.getByRole("button", { name: "Show hidden fields" });
+  // Nothing hidden, nothing to show.
+  await expect(row(stage, "Fields 10 fields")).toBeVisible();
+  await expect(showHidden).toHaveCount(0);
+
   const title = row(stage, "title Column");
   await title.click({ button: "right" });
-  // Hiding is all the menu offers.
+  // Hiding is all the menu offers a column.
   await expect(page.getByRole("menuitem")).toHaveCount(1);
   await page.getByRole("menuitem", { name: "Hide field" }).click();
   await expect
@@ -477,7 +486,15 @@ test("a field's context menu hides it, and brings it back", async ({
         },
       },
     ]);
-  // It stays listed, faded.
+  // It's gone from the list, and the toggle that shows it is there.
+  await expect(title).toHaveCount(0);
+  await expect(row(stage, "Fields 9 fields")).toBeVisible();
+  await expect(showHidden).toHaveAttribute("aria-pressed", "false");
+
+  // Shown, it's listed faded.
+  await showHidden.click();
+  await expect(showHidden).toHaveAttribute("aria-pressed", "true");
+  await expect(row(stage, "Fields 10 fields")).toBeVisible();
   await expect(title.locator(".opacity-60")).toHaveCount(1);
 
   await title.click({ button: "right" });
@@ -486,6 +503,55 @@ test("a field's context menu hides it, and brings it back", async ({
   await expect
     .poll(async () => (await calls(page, "metadata.field.set_visible")).length)
     .toBe(2);
+  // With nothing hidden, there's nothing for the toggle to show.
+  await expect(showHidden).toHaveCount(0);
+});
+
+test("a contextual query's context menu renames it, and removes it", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/fields", "light");
+  const dml = async () => (await calls(page, "dml")).length;
+  await row(stage, "featured Query").click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Rename",
+    "Hide field",
+    "Remove",
+  ]);
+
+  // Renamed in place, and the row has the keyboard back.
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const name = stage.getByLabel("Name of featured");
+  await expect(name).toBeFocused();
+  await name.fill("guest spots");
+  await name.press("Enter");
+  const renamed = row(stage, "guest spots Query");
+  await expect(renamed).toBeFocused();
+  await expect.poll(dml).toBe(1);
+
+  // Escape backs out of a rename.
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await stage.getByLabel("Name of guest spots").fill("nope");
+  await page.keyboard.press("Escape");
+  await expect(renamed).toBeFocused();
+
+  // Removing asks first.
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Remove “guest spots” from every track?");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(renamed).toBeVisible();
+
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(renamed).toHaveCount(0);
+  await expect.poll(dml).toBe(2);
 });
 
 test("Add field adds a contextual query, and opens it on its filter", async ({
@@ -613,7 +679,7 @@ test("Settings opens the page, which reads the statistics once and again on Refr
   await page.getByRole("menuitem", { name: "Data structure" }).click();
   const tree = page.getByTestId("data-structure");
   await expect(page.locator("[data-tab-id]")).toHaveText(["Data structure"]);
-  await expect(row(tree, "track 7 columns × 12,509 rows")).toBeVisible();
+  await expect(row(tree, "track 12,509 rows × 7 columns")).toBeVisible();
   expect(summaries()).toBe(1);
 
   // Coming back to the tab doesn't read them again; Refresh does.

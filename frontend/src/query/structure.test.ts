@@ -6,11 +6,11 @@ import { queryEditorSections } from "./fieldQuery";
 import type { SchemaTable } from "./schema";
 import {
   columnStatsLabel,
+  countLabel,
   isFieldExpandable,
   presetSectionPath,
   structureFieldKind,
   structureFields,
-  tableSizeLabel,
 } from "./structure";
 
 const column = (name: string, type = "VARCHAR", nullable = true) => ({
@@ -146,15 +146,11 @@ describe("presetSectionPath", () => {
   });
 });
 
-describe("tableSizeLabel", () => {
-  it("counts columns and rows", () => {
-    expect(tableSizeLabel(7, 12509)).toBe("7 columns × 12,509 rows");
-    expect(tableSizeLabel(1, 1)).toBe("1 column × 1 row");
-    expect(tableSizeLabel(3, 0)).toBe("3 columns × 0 rows");
-  });
-
-  it("says only the columns until the rows are counted", () => {
-    expect(tableSizeLabel(7, undefined)).toBe("7 columns");
+describe("countLabel", () => {
+  it("counts, singular or plural, with thousands separated", () => {
+    expect(countLabel(12509, "row", "rows")).toBe("12,509 rows");
+    expect(countLabel(1, "column", "columns")).toBe("1 column");
+    expect(countLabel(0, "row", "rows")).toBe("0 rows");
   });
 });
 

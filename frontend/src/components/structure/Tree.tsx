@@ -13,7 +13,7 @@ import {
 } from "react";
 import { Icons } from "../../icons";
 import { useApp, useAppActions } from "../../stores/react";
-import { cx } from "../ui/cx";
+import { COUNT_BUBBLE_CLASS, cx } from "../ui/cx";
 
 // The Data structure page's tree: what every item of it shares, whatever it
 // stands for — a row with a chevron, what's under it indented below a tree
@@ -192,8 +192,8 @@ export function useTreeRowProps(item: {
 
 /** One item of the tree: its row, and, while it's open, what's under it.
  *
- * `label` is the row: what the item is. `actions` are its controls, at the
- * row's far end. A row with `children` to show (`expandable`) opens and closes
+ * `label` is the row: what the item is. `actions` are its controls, right
+ * after it. A row with `children` to show (`expandable`) opens and closes
  * on a click anywhere but its controls — every item beside it too, on a
  * Ctrl+Click — and stays in view while what's under it is scrolled: it sticks to
  * the top of the page, under the rows of the items it's within.
@@ -275,8 +275,11 @@ export function TreeNode(props: {
             {expandable &&
               (expanded ? <Icons.ExpandOpen /> : <Icons.ExpandClosed />)}
           </span>
+          {/* The controls follow the label, rather than sitting at the row's
+              far end: on a page as wide as this one, they'd be a long way
+              from what they're about. */}
           <div
-            className={cx("flex min-w-0 flex-1 items-center gap-1.5", {
+            className={cx("flex min-w-0 items-center gap-1.5", {
               "opacity-60": props.dimmed,
             })}
           >
@@ -285,7 +288,7 @@ export function TreeNode(props: {
           {props.actions && (
             // A control on the row acts for itself: its click isn't the row's.
             <div
-              className="flex shrink-0 cursor-default items-center gap-0.5"
+              className="ml-1 flex shrink-0 cursor-default items-center gap-0.5"
               onClick={(e) => e.stopPropagation()}
             >
               {props.actions}
@@ -330,5 +333,23 @@ export function TreeNote(props: { children: ReactNode }): JSX.Element {
 export function TreeEmpty(props: { children: ReactNode }): JSX.Element {
   return (
     <div className="text-ink-weak py-1 pl-5 text-xs">{props.children}</div>
+  );
+}
+
+/** How many items are under a row, in a bubble: "12", read out as "12
+ * fields". */
+export function TreeCount(props: {
+  n: number;
+  one: string;
+  many: string;
+}): JSX.Element {
+  const { n } = props;
+  return (
+    <span
+      className={COUNT_BUBBLE_CLASS}
+      aria-label={`${n.toLocaleString("en-US")} ${n === 1 ? props.one : props.many}`}
+    >
+      {n.toLocaleString("en-US")}
+    </span>
   );
 }
