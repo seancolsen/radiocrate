@@ -8,8 +8,8 @@
 // here ever asks about.
 
 import type { FieldMetadataRow, FieldOrder, FieldRef } from "api-client";
-import { dropPositions } from "./playlistEntries";
 import { fieldRef, type FormField } from "./recordForm";
+import { byOrder, moveOrders } from "./sortKeys";
 
 /** What's customized about one field. */
 export interface FieldMetadata {
@@ -118,21 +118,14 @@ export function anyFieldHidden(metadata: MetadataByTable): boolean {
   );
 }
 
-/** `items`, given in their default order, in the order the user has arranged them:
- * those with a sort key first, by that key, then those without, as they came. */
-function byOrder<T>(
+/** `items`, given in their default order, in the order the user has arranged
+ * them (see `sortKeys.ts`). */
+function byFieldOrder<T>(
   items: readonly T[],
   refOf: (item: T) => FieldRef,
   metadata: TableMetadata,
 ): T[] {
-  const rank = (item: T) =>
-    metadata[fieldRefKey(refOf(item))]?.order ?? Infinity;
-  // `sort` is stable, which is what keeps the rest in their default order. Not
-  // a subtraction, because two infinities subtract to NaN.
-  return [...items].sort((a, b) => {
-    const [x, y] = [rank(a), rank(b)];
-    return x < y ? -1 : x > y ? 1 : 0;
-  });
+  return byOrder(items, (item) => metadata[fieldRefKey(refOf(item))]?.order);
 }
 
 /** `fields`, given in their default order, in the order the user has arranged
@@ -141,7 +134,7 @@ export function orderFields<F extends FormField>(
   fields: readonly F[],
   metadata: TableMetadata,
 ): F[] {
-  return byOrder(fields, fieldRef, metadata);
+  return byFieldOrder(fields, fieldRef, metadata);
 }
 
 /** The fields a form shows, in the order it shows them. */
@@ -172,7 +165,7 @@ export function appendFieldOrders(
   added: FieldRef,
 ): FieldOrder[] {
   const key = fieldRefKey(added);
-  const others = byOrder(
+  const others = byFieldOrder(
     refs.filter((ref) => fieldRefKey(ref) !== key),
     (ref) => ref,
     metadata,
@@ -211,33 +204,12 @@ export function fieldMoveOrders(
   above: FieldRef | undefined,
   below: FieldRef | undefined,
 ): FieldOrder[] {
-  const current = byOrder(refs, (ref) => ref, metadata);
-  const indexOf = (list: readonly FieldRef[], ref: FieldRef) =>
-    list.findIndex((other) => fieldRefKey(other) === fieldRefKey(ref));
-  const from = indexOf(current, moved);
-  if (from < 0) return [];
-  const rest = current.filter((_, i) => i !== from);
-  const at =
-    above !== undefined
-      ? indexOf(rest, above) + 1
-      : below !== undefined
-        ? indexOf(rest, below)
-        : -1;
-  // A neighbor the table no longer has leaves nothing to go by: the index is -1,
-  // or 0 once `above` has added its 1.
-  if (at < 0 || (above !== undefined && at === 0)) return [];
-  if (at === from) return [];
-
-  const orderOf = (ref: FieldRef | undefined) =>
-    ref === undefined
-      ? undefined
-      : (metadata[fieldRefKey(ref)]?.order ?? undefined);
-  if (current.every((ref) => orderOf(ref) !== undefined)) {
-    const fit = dropPositions(orderOf(rest[at - 1]), orderOf(rest[at]), 1);
-    if (fit) return [{ field: moved, order: fit[0] }];
-  }
-  const next = [...rest.slice(0, at), moved, ...rest.slice(at)];
-  return next.flatMap((field, i) =>
-    orderOf(field) === i + 1 ? [] : [{ field, order: i + 1 }],
-  );
+  return moveOrders(
+    refs,
+    fieldRefKey,
+    (ref) => metadata[fieldRefKey(ref)]?.order,
+    moved,
+    above,
+    below,
+  ).map(({ item, order }) => ({ field: item, order }));
 }
