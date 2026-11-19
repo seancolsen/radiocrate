@@ -18,10 +18,12 @@ import {
   tableItemId,
   tableSummary,
 } from "../query/structure";
+import { pluralOrRaw } from "../query/entityNames";
 import { isTableHidden, orderTables } from "../query/tableSettings";
 import { useApp, useAppActions } from "../stores/react";
 import PresetDeleteModal from "./PresetDeleteModal";
 import { FieldsNode } from "./structure/FieldNodes";
+import TableChip from "./structure/TableChip";
 import { PreludeNode } from "./structure/PreludeNode";
 import { QuerySettingsNode } from "./structure/PresetNodes";
 import { TreeCount, TreeEmpty, TreeName, TreeNode } from "./structure/Tree";
@@ -49,6 +51,8 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 //         Text search      the table's prelude settings, each opening into
 //         Linked record    its expression's editor
 //           comparison
+//         Custom           the conditions a filter on the table compares its
+//           comparisons    records by, under names of their own
 //         Record picker    the sorting and display the record picker on the
 //                          table opens with
 //   Querydown prelude      the editor of the user's own prelude
@@ -68,10 +72,11 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 // Refresh: DuckDB's `SUMMARIZE` of every table, in one call.
 
 /** One table: its name and size — "12,509 rows × 7 columns", each count in a
- * bubble, as the counts of what's under other rows are — and under it its
- * fields and query settings. A table presets were written for that the
- * database no longer has is listed for those presets alone. A table the user
- * has hidden, listed because they've asked to see those, is faded. */
+ * bubble, as the counts of what's under other rows are — a button opening all
+ * its records in a new query, and under it its fields and query settings. A
+ * table presets were written for that the database no longer has is listed for
+ * those presets alone. A table the user has hidden, listed because they've
+ * asked to see those, is faded. */
 function TableNode(props: {
   group: PresetTableGroup;
   hidden: boolean;
@@ -86,6 +91,7 @@ function TableNode(props: {
   const rowCount = useApp(
     (s) => tableSummary(s.tableSummaries.data, table)?.rowCount,
   );
+  const { openTableRecords } = useAppActions();
   return (
     <TreeNode
       id={tableItemId(table)}
@@ -96,8 +102,7 @@ function TableNode(props: {
       onContextMenu={props.onContextMenu}
       label={
         <>
-          <Icons.Table className="text-ink-weak size-4 shrink-0" />
-          <TreeName>{table}</TreeName>
+          <TableChip table={table} />
           {rowCount !== undefined && (
             <>
               <span className={COUNT_BUBBLE_CLASS}>
@@ -115,6 +120,16 @@ function TableNode(props: {
           )}
         </>
       }
+      actions={
+        columns !== undefined && (
+          <IconButton
+            icon={Icons.OpenInTab}
+            size="sm"
+            label={`Open all ${pluralOrRaw(table)} in new tab`}
+            onClick={() => openTableRecords(table)}
+          />
+        )
+      }
     >
       {columns !== undefined && <FieldsNode table={table} />}
       <QuerySettingsNode
@@ -128,8 +143,8 @@ function TableNode(props: {
 
 /** "Tables": how many are listed, Refresh — which reads them and their
  * statistics again, and spins while it does — the toggle that lists the hidden
- * ones too (while there are any), and the tables, in the order the user has
- * dragged them into. A table's context menu hides it from every list of
+ * ones too (while there are any, and the list is open), and the tables, in the
+ * order the user has dragged them into. A table's context menu hides it from every list of
  * tables, or brings it back; on a touch screen, holding it raises the menu. */
 function TablesNode(): JSX.Element {
   const presets = useApp((s) => s.presets);
@@ -141,6 +156,8 @@ function TablesNode(): JSX.Element {
   const schemaStatus = useApp((s) => s.schema.status);
   const settings = useApp((s) => s.tableSettings.data);
   const showHidden = useApp((s) => s.showHiddenTables);
+  // The toggle is about what's listed under the row: shown only while it is.
+  const open = useApp((s) => s.structure.expanded[TABLES_ITEM] === true);
   const reading = useApp(
     (s) =>
       s.tableSummaries.status === "loading" || s.schema.status === "loading",
@@ -235,7 +252,7 @@ function TablesNode(): JSX.Element {
               iconClassName={reading ? "animate-spin" : undefined}
               onClick={() => refreshStructure()}
             />
-            {hiddenCount > 0 && (
+            {open && hiddenCount > 0 && (
               <IconButton
                 icon={Icons.Show}
                 size="sm"

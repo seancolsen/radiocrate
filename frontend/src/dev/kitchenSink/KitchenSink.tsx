@@ -12,6 +12,7 @@ import {
 import type { FormField, ValueType } from "../../query/recordForm";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import FieldLabel from "../../components/record/FieldLabel";
+import TableChip from "../../components/structure/TableChip";
 import ModifiedStar from "../../components/record/ModifiedStar";
 import EmbeddedRecord from "../../components/record/EmbeddedRecord";
 import {
@@ -291,6 +292,9 @@ function FieldLabels(): JSX.Element {
           ))}
         </Row>
         <Row>
+          <Specimen caption="table (Data structure)">
+            <TableChip table="track" />
+          </Specimen>
           <Specimen caption="modified">
             <span className="relative">
               <ModifiedStar label="Modified" />

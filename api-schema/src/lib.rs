@@ -375,6 +375,36 @@ pub struct MetadataComputedColumnDeleteParams {
     pub name: String,
 }
 
+/// One row of `metadata.custom_comparison`: a custom comparison the user has
+/// defined on a table, or their condition for one of the app's own. See migration
+/// 0015.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomComparisonRow {
+    pub table_name: String,
+    pub name: String,
+    /// Querydown: the condition, `@x` standing for the value compared. `None`
+    /// goes by the app's condition, for one of its own comparisons.
+    pub expression: Option<String>,
+}
+
+/// Params for `metadata.custom_comparison.rename`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataCustomComparisonRenameParams {
+    pub table_name: String,
+    pub name: String,
+    pub new_name: String,
+}
+
+/// Params for `metadata.custom_comparison.delete`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataCustomComparisonDeleteParams {
+    pub table_name: String,
+    pub name: String,
+}
+
 /// One row of `metadata.table`: what the user has customized about one table as a
 /// whole. A table with no row is visible, in its default place, and goes by the
 /// app's defaults for all of its Querydown. See migration 0013.
@@ -691,6 +721,30 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "metadata.custom_comparison.list",
+        func: "metadataCustomComparisonList",
+        params: None,
+        result: "CustomComparisonRow[]",
+    },
+    Method {
+        wire: "metadata.custom_comparison.set",
+        func: "metadataCustomComparisonSet",
+        params: Some("CustomComparisonRow"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.custom_comparison.rename",
+        func: "metadataCustomComparisonRename",
+        params: Some("MetadataCustomComparisonRenameParams"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.custom_comparison.delete",
+        func: "metadataCustomComparisonDelete",
+        params: Some("MetadataCustomComparisonDeleteParams"),
+        result: "null",
+    },
+    Method {
         wire: "table.summarize",
         func: "tableSummarize",
         params: None,
@@ -765,6 +819,15 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", ComputedColumnRow::decl(&cfg)),
         format!("export {}", MetadataComputedColumnRenameParams::decl(&cfg)),
         format!("export {}", MetadataComputedColumnDeleteParams::decl(&cfg)),
+        format!("export {}", CustomComparisonRow::decl(&cfg)),
+        format!(
+            "export {}",
+            MetadataCustomComparisonRenameParams::decl(&cfg)
+        ),
+        format!(
+            "export {}",
+            MetadataCustomComparisonDeleteParams::decl(&cfg)
+        ),
         format!("export {}", ColumnSummary::decl(&cfg)),
         format!("export {}", TableSummary::decl(&cfg)),
     ]

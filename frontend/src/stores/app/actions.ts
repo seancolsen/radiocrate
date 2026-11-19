@@ -26,6 +26,10 @@ import {
   metadataComputedColumnList,
   metadataComputedColumnRename,
   metadataComputedColumnSet,
+  metadataCustomComparisonDelete,
+  metadataCustomComparisonList,
+  metadataCustomComparisonRename,
+  metadataCustomComparisonSet,
   metadataFieldList,
   metadataFieldSetDisplay,
   metadataFieldSetOrder,
@@ -36,6 +40,7 @@ import {
   metadataTableSetQuerydown,
   metadataTableSetVisible,
   type ComputedColumnRow,
+  type CustomComparisonRow,
   type FieldRef,
   type DmlOperation,
   type DmlResult,
@@ -152,6 +157,8 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import {
+  comparisonItemId,
+  comparisonPath,
   computedColumnPath,
   defaultFields,
   PRELUDE_ITEM,
@@ -196,6 +203,13 @@ import {
   takenComputedNames,
   withComputedExpression,
 } from "../../query/computedColumns";
+import {
+  availableComparisonName,
+  builtInComparison,
+  findComparisonRow,
+  takenComparisonNames,
+  withComparisonExpression,
+} from "../../query/customComparisons";
 import {
   contextTabDefinition,
   DEFAULT_CONTEXTUAL_QUERY_NAME,
@@ -532,6 +546,37 @@ export interface AppActions {
   /** Deletes one of the user's computed columns, its field going from every
    * record editor, along with what was customized about it. */
   removeComputedColumn: (table: string, name: string) => void;
+
+  /** Loads the user's side of every table's custom comparisons. */
+  loadCustomComparisons: () => Promise<void>;
+  /** Defines a custom comparison on `table`, with no condition yet. It's named
+   * for what the user `typed`, made into a name a filter can say and one no
+   * other comparison on the table has (`availableComparisonName`): the name it
+   * got is what's returned. */
+  addCustomComparison: (table: string, typed: string) => string;
+  /** Renames one of the user's custom comparisons, for what they `typed`, as
+   * `addCustomComparison` names one. Returns the name it has afterwards: the
+   * one it had, when there was nothing to change (or it's one of the app's
+   * own, whose name is fixed). */
+  renameCustomComparison: (
+    table: string,
+    name: string,
+    typed: string,
+  ) => string;
+  /** Sets a custom comparison's condition. For one of the app's own, this is
+   * the user's condition in place of the app's, and null goes back to the
+   * app's. Shows at once; the write waits for the app to go quiet — except
+   * null, which goes straight out. */
+  setCustomComparisonExpression: (
+    table: string,
+    name: string,
+    expression: string | null,
+  ) => void;
+  /** Sends a write `setCustomComparisonExpression` is holding back, the user
+   * having left its editor. */
+  flushCustomComparison: (table: string, name: string) => void;
+  /** Deletes one of the user's custom comparisons. */
+  removeCustomComparison: (table: string, name: string) => void;
 
   /** Loads every table's contextual queries. */
   loadContextualQueries: () => Promise<void>;
@@ -889,6 +934,10 @@ export interface AppActions {
    * taking the caret. It's pristine: its rows aren't loaded until the user
    * edits it or asks for them (`QueryTab.pristine`). */
   newQueryTab: () => void;
+  /** Open every record of `table` in a new unsaved query tab, beside the
+   * active one: the table's default sorting and display, and none of its
+   * default filter presets. */
+  openTableRecords: (table: string) => void;
   /** Step `tabId`'s page back by one step of its undo history (see
    * `state/undoHistory.ts`): for the query page, back to the definition it ran
    * before this one. An edit not yet run is a step of its own, so it's what
@@ -1231,12 +1280,14 @@ export interface AppActions {
 }
 
 /** What `openStructureTab` opens the tree down to: a table's presets (all three
- * sections, or one of them), the editor of one of a table's prelude settings
- * or of one of its computed columns, or the Querydown prelude's editor. */
+ * sections, or one of them), the editor of one of a table's prelude settings,
+ * computed columns or custom comparisons, or the Querydown prelude's
+ * editor. */
 export type StructureReveal =
   | { table: string; section?: Section }
   | { table: string; setting: PreludeSetting }
   | { table: string; computedColumn: string }
+  | { table: string; comparison: string }
   | "prelude";
 
 /** How long a confirmation toast stays on screen. */
@@ -3477,6 +3528,20 @@ export function createAppActions(
   const computedColumnSaveKey = (table: string, name: string) =>
     `computed-column\n${table}\n${name}`;
 
+  // Custom comparison writes go out one at a time, so a rename reaches the
+  // database after the condition typed just before it.
+  let comparisonWrites: Promise<unknown> = Promise.resolve();
+  const writeComparison = (write: () => Promise<unknown>) => {
+    comparisonWrites = comparisonWrites.then(write).catch((err) => {
+      // What's stored goes back on screen.
+      console.error("custom comparison write failed", err);
+      return actions.loadCustomComparisons();
+    });
+    return comparisonWrites;
+  };
+  const comparisonSaveKey = (table: string, name: string) =>
+    `custom-comparison\n${table}\n${name}`;
+
   // Contextual query writes go out one at a time too, for the same reason.
   let contextualQueryWrites: Promise<unknown> = Promise.resolve();
   const writeContextualQuery = (write: () => Promise<unknown>) => {
@@ -3914,6 +3979,146 @@ export function createAppActions(
         metadataComputedColumnDelete({ tableName: table, name }),
       );
       // The rows on screen may have been compiled with the column.
+      rerunOpenPages();
+    },
+
+    loadCustomComparisons: async () => {
+      try {
+        const rows = (await metadataCustomComparisonList()) ?? [];
+        set((s) => {
+          // A condition still waiting to be written stays on screen.
+          let data: readonly CustomComparisonRow[] = rows;
+          for (const local of s.customComparisons.data) {
+            if (saves.has(comparisonSaveKey(local.tableName, local.name))) {
+              data = withComparisonExpression(
+                data,
+                local.tableName,
+                local.name,
+                local.expression,
+              );
+            }
+          }
+          s.customComparisons = { status: "ready", data: castDraft(data) };
+        });
+      } catch (err) {
+        // Every table has the app's own comparisons, as the app has them.
+        console.error("custom comparison list failed", err);
+        set((s) => {
+          s.customComparisons.status = "error";
+        });
+      }
+    },
+    addCustomComparison: (table, typed) => {
+      const name = availableComparisonName(
+        typed,
+        takenComparisonNames(get().customComparisons.data, table),
+      );
+      const row: CustomComparisonRow = {
+        tableName: table,
+        name,
+        expression: "",
+      };
+      set((s) => {
+        s.customComparisons.data = [...s.customComparisons.data, row];
+      });
+      void writeComparison(() => metadataCustomComparisonSet(row));
+      return name;
+    },
+    renameCustomComparison: (table, name, typed) => {
+      const rows = get().customComparisons.data;
+      if (
+        typed.trim() === "" ||
+        builtInComparison(table, name) !== null ||
+        !findComparisonRow(rows, table, name)
+      ) {
+        return name;
+      }
+      const next = availableComparisonName(
+        typed,
+        takenComparisonNames(rows, table, name),
+      );
+      if (next === name) return name;
+      // What's waiting to be written is the old name's: it goes first.
+      saves.flush(comparisonSaveKey(table, name));
+      set((s) => {
+        s.customComparisons.data = s.customComparisons.data.map((row) =>
+          row.tableName === table && row.name === name
+            ? { ...row, name: next }
+            : row,
+        );
+        // What's open on the Data structure page stays open.
+        const m = s.structure;
+        const before = comparisonItemId(table, name);
+        const after = comparisonItemId(table, next);
+        if (m.expanded[before]) m.expanded[after] = true;
+        delete m.expanded[before];
+        if (m.reveal === before) m.reveal = after;
+      });
+      void writeComparison(() =>
+        metadataCustomComparisonRename({
+          tableName: table,
+          name,
+          newName: next,
+        }),
+      );
+      // The rows on screen were compiled under the comparison's old name.
+      rerunOpenPages();
+      return next;
+    },
+    setCustomComparisonExpression: (table, name, expression) => {
+      const stored = findComparisonRow(
+        get().customComparisons.data,
+        table,
+        name,
+      );
+      if (stored && (stored.expression ?? null) === expression) return;
+      // One of the app's own, never customized, has no row to go back from.
+      if (!stored && expression === null) return;
+      set((s) => {
+        s.customComparisons.data = withComparisonExpression(
+          s.customComparisons.data,
+          table,
+          name,
+          expression,
+        );
+      });
+      const key = comparisonSaveKey(table, name);
+      saves.defer(key, () => {
+        // What's written is what's on screen when it goes out — unless the
+        // comparison has gone in the meantime.
+        const latest = findComparisonRow(
+          get().customComparisons.data,
+          table,
+          name,
+        );
+        if (!latest) return Promise.resolve();
+        // The rows on screen were compiled under the condition before it.
+        rerunOpenPages();
+        return writeComparison(() => metadataCustomComparisonSet(latest));
+      });
+      if (expression === null) saves.flush(key);
+    },
+    flushCustomComparison: (table, name) =>
+      saves.flush(comparisonSaveKey(table, name)),
+    removeCustomComparison: (table, name) => {
+      const rows = get().customComparisons.data;
+      if (
+        builtInComparison(table, name) !== null ||
+        !findComparisonRow(rows, table, name)
+      ) {
+        return;
+      }
+      saves.cancel(comparisonSaveKey(table, name));
+      set((s) => {
+        s.customComparisons.data = s.customComparisons.data.filter(
+          (row) => !(row.tableName === table && row.name === name),
+        );
+        delete s.structure.expanded[comparisonItemId(table, name)];
+      });
+      void writeComparison(() =>
+        metadataCustomComparisonDelete({ tableName: table, name }),
+      );
+      // The rows on screen may have been compiled with the comparison.
       rerunOpenPages();
     },
 
@@ -4829,6 +5034,16 @@ export function createAppActions(
       });
     },
     newQueryTab: () => openNewQuery(null),
+    openTableRecords: (table) => {
+      const { presets, tabs, activeTabId } = get();
+      const def = definitionForBase(table, presets);
+      def.filter = { custom: "", presets: [] };
+      const beside = tabs.findIndex((t) => t.id === activeTabId);
+      openUnsavedTab(def, {
+        index: beside === -1 ? undefined : beside + 1,
+        name: relatedRecordsTabName(table, undefined),
+      });
+    },
     openRecordsTab: (besideTabId, query, name) => {
       openRecords(besideTabId, query, name);
     },
@@ -5010,6 +5225,11 @@ export function createAppActions(
         actions.openStructureTab({
           table: origin.table,
           computedColumn: origin.name,
+        });
+      } else if (origin.kind === "customComparison") {
+        actions.openStructureTab({
+          table: origin.table,
+          comparison: origin.name,
         });
       } else if (origin.kind === "full") {
         // There's only the one editor; any section's focus request opens it.
@@ -5501,6 +5721,8 @@ export function createAppActions(
               fieldRefKey({ computedColumn: reveal.computedColumn })
             ]?.visible === false;
           if (hidden) s.showHiddenFields = true;
+        } else if ("comparison" in reveal) {
+          path = comparisonPath(reveal.table, reveal.comparison);
         } else {
           path = presetSectionPath(reveal.table, reveal.section);
         }

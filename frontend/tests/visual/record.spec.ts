@@ -1023,7 +1023,7 @@ test.describe("rearranging fields", () => {
             ?.fkColumnName === "track",
       ),
     ).toBe(true);
-    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "number" });
+    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "playcount" });
 
     await dragLabel(page, stage, "id", "title", 0.1);
     await page.mouse.up();
@@ -1337,7 +1337,6 @@ test.describe("computed columns", () => {
     expect(await shown("artists")).toBe("artists [Beyoncé]");
     expect(await shown("year")).toBe("year 2016");
     expect(await shown("playcount")).toBe("playcount 2");
-    expect(await shown("number")).toBe("number 1");
     // Nothing of theirs is a text box to type into.
     await expect(computedRow(stage, "year").getByRole("textbox")).toHaveCount(
       0,

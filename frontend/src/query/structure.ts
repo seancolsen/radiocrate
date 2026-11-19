@@ -19,6 +19,8 @@
 //         Linked record comparison
 //                               table:<name>/query/linkedRecordComparison
 //         Record picker         table:<name>/query/recordPicker
+//         Custom comparisons    table:<name>/query/comparisons
+//           <comparison>        table:<name>/query/comparisons/<name>
 //   Querydown prelude           prelude
 //
 // An id is only ever compared whole, never taken apart, so a table named with a
@@ -92,6 +94,24 @@ export function computedColumnPath(table: string, name: string): string[] {
     tableItemId(table),
     fieldsItemId(table),
     structureFieldId(table, { computedColumn: name }),
+  ];
+}
+
+export const comparisonsItemId = (table: string): string =>
+  `${querySettingsItemId(table)}/comparisons`;
+
+export const comparisonItemId = (table: string, name: string): string =>
+  `${comparisonsItemId(table)}/${name}`;
+
+/** The items to open for the editor of `table`'s custom comparison `name` to
+ * be on show. */
+export function comparisonPath(table: string, name: string): string[] {
+  return [
+    TABLES_ITEM,
+    tableItemId(table),
+    querySettingsItemId(table),
+    comparisonsItemId(table),
+    comparisonItemId(table, name),
   ];
 }
 

@@ -8,6 +8,7 @@ import init from "querydown-js";
 import type { Preset } from "api-client";
 import { FIXTURE_SCHEMA_JSON } from "../dev/recordFixture";
 import {
+  checkComparison,
   checkComputedColumn,
   checkFragment,
   checkPrelude,
@@ -473,7 +474,7 @@ describe("computed columns in the prelude", () => {
   const prelude = (
     computed: { tableName: string; name: string; expression: string | null }[],
     user = "",
-  ) => composePrelude(generatedPrelude(tables, {}, computed), user);
+  ) => composePrelude(generatedPrelude(tables, {}, computed, []), user);
   const displaying = (display: string, under = prelude([])) =>
     compileSavedQuery(
       query({ display: { custom: display } }),
@@ -484,10 +485,10 @@ describe("computed columns in the prelude", () => {
 
   it("define the app's own columns, with no prelude of the user's at all", () => {
     const { sql } = displaying(
-      "$firstplay $lastplay $artists $year $added $duration $playcount $number",
+      "$firstplay $lastplay $artists $year $added $duration $playcount",
     );
     expect(sql).toContain('max("play"."timestamp")');
-    expect(sql).toContain('"track"."track_number"');
+    expect(sql).toContain('"file"."duration"');
   });
 
   it("define the app's custom comparison too", () => {
@@ -534,6 +535,58 @@ describe("computed columns in the prelude", () => {
   });
 });
 
+describe("custom comparisons in the prelude", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+  const filtering = (
+    filter: string,
+    comparisons: { tableName: string; name: string; expression: string }[],
+  ) =>
+    compileSavedQuery(
+      query({ filter: { custom: filter, presets: [] } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      composePrelude(generatedPrelude(tables, {}, [], comparisons), ""),
+    );
+
+  it("define the user's, and their condition for one of the app's", () => {
+    const { sql } = filtering("albumtitle:dark", [
+      { tableName: "track", name: "albumtitle", expression: "album.title:@x" },
+    ]);
+    expect(sql).toContain('"album"."title"');
+    const custom = filtering("artist:prince", [
+      { tableName: "track", name: "artist", expression: "title:@x" },
+    ]).sql;
+    expect(custom).not.toContain('"artist"."name"');
+  });
+});
+
+describe("checkComparison", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+  const check = (expression: string, name = "mine") =>
+    checkComparison(
+      FIXTURE_SCHEMA_JSON,
+      "track",
+      name,
+      expression,
+      generatedPrelude(tables, {}, [], [], {
+        table: "track",
+        comparison: name,
+      }),
+    );
+
+  it("passes a condition that compiles on the table", () => {
+    expect(check("album.title:@x")).toBeNull();
+    expect(check("++#artist{name:@x}", "artist")).toBeNull();
+  });
+
+  it("traces a problem to the comparison's condition", () => {
+    expect(check("album.nope:@x")).toMatchObject({
+      origin: { kind: "customComparison", table: "track", name: "mine" },
+      source: "album.nope:@x",
+    });
+  });
+});
+
 describe("checkComputedColumn", () => {
   const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
   const check = (expression: string, name = "mine") =>
@@ -542,7 +595,7 @@ describe("checkComputedColumn", () => {
       "track",
       name,
       expression,
-      generatedPrelude(tables, {}, [], {
+      generatedPrelude(tables, {}, [], [], {
         table: "track",
         computedColumn: name,
       }),

@@ -44,6 +44,7 @@ import {
   type SourceOrigin,
 } from "./sourceMap";
 import { computedDefinition } from "./computedColumns";
+import { comparisonDefinition } from "./customComparisons";
 import type { SchemaTable } from "./schema";
 import {
   preludeMapped,
@@ -293,6 +294,35 @@ export function checkSetting(
   try {
     compileSections(schemaJson, check.base, check.definitions, {
       filter: unmapped(check.filter),
+      sort: empty,
+      display: empty,
+    });
+    return null;
+  } catch (err) {
+    return toDiagnostic(err);
+  }
+}
+
+/** The problem with a custom comparison's condition, `expression`, if it has
+ * one, as its editor checks it while it's typed in: compiled as the
+ * comparison's definition, after `prelude`, in a query on its table that
+ * compares by it (`name:"test"`). The problem is traced to the comparison's
+ * editor. */
+export function checkComparison(
+  schemaJson: string,
+  table: string,
+  name: string,
+  expression: string,
+  prelude: Prelude,
+): QueryDiagnostic | null {
+  const definitions = joinMapped(
+    [preludeMapped(prelude), comparisonDefinition(table, name, expression)],
+    "\n",
+  );
+  const empty = unmapped("");
+  try {
+    compileSections(schemaJson, table, definitions, {
+      filter: unmapped(`${name}:"test"`),
       sort: empty,
       display: empty,
     });

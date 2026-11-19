@@ -1,5 +1,6 @@
 import type {
   ComputedColumnRow,
+  CustomComparisonRow,
   DmlOperation,
   DmlResult,
   Preset,
@@ -657,6 +658,11 @@ export interface AppState {
    * versions: an edit shows here at once — in every query compiled from then
    * on — and an expression is written once the app goes quiet. */
   computedColumns: ResourceState<readonly ComputedColumnRow[]>;
+  /** The user's side of every table's custom comparisons: the ones they've
+   * defined, and their conditions for the app's own (loads via
+   * `metadata.custom_comparison.list`; see `query/customComparisons.ts`). The
+   * live versions, as `computedColumns` are. */
+  customComparisons: ResourceState<readonly CustomComparisonRow[]>;
   /** Whether record editors, and the Data structure page's lists of fields,
    * show the fields the user has hidden. For the whole app rather than for one
    * form, since a form lasts only as long as the selection stays on its
@@ -851,6 +857,7 @@ export function initialState(env: AppEnv): AppState {
     tableSettings: { status: "loading", data: {} },
     contextualQueries: { status: "loading", data: [] },
     computedColumns: { status: "loading", data: [] },
+    customComparisons: { status: "loading", data: [] },
     showHiddenFields: false,
     showHiddenTables: false,
     audioQuality: storedAudioQuality(env),

@@ -197,9 +197,10 @@ function FieldNode(props: {
 
 /** A table's "Fields": how many are listed, the "+" that adds one — a computed
  * column or a contextual query — the toggle that lists the hidden ones too
- * (while the table has any), and the fields. A field's context menu hides it
- * from the record editor, or brings it back; a contextual query's renames and
- * removes it too, and so does that of a computed column of the user's own. */
+ * (while the table has any, and the list is open), and the fields. A field's
+ * context menu hides it from the record editor, or brings it back; a contextual
+ * query's renames and removes it too, and so does that of a computed column of
+ * the user's own. */
 export function FieldsNode(props: { table: string }): JSX.Element {
   const { table } = props;
   const tables = useApp((s) => s.schema.tables);
@@ -208,6 +209,10 @@ export function FieldsNode(props: { table: string }): JSX.Element {
   const metadata = useApp((s) => selectTableMetadata(s, table));
   const summary = useApp((s) => tableSummary(s.tableSummaries.data, table));
   const showHidden = useApp((s) => s.showHiddenFields);
+  // The toggle is about what's listed under the row: shown only while it is.
+  const open = useApp(
+    (s) => s.structure.expanded[fieldsItemId(table)] === true,
+  );
   const {
     addComputedColumn,
     addContextualQuery,
@@ -344,7 +349,7 @@ export function FieldsNode(props: { table: string }): JSX.Element {
                 }}
               />
             </Menu>
-            {hiddenCount > 0 && (
+            {open && hiddenCount > 0 && (
               <IconButton
                 icon={Icons.Show}
                 size="sm"

@@ -26,6 +26,9 @@ export type SourceOrigin =
   /** A computed column's expression, which the app builds into the prelude
    * too (`computedColumns.ts`). */
   | { kind: "computedColumn"; table: string; name: string }
+  /** A custom comparison's condition, which the app builds into the prelude
+   * too (`customComparisons.ts`). */
+  | { kind: "customComparison"; table: string; name: string }
   /** A full-Querydown query's text. */
   | { kind: "full" };
 
@@ -161,6 +164,9 @@ export function sameOrigin(
     return a.table === b.table && a.setting === b.setting;
   }
   if (a.kind === "computedColumn" && b.kind === "computedColumn") {
+    return a.table === b.table && a.name === b.name;
+  }
+  if (a.kind === "customComparison" && b.kind === "customComparison") {
     return a.table === b.table && a.name === b.name;
   }
   return true;

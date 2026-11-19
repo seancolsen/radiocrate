@@ -38,7 +38,7 @@ const row = (
 const TABLES = [table("album", "id", "title"), table("track", "id", "title")];
 
 describe("the app's own computed columns", () => {
-  it("are what the prelude used to define for tracks", () => {
+  it("are the ones the app defines for tracks", () => {
     expect(BUILT_IN_COMPUTED_COLUMNS["track"]?.map((c) => c.name)).toEqual([
       "firstplay",
       "lastplay",
@@ -47,7 +47,6 @@ describe("the app's own computed columns", () => {
       "added",
       "duration",
       "playcount",
-      "number",
     ]);
     expect(builtInExpression("track", "lastplay")).toBe("#play.timestamp%max");
     // Two backslashes ahead of each sort key, as Querydown writes them.
@@ -243,7 +242,6 @@ describe("computedPrelude", () => {
       "#track.added = file.added",
       "#track.duration = file.duration",
       "#track.playcount = #play",
-      "#track.number = track_number",
       "#track.mine = id",
     ]);
   });

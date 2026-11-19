@@ -63,52 +63,39 @@ function settingState(customized: boolean, hasDefault: boolean): string {
   return hasDefault ? "Built-in" : "None";
 }
 
+/** Inline Querydown, or a name, in a help popover. */
+function code(text: string): JSX.Element {
+  return (
+    <code className="bg-hover rounded px-0.5 font-mono text-xs">{text}</code>
+  );
+}
+
 /** A setting's help: what it does, in the popover behind its "?". */
 function SettingHelp(props: {
   table: string;
   setting: PreludeSetting;
 }): JSX.Element {
   const { table } = props;
-  const code = (text: string) => (
-    <code className="bg-hover rounded px-0.5 font-mono text-xs">{text}</code>
-  );
-  const hasDefault = builtInSetting(table, props.setting) !== null;
-  let fallback: string;
-  if (hasDefault) {
-    fallback = `Left blank, or reset, it’s the app’s default for ${table}.`;
-  } else if (props.setting === "defaultTextSearch") {
-    fallback = `Left blank, Querydown’s own search is used: it looks through the text columns of ${table}.`;
-  } else {
-    fallback = `Left blank, a link to ${table} is compared with the linked record’s id.`;
-  }
   if (props.setting === "defaultTextSearch") {
     return (
-      <>
-        <p>
-          What a quoted string on its own searches for in a filter on {table}:
-          one condition, with {code(SETTING_VARIABLE)} standing for the string.
-          With {code("title:@x")}, the filter {code('"love"')} finds the records
-          whose title contains “love”.
-        </p>
-        <p className="mt-2">
-          To search several columns at once, list a condition for each between{" "}
-          {code("[")} and {code("]")}: a record matching any of them is found.
-        </p>
-        <p className="mt-2">{fallback}</p>
-      </>
+      <p>
+        When you enter bare words into a Querydown filter for {code(table)}{" "}
+        records, this setting customizes how a filter condition is constructed
+        from the text you enter. Use {code(SETTING_VARIABLE)} in this field to
+        represent the text entered.
+      </p>
     );
   }
   return (
-    <>
-      <p>
-        What comparing a link to {table} with a value compares, in a filter on a
-        table that links here: one condition on {table}, with{" "}
-        {code(SETTING_VARIABLE)} standing for the value. With {code("value:@x")}{" "}
-        on rating, the filter {code("rating:2")} on track means{" "}
-        {code("rating.value:2")}.
-      </p>
-      <p className="mt-2">{fallback}</p>
-    </>
+    <p>
+      When a column in another table refers to records in this table, this
+      setting lets you control the behavior of comparisons in the other table
+      which include that linked record column. To customize the behavior, write
+      a Querydown comparison expression here, in the context of this table,
+      using {code(SETTING_VARIABLE)} to represent the compared value. For
+      example, if this table has a {code("name")} column, you can write{" "}
+      {code("name:@x")} to compare linked records by name.
+    </p>
   );
 }
 
@@ -127,6 +114,7 @@ function PreludeSettingEditor(props: {
   const tables = useApp((s) => s.schema.tables);
   const settings = useApp((s) => s.tableSettings.data);
   const computed = useApp((s) => s.computedColumns.data);
+  const comparisons = useApp((s) => s.customComparisons.data);
   const user = useApp(selectUserPrelude);
   const { setTableQuerydown, flushTableQuerydown } = useAppActions();
   // Nothing typed waits on the idle queue once the editor has gone.
@@ -140,10 +128,13 @@ function PreludeSettingEditor(props: {
   const prelude = useMemo(
     () =>
       composePrelude(
-        generatedPrelude(tables, settings, computed, { table, setting }),
+        generatedPrelude(tables, settings, computed, comparisons, {
+          table,
+          setting,
+        }),
         user,
       ),
-    [tables, settings, computed, table, setting, user],
+    [tables, settings, computed, comparisons, table, setting, user],
   );
   const schemaJson = useCheckContext()?.schemaJson;
   const blank = !isCustomized(text);
@@ -245,19 +236,14 @@ export function PreludeSettingNode(props: {
 }
 
 /** The record picker's help, behind its "?". */
-const RECORD_PICKER_HELP = (
-  <>
+function RecordPickerHelp(props: { table: string }): JSX.Element {
+  return (
     <p>
-      How the record picker lists records of this table, when a linked record
-      field is pointed at one: the order they’re in, and what of each it shows.
+      When selecting a {code(props.table)} record, these settings allow you to
+      customize the sorting and display of such records.
     </p>
-    <p className="mt-2">
-      Until they’re written here, they’re generated from the table’s columns.
-      Changing them in the record picker changes them here too, for every picker
-      on the table. “Restore default”, in the ⋮, goes back to what’s generated.
-    </p>
-  </>
-);
+  );
+}
 
 /** The editor of a table's record picker: its sorting and display, written or
  * generated. */
@@ -296,7 +282,7 @@ function RecordPickerEditor(props: { table: string }): JSX.Element {
         text={stored ?? generated[section]}
         onChange={(text) => setTableQuerydown(table, part, text)}
         onEscape={() => focusOwnRow(wrapRef.current)}
-        help={RECORD_PICKER_HELP}
+        help={<RecordPickerHelp table={table} />}
         inputActions={
           <MenuItem
             icon={Icons.Revert}

@@ -15,7 +15,11 @@ import {
   fieldRefKey,
   type FieldMetadata,
 } from "../../query/fieldMetadata";
-import type { ComputedColumnRow, FieldRef } from "api-client";
+import type {
+  ComputedColumnRow,
+  CustomComparisonRow,
+  FieldRef,
+} from "api-client";
 import {
   FILTER_DEF,
   FULL_DEF,
@@ -39,6 +43,8 @@ import {
   type QueryDefinition,
 } from "../../query/definition";
 import {
+  comparisonItemId,
+  comparisonPath,
   fieldsItemId,
   PRELUDE_ITEM,
   presetSectionItemId,
@@ -343,6 +349,16 @@ function seedComputedColumns(
 ): void {
   stores.app.store.setState((s) => {
     s.computedColumns = { status: "ready", data: castDraft(rows) };
+  });
+}
+
+/** Seeds the user's side of the tables' custom comparisons. */
+function seedCustomComparisons(
+  stores: Stores,
+  rows: readonly CustomComparisonRow[],
+): void {
+  stores.app.store.setState((s) => {
+    s.customComparisons = { status: "ready", data: castDraft(rows) };
   });
 }
 
@@ -1817,6 +1833,33 @@ export const STORIES: Record<string, Story> = {
       seedTableSettings(stores, {
         album: { linkedRecordComparison: "titel:@x" },
       }),
+  ),
+  // `track`'s custom comparisons: the app's own `artist`, opened at the app's
+  // condition, and one of the user's, opened too.
+  "data-structure/custom-comparisons": dataStructure(
+    { height: 560 },
+    [
+      ...comparisonPath("track", "artist"),
+      comparisonItemId("track", "albumtitle"),
+    ],
+    (stores) =>
+      seedCustomComparisons(stores, [
+        {
+          tableName: "track",
+          name: "albumtitle",
+          expression: "album.title:@x",
+        },
+      ]),
+  ),
+  // A comparison of the user's whose condition names a column its table
+  // hasn't got: the problem under its editor.
+  "data-structure/comparison-problem": dataStructure(
+    { height: 420 },
+    comparisonPath("album", "label"),
+    (stores) =>
+      seedCustomComparisons(stores, [
+        { tableName: "album", name: "label", expression: "labl:@x" },
+      ]),
   ),
   // `album`'s record picker opened into its editor, on its sorting, with a
   // display of the user's: "Customized" on its row.

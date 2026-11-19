@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, ComputedColumnRow, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
+import type { AppVersion, ComputedColumnRow, CustomComparisonRow, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams, MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -139,6 +139,22 @@ export async function metadataComputedColumnRename(params: MetadataComputedColum
 
 export async function metadataComputedColumnDelete(params: MetadataComputedColumnDeleteParams): Promise<null> {
   return (await rpcCall("metadata.computed_column.delete", params)) as null;
+}
+
+export async function metadataCustomComparisonList(): Promise<CustomComparisonRow[]> {
+  return (await rpcCall("metadata.custom_comparison.list", null)) as CustomComparisonRow[];
+}
+
+export async function metadataCustomComparisonSet(params: CustomComparisonRow): Promise<null> {
+  return (await rpcCall("metadata.custom_comparison.set", params)) as null;
+}
+
+export async function metadataCustomComparisonRename(params: MetadataCustomComparisonRenameParams): Promise<null> {
+  return (await rpcCall("metadata.custom_comparison.rename", params)) as null;
+}
+
+export async function metadataCustomComparisonDelete(params: MetadataCustomComparisonDeleteParams): Promise<null> {
+  return (await rpcCall("metadata.custom_comparison.delete", params)) as null;
 }
 
 export async function tableSummarize(): Promise<TableSummary[]> {

@@ -76,6 +76,7 @@ function rpcResult(method: string, params: unknown): unknown {
     case "metadata.field.list":
     case "metadata.table.list":
     case "metadata.computed_column.list":
+    case "metadata.custom_comparison.list":
       return [];
     case "table.summarize":
       return TABLE_SUMMARIES_FIXTURE;

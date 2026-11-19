@@ -170,7 +170,7 @@ const cases: Record<
 
 // What the app defines ahead of every query: the tables' computed columns and
 // settings, as they are with nothing customized.
-const prelude = generatedPrelude(parseSchemaTables(schema), {}, []).text;
+const prelude = generatedPrelude(parseSchemaTables(schema), {}, [], []).text;
 
 let failed = false;
 for (const [name, { text, entryColumns, rows: expectedRows, noTrackId }] of Object.entries(

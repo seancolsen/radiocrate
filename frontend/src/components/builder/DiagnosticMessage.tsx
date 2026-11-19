@@ -26,6 +26,9 @@ export function diagnosticPlace(
   if (origin?.kind === "computedColumn") {
     return `Computed column ${origin.name} of ${origin.table}`;
   }
+  if (origin?.kind === "customComparison") {
+    return `Custom comparison ${origin.name} of ${origin.table}`;
+  }
   if (origin?.kind === "full") return "Querydown";
   return d.kind === "run" ? "Database" : "Query";
 }

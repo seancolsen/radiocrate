@@ -442,7 +442,9 @@ for (const colorScheme of SCHEMES) {
     );
     await stage.getByRole("button", { name: "About text search" }).click();
     const help = page.getByTestId("help-popover");
-    await expect(help).toContainText("searches for in a filter on track");
+    await expect(help).toContainText(
+      "When you enter bare words into a Querydown filter for track records",
+    );
     await expect(help).toHaveScreenshot(
       snapshot("data-structure/text-search-help", colorScheme),
     );
@@ -462,6 +464,45 @@ for (const colorScheme of SCHEMES) {
     );
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/setting-problem", colorScheme),
+    );
+  });
+
+  // A table's custom comparisons: the app's own, at its condition, and one of
+  // the user's.
+  test(`data-structure/custom-comparisons - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/custom-comparisons",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "Custom comparisons"));
+    await expect(row(stage, "Custom comparisons")).toContainText("2");
+    await expect(stage.getByLabel("Condition of artist on track")).toHaveText(
+      "++#artist{name:@x}",
+    );
+    await expect(row(stage, /^artist (Built-in|Customized)$/)).toContainText(
+      "Built-in",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/custom-comparisons", colorScheme),
+    );
+  });
+
+  // A comparison naming a column its table hasn't got.
+  test(`data-structure/comparison-problem - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/comparison-problem",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "Custom comparisons"));
+    await expect(stage.getByRole("alert")).toContainText("labl");
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/comparison-problem", colorScheme),
     );
   });
 
@@ -657,7 +698,7 @@ test("a field's context menu hides it, and brings it back", async ({
   const fields = row(stage, "Fields");
   const showHidden = fields.getByRole("button", { name: "Show hidden fields" });
   // Nothing hidden, nothing to show.
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 17 fields")).toBeVisible();
   await expect(showHidden).toHaveCount(0);
 
   const title = row(stage, "title Column");
@@ -679,13 +720,13 @@ test("a field's context menu hides it, and brings it back", async ({
     ]);
   // It's gone from the list, and the toggle that shows it is there.
   await expect(title).toHaveCount(0);
-  await expect(row(stage, "Fields 17 fields")).toBeVisible();
+  await expect(row(stage, "Fields 16 fields")).toBeVisible();
   await expect(showHidden).toHaveAttribute("aria-pressed", "false");
 
   // Shown, it's listed faded.
   await showHidden.click();
   await expect(showHidden).toHaveAttribute("aria-pressed", "true");
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 17 fields")).toBeVisible();
   await expect(title.locator(".opacity-60")).toHaveCount(1);
 
   await title.click({ button: "right" });
@@ -750,7 +791,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 }) => {
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the query goes.
-  const fields = row(stage, "Fields 18 fields");
+  const fields = row(stage, "Fields 17 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -769,7 +810,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 
   const added = row(stage, "credits by role Query");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 19 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   // The filter is guessed from the schema's links, and has the caret.
   const filter = stage.getByLabel("Filter of credits by role");
   await expect(filter).toContainText("track.id:@id");
@@ -785,7 +826,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the column
   // goes.
-  const fields = row(stage, "Fields 18 fields");
+  const fields = row(stage, "Fields 17 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -800,7 +841,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
 
   const added = row(stage, "release_decade Computed");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 19 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   expect(await calls(page, "metadata.computed_column.set")).toEqual([
     {
       method: "metadata.computed_column.set",
@@ -919,6 +960,94 @@ test("one of the app's computed columns takes the user's expression, and is rese
     });
 });
 
+test("a custom comparison is added, renamed and removed, one of the app's only reset", async ({
+  page,
+}) => {
+  const stage = await openStory(
+    page,
+    "data-structure/custom-comparisons",
+    "light",
+  );
+  // One of the app's own: its name is fixed, and it's there to stay.
+  await row(stage, /^artist (Built-in|Customized)$/).click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
+
+  const list = row(stage, "Custom comparisons");
+  await list
+    .getByRole("button", { name: "New custom comparison for track" })
+    .click();
+  const name = stage.getByLabel("Name of the new custom comparison");
+  await expect(name).toBeFocused();
+  await name.fill("by label");
+  await name.press("Enter");
+  const added = row(stage, "by_label");
+  await expect(added).toHaveAttribute("aria-expanded", "true");
+  await expect(list).toContainText("3");
+  const condition = stage.getByLabel("Condition of by_label on track");
+  await expect(condition).toBeFocused();
+  await expect(
+    stage.getByText("Blank: by_label isn’t defined yet."),
+  ).toBeVisible();
+  await page.keyboard.type("album.title:@x");
+  await added.click();
+  await expect
+    .poll(async () =>
+      (await calls(page, "metadata.custom_comparison.set")).at(-1),
+    )
+    .toEqual({
+      method: "metadata.custom_comparison.set",
+      params: {
+        tableName: "track",
+        name: "by_label",
+        expression: "album.title:@x",
+      },
+    });
+
+  await added.click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText(["Rename", "Remove"]);
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const rename = stage.getByLabel("Name of by_label");
+  await rename.fill("label");
+  await rename.press("Enter");
+  const renamed = row(stage, "label");
+  await expect(renamed).toBeFocused();
+  expect(await calls(page, "metadata.custom_comparison.rename")).toEqual([
+    {
+      method: "metadata.custom_comparison.rename",
+      params: { tableName: "track", name: "by_label", newName: "label" },
+    },
+  ]);
+
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Remove “label” from track?");
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect(renamed).toHaveCount(0);
+  await expect
+    .poll(() => calls(page, "metadata.custom_comparison.delete"))
+    .toEqual([
+      {
+        method: "metadata.custom_comparison.delete",
+        params: { tableName: "track", name: "label" },
+      },
+    ]);
+
+  // The app's own takes the user's condition, and is reset.
+  const artist = stage.getByLabel("Condition of artist on track");
+  const reset = stage.getByRole("button", { name: "Reset to default" });
+  await expect(reset).toBeDisabled();
+  await artist.fill("++#artist{name:=@x}");
+  await expect(row(stage, /^artist (Built-in|Customized)$/)).toContainText(
+    "Customized",
+  );
+  await reset.click();
+  await expect(artist).toHaveText("++#artist{name:@x}");
+  await expect(row(stage, /^artist (Built-in|Customized)$/)).toContainText(
+    "Built-in",
+  );
+});
+
 test("a related-records field's Querydown is written, and restored", async ({
   page,
 }) => {
@@ -985,6 +1114,12 @@ test("a table's context menu hides it, and brings it back", async ({
     ]);
   await expect(role).toHaveCount(0);
   await expect(row(stage, "Tables 9 tables")).toBeVisible();
+
+  // The toggle is about what's listed under the row: closed, it's gone.
+  await tables.click();
+  await expect(showHidden).toHaveCount(0);
+  await tables.click();
+  await expect(showHidden).toHaveCount(1);
 
   await showHidden.click();
   await expect(role.locator(".opacity-60")).toHaveCount(1);

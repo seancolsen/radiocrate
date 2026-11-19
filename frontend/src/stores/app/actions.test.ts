@@ -18,6 +18,8 @@ import { FakePlayer, fakeEnv } from "./testEnv";
 import { TOAST_MS } from "./actions";
 import { buildResultFromStringRows } from "../../query/result";
 import {
+  comparisonItemId,
+  comparisonPath,
   computedColumnPath,
   DEFAULT_EXPANDED,
   PRELUDE_ITEM,
@@ -51,6 +53,10 @@ vi.mock("api-client", async (importOriginal) => {
     metadataComputedColumnSet: vi.fn(() => Promise.resolve(null)),
     metadataComputedColumnRename: vi.fn(() => Promise.resolve(null)),
     metadataComputedColumnDelete: vi.fn(() => Promise.resolve(null)),
+    metadataCustomComparisonList: vi.fn(() => Promise.resolve([])),
+    metadataCustomComparisonSet: vi.fn(() => Promise.resolve(null)),
+    metadataCustomComparisonRename: vi.fn(() => Promise.resolve(null)),
+    metadataCustomComparisonDelete: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
     folderAdd: vi.fn(() => Promise.resolve(null)),
@@ -138,6 +144,10 @@ import {
   metadataComputedColumnList,
   metadataComputedColumnRename,
   metadataComputedColumnSet,
+  metadataCustomComparisonDelete,
+  metadataCustomComparisonList,
+  metadataCustomComparisonRename,
+  metadataCustomComparisonSet,
   metadataFieldList,
   metadataFieldSetOrder,
   metadataFieldSetDisplay,
@@ -195,6 +205,7 @@ import {
   selectQueryTab,
   selectRowContext,
   selectSortApplied,
+  selectComparisonExpression,
   selectComputedExpression,
   selectFieldQuerydown,
   selectPrelude,
@@ -6091,5 +6102,148 @@ describe("computed columns", () => {
     }
     expect(state().structure.reveal).toBe(path[path.length - 1]);
     expect(state().showHiddenFields).toBe(true);
+  });
+});
+
+describe("custom comparisons", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.mocked(metadataCustomComparisonList).mockClear();
+    vi.mocked(metadataCustomComparisonSet).mockClear();
+    vi.mocked(metadataCustomComparisonRename).mockClear();
+    vi.mocked(metadataCustomComparisonDelete).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+  });
+  afterEach(() => bundle.dispose());
+  const state = () => bundle.store.getState();
+  const rows = () => state().customComparisons.data;
+  /** Lets the queued writes reach the mocks. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
+
+  it("loads the user's rows", async () => {
+    vi.mocked(metadataCustomComparisonList).mockResolvedValueOnce([
+      { tableName: "album", name: "label", expression: "title:@x" },
+    ]);
+    await bundle.actions.loadCustomComparisons();
+    expect(state().customComparisons.status).toBe("ready");
+    expect(selectComparisonExpression(state(), "album", "label")).toBe(
+      "title:@x",
+    );
+    expect(
+      selectComparisonExpression(state(), "track", "artist"),
+    ).toBeUndefined();
+  });
+
+  it("adds one, named to be legal and free, defined once it has a condition", async () => {
+    const name = bundle.actions.addCustomComparison("album", "by label");
+    expect(name).toBe("by_label");
+    expect(bundle.actions.addCustomComparison("track", "artist")).toBe(
+      "artist_2",
+    );
+    expect(selectPrelude(state()).text).not.toContain("#album.by_label");
+    bundle.actions.setCustomComparisonExpression("album", name, "title:@x");
+    expect(selectPrelude(state()).text).toContain(
+      "#album.by_label:@x = title:@x",
+    );
+    await settle();
+    expect(metadataCustomComparisonSet).toHaveBeenCalledWith({
+      tableName: "album",
+      name: "by_label",
+      expression: "",
+    });
+    bundle.actions.flushCustomComparison("album", name);
+    await settle();
+    expect(metadataCustomComparisonSet).toHaveBeenLastCalledWith({
+      tableName: "album",
+      name: "by_label",
+      expression: "title:@x",
+    });
+  });
+
+  it("customizes one of the app's own, and resets it", async () => {
+    bundle.actions.setCustomComparisonExpression(
+      "track",
+      "artist",
+      "++#artist{name:=@x}",
+    );
+    expect(selectPrelude(state()).text).toContain(
+      "#track.artist:@x = ++#artist{name:=@x}",
+    );
+    bundle.actions.setCustomComparisonExpression("track", "artist", null);
+    expect(selectPrelude(state()).text).toContain(
+      "#track.artist:@x = ++#artist{name:@x}",
+    );
+    await settle();
+    expect(metadataCustomComparisonSet).toHaveBeenLastCalledWith({
+      tableName: "track",
+      name: "artist",
+      expression: null,
+    });
+  });
+
+  it("renames one of the user's, keeping its row open, but never the app's", async () => {
+    bundle.actions.addCustomComparison("album", "label");
+    bundle.actions.revealStructureItem(comparisonItemId("album", "label"));
+    expect(
+      bundle.actions.renameCustomComparison("album", "label", "imprint"),
+    ).toBe("imprint");
+    expect(rows()).toEqual([
+      { tableName: "album", name: "imprint", expression: "" },
+    ]);
+    const open = comparisonItemId("album", "imprint");
+    expect(state().structure.expanded[open]).toBe(true);
+    expect(state().structure.reveal).toBe(open);
+    expect(
+      bundle.actions.renameCustomComparison("track", "artist", "credited"),
+    ).toBe("artist");
+    await settle();
+    expect(metadataCustomComparisonRename).toHaveBeenCalledTimes(1);
+    expect(metadataCustomComparisonRename).toHaveBeenCalledWith({
+      tableName: "album",
+      name: "label",
+      newName: "imprint",
+    });
+  });
+
+  it("removes one of the user's, but never the app's", async () => {
+    bundle.actions.addCustomComparison("album", "label");
+    bundle.actions.removeCustomComparison("album", "label");
+    bundle.actions.removeCustomComparison("track", "artist");
+    expect(rows()).toEqual([]);
+    await settle();
+    expect(metadataCustomComparisonDelete).toHaveBeenCalledTimes(1);
+    expect(metadataCustomComparisonDelete).toHaveBeenCalledWith({
+      tableName: "album",
+      name: "label",
+    });
+  });
+
+  it("opens the Data structure page at one from a problem in it", () => {
+    bundle.actions.openStructureTab({ table: "track", comparison: "artist" });
+    const path = comparisonPath("track", "artist");
+    for (const item of path) {
+      expect(state().structure.expanded[item]).toBe(true);
+    }
+    expect(state().structure.reveal).toBe(path.at(-1));
+  });
+});
+
+describe("openTableRecords", () => {
+  it("opens every record of the table beside the active tab, with none of its default filters", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.newQueryTab();
+    const first = bundle.store.getState().activeTabId;
+    bundle.actions.openTableRecords("album");
+    const s = bundle.store.getState();
+    expect(s.tabs.findIndex((t) => t.id === s.activeTabId)).toBe(
+      s.tabs.findIndex((t) => t.id === first) + 1,
+    );
+    const tab = selectQueryTab(s, s.activeTabId!);
+    expect(tab?.live.base).toBe("album");
+    expect(tab?.live.filter).toEqual({ custom: "", presets: [] });
+    expect(tab?.name).toBe("albums");
+    expect(tab?.pristine).toBeUndefined();
+    bundle.dispose();
   });
 });

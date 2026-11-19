@@ -1,5 +1,6 @@
 import type {
   ComputedColumnRow,
+  CustomComparisonRow,
   FieldRef,
   Preset,
   Source,
@@ -36,6 +37,7 @@ import {
   type TableSettings,
 } from "../../query/tableSettings";
 import { findComputedRow } from "../../query/computedColumns";
+import { findComparisonRow } from "../../query/customComparisons";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import { queuePositions } from "../../state/playQueue";
@@ -499,6 +501,16 @@ export const selectComputedExpression = (
 ): string | null | undefined =>
   findComputedRow(s.computedColumns.data, table, name)?.expression;
 
+/** The user's condition for `table`'s custom comparison `name`: null while one
+ * of the app's own goes by the app's, and `undefined` when there's no row for
+ * it at all. */
+export const selectComparisonExpression = (
+  s: AppState,
+  table: string,
+  name: string,
+): string | null | undefined =>
+  findComparisonRow(s.customComparisons.data, table, name)?.expression;
+
 /** One contextual query, by id — `undefined` once it's removed. */
 export const selectContextualQuery = (
   s: AppState,
@@ -671,12 +683,14 @@ let preludeMemo:
       tables: AppState["schema"]["tables"];
       settings: AppState["tableSettings"]["data"];
       computed: readonly ComputedColumnRow[];
+      comparisons: readonly CustomComparisonRow[];
       prelude: Mapped;
     }
   | undefined;
 
 /** The Querydown prepended to every compiled query: the definitions the app
- * builds from the tables' computed columns and settings, then the user's
+ * builds from the tables' computed columns, settings and custom comparisons,
+ * then the user's
  * prelude, each traced to where it's edited (`query/tableSettings.ts`). The
  * same reference for as long as what it's built from stays the same, so it's
  * safe to subscribe to. */
@@ -685,20 +699,22 @@ export function selectPrelude(s: AppState): Mapped {
   const tables = s.schema.tables;
   const settings = s.tableSettings.data;
   const computed = s.computedColumns.data;
+  const comparisons = s.customComparisons.data;
   const memo = preludeMemo;
   if (
     memo?.user === user &&
     memo.tables === tables &&
     memo.settings === settings &&
-    memo.computed === computed
+    memo.computed === computed &&
+    memo.comparisons === comparisons
   ) {
     return memo.prelude;
   }
   const prelude = composePrelude(
-    generatedPrelude(tables, settings, computed),
+    generatedPrelude(tables, settings, computed, comparisons),
     user,
   );
-  preludeMemo = { user, tables, settings, computed, prelude };
+  preludeMemo = { user, tables, settings, computed, comparisons, prelude };
   return prelude;
 }
 

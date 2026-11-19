@@ -28,6 +28,7 @@
 // `metadata.computed_column.rename` in the database.
 
 import type { ComputedColumnRow } from "api-client";
+import { availableIdentifier, legalIdentifier } from "./identifiers";
 import type { ComputedField } from "./recordForm";
 import type { SchemaTable } from "./schema";
 import { fromSource, joinMapped, type Mapped } from "./sourceMap";
@@ -55,7 +56,6 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
     { name: "added", expression: "file.added" },
     { name: "duration", expression: "file.duration" },
     { name: "playcount", expression: "#play" },
-    { name: "number", expression: "track_number" },
   ],
 };
 
@@ -207,16 +207,9 @@ export function computedFields(
 export const DEFAULT_COMPUTED_COLUMN_NAME = "computed";
 
 /** `typed` as a name a definition can be written with: Querydown's unquoted
- * identifier, which begins with a letter or an underscore and holds only
- * letters, digits and underscores. Anything else in it becomes an underscore
- * ("last play" is `last_play`), and nothing at all is the default name. */
+ * identifier, or the default name for nothing at all (`legalIdentifier`). */
 export function legalComputedName(typed: string): string {
-  const name = typed
-    .split(/[^A-Za-z0-9_]+/)
-    .filter((part) => part !== "")
-    .join("_");
-  if (name === "") return DEFAULT_COMPUTED_COLUMN_NAME;
-  return /^[0-9]/.test(name) ? `_${name}` : name;
+  return legalIdentifier(typed, DEFAULT_COMPUTED_COLUMN_NAME);
 }
 
 /** The names a new computed column of `table` can't take, lowercased: its real
@@ -245,12 +238,7 @@ export function availableComputedName(
   typed: string,
   taken: ReadonlySet<string>,
 ): string {
-  const base = legalComputedName(typed);
-  if (!taken.has(base.toLowerCase())) return base;
-  for (let n = 2; ; n++) {
-    const candidate = `${base}_${n}`;
-    if (!taken.has(candidate.toLowerCase())) return candidate;
-  }
+  return availableIdentifier(typed, taken, DEFAULT_COMPUTED_COLUMN_NAME);
 }
 
 // ── Definitions ─────────────────────────────────────────────────────────────

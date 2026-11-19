@@ -15,7 +15,7 @@ import DiagnosticMessage, {
 /** The query page's error strip, under the toolbar (and the builder, when one
  * is open): the problem with the page's query, if it has one — wherever it
  * is, so one in a section that's closed, a collapsed preset, the prelude, or
- * a table's setting or computed column still shows. While it does, the rows below are an earlier definition's.
+ * a table's setting, computed column or custom comparison still shows. While it does, the rows below are an earlier definition's.
  *
  * Its "Show" takes the user to the problem, when it's somewhere they aren't
  * already looking. Nothing dismisses it: it goes when the problem does — or
@@ -35,7 +35,8 @@ export default function QueryDiagnosticBar(props: {
       origin === null ||
       origin.kind === "prelude" ||
       origin.kind === "tableSetting" ||
-      origin.kind === "computedColumn"
+      origin.kind === "computedColumn" ||
+      origin.kind === "customComparison"
     ) {
       return false;
     }
@@ -56,7 +57,9 @@ export default function QueryDiagnosticBar(props: {
         ? `Edit ${PRELUDE_SETTING_LABELS[origin.setting].toLowerCase()}`
         : origin?.kind === "computedColumn"
           ? "Edit computed column"
-          : origin && !inView && "Show";
+          : origin?.kind === "customComparison"
+            ? "Edit custom comparison"
+            : origin && !inView && "Show";
 
   return (
     <div

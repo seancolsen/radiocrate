@@ -101,6 +101,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   void app.actions.loadFieldMetadata();
   void app.actions.loadTableSettings();
   void app.actions.loadComputedColumns();
+  void app.actions.loadCustomComparisons();
   void app.actions.loadContextualQueries();
   void commands.actions.loadKeymap();
 

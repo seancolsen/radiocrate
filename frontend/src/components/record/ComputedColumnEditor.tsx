@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, type JSX } from "react";
+import { forwardRef, useEffect, useMemo } from "react";
 import { Icons } from "../../icons";
 import { checkComputedColumn } from "../../query/compile";
 import { builtInExpression, hasExpression } from "../../query/computedColumns";
@@ -11,49 +11,16 @@ import {
   useCheckContext,
   useSettledDiagnostic,
 } from "../builder/useDiagnostics";
-import HelpPopover from "../ui/HelpPopover";
 import IconButton from "../ui/IconButton";
 
 const TOOLBAR_BUTTON =
   "text-ink hover:bg-hover flex h-[26px] shrink-0 items-center gap-1.5 rounded px-2 text-sm disabled:opacity-40 disabled:hover:bg-transparent";
 
-/** A computed column's help: what its expression is, behind the "?". */
-function ComputedColumnHelp(props: {
-  table: string;
-  name: string;
-  builtIn: boolean;
-}): JSX.Element {
-  const { table, name } = props;
-  const code = (text: string) => (
-    <code className="bg-hover rounded px-0.5 font-mono text-xs">{text}</code>
-  );
-  return (
-    <>
-      <p>
-        What {code(name)} is, for each record of {table}: one Querydown
-        expression, written as it would be in a query on {table}. With{" "}
-        {code("album.year")}, a query can display {code(`$${name}`)} or filter
-        by {code(`${name}:>2000`)}, as if it were a column.
-      </p>
-      <p className="mt-2">
-        It can count or summarize related records ({code("#play")},{" "}
-        {code("#play.timestamp%max")}), and use the table’s other computed
-        columns by name.
-      </p>
-      <p className="mt-2">
-        {props.builtIn
-          ? `Left blank, or reset, it’s the app’s own expression for ${name}.`
-          : `Left blank, ${name} isn’t defined, and a query that uses it won’t run.`}
-      </p>
-    </>
-  );
-}
-
 /** The editor of a computed column's expression, wherever it's edited: under
  * the column's field in the record editor, and under its row on the Data
  * structure page. A toolbar — "Reset to default", for one of the app's own
- * columns; a "?"; and the × when there's a way out — over the expression, with
- * a problem with it below.
+ * columns, and the × when there's a way out — over the expression, with a
+ * problem with it below.
  *
  * The expression is checked as it's typed: compiled as the column's
  * definition, under the rest of the prelude, in a query that displays the
@@ -81,6 +48,7 @@ const ComputedColumnEditor = forwardRef<
   const tables = useApp((s) => s.schema.tables);
   const settings = useApp((s) => s.tableSettings.data);
   const computed = useApp((s) => s.computedColumns.data);
+  const comparisons = useApp((s) => s.customComparisons.data);
   const user = useApp(selectUserPrelude);
   const { setComputedColumnExpression, flushComputedColumn } = useAppActions();
   // Nothing typed waits on the idle queue once the editor has gone.
@@ -94,13 +62,13 @@ const ComputedColumnEditor = forwardRef<
   const prelude = useMemo(
     () =>
       composePrelude(
-        generatedPrelude(tables, settings, computed, {
+        generatedPrelude(tables, settings, computed, comparisons, {
           table,
           computedColumn: name,
         }),
         user,
       ),
-    [tables, settings, computed, table, name, user],
+    [tables, settings, computed, comparisons, table, name, user],
   );
   const schemaJson = useCheckContext()?.schemaJson;
   const blank = !hasExpression(text);
@@ -115,37 +83,29 @@ const ComputedColumnEditor = forwardRef<
 
   return (
     <div className="py-1 pr-1 pl-5" data-testid="computed-column-editor">
-      <div className="flex items-center gap-1 pb-1">
-        {builtIn !== null && (
-          <button
-            type="button"
-            disabled={stored == null}
-            className={TOOLBAR_BUTTON}
-            onClick={() => setComputedColumnExpression(table, name, null)}
-          >
-            <Icons.Revert className="text-ink-weak size-4" />
-            Reset to default
-          </button>
-        )}
-        {onClose && <div className="flex-1" />}
-        <HelpPopover
-          label="About computed columns"
-          align={onClose ? "end" : undefined}
-        >
-          <ComputedColumnHelp
-            table={table}
-            name={name}
-            builtIn={builtIn !== null}
-          />
-        </HelpPopover>
-        {onClose && (
-          <IconButton
-            icon={Icons.Close}
-            label="Close expression editor"
-            onClick={onClose}
-          />
-        )}
-      </div>
+      {(builtIn !== null || onClose) && (
+        <div className="flex items-center gap-1 pb-1">
+          {builtIn !== null && (
+            <button
+              type="button"
+              disabled={stored == null}
+              className={TOOLBAR_BUTTON}
+              onClick={() => setComputedColumnExpression(table, name, null)}
+            >
+              <Icons.Revert className="text-ink-weak size-4" />
+              Reset to default
+            </button>
+          )}
+          {onClose && <div className="flex-1" />}
+          {onClose && (
+            <IconButton
+              icon={Icons.Close}
+              label="Close expression editor"
+              onClick={onClose}
+            />
+          )}
+        </div>
+      )}
       <QuerydownEditor
         ref={ref}
         label={`Expression of ${name}`}

@@ -20,6 +20,7 @@ import {
   TreeNode,
   useTreeRowProps,
 } from "./Tree";
+import { CustomComparisonsNode } from "./ComparisonNodes";
 import { PreludeSettingNode, RecordPickerNode } from "./TableSettingNodes";
 
 // A table's query settings on the Data structure page: its presets, a list for
@@ -138,8 +139,9 @@ function PresetSectionNode(props: {
 }
 
 /** A table's "Query settings": its presets, by section, and — for a table the
- * database has — its text search, its linked record comparison and its record
- * picker (`TableSettingNodes.tsx`). */
+ * database has — its text search, its linked record comparison, its custom
+ * comparisons (`ComparisonNodes.tsx`) and its record picker
+ * (`TableSettingNodes.tsx`). */
 export function QuerySettingsNode(props: {
   table: string;
   sections: readonly PresetSectionGroup[];
@@ -174,6 +176,7 @@ export function QuerySettingsNode(props: {
             setting={setting}
           />
         ))}
+      {props.inSchema && <CustomComparisonsNode table={props.table} />}
       {props.inSchema && <RecordPickerNode table={props.table} />}
     </TreeNode>
   );

@@ -145,6 +145,17 @@ export type MetadataComputedColumnRenameParams = { tableName: string, name: stri
 
 export type MetadataComputedColumnDeleteParams = { tableName: string, name: string, };
 
+export type CustomComparisonRow = { tableName: string, name: string, 
+/**
+ * Querydown: the condition, `@x` standing for the value compared. `None`
+ * goes by the app's condition, for one of its own comparisons.
+ */
+expression: string | null, };
+
+export type MetadataCustomComparisonRenameParams = { tableName: string, name: string, newName: string, };
+
+export type MetadataCustomComparisonDeleteParams = { tableName: string, name: string, };
+
 export type ColumnSummary = { name: string, 
 /**
  * How many different values the column holds, not counting NULL. An

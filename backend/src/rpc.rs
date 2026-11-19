@@ -9,9 +9,10 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, ColumnSummary, ComputedColumnRow, FieldMetadataRow, FieldOrder, FieldRef,
-    FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
-    MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
+    AppVersion, ColumnSummary, ComputedColumnRow, CustomComparisonRow, FieldMetadataRow,
+    FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams, Keybinding,
+    KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
+    MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams,
     MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams,
     MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams,
     MetadataTableSetVisibleParams, MultiLink, Placement, Preset, PresetDeleteParams,
@@ -328,6 +329,30 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             let p: MetadataComputedColumnDeleteParams = from_params(params)?;
             state.write_mut(|conn| {
                 delete_computed_column(conn, &p.table_name, &p.name).map(|()| Value::Null)
+            })
+        }
+        "metadata.custom_comparison.list" => state.read(|conn| -> Result<Value, String> {
+            let rows = list_custom_comparisons(conn)?;
+            serde_json::to_value(rows).map_err(|e| e.to_string())
+        }),
+        "metadata.custom_comparison.set" => {
+            let p: CustomComparisonRow = from_params(params)?;
+            state.write(|conn| {
+                set_custom_comparison(conn, &p)?;
+                Ok(Value::Null)
+            })
+        }
+        "metadata.custom_comparison.rename" => {
+            let p: MetadataCustomComparisonRenameParams = from_params(params)?;
+            state.write(|conn| {
+                rename_custom_comparison(conn, &p.table_name, &p.name, &p.new_name)
+                    .map(|()| Value::Null)
+            })
+        }
+        "metadata.custom_comparison.delete" => {
+            let p: MetadataCustomComparisonDeleteParams = from_params(params)?;
+            state.write(|conn| {
+                delete_custom_comparison(conn, &p.table_name, &p.name).map(|()| Value::Null)
             })
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
@@ -953,6 +978,62 @@ fn delete_computed_column(
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
+}
+
+fn list_custom_comparisons(conn: &Connection) -> Result<Vec<CustomComparisonRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT table_name, name, expression FROM metadata.custom_comparison \
+             ORDER BY table_name, name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CustomComparisonRow {
+                table_name: row.get(0)?,
+                name: row.get(1)?,
+                expression: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Creates a custom comparison, or sets the condition of the one of that name.
+fn set_custom_comparison(conn: &Connection, row: &CustomComparisonRow) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO metadata.custom_comparison (table_name, name, expression) VALUES (?, ?, ?) \
+         ON CONFLICT (table_name, name) DO UPDATE SET expression = excluded.expression",
+        duckdb::params![row.table_name, row.name, row.expression],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Renames a custom comparison. A name another of the table's comparisons has
+/// fails, and changes nothing.
+fn rename_custom_comparison(
+    conn: &Connection,
+    table_name: &str,
+    name: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE metadata.custom_comparison SET name = ? WHERE table_name = ? AND name = ?",
+        duckdb::params![new_name, table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn delete_custom_comparison(conn: &Connection, table_name: &str, name: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM metadata.custom_comparison WHERE table_name = ? AND name = ?",
+        duckdb::params![table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn list_keybindings(conn: &Connection) -> Result<Vec<Keybinding>, String> {
@@ -1836,6 +1917,48 @@ mod tests {
         // The renamed field still has the one row.
         set_field_visible(&conn, "track", &computed_column("era"), true).unwrap();
         assert_eq!(list_field_metadata(&conn).unwrap().len(), 3);
+    }
+
+    fn comparison_row(
+        table_name: &str,
+        name: &str,
+        expression: Option<&str>,
+    ) -> CustomComparisonRow {
+        CustomComparisonRow {
+            table_name: table_name.into(),
+            name: name.into(),
+            expression: expression.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_custom_comparison_is_set_renamed_and_deleted_by_table_and_name() {
+        let conn = setup();
+        assert_eq!(list_custom_comparisons(&conn).unwrap(), vec![]);
+        set_custom_comparison(&conn, &comparison_row("track", "tag", Some("a"))).unwrap();
+        set_custom_comparison(&conn, &comparison_row("album", "tag", Some("b"))).unwrap();
+        set_custom_comparison(&conn, &comparison_row("track", "tag", Some("c"))).unwrap();
+        set_custom_comparison(&conn, &comparison_row("track", "artist", None)).unwrap();
+        assert_eq!(
+            list_custom_comparisons(&conn).unwrap(),
+            vec![
+                comparison_row("album", "tag", Some("b")),
+                comparison_row("track", "artist", None),
+                comparison_row("track", "tag", Some("c")),
+            ],
+        );
+
+        // A name the table's other comparison has is refused, and changes nothing.
+        assert!(rename_custom_comparison(&conn, "track", "tag", "artist").is_err());
+        rename_custom_comparison(&conn, "track", "tag", "genre").unwrap();
+        delete_custom_comparison(&conn, "album", "tag").unwrap();
+        assert_eq!(
+            list_custom_comparisons(&conn).unwrap(),
+            vec![
+                comparison_row("track", "artist", None),
+                comparison_row("track", "genre", Some("c")),
+            ],
+        );
     }
 
     #[test]
