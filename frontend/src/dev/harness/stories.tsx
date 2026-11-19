@@ -771,6 +771,20 @@ const FEATURED_QUERY: ContextualQuery = {
   },
 };
 
+/** A contextual query of tracks that groups what it finds: the track's credits,
+ * counted by artist. Its rows are artists' counts, not credits. */
+const CREDITS_BY_ARTIST_QUERY: ContextualQuery = {
+  id: "query-by-artist",
+  tableName: "track",
+  name: "by artist",
+  definition: {
+    ...emptyDefinition(),
+    base: "credit",
+    filter: { custom: "track:=@id", presets: [] },
+    display: { custom: "$artist.name \\gs2 $%count \\sd1" },
+  },
+};
+
 /** The toolbar of whichever query tab is active — for a story about a tab whose
  * id is minted as it opens (a new query's). */
 function ActiveQueryToolbar(): JSX.Element | null {
@@ -2309,6 +2323,13 @@ export const STORIES: Record<string, Story> = {
   "record-editor/contextual-query": withContextualQueries(recordEditor([3]), [
     FEATURED_QUERY,
   ]),
+  // A contextual query that groups what it finds, opened out (the test does the
+  // opening): a row for each group, with what the query displays for it and
+  // nothing to open it into.
+  "record-editor/contextual-query-grouped": withContextualQueries(
+    recordEditor([3]),
+    [CREDITS_BY_ARTIST_QUERY],
+  ),
   // A contextual query being added (the test does the adding): the new field at
   // the bottom, its default name selected to be typed over, and the Base
   // selector beside it with no table chosen.

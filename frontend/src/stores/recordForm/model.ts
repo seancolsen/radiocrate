@@ -117,6 +117,7 @@ import {
 import { embedPreview } from "../../query/embedPreview";
 import {
   isCompileError,
+  isDisplayCompileError,
   compileErrorReason,
   runDisplayQuery,
   runRecordQuery,
@@ -1785,7 +1786,12 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
    * saying why; until there's anything on screen, it's what the list says.
    *
    * A query with no filter doesn't run (`isRunnable`): its list empties and waits
-   * for one. */
+   * for one.
+   *
+   * A query whose display can't have the record's key put ahead of it — a
+   * grouped one, where the key is neither grouped by nor aggregated — has rows
+   * that aren't records. It runs as written, and the list holds what it
+   * displays (`ListNode.rows`) in place of records to open. */
   const loadContext = async (recordId: string, field: ContextQueryField) => {
     const id = listId(recordId, field.key);
     const query = contextQueryOf(field);
@@ -1795,28 +1801,59 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     const token = ++tokenSeq;
     tokens.set(id, token);
     if (!isRunnable(query.definition)) {
-      patchList(id, { status: "unloaded", error: null, childIds: [] });
+      patchList(id, {
+        status: "unloaded",
+        error: null,
+        childIds: [],
+        rows: undefined,
+      });
       return;
     }
     const shown = get().lists[id]?.status === "loaded";
     if (!shown) patchList(id, { status: "loading", error: null });
     try {
-      const width = field.keyColumns.length;
-      const result = await runDisplayQuery(
+      const rowsQuery = (keyColumns: readonly string[]) =>
         contextRowsQuery(
           query.definition,
           source.presets(),
-          field.keyColumns,
+          keyColumns,
           contextDefinitions(source.prelude(), value),
           specFor(field.table).display.join(" "),
-        ),
-        opts.schemaJson,
-      );
+        );
+      const keyed = rowsQuery(field.keyColumns);
+      const asWritten = rowsQuery([]);
+      let width = field.keyColumns.length;
+      let result: RecordResult;
+      try {
+        result = await runDisplayQuery(keyed, opts.schemaJson);
+      } catch (err) {
+        if (width === 0 || !isDisplayCompileError(err)) throw err;
+        // The display won't take the key. If it compiles without, its rows
+        // aren't records; if it doesn't, the problem is the user's own, and
+        // this failure says where in what they wrote.
+        result = await runDisplayQuery(asWritten, opts.schemaJson);
+        width = 0;
+      }
       if (tokens.get(id) !== token) return;
       const columns = result.columns.slice(width);
+      if (width === 0) {
+        set((s) => {
+          const list = s.lists[id];
+          if (!list) return;
+          list.status = "loaded";
+          list.error = null;
+          list.expected = result.rows.length;
+          list.childIds = [];
+          list.rows = castDraft(
+            result.rows.map((row) => embedPreview(row, columns, [])),
+          );
+        });
+        return;
+      }
       set((s) => {
         const list = s.lists[id];
         if (!list) return;
+        delete list.rows;
         const signatureOf = (key: RecordKey | undefined) =>
           keySignature((key ?? []).map((part) => part.value));
         const held = new Map(

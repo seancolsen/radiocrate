@@ -290,14 +290,16 @@ export function selectRunsContextQuery(
 }
 
 /** How many records a contextual query found for a record, once it has run —
- * `undefined` before, there being no telling. */
+ * `undefined` before, there being no telling. For a query whose rows aren't
+ * records (`ListNode.rows`), how many rows. */
 export function selectContextCount(
   s: FormState,
   recordId: string,
   fieldKey: string,
 ): number | undefined {
   const list = s.lists[listId(recordId, fieldKey)];
-  return list?.status === "loaded" ? list.childIds.length : undefined;
+  if (list?.status !== "loaded") return undefined;
+  return (list.rows ?? list.childIds).length;
 }
 
 /** What a computed column's field shows: the value its column came to for

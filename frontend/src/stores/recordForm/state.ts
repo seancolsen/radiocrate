@@ -18,6 +18,7 @@
 
 import type { ColumnMetadata } from "../../query/columns";
 import type { Section } from "../../query/definition";
+import type { EmbedPreview } from "../../query/embedPreview";
 import type { FormField, JoinLink, RecordKey } from "../../query/recordForm";
 import type { ColumnValues } from "../../record/formValues";
 
@@ -93,6 +94,13 @@ export interface ListNode {
    * bound on the rows: some of them may turn out to be the same row. */
   expected: number;
   childIds: string[];
+  /** What a contextual query found when its rows aren't records of its table:
+   * a grouped query's (`$artist.name \g $%count`), each row standing for
+   * however many records share what it groups by. They're what the query
+   * displays, there to read: with no record behind a row, there's nothing to
+   * open, select or edit, and {@link ListNode.childIds} stays empty. Absent
+   * for a list of records. */
+  rows?: readonly EmbedPreview[];
   /** The records the user has taken out of the list, kept — with their keys —
    * because they're still in the database until the form is saved, and the save
    * has to name them to delete them. Records the form itself created never get

@@ -1217,6 +1217,23 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A contextual query that groups what it finds: a row for each group, showing
+  // what the query displays, with no toggle to open it by.
+  test(`record-editor/contextual-query-grouped - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/contextual-query-grouped",
+      colorScheme,
+    );
+    await stage.getByRole("button", { name: "Expand by artist" }).click();
+    await expect(stage.getByTestId("query-row")).toHaveCount(2);
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/contextual-query-grouped", colorScheme),
+    );
+  });
+
   // A contextual query being added: the new field at the bottom, its default
   // name selected to be typed over, and the Base selector beside it.
   test(`record-editor/provisional-query - ${colorScheme}`, async ({ page }) => {
@@ -1564,6 +1581,22 @@ test.describe("contextual queries", () => {
     // What it found has no delete button: it isn't the field's to take away.
     await expect(
       stage.getByRole("button", { name: /^Delete Jack White/ }),
+    ).toHaveCount(0);
+  });
+
+  test("lists a grouped query's rows, which aren't records", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/contextual-query-grouped");
+    await stage.getByRole("button", { name: "Expand by artist" }).click();
+    const rows = stage.getByTestId("query-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText("Beyoncé");
+    await expect(rows.nth(0)).toContainText("1");
+    await expect(rows.nth(1)).toContainText("Jack White");
+    // A row stands for no one record: there's nothing to open it into.
+    await expect(
+      stage.getByRole("button", { name: /Expand (Beyoncé|Jack White)/ }),
     ).toHaveCount(0);
   });
 

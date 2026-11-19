@@ -271,6 +271,13 @@ describe("contextRowsQuery", () => {
     );
   });
 
+  it("is the query as written, given no key to display", () => {
+    const def = { ...credits(), display: { custom: "$role \\g $%count" } };
+    expect(contextRowsQuery(def, [], [], "", "$role").display).toBe(
+      "$role \\g $%count",
+    );
+  });
+
   it("refuses a full Querydown query", () => {
     const def = { ...credits(), full: "#credit\nartist:=@id" };
     expect(() => contextRowsQuery(def, [], ["id"], "", "")).toThrow();

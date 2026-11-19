@@ -38,6 +38,8 @@ vi.mock("../../query/recordData", () => {
     }),
     isCompileError: (err: unknown) =>
       err instanceof Error && err.message.startsWith("compile:"),
+    isDisplayCompileError: (err: unknown) =>
+      err instanceof Error && err.message.startsWith("compile: Display"),
     // What the compiler said, less the "compile:" these tests mark it with.
     compileErrorReason: (err: unknown) =>
       err instanceof Error && err.message.startsWith("compile:")
@@ -2212,6 +2214,97 @@ describe("contextual queries", () => {
     expect(ids).toHaveLength(2);
     expect(ids[0]).toBe(second);
     expect(ids[1]).not.toBe(second);
+  });
+
+  /** Answers as {@link serveQueried} does, for a query that groups its
+   * credits: the compiler refuses the record's key ahead of its display, and
+   * the query as written finds `groups`. */
+  function serveGrouped(groups: [string, string][]) {
+    runner.mockImplementation(async (query) => {
+      if (query.base === "track")
+        return [trackRow("t1", "Formation", "Pop", 0)];
+      if (query.display.startsWith("$id\n")) {
+        throw new Error("compile: Display section: not grouped by");
+      }
+      return groups;
+    });
+  }
+  const GROUPED = "$role \\g $%count";
+
+  it("lists what a grouped query displays, its rows not being records", async () => {
+    const { model, queries } = queried();
+    queries[0] = {
+      ...queries[0],
+      definition: { ...definition(), display: { custom: GROUPED } },
+    };
+    serveGrouped([
+      ["Vocals", "2"],
+      ["Drums", "1"],
+    ]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    // With the key ahead of it, which the compiler refuses, then as written.
+    expect(contextCalls().map(([query]) => query.display)).toEqual([
+      `$id\n${GROUPED}`,
+      GROUPED,
+    ]);
+    const s = model.store.getState();
+    const list = s.lists[QUERY_LIST];
+    expect(list?.status).toBe("loaded");
+    expect(list?.rows?.map((row) => row.cells)).toEqual([
+      ["Vocals", "2"],
+      ["Drums", "1"],
+    ]);
+    expect(list?.childIds).toEqual([]);
+    expect(selectContextCount(s, ROOT_ID, QUERY)).toBe(2);
+  });
+
+  it("lists records again once the query's rows are records", async () => {
+    const { model, queries } = queried();
+    queries[0] = {
+      ...queries[0],
+      definition: { ...definition(), display: { custom: GROUPED } },
+    };
+    serveGrouped([["Vocals", "2"]]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+
+    serveQueried([
+      ["c1", "Vocals"],
+      ["c2", "Vocals"],
+    ]);
+    queries[0] = { ...queries[0], definition: definition() };
+    model.syncContextualQueries();
+    await settle();
+    const list = model.store.getState().lists[QUERY_LIST];
+    expect(list?.rows).toBeUndefined();
+    expect(list?.childIds).toHaveLength(2);
+  });
+
+  it("says what's wrong with a display that compiles neither way", async () => {
+    const { model } = queried();
+    runner.mockImplementation(async (query) => {
+      if (query.base === "track")
+        return [trackRow("t1", "Formation", "Pop", 0)];
+      throw new Error(
+        query.display.startsWith("$id\n")
+          ? "compile: Display section: no such column (line 2, column 2)"
+          : "compile: Display section: no such column (line 1, column 2)",
+      );
+    });
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    // The place is one in what the user wrote, not in what the form ran.
+    expect(model.store.getState().lists[QUERY_LIST]).toMatchObject({
+      status: "error",
+      error: "compile: Display section: no such column (line 1, column 2)",
+    });
   });
 
   it("runs a changed query afresh on opening, where it was closed", async () => {

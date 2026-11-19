@@ -264,6 +264,11 @@ export function seedDefinition(
  * preview is on a line of its own, so a `//` comment ending what the user wrote
  * doesn't swallow the keys.
  *
+ * No `keyColumns` gives the query as the user wrote it — what's run when the
+ * display won't take the key: a grouped query's (`$role \g $%count`), where
+ * every column has to be grouped by or aggregated, and whose rows aren't records
+ * to open anyway.
+ *
  * Throws, as `assemble` does, on a definition with no base or a dangling preset,
  * and on a full-mode definition, which has no sections to add the keys to. */
 export function contextRowsQuery(

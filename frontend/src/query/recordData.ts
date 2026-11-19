@@ -87,6 +87,12 @@ export function isCompileError(err: unknown): boolean {
   return is_querydown_error(err);
 }
 
+/** Whether a failed query never reached the database because of what it
+ * displays: the compiler's complaint is about its display section. */
+export function isDisplayCompileError(err: unknown): boolean {
+  return is_querydown_error(err) && err.section === "display";
+}
+
 /** What a failed query's Querydown got wrong, in the compiler's words, without
  * the place it gives — a line and column of text the app put together, which
  * is nowhere the user can look. Undefined for any other failure. */

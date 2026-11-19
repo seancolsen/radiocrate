@@ -1825,7 +1825,8 @@ const pageCount = (total: number): number =>
  *
  * Or the records a contextual query found, which have no count to go by until
  * they've arrived: one placeholder stands in for them the first time, and as many
- * as there were the next. */
+ * as there were the next. A query whose rows aren't records (a grouped one)
+ * lists what it displays for each row instead, there to read and no more. */
 function ChildList(props: {
   model: RecordFormModel;
   recordId: string;
@@ -1838,9 +1839,10 @@ function ChildList(props: {
   const expected = useFormState(model, (s) => s.lists[id]?.expected ?? 0);
   const childIds = useFormState(model, (s) => s.lists[id]?.childIds);
   const error = useFormState(model, (s) => s.lists[id]?.error ?? null);
+  const rows = useFormState(model, (s) => s.lists[id]?.rows);
   const selection = useFormState(model, (s) => s.selection);
   const [requested, setPage] = useState(0);
-  const total = childIds?.length ?? 0;
+  const total = (rows ?? childIds)?.length ?? 0;
   // Records can leave the list under the page being shown: stay on the last.
   const page = Math.min(requested, Math.max(0, pageCount(total) - 1));
   const shown = useMemo(
@@ -1909,6 +1911,21 @@ function ChildList(props: {
             <EmbeddedRecord cells={NO_CELLS} />
           </div>
         ))
+      ) : rows ? (
+        // Rows that stand for no one record: nothing to open, select or drag.
+        // They only ever change all at once, so their place is their key.
+        rows
+          .slice(page * CHILDREN_PER_PAGE, (page + 1) * CHILDREN_PER_PAGE)
+          .map((row, i) => (
+            <div
+              key={page * CHILDREN_PER_PAGE + i}
+              className="flex min-h-[30px] items-center gap-1 py-0.5"
+              data-testid="query-row"
+            >
+              <span className="size-4 shrink-0" aria-hidden="true" />
+              <EmbeddedRecord cells={row.cells} columns={row.columns} />
+            </div>
+          ))
       ) : (
         <div ref={listRef} className="relative">
           {shown?.map((childId) => (
