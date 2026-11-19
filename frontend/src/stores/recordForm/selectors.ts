@@ -8,18 +8,13 @@
 // the forms store compares it shallowly, and nothing renders from it directly.
 
 import type { Section } from "../../query/definition";
-import {
-  isFieldHidden,
-  type EmbedSection,
-  type MetadataByTable,
-} from "../../query/fieldMetadata";
+import { isFieldHidden, type MetadataByTable } from "../../query/fieldMetadata";
 import {
   fieldRef,
   type FormField,
   type ScalarLinkField,
 } from "../../query/recordForm";
 import {
-  embedEditorId,
   fieldItemId,
   listId,
   ROOT_ID,
@@ -52,24 +47,6 @@ export const selectRecord = (
 /** A child list by id, likewise. */
 export const selectList = (s: FormState, id: string): ListNode | undefined =>
   s.lists[id];
-
-/** Whether a field's Querydown editor for `section` is open. */
-export const selectEmbedEditorOpen = (
-  s: FormState,
-  recordId: string,
-  fieldKey: string,
-  section: EmbedSection,
-): boolean =>
-  s.embedEditors[embedEditorId(recordId, fieldKey, section)] === true;
-
-/** Whether a field's Querydown editor for `section` has been asked to take the
- * caret. */
-export const selectEmbedEditorFocusAsked = (
-  s: FormState,
-  recordId: string,
-  fieldKey: string,
-  section: EmbedSection,
-): boolean => s.embedEditorFocus === embedEditorId(recordId, fieldKey, section);
 
 /** An embedded record's preview by id, likewise. */
 export const selectEmbed = (s: FormState, id: string): EmbedNode | undefined =>
@@ -321,7 +298,7 @@ export function selectContextCount(
   return list?.status === "loaded" ? list.childIds.length : undefined;
 }
 
-/** Which section of a contextual query its editor is showing, or null while the
+/** Which section of a query a field's editor is showing, or null while the
  * editor is closed. */
 export const selectQueryEditor = (
   s: FormState,
@@ -329,12 +306,12 @@ export const selectQueryEditor = (
   fieldKey: string,
 ): Section | null => s.queryEditors[fieldItemId(recordId, fieldKey)] ?? null;
 
-/** Whether a contextual query's editor has been asked to take the caret. */
+/** Whether a field's query editor has been asked to take the caret. */
 export const selectQueryEditorFocusAsked = (
   s: FormState,
   recordId: string,
   fieldKey: string,
-): boolean => s.embedEditorFocus === embedEditorId(recordId, fieldKey, "query");
+): boolean => s.queryEditorFocus === fieldItemId(recordId, fieldKey);
 
 /** Whether an item (field or child record) is expanded. */
 export const selectIsExpanded = (s: FormState, itemId: string): boolean =>

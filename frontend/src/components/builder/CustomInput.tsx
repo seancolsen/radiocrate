@@ -2,9 +2,8 @@ import { forwardRef } from "react";
 import { Icons } from "../../icons";
 import type { QueryDiagnostic } from "../../query/diagnostics";
 import type { QuerydownContext } from "../../editor/querydownEditor";
-import { Menu, MenuItem } from "../ui/Menu";
-import { useTooltip } from "../ui/Tooltip";
-import { NESTED_FOCUS_CLASS, cx } from "../ui/cx";
+import { MenuItem } from "../ui/Menu";
+import InputActionsMenu from "./InputActionsMenu";
 import QuerydownEditor from "./QuerydownEditor";
 
 /** An auto-growing monospace Querydown editor — the toolbar's builder
@@ -39,7 +38,6 @@ const CustomInput = forwardRef<
   }
 >(function CustomInput(props, ref) {
   const hasText = props.value.trim() !== "";
-  const menuTip = useTooltip({ label: "Input options" });
 
   return (
     <div className="relative w-full">
@@ -55,40 +53,21 @@ const CustomInput = forwardRef<
         onKeyDown={props.onKeyDown}
       />
       {hasText && (
-        <div className="absolute top-0.5 right-0.5">
-          <Menu
-            align="end"
-            width="190px"
-            trigger={(api) => (
-              <button
-                type="button"
-                {...menuTip.triggerProps}
-                className={cx(
-                  "text-ink-weak hover:text-ink flex size-[22px] items-center justify-center rounded",
-                  NESTED_FOCUS_CLASS,
-                )}
-                onClick={() => api.toggle()}
-              >
-                <Icons.More className="size-4" />
-              </button>
-            )}
-          >
+        <InputActionsMenu>
+          <MenuItem
+            icon={Icons.Clear}
+            label="Clear"
+            onClick={() => props.onClear()}
+          />
+          {props.onSaveAsPreset && (
             <MenuItem
-              icon={Icons.Clear}
-              label="Clear"
-              onClick={() => props.onClear()}
+              icon={Icons.Save}
+              label="Save as preset"
+              disabled={!props.canSave}
+              onClick={() => props.onSaveAsPreset?.()}
             />
-            {props.onSaveAsPreset && (
-              <MenuItem
-                icon={Icons.Save}
-                label="Save as preset"
-                disabled={!props.canSave}
-                onClick={() => props.onSaveAsPreset?.()}
-              />
-            )}
-          </Menu>
-          {menuTip.tooltip}
-        </div>
+          )}
+        </InputActionsMenu>
       )}
     </div>
   );

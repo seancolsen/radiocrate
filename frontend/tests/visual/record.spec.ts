@@ -9,15 +9,33 @@ import { SCHEMES, openStory, snapshot, valueEditor } from "./harness";
 const star = (panel: Locator, label: string) =>
   panel.locator(`[aria-label="${label} modified"]`);
 
-/** Raises a field's context menu and takes one of its entries. */
-async function openEmbedEditor(
+/** Opens a field's query editor from its context menu, on the section given
+ * (its first, unless said otherwise). */
+async function openQueryEditor(
   page: Page,
   stage: Locator,
   field: string,
-  entry: "Display" | "Sorting",
+  section?: "Filter" | "Sort" | "Display",
 ) {
   await fieldLabelOf(stage, field).click({ button: "right" });
-  await page.getByRole("menuitem", { name: entry, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit query", exact: true }).click();
+  if (section !== undefined) {
+    await queryEditorOf(stage)
+      .getByRole("button", { name: section, exact: true })
+      .click();
+  }
+}
+
+/** A field's query editor, all of it: toolbar, text and what's said under it. */
+const queryEditorOf = (stage: Locator) =>
+  stage.getByTestId("field-query-editor");
+
+/** Takes "Restore default" from the ⋮ inside a query editor's text. */
+async function restoreDefault(page: Page, stage: Locator) {
+  await queryEditorOf(stage)
+    .getByRole("button", { name: "Input options" })
+    .click();
+  await page.getByRole("menuitem", { name: "Restore default" }).click();
 }
 
 const fieldLabelOf = (stage: Locator, name: string) =>
@@ -325,7 +343,8 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The two rows under a field whose embedded record is being customized.
+  // The query editor under a linked-record field: the one section it has,
+  // pressed, and the ⋮ inside the text.
   test(`record-editor/embed-display - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
@@ -333,7 +352,7 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await expect(
       embedEditor(stage, "Display of file").locator(".cm-line"),
     ).not.toBeEmpty();
@@ -349,8 +368,11 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
-    await openEmbedEditor(page, stage, "track tags", "Display");
-    await openEmbedEditor(page, stage, "track tags", "Sorting");
+    // A related-records field's: sorting and display, open on sorting.
+    await openQueryEditor(page, stage, "track tags");
+    await expect(
+      queryEditorOf(stage).getByRole("button", { name: "Sort", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await expect(stage.locator("[data-selectable]")).toHaveCount(2);
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/embed-sorting", colorScheme),
@@ -364,7 +386,7 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, "$nope");
     await expect(stage.getByRole("alert")).toBeVisible();
     await expect(stage).toHaveScreenshot(
@@ -469,7 +491,7 @@ test.describe("customizing embedded records", () => {
     expect(await menuEntries(page)).toEqual([
       "Pick a record",
       "Enter a new record",
-      "Display",
+      "Edit query",
       "Clear",
       "Hide field",
     ]);
@@ -478,24 +500,23 @@ test.describe("customizing embedded records", () => {
     await fieldLabelOf(stage, "credits").click({ button: "right" });
     expect(await menuEntries(page)).toEqual([
       "New record",
-      "Display",
-      "Sorting",
+      "Edit query",
       "Delete all records",
       "Hide field",
     ]);
     await page.keyboard.press("Escape");
 
     await fieldLabelOf(stage, "title").click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "Display" })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("menuitem", { name: "Edit query" }),
+    ).toHaveCount(0);
   });
 
   test("the editor opens on the generated Querydown, with the caret in it", async ({
     page,
   }) => {
     const stage = await opened(page);
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     const editor = embedEditor(stage, "Display of file");
     await expect(editor).toBeFocused();
     await expect(editor).toHaveText("$path");
@@ -507,7 +528,7 @@ test.describe("customizing embedded records", () => {
   }) => {
     const stage = await opened(page);
     const widget = stage.locator(".rc-embedded").first();
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, '$id @{hide:"yes"} $path @{prefix:"at "}');
     await expect(widget).toHaveText(/^at .*\.flac$/);
     await expect(widget.locator("span")).toHaveCount(1);
@@ -518,13 +539,13 @@ test.describe("customizing embedded records", () => {
   }) => {
     const stage = await opened(page);
     const widget = stage.locator(".rc-embedded").first();
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, "$id");
     await expect(widget).toHaveText("file-1");
     // Not written yet: that waits for the app to go quiet.
     expect(await calls(page, "metadata.field.set_display")).toEqual([]);
 
-    await stage.getByRole("button", { name: "Close display editor" }).click();
+    await stage.getByRole("button", { name: "Close query editor" }).click();
     await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
     await expect(fieldLabelOf(stage, "file")).toBeFocused();
     await expect
@@ -542,7 +563,7 @@ test.describe("customizing embedded records", () => {
     await expect(widget).toHaveText("file-1");
 
     // Opens on what the user wrote, this time.
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await expect(embedEditor(stage, "Display of file")).toHaveText("$id");
   });
 
@@ -550,7 +571,7 @@ test.describe("customizing embedded records", () => {
     page,
   }) => {
     const stage = await opened(page);
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, "$id");
     await expect
       .poll(() => calls(page, "metadata.field.set_display"), { timeout: 8000 })
@@ -558,19 +579,28 @@ test.describe("customizing embedded records", () => {
     await expect(embedEditor(stage, "Display of file")).toBeVisible();
   });
 
-  test("Restore default goes back to what's generated, and closes", async ({
+  test("Restore default goes back to what's generated, from the editor's ⋮", async ({
     page,
   }) => {
     const stage = await opened(page);
     const widget = stage.locator(".rc-embedded").first();
     const generated = await widget.innerText();
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, "$id");
     await expect(widget).toHaveText("file-1");
 
-    await stage.getByRole("button", { name: "Restore default" }).click();
-    await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
+    await restoreDefault(page, stage);
+    const editor = embedEditor(stage, "Display of file");
+    await expect(editor).toHaveText("$path");
     await expect(widget).toHaveText(generated);
+    // Nothing more to restore.
+    await queryEditorOf(stage)
+      .getByRole("button", { name: "Input options" })
+      .click();
+    await expect(
+      page.getByRole("menuitem", { name: "Restore default" }),
+    ).toBeDisabled();
+    await page.keyboard.press("Escape");
     await expect
       .poll(() => calls(page, "metadata.field.set_display"))
       .toEqual([
@@ -587,30 +617,32 @@ test.describe("customizing embedded records", () => {
 
   test("Escape closes the editor", async ({ page }) => {
     const stage = await opened(page);
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await page.keyboard.press("Escape");
     await expect(embedEditor(stage, "Display of file")).toHaveCount(0);
     await expect(fieldLabelOf(stage, "file")).toBeFocused();
   });
 
-  test("a multi-record field opens, re-displays and re-sorts under its editors", async ({
+  test("a multi-record field opens, re-displays and re-sorts under its editor", async ({
     page,
   }) => {
     const stage = await opened(page, "record-editor/embed-sorting");
     const rows = stage.locator("[data-selectable]");
     await expect(rows).toHaveCount(0);
 
-    await openEmbedEditor(page, stage, "track tags", "Display");
+    await openQueryEditor(page, stage, "track tags", "Display");
     await expect(rows).toHaveCount(2);
     await rewrite(page, "$tag");
     await expect(rows).toHaveText(["tag-rnb", "tag-rock"]);
 
-    await openEmbedEditor(page, stage, "track tags", "Sorting");
+    await queryEditorOf(stage)
+      .getByRole("button", { name: "Sort", exact: true })
+      .click();
     await expect(embedEditor(stage, "Sorting of track tags")).toBeFocused();
     await rewrite(page, "\\\\tag \\d");
     await expect(rows).toHaveText(["tag-rock", "tag-rnb"]);
 
-    await stage.getByRole("button", { name: "Close sorting editor" }).click();
+    await stage.getByRole("button", { name: "Close query editor" }).click();
     await expect
       .poll(() => calls(page, "metadata.field.set_sorting"))
       .toEqual([
@@ -628,7 +660,7 @@ test.describe("customizing embedded records", () => {
           },
         },
       ]);
-    await expect(embedEditor(stage, "Display of track tags")).toBeVisible();
+    await expect(queryEditorOf(stage)).toHaveCount(0);
   });
 
   test("Querydown that won't compile says so, and the records stay as they were", async ({
@@ -637,7 +669,7 @@ test.describe("customizing embedded records", () => {
     const stage = await opened(page);
     const widget = stage.locator(".rc-embedded").first();
     const before = await widget.innerText();
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await rewrite(page, "$nope");
     await expect(stage.getByRole("alert")).toContainText("nope");
     await expect(widget).toHaveText(before);
@@ -647,14 +679,14 @@ test.describe("customizing embedded records", () => {
 
   test("only asking for an editor moves the caret to it", async ({ page }) => {
     const stage = await opened(page);
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     const editor = embedEditor(stage, "Display of file");
     await expect(editor).toBeFocused();
 
     // Off somewhere else, and asked for again while it's still open.
     await fieldLabelOf(stage, "title").click();
     await expect(editor).not.toBeFocused();
-    await openEmbedEditor(page, stage, "file", "Display");
+    await openQueryEditor(page, stage, "file");
     await expect(editor).toBeFocused();
   });
 });
@@ -1311,6 +1343,54 @@ test.describe("contextual queries", () => {
     await expect(
       stage.getByText("Write a filter to run this query."),
     ).toBeVisible();
+  });
+
+  test("its editor shows which section it's on, and a new base table starts it over", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/contextual-query");
+    await openQueryEditor(page, stage, "featured");
+    const editor = queryEditorOf(stage);
+    const toggle = (name: string) =>
+      editor.getByRole("button", { name, exact: true });
+    await expect(toggle("Filter")).toHaveAttribute("aria-pressed", "true");
+    await expect(toggle("Sort")).toHaveAttribute("aria-pressed", "false");
+    await toggle("Display").click();
+    await expect(toggle("Display")).toHaveAttribute("aria-pressed", "true");
+    await expect(toggle("Filter")).toHaveAttribute("aria-pressed", "false");
+    await expect(embedEditor(stage, "Display of featured")).toBeFocused();
+
+    await editor.getByRole("button", { name: "Base table" }).click();
+    // It lists credits: the one checked.
+    await expect(
+      page.getByRole("menuitemradio", { name: "credit", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
+    await page
+      .getByRole("menuitemradio", { name: "track", exact: true })
+      .click();
+    // Seeded as a new query on tracks would be: a track's own table has no
+    // link to guess a filter from, and the display is a track's.
+    await toggle("Filter").click();
+    await expect(embedEditor(stage, "Filter of featured")).toHaveText("");
+    await toggle("Display").click();
+    await expect(embedEditor(stage, "Display of featured")).toHaveText(
+      "$file.path $title",
+    );
+    await expect
+      .poll(async () => (await writes(page)).at(-1))
+      .toMatchObject({
+        operations: [
+          {
+            operation: "update",
+            table: "contextual_query",
+            where: { id: "query-featured" },
+          },
+        ],
+      });
+    await editor.getByRole("button", { name: "Base table" }).click();
+    await expect(
+      page.getByRole("menuitemradio", { name: "track", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 
   test("Escape while it's being named drops a query being added", async ({

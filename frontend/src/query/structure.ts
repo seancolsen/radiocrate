@@ -23,6 +23,7 @@ import type { ContextualQuery } from "./contextualQuery";
 import { contextFields } from "./contextualQuery";
 import type { Section } from "./definition";
 import { fieldRefKey, orderFields, type TableMetadata } from "./fieldMetadata";
+import { hasQueryEditor } from "./fieldQuery";
 import { buildFormFields, type FormField } from "./recordForm";
 import type { SchemaTable } from "./schema";
 
@@ -92,23 +93,11 @@ export function structureFields(
   return orderFields(fields, metadata);
 }
 
-/** Which of a related-records field's embedded records the user can write
- * Querydown for: none for a table whose records can't be told apart (they're
- * counted, not listed), and no sorting for records kept in an order of the
- * user's own. The same rules as the record editor's menu. */
-export function relatedFieldSections(
-  field: FormField,
-): readonly ("sort" | "display")[] {
-  if (field.kind !== "multiRecord" || field.keyColumns.length === 0) return [];
-  return field.ordered ? ["display"] : ["sort", "display"];
-}
-
-/** Whether a field's row opens into anything: a contextual query's editor, or a
- * related-records field's — a column has none. */
+/** Whether a field's row opens into anything: its query's editor, for a
+ * contextual query or a related-records field. A column has none — a linked
+ * one included, whose record's display is the record editor's to write. */
 export function isFieldExpandable(field: FormField): boolean {
-  return (
-    field.kind === "contextQuery" || relatedFieldSections(field).length > 0
-  );
+  return field.kind !== "scalarLink" && hasQueryEditor(field);
 }
 
 const count = (n: number, one: string, many: string): string =>

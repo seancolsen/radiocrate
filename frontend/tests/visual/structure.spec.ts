@@ -90,9 +90,9 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // A related-records field and a contextual query, each open on its editor:
-  // sorting and display with "Restore default" for the one, all three sections
-  // and the "?" for the other.
+  // A related-records field and a contextual query, each open on its query
+  // editor: sorting and display with the ⋮ for the one, all three sections,
+  // "Base table" and the "?" for the other.
   test(`data-structure/field-editors - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
@@ -100,15 +100,25 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await scrollToTop(row(stage, "Fields"));
-    const related = stage.getByTestId("related-field-editor");
+    const editors = stage.getByTestId("field-query-editor");
+    const related = editors.filter({
+      has: page.getByLabel("Sorting of plays"),
+    });
     await expect(related.getByRole("button", { name: "Filter" })).toHaveCount(
       0,
     );
-    await expect(related.getByLabel("Sorting of plays")).toBeVisible();
     await expect(
-      related.getByRole("button", { name: "Restore default" }),
-    ).toBeDisabled();
-    const query = stage.getByTestId("context-query-editor");
+      related.getByRole("button", { name: "Sort", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      related.getByRole("button", { name: "Input options" }),
+    ).toBeVisible();
+    const query = editors.filter({
+      has: page.getByLabel("Filter of featured"),
+    });
+    await expect(
+      query.getByRole("button", { name: "Base table" }),
+    ).toBeVisible();
     await expect(query.getByLabel("Filter of featured")).toContainText(
       "track:=@id",
     );
@@ -516,13 +526,19 @@ test("a related-records field's Querydown is written, and restored", async ({
   page,
 }) => {
   const stage = await openStory(page, "data-structure/field-editors", "light");
-  const editor = stage.getByTestId("related-field-editor");
-  const restore = editor.getByRole("button", { name: "Restore default" });
+  const editor = stage.getByTestId("field-query-editor").filter({
+    hasNot: page.getByRole("button", { name: "Filter", exact: true }),
+  });
   const sorting = editor.getByLabel("Sorting of plays");
+  const restore = page.getByRole("menuitem", { name: "Restore default" });
+  const openOptions = () =>
+    editor.getByRole("button", { name: "Input options" }).click();
   const generated = await sorting.textContent();
 
   await sorting.fill("\\\\timestamp");
+  await openOptions();
   await expect(restore).toBeEnabled();
+  await page.keyboard.press("Escape");
   // Written once the user leaves the editor, without waiting for the app to
   // go quiet.
   await editor.getByRole("button", { name: "Display" }).click();
@@ -544,9 +560,11 @@ test("a related-records field's Querydown is written, and restored", async ({
     ]);
 
   await row(stage, "plays Related").click();
+  await openOptions();
   await restore.click();
-  await expect(restore).toBeDisabled();
   await expect(sorting).toHaveText(generated ?? "");
+  await openOptions();
+  await expect(restore).toBeDisabled();
 });
 
 // ── In the assembled app ─────────────────────────────────────────────────────

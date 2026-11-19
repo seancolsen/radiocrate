@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ContextualQuery } from "./contextualQuery";
 import { emptyDefinition } from "./definition";
 import { fieldRefKey } from "./fieldMetadata";
+import { queryEditorSections } from "./fieldQuery";
 import type { SchemaTable } from "./schema";
 import {
   columnStatsLabel,
   isFieldExpandable,
   presetSectionPath,
-  relatedFieldSections,
   structureFieldKind,
   structureFields,
   tableSizeLabel,
@@ -110,14 +110,19 @@ describe("what a field opens into", () => {
 
   it("is the whole query for a contextual query", () => {
     expect(isFieldExpandable(named("same album"))).toBe(true);
+    expect(queryEditorSections(named("same album"))).toEqual([
+      "filter",
+      "sort",
+      "display",
+    ]);
   });
 
   it("leaves out the sorting of records kept in their own order", () => {
-    expect(relatedFieldSections(named("credits"))).toEqual(["display"]);
+    expect(queryEditorSections(named("credits"))).toEqual(["display"]);
   });
 
   it("is nothing for records that are only counted", () => {
-    expect(relatedFieldSections(named("plays"))).toEqual([]);
+    expect(queryEditorSections(named("plays"))).toEqual([]);
     expect(isFieldExpandable(named("plays"))).toBe(false);
   });
 
@@ -125,7 +130,7 @@ describe("what a field opens into", () => {
     const tracks = structureFields(TABLES, "album", [], {}).find(
       (f) => f.label === "tracks",
     )!;
-    expect(relatedFieldSections(tracks)).toEqual(["sort", "display"]);
+    expect(queryEditorSections(tracks)).toEqual(["sort", "display"]);
   });
 });
 

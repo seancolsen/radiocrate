@@ -1620,8 +1620,9 @@ export const STORIES: Record<string, Story> = {
     seedTrackFields,
   ),
   // A contextual query's field and a related-records field, each opened into
-  // its editor: the query's with all three sections, on its filter; the
-  // related records' with only sorting and display, and "Restore default".
+  // its query editor: the query's with all three sections, on its filter, and
+  // its "Base table" and "?"; the related records' with only sorting and
+  // display, and the ⋮ holding "Restore default".
   "data-structure/field-editors": dataStructure(
     { height: 680 },
     [
@@ -2141,11 +2142,11 @@ export const STORIES: Record<string, Story> = {
       { ...defaultFieldMetadata(), visible: false },
     ],
   ]),
-  // The Querydown behind a scalar linked record's embedded record, being edited
-  // (the test opens the editor from the field's menu).
+  // The query behind a scalar linked record's embedded record, being edited
+  // (the test opens the editor from the field's menu): its display alone.
   "record-editor/embed-display": recordEditor([1]),
-  // A multi-record field's display and sorting both being edited, above the
-  // records they're about.
+  // A multi-record field's query being edited, on its sorting, above the
+  // records it's about.
   "record-editor/embed-sorting": recordEditor([3]),
   // A problem in that Querydown, which the editor says under it.
   "record-editor/embed-problem": recordEditor([1]),

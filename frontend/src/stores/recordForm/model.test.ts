@@ -21,6 +21,7 @@ import type {
 } from "../../query/recordForm";
 import type { ContextualQuery } from "../../query/contextualQuery";
 import { emptyDefinition, type QueryDefinition } from "../../query/definition";
+import { queryEditorSections } from "../../query/fieldQuery";
 
 /** What the next display queries' annotations say, positionally. */
 const annotated = vi.hoisted(() => ({
@@ -65,11 +66,10 @@ import {
   selectFieldExpandable,
   selectFindReplace,
   selectQueryEditor,
+  selectQueryEditorFocusAsked,
   selectRunsContextQuery,
   distinctValues,
   selectDistinctCount,
-  selectEmbedEditorFocusAsked,
-  selectEmbedEditorOpen,
   selectFieldModified,
   selectAnyExpanded,
   selectCanAutocomplete,
@@ -822,40 +822,35 @@ describe("customizing a field's embedded records", () => {
     expect(runner.mock.calls.at(-1)?.[0].display).toBe("$role");
   });
 
-  it("opens an editor, and a multi-record field with it so its records show", async () => {
+  it("opens the query editor on the field's first section, and the field with it so its records show", async () => {
     const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
     const field = credits(model);
     model.toggleField(ROOT_ID, field, false);
-    model.openEmbedEditor(ROOT_ID, field, "sorting");
+    model.openQueryEditor(ROOT_ID, field);
     const s = model.store.getState();
-    expect(selectEmbedEditorOpen(s, ROOT_ID, field.key, "sorting")).toBe(true);
-    expect(selectEmbedEditorOpen(s, ROOT_ID, field.key, "display")).toBe(false);
+    expect(selectQueryEditor(s, ROOT_ID, field.key)).toBe(
+      queryEditorSections(field)[0],
+    );
     expect(s.expanded[fieldItemId(ROOT_ID, field.key)]).toBe(true);
 
-    model.closeEmbedEditor(ROOT_ID, field.key, "sorting");
+    model.openQueryEditor(ROOT_ID, field, "display");
+    expect(selectQueryEditor(model.store.getState(), ROOT_ID, field.key)).toBe(
+      "display",
+    );
+    model.closeQueryEditor(ROOT_ID, field.key);
     expect(
-      selectEmbedEditorOpen(
-        model.store.getState(),
-        ROOT_ID,
-        field.key,
-        "sorting",
-      ),
-    ).toBe(false);
+      selectQueryEditor(model.store.getState(), ROOT_ID, field.key),
+    ).toBeNull();
   });
 
   it("asks for the caret when an editor is opened, until it has it", async () => {
     const { model } = await listed([listRow("c1", "Vocals", ["Vocals"])]);
     const field = credits(model);
-    model.openEmbedEditor(ROOT_ID, field, "display");
+    model.openQueryEditor(ROOT_ID, field, "display");
     const asked = () =>
-      selectEmbedEditorFocusAsked(
-        model.store.getState(),
-        ROOT_ID,
-        field.key,
-        "display",
-      );
+      selectQueryEditorFocusAsked(model.store.getState(), ROOT_ID, field.key);
     expect(asked()).toBe(true);
-    model.noteEmbedEditorFocused();
+    model.noteQueryEditorFocused();
     expect(asked()).toBe(false);
   });
 
@@ -863,7 +858,7 @@ describe("customizing a field's embedded records", () => {
     const { model } = await listed([]);
     const field = credits(model);
     model.toggleField(ROOT_ID, field, false);
-    model.openEmbedEditor(ROOT_ID, field, "display");
+    model.openQueryEditor(ROOT_ID, field, "display");
     expect(
       model.store.getState().expanded[fieldItemId(ROOT_ID, field.key)],
     ).toBe(false);

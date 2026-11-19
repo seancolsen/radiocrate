@@ -1,49 +1,33 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type JSX,
-  type MouseEvent,
-} from "react";
+import { useMemo, useRef, useState, type JSX, type MouseEvent } from "react";
 import type { ColumnSummary } from "api-client";
 import { Icons } from "../../icons";
 import {
-  contextDefinitions,
   contextKeyColumn,
   DEFAULT_CONTEXTUAL_QUERY_NAME,
-  sectionText,
 } from "../../query/contextualQuery";
-import { SECTIONS, type Section } from "../../query/definition";
-import { defaultEmbedSections, embedSpec } from "../../query/embeddedRecord";
-import { isFieldHidden, type EmbedSection } from "../../query/fieldMetadata";
+import type { Section } from "../../query/definition";
+import { isFieldHidden } from "../../query/fieldMetadata";
 import {
-  fieldRef,
-  type ContextQueryField,
-  type FormField,
-  type MultiRecordField,
-} from "../../query/recordForm";
+  hasQueryEditor,
+  queryEditorSections,
+  type QueryEditorField,
+} from "../../query/fieldQuery";
+import { fieldRef, type FormField } from "../../query/recordForm";
 import {
   columnStatsLabel,
   FIELD_KIND_LABELS,
   fieldsItemId,
-  relatedFieldSections,
+  isFieldExpandable,
   structureFieldId,
   structureFieldKind,
   structureFields,
   tableSummary,
 } from "../../query/structure";
-import {
-  selectContextualQuery,
-  selectFieldQuerydown,
-  selectTableMetadata,
-} from "../../stores/app";
+import { selectTableMetadata } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
-import { useCheckContext } from "../builder/useDiagnostics";
-import { CONTEXT_QUERY_HELP } from "../record/ContextQueryEditor";
+import FieldQueryEditor from "../record/FieldQueryEditor";
 import { FieldPill } from "../record/FieldLabel";
 import ProvisionalQueryRow from "../record/ProvisionalQueryRow";
-import QuerySectionsEditor from "../record/QuerySectionsEditor";
 import { ContextMenu } from "../ui/ContextMenu";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem } from "../ui/Menu";
@@ -69,125 +53,34 @@ function focusOwnRow(el: HTMLElement | null): void {
     ?.focus();
 }
 
-/** A contextual query's editor, under its field: the one the record editor
- * shows there, with nothing to close — closing the field does that. No record
- * is in hand here, so `@id` is checked as standing for no value in particular.
+/** A field's query editor, under its row: the one the record editor shows
+ * under the field (`FieldQueryEditor`), with nothing to close — closing the
+ * row does that, and Escape gives the row back the keyboard. No record is in
+ * hand here, so a contextual query's `@id` is checked as standing for no value
+ * in particular.
  *
- * What's typed is the query's at once, and is written once the app goes quiet,
- * or as the editor goes away. */
-function ContextQueryNodeEditor(props: {
+ * What's typed is the field's at once, in every record editor on the table, and
+ * is written once the app goes quiet, or as the editor goes away. */
+function FieldNodeEditor(props: {
   itemId: string;
-  field: ContextQueryField;
+  table: string;
+  field: QueryEditorField;
 }): JSX.Element {
-  const { field } = props;
-  const [section, setSection] = useState<Section>("filter");
-  const { setContextualQuerySection, flushContextualQuery } = useAppActions();
-  const definition = useApp(
-    (s) => selectContextualQuery(s, field.queryId)?.definition,
+  const [section, setSection] = useState<Section>(
+    () => queryEditorSections(props.field)[0] ?? "display",
   );
-  const definitions = contextDefinitions(useCheckContext()?.prelude ?? "", "");
-  useEffect(
-    () => () => flushContextualQuery(field.queryId),
-    [field.queryId, flushContextualQuery],
-  );
-
   const wrapRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLElement>(null);
   useFocusOnReveal(props.itemId, editorRef);
 
   return (
     <div ref={wrapRef}>
-      <QuerySectionsEditor
+      <FieldQueryEditor
         ref={editorRef}
-        className="py-1 pr-1 pl-5"
-        testId="context-query-editor"
-        sections={SECTIONS}
+        table={props.table}
+        field={props.field}
         section={section}
         onSection={setSection}
-        label={field.label}
-        base={definition?.base ?? field.table}
-        definitions={definitions}
-        text={definition ? sectionText(definition, section) : ""}
-        onChange={(next) =>
-          setContextualQuerySection(field.queryId, section, next)
-        }
-        help={CONTEXT_QUERY_HELP}
-        onEscape={() => focusOwnRow(wrapRef.current)}
-      />
-    </div>
-  );
-}
-
-/** The part of a field's metadata each section of its records' query is kept
- * in. */
-const EMBED_SECTIONS: Record<"sort" | "display", EmbedSection> = {
-  sort: "sorting",
-  display: "display",
-};
-
-/** A related-records field's editor, under the field: the same editor as a
- * contextual query's, without a filter — which records a field lists is what
- * the field is. It edits the Querydown behind the field's embedded records, in
- * every record editor on the table: what's generated for them until the user
- * writes their own, which "Restore default" goes back to. */
-function RelatedFieldEditor(props: {
-  table: string;
-  field: MultiRecordField;
-  sections: readonly ("sort" | "display")[];
-}): JSX.Element {
-  const { table, field, sections } = props;
-  const [chosen, setSection] = useState(sections[0]);
-  // A field can lose its sorting while it's open: its table gains an `order`.
-  const section = sections.includes(chosen) ? chosen : sections[0];
-  const part = EMBED_SECTIONS[section];
-  const ref = useMemo(() => fieldRef(field), [field]);
-  const stored = useApp((s) => selectFieldQuerydown(s, table, ref, part));
-  const tables = useApp((s) => s.schema.tables);
-  const generated = useMemo(
-    () =>
-      defaultEmbedSections(
-        embedSpec(tables, field.table, field.column),
-        field.keyColumns,
-      ),
-    [tables, field],
-  );
-  const { setFieldQuerydown, flushFieldQuerydown } = useAppActions();
-  useEffect(
-    () => () => {
-      flushFieldQuerydown(table, ref, "display");
-      flushFieldQuerydown(table, ref, "sorting");
-    },
-    [table, ref, flushFieldQuerydown],
-  );
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  return (
-    <div ref={wrapRef}>
-      <QuerySectionsEditor
-        className="py-1 pr-1 pl-5"
-        testId="related-field-editor"
-        sections={sections}
-        section={section}
-        onSection={(next) => {
-          if (next !== "filter") setSection(next);
-        }}
-        label={field.label}
-        base={field.table}
-        // As the form's queries are compiled: on the field's own table, with
-        // no prelude.
-        definitions=""
-        text={stored ?? generated[part]}
-        onChange={(next) => setFieldQuerydown(table, ref, part, next)}
-        trailing={
-          <button
-            type="button"
-            disabled={stored === null}
-            className="text-ink hover:bg-hover h-[22px] shrink-0 rounded px-1.5 text-xs disabled:opacity-40 disabled:hover:bg-transparent"
-            onClick={() => setFieldQuerydown(table, ref, part, null)}
-          >
-            Restore default
-          </button>
-        }
         onEscape={() => focusOwnRow(wrapRef.current)}
       />
     </div>
@@ -196,8 +89,8 @@ function RelatedFieldEditor(props: {
 
 /** One field: its label as the record editor draws it, what kind of field it
  * is, and for a column its type and what `SUMMARIZE` found in it. A contextual
- * query's and a related-records field's open into their editors; a column has
- * nothing to open into. */
+ * query's and a related-records field's open into their query's editor; a
+ * column has nothing to open into. */
 function FieldNode(props: {
   table: string;
   field: FormField;
@@ -213,11 +106,11 @@ function FieldNode(props: {
   const { table, field } = props;
   const kind = structureFieldKind(field);
   const id = structureFieldId(table, fieldRef(field));
-  const sections = relatedFieldSections(field);
+  const expandable = isFieldExpandable(field);
   return (
     <TreeNode
       id={id}
-      expandable={field.kind === "contextQuery" || sections.length > 0}
+      expandable={expandable}
       dimmed={props.hidden}
       onContextMenu={props.onContextMenu}
       label={
@@ -237,11 +130,8 @@ function FieldNode(props: {
         </>
       }
     >
-      {field.kind === "contextQuery" && (
-        <ContextQueryNodeEditor itemId={id} field={field} />
-      )}
-      {field.kind === "multiRecord" && sections.length > 0 && (
-        <RelatedFieldEditor table={table} field={field} sections={sections} />
+      {expandable && hasQueryEditor(field) && (
+        <FieldNodeEditor itemId={id} table={table} field={field} />
       )}
     </TreeNode>
   );

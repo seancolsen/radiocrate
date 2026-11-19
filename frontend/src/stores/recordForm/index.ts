@@ -14,7 +14,6 @@ export { createExpansionMemory, type ExpansionMemory } from "./expansionMemory";
 // them through it.
 export {
   distinctItemId,
-  embedEditorId,
   fieldItemId,
   listId,
   ROOT_ID,

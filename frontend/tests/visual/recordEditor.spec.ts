@@ -1593,13 +1593,10 @@ test("a multi-record field's menu adds and deletes records", async ({
   await rightClick(formItem(editor, "r:#credit"));
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "New record",
-    "Display",
-    "Sorting",
+    "Edit query",
     "Delete all records",
     "Hide field",
   ]);
-  // Sorting is offered, but grayed: credits are kept in an order of their own.
-  await expect(page.getByRole("menuitem", { name: "Sorting" })).toBeDisabled();
   await page.getByRole("menuitem", { name: "New record" }).click();
   // At the end, credits being kept in order — and the artist it needs picked
   // first, which this leaves for later.
@@ -1615,6 +1612,18 @@ test("a multi-record field's menu adds and deletes records", async ({
   await expect(
     editor.getByRole("button", { name: "Expand credits" }),
   ).toBeHidden();
+
+  // Credits are kept in an order of their own, so their query has no sorting
+  // to edit: its editor has the display alone.
+  await rightClick(formItem(editor, "r:#credit"));
+  await page.getByRole("menuitem", { name: "Edit query" }).click();
+  const query = editor.getByTestId("field-query-editor");
+  await expect(
+    query.getByRole("button", { name: "Display", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    query.getByRole("button", { name: "Sort", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("a scalar linked record field's menu enters a new record", async ({
@@ -1629,7 +1638,7 @@ test("a scalar linked record field's menu enters a new record", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Pick a record",
     "Enter a new record",
-    "Display",
+    "Edit query",
     "Clear",
     "Hide field",
   ]);

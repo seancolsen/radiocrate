@@ -86,7 +86,6 @@ import {
   fieldRefKey,
   NO_TABLE_METADATA,
   type EmbedChange,
-  type EmbedSection,
   type MetadataByTable,
 } from "../../query/fieldMetadata";
 import type { ColumnMetadata } from "../../query/columns";
@@ -100,6 +99,10 @@ import {
   type ContextualQuery,
 } from "../../query/contextualQuery";
 import type { QueryDefinition, Section } from "../../query/definition";
+import {
+  queryEditorSections,
+  type QueryEditorField,
+} from "../../query/fieldQuery";
 import { embedPreview } from "../../query/embedPreview";
 import {
   isCompileError,
@@ -124,7 +127,6 @@ import {
   childId,
   deletedChildId,
   distinctItemId,
-  embedEditorId,
   fieldItemId,
   isDurableItemId,
   listId,
@@ -228,9 +230,6 @@ export interface RecordFormActions {
    * in place. */
   clearSaveError: () => void;
 
-  /** The preview columns (and their ordering) generated for one table, whatever
-   * has been customized — what a field's Querydown editors open with. */
-  previewSpec: (table: string, contextColumn?: string) => EmbedSpec;
   /** What a field's embedded records show and how they're sorted, its
    * customization included — what the record picker's display and sort builders
    * open pre-filled with. */
@@ -242,36 +241,24 @@ export interface RecordFormActions {
    * once they've stopped changing. What's on screen stays until the answer lands,
    * and the form's edits, expansion and selection are left as they are. */
   refreshEmbeds: (changes: readonly EmbedChange[]) => void;
-  /** Opens the editor for the Querydown behind a part of a field's embedded
-   * records, under the field's row. A multi-record field opens too, so its records
-   * are there to watch change. */
-  openEmbedEditor: (
-    recordId: string,
-    field: ScalarLinkField | MultiRecordField,
-    section: EmbedSection,
-  ) => void;
-  closeEmbedEditor: (
-    recordId: string,
-    fieldKey: string,
-    section: EmbedSection,
-  ) => void;
-  /** The editor that was asked for has the caret now. */
-  noteEmbedEditorFocused: () => void;
-
   /** Brings every record's contextual query fields into line with the queries as
    * they stand now: new ones appear, removed ones go, renamed ones relabel. A
    * query whose Querydown has changed runs again where it's expanded, once it has
    * stopped changing, and is left to run afresh next time where it isn't. */
   syncContextualQueries: () => void;
-  /** Opens a contextual query's editor under its field, on `section` (the filter,
-   * unless said otherwise), with the caret in it. The field opens too, where it
-   * can, so the records it finds are there to watch change. */
+  /** Opens the query editor under a field, on `section` (the first the field
+   * offers, unless said otherwise — a contextual query's filter), with the caret
+   * in it: a contextual query's, or the one for the Querydown behind a field's
+   * embedded records. The field opens too, where it can, so the records are
+   * there to watch change. */
   openQueryEditor: (
     recordId: string,
-    field: ContextQueryField,
+    field: QueryEditorField,
     section?: Section,
   ) => void;
   closeQueryEditor: (recordId: string, fieldKey: string) => void;
+  /** The editor that was asked for has the caret now. */
+  noteQueryEditorFocused: () => void;
   /** Hands a contextual query's records, for the record its field is on, to
    * `openContextualQuery`. */
   openContextRecords: (recordId: string, field: ContextQueryField) => void;
@@ -2232,7 +2219,6 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         s.saveError = null;
       }),
 
-    previewSpec: specFor,
     fieldSpec,
 
     refreshEmbeds: (changes) => {
@@ -2259,28 +2245,6 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         );
       }
     },
-
-    openEmbedEditor: (recordId, field, section) => {
-      const id = embedEditorId(recordId, field.key, section);
-      set((s) => {
-        s.embedEditors[id] = true;
-        s.embedEditorFocus = id;
-      });
-      if (
-        field.kind === "multiRecord" &&
-        (selectCountMax(get(), recordId, field.key) ?? 0) > 0
-      ) {
-        openField(recordId, field);
-      }
-    },
-    closeEmbedEditor: (recordId, fieldKey, section) =>
-      set((s) => {
-        delete s.embedEditors[embedEditorId(recordId, fieldKey, section)];
-      }),
-    noteEmbedEditorFocused: () =>
-      set((s) => {
-        s.embedEditorFocus = null;
-      }),
 
     syncContextualQueries: () => {
       const queries = opts.contextualQueries?.list() ?? [];
@@ -2328,23 +2292,30 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         );
       }
     },
-    openQueryEditor: (recordId, field, section = "filter") => {
+    openQueryEditor: (recordId, field, section) => {
       const itemId = fieldItemId(recordId, field.key);
+      const shown = section ?? queryEditorSections(field)[0];
+      if (shown === undefined) return;
       set((s) => {
         s.menu = null;
-        s.queryEditors[itemId] = section;
-        s.embedEditorFocus = embedEditorId(recordId, field.key, "query");
+        s.queryEditors[itemId] = shown;
+        s.queryEditorFocus = itemId;
       });
-      if (
-        selectRunsContextQuery(get(), recordId) &&
-        get().expanded[itemId] !== true
-      ) {
-        openField(recordId, field);
-      }
+      if (get().expanded[itemId] === true) return;
+      const opens =
+        field.kind === "contextQuery"
+          ? selectRunsContextQuery(get(), recordId)
+          : field.kind === "multiRecord" &&
+            (selectCountMax(get(), recordId, field.key) ?? 0) > 0;
+      if (opens) openField(recordId, field);
     },
     closeQueryEditor: (recordId, fieldKey) =>
       set((s) => {
         delete s.queryEditors[fieldItemId(recordId, fieldKey)];
+      }),
+    noteQueryEditorFocused: () =>
+      set((s) => {
+        s.queryEditorFocus = null;
       }),
     openContextRecords: (recordId, field) => {
       const value = contextValue(recordId);

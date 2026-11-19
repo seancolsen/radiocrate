@@ -89,16 +89,6 @@ export function isDurableItemId(id: string): boolean {
   return !/=|!null$|\[new:/.test(id);
 }
 
-/** The id a field's Querydown editor is tracked as open under, there being one per
- * section of the query it edits. */
-export function embedEditorId(
-  recordId: string,
-  fieldKey: string,
-  section: string,
-): string {
-  return `${fieldItemId(recordId, fieldKey)}/${section}`;
-}
-
 /** The id one *distinct value* of a scalar field is expanded and edited under,
  * when the records the form is on disagree about that field — its field's id,
  * qualified by the value. NULL and the string `"null"` are two different

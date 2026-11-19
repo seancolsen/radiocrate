@@ -16,6 +16,7 @@ import {
 import { selectTableMetadata, type RecordRef } from "../../stores/app";
 import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { isFieldHidden } from "../../query/fieldMetadata";
+import { hasQueryEditor } from "../../query/fieldQuery";
 import { fieldRef, type FormField } from "../../query/recordForm";
 
 // The form's context menus — one component for all of them, because only one is
@@ -25,8 +26,8 @@ import { fieldRef, type FormField } from "../../query/recordForm";
 // what its *kind* can do, an embedded record offers what can be done to the
 // record it previews. Every action here is ephemeral, like every other form
 // modification — nothing reaches the database until the form is saved. The one
-// exceptions are hiding a field and writing Querydown for its embedded records,
-// which are about the form and not about any record's data: they apply at once,
+// exceptions are hiding a field and editing the query behind it, which are about
+// the form and not about any record's data: they apply at once,
 // for every record of the table.
 //
 // An entry the form can't carry out across several records at once is shown
@@ -72,6 +73,18 @@ function menuEntries(
     run: () => model.clearField(recordId, field),
   };
 
+  // The query behind the field: a contextual query's own, or the one that
+  // loads a field's embedded records, whose sorting and display are the
+  // user's to write.
+  const editQuery: Entry = {
+    icon: Icons.Querydown,
+    label: "Edit query",
+    disabled: !hasQueryEditor(field),
+    run: () => {
+      if (hasQueryEditor(field)) model.openQueryEditor(recordId, field);
+    },
+  };
+
   if (open.target.kind === "childRecords") {
     // What a contextual query found isn't the record's to delete.
     if (field.kind !== "multiRecord") return [];
@@ -93,11 +106,7 @@ function menuEntries(
   // naming it and removing it — for every record of the table, at once.
   if (field.kind === "contextQuery") {
     return [
-      {
-        icon: Icons.Querydown,
-        label: "Edit query",
-        run: () => model.openQueryEditor(recordId, field),
-      },
+      editQuery,
       {
         icon: Icons.Rename,
         label: "Rename",
@@ -122,20 +131,7 @@ function menuEntries(
       },
       // A table with no record identity has its records counted, not listed, so
       // there's no embedded record to customize.
-      {
-        icon: Icons.Display,
-        label: "Display",
-        disabled: field.keyColumns.length === 0,
-        run: () => model.openEmbedEditor(recordId, field, "display"),
-      },
-      // Nor is there one to sort for records kept in an order of the user's
-      // own: that order is the one they're listed in.
-      {
-        icon: Icons.Sort,
-        label: "Sorting",
-        disabled: field.keyColumns.length === 0 || field.ordered,
-        run: () => model.openEmbedEditor(recordId, field, "sorting"),
-      },
+      editQuery,
       {
         icon: Icons.Delete,
         danger: true,
@@ -159,11 +155,7 @@ function menuEntries(
         disabled: blocked,
         run: () => model.addLinkedRecord(recordId, field),
       },
-      {
-        icon: Icons.Display,
-        label: "Display",
-        run: () => model.openEmbedEditor(recordId, field, "display"),
-      },
+      editQuery,
       clear,
     ];
   }

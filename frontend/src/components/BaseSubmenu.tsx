@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
+import type { SchemaTable } from "../query/schema";
 import { selectIsFullQuery, selectQueryTab } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import {
@@ -28,20 +29,11 @@ export default function BaseSubmenu(props: { tabId: string }): JSX.Element {
 
   return (
     <MenuSubmenu icon={Icons.Base} label="Base">
-      {tables.length > 0 ? (
-        tables.map((table) => (
-          <MenuToggleItem
-            key={table.name}
-            kind="radio"
-            icon={Icons.Table}
-            label={table.name}
-            checked={!fullMode && table.name === base}
-            onClick={() => setBase(props.tabId, table.name)}
-          />
-        ))
-      ) : (
-        <MenuNote text="Loading schema…" />
-      )}
+      <BaseTableItems
+        tables={tables}
+        base={fullMode ? null : base}
+        onChoose={(table) => setBase(props.tabId, table)}
+      />
       <MenuSeparator />
       <MenuToggleItem
         kind="radio"
@@ -51,5 +43,31 @@ export default function BaseSubmenu(props: { tabId: string }): JSX.Element {
         onClick={() => convertToFull(props.tabId)}
       />
     </MenuSubmenu>
+  );
+}
+
+/** A menu's rows for choosing a query's base table: one radio per table in
+ * `tables`, `base` checked — or none, for null — and a note while the schema is
+ * still loading. The wrench menu's "Base ▸" lists them, and so does a
+ * contextual query's "Base table" button (`FieldQueryEditor`). */
+export function BaseTableItems(props: {
+  tables: readonly SchemaTable[];
+  base: string | null;
+  onChoose: (table: string) => void;
+}): JSX.Element {
+  if (props.tables.length === 0) return <MenuNote text="Loading schema…" />;
+  return (
+    <>
+      {props.tables.map((table) => (
+        <MenuToggleItem
+          key={table.name}
+          kind="radio"
+          icon={Icons.Table}
+          label={table.name}
+          checked={table.name === props.base}
+          onClick={() => props.onChoose(table.name)}
+        />
+      ))}
+    </>
   );
 }

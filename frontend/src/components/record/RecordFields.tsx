@@ -11,8 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ContextQueryEditor from "./ContextQueryEditor";
-import EmbedQuerydownEditor from "./EmbedQuerydownEditor";
+import FieldQueryEditor from "./FieldQueryEditor";
 import Pager from "../ui/Pager";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
@@ -39,7 +38,6 @@ import {
   selectDistinctCount,
   selectDistinctEdit,
   selectDistinctText,
-  selectEmbedEditorOpen,
   selectFieldExpandable,
   selectFieldModified,
   selectFindReplace,
@@ -50,6 +48,7 @@ import {
   selectIsSelected,
   selectListsDistinct,
   selectQueryEditor,
+  selectQueryEditorFocusAsked,
   selectRecordCount,
   selectRecordModified,
   selectRunsContextQuery,
@@ -74,6 +73,8 @@ import { compileFind, hasMatch } from "../../record/findReplace";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
 import { contextKeyColumn, isRunnable } from "../../query/contextualQuery";
+import type { Section } from "../../query/definition";
+import type { QueryEditorField } from "../../query/fieldQuery";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
 import { useTooltip } from "../ui/Tooltip";
@@ -401,13 +402,10 @@ function FieldRow(props: {
     selectFieldModified(s, recordId, field.key),
   );
 
-  /** Whether the Querydown behind this field's embedded records is being edited,
-   * for the parts of it a field can have any. */
-  const displayOpen = useFormState(model, (s) =>
-    selectEmbedEditorOpen(s, recordId, field.key, "display"),
-  );
-  const sortingOpen = useFormState(model, (s) =>
-    selectEmbedEditorOpen(s, recordId, field.key, "sorting"),
+  /** The section of the query behind this field's embedded records being
+   * edited, while its editor is open. */
+  const querySection = useFormState(model, (s) =>
+    selectQueryEditor(s, recordId, field.key),
   );
 
   /** Whether the open context menu is this field's own. */
@@ -676,22 +674,13 @@ function FieldRow(props: {
 
       {/* Between the row and what it expands into, so the records being changed
           are right below the text changing them. */}
-      {field.kind !== "primitive" && displayOpen && (
-        <EmbedQuerydownEditor
+      {field.kind !== "primitive" && querySection !== null && (
+        <FormQueryEditor
           model={model}
           recordId={recordId}
           table={props.table}
           field={field}
-          section="display"
-        />
-      )}
-      {field.kind !== "primitive" && sortingOpen && (
-        <EmbedQuerydownEditor
-          model={model}
-          recordId={recordId}
-          table={props.table}
-          field={field}
-          section="sorting"
+          section={querySection}
         />
       )}
 
@@ -920,9 +909,10 @@ function ContextQueryRow(props: {
       </div>
 
       {section !== null && (
-        <ContextQueryEditor
+        <FormQueryEditor
           model={model}
           recordId={recordId}
+          table={props.table}
           field={field}
           section={section}
           idValue={idValue}
@@ -941,6 +931,68 @@ function ContextQueryRow(props: {
         </Subtree>
       )}
     </>
+  );
+}
+
+/** The query editor under a field (`FieldQueryEditor`), as the form has it:
+ * the section shown is the form's, the caret comes to it when the user asks for
+ * it and only then, and closing it — the ×, or Escape — hands the keyboard back
+ * to the field. Under it, why the database refused the field's records, while
+ * the ones on screen are from before. */
+function FormQueryEditor(props: FormQueryEditorProps): JSX.Element {
+  // A section of its own for each section, so the caret goes to the editor of
+  // the one shown when it's asked for — StrictMode remounting that editor
+  // included.
+  return <FormQueryEditorSection key={props.section} {...props} />;
+}
+
+interface FormQueryEditorProps {
+  model: RecordFormModel;
+  recordId: string;
+  /** The table of the record the field belongs to. */
+  table: string;
+  field: QueryEditorField;
+  section: Section;
+  /** What `@id` stands for on this record, while it's known. */
+  idValue?: string | null;
+}
+
+function FormQueryEditorSection(props: FormQueryEditorProps): JSX.Element {
+  const { model, recordId, field } = props;
+  const itemId = fieldItemId(recordId, field.key);
+  const refused = useFormState(model, (s) => s.embedErrors[itemId]);
+
+  // A layout effect, so focus has moved before the context menu it's asked
+  // for from restores its own.
+  const editorRef = useRef<HTMLElement>(null);
+  const focusAsked = useFormState(model, (s) =>
+    selectQueryEditorFocusAsked(s, recordId, field.key),
+  );
+  useLayoutEffect(() => {
+    if (!focusAsked) return;
+    editorRef.current?.focus();
+    model.noteQueryEditorFocused();
+  }, [model, focusAsked]);
+
+  /** The user has finished, and the keyboard goes back to the field. What they
+   * wrote is written as the editor goes. */
+  const close = () => {
+    model.closeQueryEditor(recordId, field.key);
+    queueMicrotask(() => model.focusItem(itemId));
+  };
+
+  return (
+    <FieldQueryEditor
+      ref={editorRef}
+      table={props.table}
+      field={field}
+      section={props.section}
+      onSection={(next) => model.openQueryEditor(recordId, field, next)}
+      idValue={props.idValue ?? ""}
+      onClose={close}
+      onEscape={close}
+      refused={field.kind === "contextQuery" ? undefined : refused}
+    />
   );
 }
 

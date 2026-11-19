@@ -5301,6 +5301,28 @@ describe("contextual queries", () => {
       expect(dml).toHaveBeenCalledTimes(1);
     });
 
+    it("is replaced by a new base, which starts it over and goes out at once", async () => {
+      const id = bundle.actions.addContextualQuery("artist", "a", "credit");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(dml).mockClear();
+      bundle.actions.setContextualQuerySection(id, "sort", "\\\\role");
+      bundle.actions.setContextualQueryBase(id, "artist");
+      const definition = queries()[0]?.definition;
+      expect(definition?.base).toBe("artist");
+      // A query on its own table has nothing to guess a filter from.
+      expect(definition?.filter.custom).toBe("");
+      expect(definition?.sort).not.toEqual({ custom: "\\\\role" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dml).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(dml).toHaveBeenCalledTimes(1);
+
+      // The same table again changes nothing.
+      bundle.actions.setContextualQueryBase(id, "artist");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dml).toHaveBeenCalledTimes(1);
+    });
+
     it("is dropped with the query it was to", async () => {
       const id = bundle.actions.addContextualQuery("artist", "a", "credit");
       await vi.advanceTimersByTimeAsync(0);

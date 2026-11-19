@@ -459,6 +459,11 @@ export interface AppActions {
   /** Sends a write `setContextualQuerySection` is holding back, the user having
    * left the query's editor. */
   flushContextualQuery: (id: string) => void;
+  /** Makes a contextual query list the records of another table, starting it
+   * over as a new one on that table starts (`seedDefinition`): what it had
+   * written was about the old table. Shows at once, and is written at once.
+   * The same table leaves it as it was. */
+  setContextualQueryBase: (id: string, base: string) => void;
   /** Deletes a contextual query, its field going from every record editor. */
   removeContextualQuery: (id: string) => void;
   /** Opens the records contextual query `id` finds for the record whose key is
@@ -3588,6 +3593,21 @@ export function createAppActions(
       });
     },
     flushContextualQuery: (id) => saves.flush(contextualQuerySaveKey(id)),
+    setContextualQueryBase: (id, base) => {
+      const query = selectContextualQuery(get(), id);
+      if (!query || query.definition.base.trim() === base) return;
+      const definition = seedDefinition(
+        get().schema.tables,
+        query.tableName,
+        base,
+      );
+      patchContextualQuery(id, (q) => ({ ...q, definition }));
+      // Anything held back was about the old table: this replaces it.
+      saves.cancel(contextualQuerySaveKey(id));
+      void writeContextualQuery(() =>
+        writeContextualQueryDefinition({ ...query, definition }),
+      );
+    },
     removeContextualQuery: (id) => {
       saves.cancel(contextualQuerySaveKey(id));
       set((s) => {
