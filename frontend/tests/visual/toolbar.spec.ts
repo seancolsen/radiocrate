@@ -366,14 +366,17 @@ test("a new query waits, filter focused, until it's touched or asked to show all
 
   await expect(page.getByPlaceholder("Filter")).toBeFocused();
   const prompt = page.getByTestId("new-query-prompt");
-  await expect(prompt.getByLabel("Base")).toHaveValue("track");
+  // The prompt offers no base of its own: that's the wrench menu's job.
+  await expect(prompt.getByRole("combobox")).toHaveCount(0);
 
-  // Picking the base isn't touching the query: still no run.
-  const base = prompt.getByLabel("Base");
-  await base.selectOption("album");
-  await expect(base).toHaveValue("album");
-  await base.selectOption("track");
-  await expect(base).toHaveValue("track");
+  // Picking the base, in the wrench menu, isn't touching the query: still no
+  // run. (Back to `track` after, since the filter doesn't compile on `album`.)
+  for (const table of ["album", "track"]) {
+    await page.getByRole("button", { name: "Query actions" }).click();
+    await page.getByRole("menuitem", { name: "Base" }).click();
+    await page.getByRole("menuitemradio", { name: table, exact: true }).click();
+  }
+  await expect(prompt).toBeVisible();
   await page.waitForTimeout(500);
   expect(runs).toHaveLength(1);
 

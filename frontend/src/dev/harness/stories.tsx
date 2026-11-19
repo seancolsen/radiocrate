@@ -1443,8 +1443,8 @@ export const STORIES: Record<string, Story> = {
     setup: (stores) => stores.app.actions.newQueryTab(),
     render: () => <ActiveQueryToolbar />,
   },
-  // What a new query shows where its rows would be until it's touched: its
-  // base table, beside its label, over the "Show all results" button.
+  // What a new query shows where its rows would be until it's touched: the
+  // "Show all results" button.
   "query-page/new": {
     width: 640,
     height: 160,

@@ -123,11 +123,9 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // A new query, untouched: its base beside its label, over "Show all
-  // results", where the rows would be.
+  // A new query, untouched: "Show all results", where the rows would be.
   test(`query-page/new - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "query-page/new", colorScheme);
-    await expect(stage.getByLabel("Base")).toHaveValue("track");
     await expect(
       stage.getByRole("button", { name: "Show all results" }),
     ).toBeVisible();
