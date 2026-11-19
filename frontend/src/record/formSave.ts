@@ -234,7 +234,11 @@ export function planSave(tree: FormTree, rootId: string = ROOT_ID): SavePlan {
     const values = node.keys.map((_, index) => {
       const changed: Record<string, JsonValue> = {};
       for (const field of node.fields) {
-        if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+        if (
+          field.kind === "multiRecord" ||
+          field.kind === "contextQuery" ||
+          field.kind === "computed"
+        ) {
           continue;
         }
         const current = node.values[field.column]?.[index] ?? null;

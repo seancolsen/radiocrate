@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import ComputedColumnEditor from "./ComputedColumnEditor";
 import FieldQueryEditor from "./FieldQueryEditor";
 import Pager from "../ui/Pager";
 import EmbeddedRecord from "./EmbeddedRecord";
@@ -19,9 +20,11 @@ import FieldLabel, { fieldAppearance, type RenameEnd } from "./FieldLabel";
 import FieldValue, {
   OneLineValue,
   ValueInput,
+  VariedValue,
   type EditExit,
 } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
+import ProvisionalComputedRow from "./ProvisionalComputedRow";
 import ProvisionalQueryRow from "./ProvisionalQueryRow";
 import { FindReplacePanel, ReplacePreview } from "./FindReplace";
 import type { ValueAutocomplete } from "./ValueSuggestions";
@@ -31,13 +34,18 @@ import {
   fieldItemId,
   listedValues,
   listId,
+  ROOT_ID,
   scalarChildId,
+  selectComputedDistinct,
+  selectComputedError,
+  selectComputedValue,
   selectContextCount,
   selectCountMax,
   selectCountMin,
   selectDistinctCount,
   selectDistinctEdit,
   selectDistinctText,
+  selectExpressionEditorOpen,
   selectFieldExpandable,
   selectFieldModified,
   selectFindReplace,
@@ -72,6 +80,10 @@ import { embedText } from "../../query/embedPreview";
 import { compileFind, hasMatch } from "../../record/findReplace";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
+import {
+  computedFieldKey,
+  isComputedDefined,
+} from "../../query/computedColumns";
 import { contextKeyColumn, isRunnable } from "../../query/contextualQuery";
 import type { Section } from "../../query/definition";
 import type { QueryEditorField } from "../../query/fieldQuery";
@@ -82,6 +94,7 @@ import { COUNT_BUBBLE_CLASS, cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
 import {
   fieldRef,
+  type ComputedField,
   type ContextQueryField,
   type DataField,
   type FormField,
@@ -238,6 +251,10 @@ function FieldList(props: {
     model,
     (s) => s.provisional?.recordId === recordId,
   );
+  const addingComputed = useFormState(
+    model,
+    (s) => s.addingComputed && recordId === ROOT_ID,
+  );
 
   return (
     <div ref={listRef} className="relative">
@@ -249,6 +266,16 @@ function FieldList(props: {
         >
           {field.kind === "contextQuery" ? (
             <ContextQueryRow
+              model={model}
+              recordId={recordId}
+              table={table}
+              field={field}
+              hiddenField={isFieldHidden(metadata, fieldRef(field))}
+              onLabelPointerDown={(e) => dnd.onPointerDown(e, field.key)}
+              labelPressed={dnd.pressing}
+            />
+          ) : field.kind === "computed" ? (
+            <ComputedRow
               model={model}
               recordId={recordId}
               table={table}
@@ -272,6 +299,7 @@ function FieldList(props: {
         </div>
       ))}
       {provisional && <ProvisionalRow model={model} table={table} />}
+      {addingComputed && <AddingComputedRow model={model} table={table} />}
       {drag?.target && (
         <div
           aria-hidden="true"
@@ -294,7 +322,8 @@ function FieldList(props: {
 }
 
 /** One field: its row, plus whatever the row expands into. (A contextual query's
- * field has a row of its own, `ContextQueryRow`.) */
+ * field has a row of its own, `ContextQueryRow`, and so has a computed
+ * column's, `ComputedRow`.) */
 function FieldRow(props: {
   model: RecordFormModel;
   recordId: string;
@@ -931,6 +960,272 @@ function ContextQueryRow(props: {
         </Subtree>
       )}
     </>
+  );
+}
+
+/** A computed column's field: its label and what the column comes to for the
+ * record — there to read, never to edit, since it's worked out from the rest —
+ * then, below, the editor of the column's expression while that's open, and
+ * the whole of a value too long for its row once it's expanded.
+ *
+ * On several records it shows the value they share, or how many they don't. A
+ * column with no expression yet offers a pencil that opens its editor, and one
+ * whose expression won't run says why in place of a value.
+ *
+ * Double-clicking the label, or Enter on it, opens the expression's editor:
+ * what the field *is* is the one thing about it there is to edit. One of the
+ * user's own columns is renamed in place, from its menu. */
+function ComputedRow(props: {
+  model: RecordFormModel;
+  recordId: string;
+  /** The table of the record this field belongs to. */
+  table: string;
+  field: ComputedField;
+  /** Whether the user has hidden this field, and it's on show regardless. */
+  hiddenField: boolean;
+  /** A press on the field's label, which may be the start of a drag. */
+  onLabelPointerDown: (e: PointerEvent<HTMLElement>) => void;
+  /** Whether a touch is resting on a label, on its way to picking it up. */
+  labelPressed: () => boolean;
+}): JSX.Element {
+  const { model, recordId, field, table } = props;
+  const itemId = fieldItemId(recordId, field.key);
+
+  // Whether the value is cut off, as a text field's row tracks it.
+  const [overflowing, setOverflowing] = useState(false);
+  const overflowingRef = useRef(overflowing);
+  useEffect(() => {
+    overflowingRef.current = overflowing;
+  }, [overflowing]);
+
+  const expanded = useFormState(model, (s) => selectIsExpanded(s, itemId));
+  const value: SharedValue = useFormState(model, (s) =>
+    selectComputedValue(s, recordId, field.key),
+  );
+  const distinct = useFormState(model, (s) =>
+    selectComputedDistinct(s, recordId, field.key),
+  );
+  const error = useFormState(model, (s) =>
+    selectComputedError(s, recordId, field.key),
+  );
+  const menuOpen = useFormState(model, (s) => {
+    const target = s.menu?.target;
+    return (
+      target?.kind === "field" &&
+      target.recordId === recordId &&
+      target.fieldKey === field.key
+    );
+  });
+  const renaming = useFormState(model, (s) => s.renaming === itemId);
+  const editing = useFormState(model, (s) =>
+    selectExpressionEditorOpen(s, recordId, field.key),
+  );
+  /** Whether the column has an expression to compute anything with. */
+  const defined = useApp((s) =>
+    isComputedDefined(s.computedColumns.data, table, field.name),
+  );
+  const { renameComputedColumn } = useAppActions();
+
+  const text = typeof value === "string" ? value : "";
+  const filled = error === null && text !== "";
+  const expandable = filled && overflowing;
+
+  useEffect(() => {
+    model.registerItem(itemId, {
+      group: recordId,
+      expandable: () => overflowingRef.current,
+      setExpanded: (open) => model.toggleField(recordId, field, open),
+      // What a column computes isn't the record's to delete.
+      remove: () => {},
+    });
+    return () => model.unregisterItem(itemId);
+  }, [model, itemId, recordId, field]);
+
+  const openMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    model.openMenu({
+      target: { kind: "field", recordId, fieldKey: field.key },
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+  const editExpression = () => model.openExpressionEditor(recordId, field.key);
+
+  return (
+    <>
+      <div className="flex min-h-[30px] items-center gap-1 py-0.5">
+        <ExpansionToggle
+          expandable={expandable}
+          expanded={expanded && expandable}
+          label={field.label}
+          onToggle={(siblings) =>
+            siblings
+              ? model.toggleSiblings(itemId, !expanded)
+              : model.toggleField(recordId, field)
+          }
+        />
+        <div className="relative shrink-0">
+          <FieldLabel
+            field={field}
+            itemId={itemId}
+            menuOpen={menuOpen}
+            hiddenField={props.hiddenField}
+            onClick={() => model.focusItem(itemId)}
+            onDblClick={editExpression}
+            onFocus={() => model.noteFocus(itemId)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              editExpression();
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (!props.labelPressed()) openMenu(e);
+            }}
+            onPointerDown={props.onLabelPointerDown}
+            rename={
+              renaming
+                ? {
+                    onCommit: (name, end) => {
+                      const next = renameComputedColumn(
+                        table,
+                        field.name,
+                        name,
+                      );
+                      model.endRename();
+                      // Renamed, the field is one of another key.
+                      focusAfterRename(
+                        model,
+                        fieldItemId(recordId, computedFieldKey(next)),
+                        end,
+                      );
+                    },
+                    onCancel: () => {
+                      model.endRename();
+                      focusAfterRename(model, itemId, null);
+                    },
+                  }
+                : undefined
+            }
+          />
+        </div>
+
+        {error !== null ? (
+          <OneLineValue
+            // As the compiler says it, less the backticks it quotes names in.
+            text={error.replaceAll("`", "")}
+            className="control text-danger block min-w-0 flex-1 cursor-default truncate"
+            onContextMenu={openMenu}
+          />
+        ) : value === VARIED ? (
+          <VariedValue distinct={distinct} />
+        ) : !defined ? (
+          <IconButton
+            icon={Icons.Edit}
+            label={`Write the expression of ${field.label}`}
+            size="sm"
+            tabIndex={-1}
+            onClick={editExpression}
+          />
+        ) : (
+          filled &&
+          !(expanded && expandable) && (
+            <OneLineValue
+              text={text}
+              className="control text-ink block min-w-0 flex-1 cursor-default truncate"
+              onContextMenu={openMenu}
+              onOverflow={setOverflowing}
+            />
+          )
+        )}
+      </div>
+
+      {editing && (
+        <FormExpressionEditor
+          model={model}
+          recordId={recordId}
+          table={table}
+          field={field}
+        />
+      )}
+
+      {/* The whole value, given the full width below the label. */}
+      {expanded && expandable && (
+        <Subtree>
+          <div className="pr-1 pb-1">
+            <span
+              className="control text-ink block w-full cursor-default break-words whitespace-pre-wrap"
+              onContextMenu={openMenu}
+            >
+              {text}
+            </span>
+          </div>
+        </Subtree>
+      )}
+    </>
+  );
+}
+
+/** The editor of a computed column's expression (`ComputedColumnEditor`), as
+ * the form has it under the column's field: the caret comes to it when the
+ * user asks for it and only then, and closing it — the ×, or Escape — hands
+ * the keyboard back to the field. */
+function FormExpressionEditor(props: {
+  model: RecordFormModel;
+  recordId: string;
+  table: string;
+  field: ComputedField;
+}): JSX.Element {
+  const { model, recordId, field } = props;
+  const itemId = fieldItemId(recordId, field.key);
+
+  // A layout effect, so focus has moved before the context menu it's asked
+  // for from restores its own.
+  const editorRef = useRef<HTMLElement>(null);
+  const focusAsked = useFormState(model, (s) =>
+    selectQueryEditorFocusAsked(s, recordId, field.key),
+  );
+  useLayoutEffect(() => {
+    if (!focusAsked) return;
+    editorRef.current?.focus();
+    model.noteQueryEditorFocused();
+  }, [model, focusAsked]);
+
+  /** The user has finished, and the keyboard goes back to the field. What they
+   * wrote is written as the editor goes. */
+  const close = () => {
+    model.closeExpressionEditor(recordId, field.key);
+    queueMicrotask(() => model.focusItem(itemId));
+  };
+
+  return (
+    <ComputedColumnEditor
+      ref={editorRef}
+      table={props.table}
+      name={field.name}
+      onClose={close}
+      onEscape={close}
+    />
+  );
+}
+
+/** A computed column being added to the form
+ * (`RecordFormActions.beginAddComputed`): the row that names it
+ * (`ProvisionalComputedRow`), which makes the column once it has. */
+function AddingComputedRow(props: {
+  model: RecordFormModel;
+  /** The table of the record whose fields it's among. */
+  table: string;
+}): JSX.Element {
+  const { model } = props;
+  const { addComputedColumn } = useAppActions();
+  return (
+    <ProvisionalComputedRow
+      onName={(name) =>
+        model.finishAddComputed(addComputedColumn(props.table, name))
+      }
+      onDiscard={() => model.cancelAddComputed()}
+    />
   );
 }
 

@@ -117,16 +117,35 @@ export interface ContextQueryField extends FieldBase {
   keyColumns: readonly string[];
 }
 
-export type FormField =
-  PrimitiveField | ScalarLinkField | MultiRecordField | ContextQueryField;
+/** A field standing for a computed column (`query/computedColumns.ts`): what a
+ * Querydown expression named as a column of the record's table computes for
+ * this record. Like a contextual query's, it's not built from the schema but
+ * from what's been defined for the table, and has no column behind it: the
+ * form adds it to a record's fields (see `computedFields`), reads its value in
+ * a query of its own, and never writes it. */
+export interface ComputedField extends FieldBase {
+  kind: "computed";
+  /** The computed column's name, as a query refers to it. */
+  name: string;
+  /** Whether the column is one of the app's own, which the user can neither
+   * rename nor remove. */
+  builtIn: boolean;
+}
 
-/** The fields holding a record's own data — every one but a contextual query,
- * which the record's load knows nothing about. */
-export type DataField = Exclude<FormField, ContextQueryField>;
+export type FormField =
+  | PrimitiveField
+  | ScalarLinkField
+  | MultiRecordField
+  | ContextQueryField
+  | ComputedField;
+
+/** The fields holding a record's own data — every one but a contextual query
+ * and a computed column, which the record's load knows nothing about. */
+export type DataField = Exclude<FormField, ContextQueryField | ComputedField>;
 
 /** Whether `field` holds the record's own data (see {@link DataField}). */
 export function isDataField(field: FormField): field is DataField {
-  return field.kind !== "contextQuery";
+  return field.kind !== "contextQuery" && field.kind !== "computed";
 }
 
 /** DuckDB type names, uppercased, grouped into {@link ValueType}s. Prefix
@@ -290,6 +309,8 @@ export function fieldRef(field: FormField): FieldRef {
       };
     case "contextQuery":
       return { contextualQuery: field.queryId };
+    case "computed":
+      return { computedColumn: field.name };
     default:
       return { columnName: field.column };
   }
@@ -297,7 +318,8 @@ export function fieldRef(field: FormField): FieldRef {
 
 /** A Querydown query in the four parts `compile_sections` takes. The record
  * editor's own queries write no `definitions` — they query real columns only — but
- * a contextual query runs under the user's prelude, with `@id` defined. */
+ * a contextual query runs under the prelude, with `@id` defined, and the query
+ * reading a record's computed columns runs under the prelude that defines them. */
 export interface RecordQuery {
   base: string;
   filter: string;

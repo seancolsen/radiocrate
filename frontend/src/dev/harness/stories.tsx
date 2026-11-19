@@ -15,8 +15,7 @@ import {
   fieldRefKey,
   type FieldMetadata,
 } from "../../query/fieldMetadata";
-import type { FieldRef } from "api-client";
-import { SETTINGS } from "../../state/settings";
+import type { ComputedColumnRow, FieldRef } from "api-client";
 import {
   FILTER_DEF,
   FULL_DEF,
@@ -330,6 +329,23 @@ function seedTrackFields(stores: Stores): void {
   });
 }
 
+/** A computed column of the user's own on tracks: how many tags it has. */
+const TAGCOUNT_COLUMN: ComputedColumnRow = {
+  tableName: "track",
+  name: "tagcount",
+  expression: "#track_tag",
+};
+
+/** Gives the app the user's side of the computed columns a story needs. */
+function seedComputedColumns(
+  stores: Stores,
+  rows: readonly ComputedColumnRow[],
+): void {
+  stores.app.store.setState((s) => {
+    s.computedColumns = { status: "ready", data: castDraft(rows) };
+  });
+}
+
 /** Customizes tables as a story needs them: `settings` for each one named. */
 function seedTableSettings(
   stores: Stores,
@@ -469,9 +485,15 @@ const LOG_FIXTURE: LogEntry[] = (() => {
   return entries.map((entry, i) => ({ id: i + 1, ...entry }));
 })();
 
+/** A prelude a user might write: definitions of their own, ahead of every
+ * query. */
+const USER_PRELUDE = `@recent = 1m
+@@decade = @year => @year / 10 * 10
+#track.loud = rating.value:>=4`;
+
 /** A prelude whose last definition is left open, as the prelude editor's
  * error story holds it. */
-const BROKEN_PRELUDE = `${SETTINGS.querydown_prelude.default}\n#track.x = (`;
+const BROKEN_PRELUDE = `${USER_PRELUDE}\n#track.x = (`;
 
 /** Opens "Lemonade" and seeds a playing track — the now-playing bar's stories'
  * shared setup — two-thirds downloaded, or with `playback` in place of that.
@@ -599,7 +621,9 @@ const MENU_ROWS: readonly number[] = [0];
 function recordEditor(ns: readonly number[], saveFails?: string): Story {
   return {
     width: 340,
-    height: 640,
+    // Room for a track's own fields, its computed columns, and something
+    // opened out under one of them.
+    height: 880,
     frame: "flex",
     setup: (stores) => {
       if (saveFails !== undefined) failDml(saveFails);
@@ -697,6 +721,20 @@ function withContextualQueries(
       stores.app.store.setState((s) => {
         s.contextualQueries = { status: "ready", data: castDraft(queries) };
       });
+      story.setup?.(stores);
+    },
+  };
+}
+
+/** A record-editor story with these computed columns of the user's defined. */
+function withComputedColumns(
+  story: Story,
+  rows: readonly ComputedColumnRow[],
+): Story {
+  return {
+    ...story,
+    setup: (stores) => {
+      seedComputedColumns(stores, rows);
       story.setup?.(stores);
     },
   };
@@ -1674,6 +1712,37 @@ export const STORIES: Record<string, Story> = {
     ],
     seedTrackFields,
   ),
+  // A table's computed columns, among its fields: one of the app's own opened
+  // into its expression, as the app has it — "Reset to default" with nothing
+  // to reset — another the user has written their own expression for, and a
+  // column of the user's own, open too.
+  "data-structure/computed-columns": dataStructure(
+    { height: 760 },
+    [
+      ...TRACK_FIELDS,
+      structureFieldId("track", { computedColumn: "lastplay" }),
+      structureFieldId("track", { computedColumn: "tagcount" }),
+    ],
+    (stores) =>
+      seedComputedColumns(stores, [
+        { tableName: "track", name: "year", expression: "album.year + 1" },
+        TAGCOUNT_COLUMN,
+      ]),
+  ),
+  // A computed column whose expression doesn't fit the schema: the problem
+  // under its editor, located.
+  "data-structure/computed-column-problem": dataStructure(
+    { height: 420 },
+    [
+      tableItemId("album"),
+      fieldsItemId("album"),
+      structureFieldId("album", { computedColumn: "decade" }),
+    ],
+    (stores) =>
+      seedComputedColumns(stores, [
+        { tableName: "album", name: "decade", expression: "yeer / 10 * 10" },
+      ]),
+  ),
   // A table's fields as the database gives them, for the test to act on: the
   // "Add field" menu (which it opens, and shoots), a contextual query being
   // added, a field's context menu hiding it.
@@ -1759,24 +1828,31 @@ export const STORIES: Record<string, Story> = {
         album: { recordPickerDisplay: "$title $year" },
       }),
   ),
-  // The Querydown prelude's editor, holding the default value — the state it
-  // opens in for anyone who hasn't customized it: Reset to default and Save
-  // both disabled. (The test hovers its "?" for the help story.)
+  // The Querydown prelude's editor, holding a prelude the user wrote and
+  // saved: Save disabled, there being nothing to save. (The test hovers its
+  // "?" for the help story.)
   "data-structure/prelude": dataStructure(
+    { height: 420 },
+    [PRELUDE_ITEM],
+    (stores) => {
+      stores.app.actions.setStructureExpanded(["tables"], false);
+      stores.app.actions.saveSetting("querydown_prelude", USER_PRELUDE);
+    },
+  ),
+  // The prelude as it is for anyone who hasn't written one: empty, the app
+  // having none of its own.
+  "data-structure/prelude-empty": dataStructure(
     { height: 420 },
     [PRELUDE_ITEM],
     (stores) => stores.app.actions.setStructureExpanded(["tables"], false),
   ),
-  // The prelude edited and not yet saved: the ✱ on Save, and Reset to default
-  // enabled.
+  // The prelude edited and not yet saved: the ✱ on Save.
   "data-structure/prelude-unsaved": dataStructure(
     { height: 420 },
     [PRELUDE_ITEM],
     (stores) => {
       stores.app.actions.setStructureExpanded(["tables"], false);
-      stores.app.actions.editPrelude(
-        `${SETTINGS.querydown_prelude.default}\n#track.loud = rating.value:>=4`,
-      );
+      stores.app.actions.editPrelude(USER_PRELUDE);
     },
   ),
   // The prelude holding a syntax error: the problem between the toolbar and
@@ -2197,6 +2273,21 @@ export const STORIES: Record<string, Story> = {
     recordEditor([5]),
     [],
   ),
+  // A computed column's expression being edited (the test opens the editor
+  // from the field's menu): one of the app's own, so "Reset to default" is
+  // offered, with nothing yet to reset.
+  "record-editor/computed-expression": recordEditor([1]),
+  // Computed columns of the user's own, beside the app's: one with a value, one
+  // whose expression doesn't fit the schema — which says so in place of a
+  // value — and one with no expression yet, offering its pencil.
+  "record-editor/computed-columns": withComputedColumns(recordEditor([1]), [
+    TAGCOUNT_COLUMN,
+    { tableName: "track", name: "label", expression: "album.label" },
+    { tableName: "track", name: "unwritten", expression: "" },
+  ]),
+  // A computed column being added (the test does the adding): the new field at
+  // the bottom, its default name selected to be typed over.
+  "record-editor/provisional-computed": recordEditor([5]),
   // The user's own arrangement of `track`: `title` moved up to the top, and
   // `disc_number` and the credits hidden but on show, their labels dimmed.
   "record-editor/fields-customized": withFieldMetadata(recordEditor([1]), [

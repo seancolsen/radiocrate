@@ -8,23 +8,22 @@ import init from "querydown-js";
 import type { Preset } from "api-client";
 import { FIXTURE_SCHEMA_JSON } from "../dev/recordFixture";
 import {
+  checkComputedColumn,
   checkFragment,
   checkPrelude,
   checkSetting,
   compilePlaylist,
   compileSavedQuery,
 } from "./compile";
+import { builtInComputedColumns } from "./computedColumns";
 import { parseSchemaTables } from "./schema";
 import {
   composePrelude,
   defaultTableSettings,
+  generatedPrelude,
   tablePrelude,
 } from "./tableSettings";
-import {
-  DEFAULT_PRELUDE,
-  emptyDefinition,
-  type QueryDefinition,
-} from "./definition";
+import { emptyDefinition, type QueryDefinition } from "./definition";
 import { DiagnosticError, type QueryDiagnostic } from "./diagnostics";
 
 beforeAll(async () => {
@@ -34,6 +33,12 @@ beforeAll(async () => {
   );
   await init({ module_or_path: readFileSync(wasm) });
 });
+
+/** A prelude a user might write: a computed column, a constant and a
+ * function. */
+const USER_PRELUDE = `#track.year = album.year
+@recent = 1w
+@@decade = @y => @y / 10`;
 
 function preset(over: Partial<Preset> & { id: string }): Preset {
   return {
@@ -72,7 +77,7 @@ function query(over: Partial<QueryDefinition>): QueryDefinition {
 }
 
 const compileQuery =
-  (def: QueryDefinition, prelude = DEFAULT_PRELUDE) =>
+  (def: QueryDefinition, prelude = USER_PRELUDE) =>
   () =>
     compileSavedQuery(def, PRESETS, FIXTURE_SCHEMA_JSON, prelude);
 
@@ -114,7 +119,7 @@ describe("a query's problem", () => {
         },
         PRESETS,
         FIXTURE_SCHEMA_JSON,
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
       ),
     );
     expect(d).toMatchObject({ origin: { kind: "custom", section: "filter" } });
@@ -178,7 +183,7 @@ describe("a query's problem", () => {
         },
         PRESETS,
         FIXTURE_SCHEMA_JSON,
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
       ),
     );
     expect(d).toMatchObject({
@@ -258,8 +263,8 @@ describe("a query's problem", () => {
 });
 
 describe("checkPrelude", () => {
-  it("passes the default prelude", () => {
-    expect(checkPrelude(FIXTURE_SCHEMA_JSON, DEFAULT_PRELUDE)).toBeNull();
+  it("passes a prelude of definitions", () => {
+    expect(checkPrelude(FIXTURE_SCHEMA_JSON, USER_PRELUDE)).toBeNull();
   });
 
   it("passes an empty prelude", () => {
@@ -267,7 +272,7 @@ describe("checkPrelude", () => {
   });
 
   it("locates a problem in the prelude's own text", () => {
-    const prelude = `${DEFAULT_PRELUDE}\n#track.x = (`;
+    const prelude = `${USER_PRELUDE}\n#track.x = (`;
     expect(checkPrelude(FIXTURE_SCHEMA_JSON, prelude)).toMatchObject({
       kind: "syntax",
       origin: { kind: "prelude" },
@@ -283,7 +288,7 @@ describe("checkFragment", () => {
     expect(
       checkFragment(
         FIXTURE_SCHEMA_JSON,
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
         "track",
         "sort",
         "\\\\title",
@@ -296,7 +301,7 @@ describe("checkFragment", () => {
     expect(
       checkFragment(
         FIXTURE_SCHEMA_JSON,
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
         "track",
         "sort",
         "\\\\title $",
@@ -309,7 +314,7 @@ describe("checkFragment", () => {
     expect(
       checkFragment(
         FIXTURE_SCHEMA_JSON,
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
         "track",
         "filter",
         "nope:1",
@@ -321,7 +326,7 @@ describe("checkFragment", () => {
 
 describe("the tables' settings in the prelude", () => {
   const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
-  const withSettings = (textSearch: string | null, user = DEFAULT_PRELUDE) =>
+  const withSettings = (textSearch: string | null, user = USER_PRELUDE) =>
     composePrelude(
       tablePrelude(tables, {
         track: { ...defaultTableSettings(), defaultTextSearch: textSearch },
@@ -416,7 +421,7 @@ describe("checkSetting", () => {
         "track",
         "defaultTextSearch",
         "[\n  title:@x\n  ++#artist{name:@x}\n]",
-        DEFAULT_PRELUDE,
+        USER_PRELUDE,
       ),
     ).toBeNull();
     expect(
@@ -459,6 +464,118 @@ describe("checkSetting", () => {
       kind: "compile",
       origin: { kind: "tableSetting", setting: "linkedRecordComparison" },
       range: { start: 0, end: 4 },
+    });
+  });
+});
+
+describe("computed columns in the prelude", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+  const prelude = (
+    computed: { tableName: string; name: string; expression: string | null }[],
+    user = "",
+  ) => composePrelude(generatedPrelude(tables, {}, computed), user);
+  const displaying = (display: string, under = prelude([])) =>
+    compileSavedQuery(
+      query({ display: { custom: display } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      under,
+    );
+
+  it("define the app's own columns, with no prelude of the user's at all", () => {
+    const { sql } = displaying(
+      "$firstplay $lastplay $artists $year $added $duration $playcount $number",
+    );
+    expect(sql).toContain('max("play"."timestamp")');
+    expect(sql).toContain('"track"."track_number"');
+  });
+
+  it("define the app's custom comparison too", () => {
+    const { sql } = compileSavedQuery(
+      query({ filter: { custom: "artist:prince", presets: [] } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      prelude([]),
+    );
+    expect(sql).toContain('"artist"."name"');
+  });
+
+  it("define the user's columns, which can use the app's and each other", () => {
+    const under = prelude([
+      { tableName: "track", name: "era", expression: "decade * 10" },
+      { tableName: "track", name: "decade", expression: "year / 10" },
+    ]);
+    expect(displaying("$era", under).sql).toContain('"album"."year"');
+  });
+
+  it("go by the user's expression for one of the app's", () => {
+    const under = prelude([
+      { tableName: "track", name: "year", expression: "disc_number" },
+    ]);
+    const { sql } = displaying("$year", under);
+    expect(sql).toContain('"track"."disc_number"');
+    expect(sql).not.toContain('"album"');
+  });
+
+  it("give way to a definition of the same name in the user's prelude", () => {
+    const under = prelude([], "#track.year = disc_number");
+    expect(displaying("$year", under).sql).toContain('"track"."disc_number"');
+  });
+
+  it("trace a problem to the column's expression", () => {
+    const expression = "album.nope";
+    const under = prelude([{ tableName: "track", name: "bad", expression }]);
+    expect(failure(() => displaying("$bad", under))).toMatchObject({
+      kind: "compile",
+      origin: { kind: "computedColumn", table: "track", name: "bad" },
+      source: expression,
+      range: { start: 6, end: 10 },
+    });
+  });
+});
+
+describe("checkComputedColumn", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+  const check = (expression: string, name = "mine") =>
+    checkComputedColumn(
+      FIXTURE_SCHEMA_JSON,
+      "track",
+      name,
+      expression,
+      generatedPrelude(tables, {}, [], {
+        table: "track",
+        computedColumn: name,
+      }),
+    );
+  const origin = { kind: "computedColumn", table: "track", name: "mine" };
+
+  it("passes an expression that compiles on the table", () => {
+    expect(check("album.year")).toBeNull();
+    expect(check("#play.timestamp%max")).toBeNull();
+    // One over several lines, and one using another computed column.
+    expect(check("? year:>2000 ~ 1\n  ~~ 0")).toBeNull();
+    expect(check("playcount + 1")).toBeNull();
+  });
+
+  it("passes the app's own expression for each of its columns", () => {
+    for (const column of builtInComputedColumns("track")) {
+      expect(check(column.expression, column.name)).toBeNull();
+    }
+  });
+
+  it("locates a syntax error in the expression's own text", () => {
+    expect(check("album.year + (")).toMatchObject({
+      kind: "syntax",
+      origin,
+      source: "album.year + (",
+    });
+  });
+
+  it("reports what doesn't fit the schema, which nothing using it would", () => {
+    expect(check("album.nope")).toMatchObject({
+      kind: "compile",
+      origin,
+      range: { start: 6, end: 10 },
     });
   });
 });

@@ -1,4 +1,4 @@
-import type { FieldRef } from "api-client";
+import type { ComputedColumnRow, FieldRef } from "api-client";
 import {
   defaultFieldMetadata,
   fieldRefKey,
@@ -38,6 +38,11 @@ vi.mock("../../query/recordData", () => {
     }),
     isCompileError: (err: unknown) =>
       err instanceof Error && err.message.startsWith("compile:"),
+    // What the compiler said, less the "compile:" these tests mark it with.
+    compileErrorReason: (err: unknown) =>
+      err instanceof Error && err.message.startsWith("compile:")
+        ? err.message.slice("compile:".length).trim()
+        : undefined,
   };
 });
 
@@ -60,7 +65,12 @@ import {
   listId,
   ROOT_ID,
   scalarChildId,
+  selectComputedDistinct,
+  selectComputedError,
+  selectComputedLoading,
+  selectComputedValue,
   selectContextCount,
+  selectExpressionEditorOpen,
   selectCountMax,
   selectCountMin,
   selectFieldExpandable,
@@ -258,7 +268,7 @@ const fieldOf = (model: RecordFormModel, recordId: string, key: string) => {
  * that take one value across every record the form is on are about. */
 const scalarField = (model: RecordFormModel, recordId: string, key: string) => {
   const field = fieldOf(model, recordId, key);
-  if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+  if (field.kind !== "primitive" && field.kind !== "scalarLink") {
     throw new Error(`${key} is not scalar`);
   }
   return field;
@@ -2360,5 +2370,338 @@ describe("contextual queries", () => {
     const s = model.store.getState();
     expect(s.provisional).toBeNull();
     expect(selectQueryEditor(s, ROOT_ID, "@q2")).toBe("filter");
+  });
+});
+
+describe("computed columns", () => {
+  // The user's rows, as the app store holds them: the form reads them whenever
+  // it builds a record's fields. `album` has none of the app's own, so what's
+  // here is all there is.
+  let rows: ComputedColumnRow[];
+  let prelude: string;
+  beforeEach(() => {
+    rows = [
+      { tableName: "album", name: "decade", expression: "year / 10" },
+      { tableName: "album", name: "era", expression: "decade" },
+    ];
+    prelude = "#album.decade = year / 10\n#album.era = decade";
+  });
+
+  const albumKey = (id: string) => [{ column: "id", value: id }];
+  const albumForm = (keys = [albumKey("a1")]) =>
+    createRecordForm({
+      tables: TABLES,
+      table: "album",
+      keys,
+      schemaJson: "{}",
+      computedColumns: { list: () => rows, prelude: () => prelude },
+    });
+  /** The queries that read computed columns: the only ones with definitions. */
+  const computedCalls = () =>
+    runner.mock.calls.map(([query]) => query).filter((q) => q.definitions);
+  /** Answers an album's data query from `albums`, and a computed query from
+   * `computed`: each column's value by album id, or an error to fail with for
+   * any query that asks for it. */
+  const serveAlbums = (
+    albums: Record<string, string>,
+    computed: Record<string, Record<string, string | null> | Error>,
+  ) => {
+    runner.mockImplementation(async (query) => {
+      const ids = [...query.filter.matchAll(/id:="([^"]*)"/g)].map((m) => m[1]);
+      if (query.definitions === undefined) {
+        return ids.map((id) => [id, id, albums[id] ?? null, "0"]);
+      }
+      const names = query.display.split(" ").slice(1);
+      for (const name of names) {
+        const values = computed[name.slice(1)];
+        if (values instanceof Error) throw values;
+      }
+      return ids.map((id) => [
+        id,
+        ...names.map((name) => {
+          const values = computed[name.slice(1)];
+          return values instanceof Error ? null : (values?.[id] ?? null);
+        }),
+      ]);
+    });
+  };
+  const keysOf = (model: RecordFormModel) =>
+    model.store.getState().records[ROOT_ID]?.fields.map((f) => f.key);
+  const value = (model: RecordFormModel, name: string) =>
+    selectComputedValue(model.store.getState(), ROOT_ID, `=${name}`);
+
+  it("are fields of the record, after its own and before its contextual queries", () => {
+    const model = createRecordForm({
+      tables: TABLES,
+      table: "album",
+      keys: [albumKey("a1")],
+      schemaJson: "{}",
+      computedColumns: { list: () => rows, prelude: () => prelude },
+      contextualQueries: {
+        list: () => [
+          {
+            id: "q1",
+            tableName: "album",
+            name: "others",
+            definition: { ...emptyDefinition(), base: "album" },
+          },
+        ],
+        presets: () => [],
+        prelude: () => prelude,
+      },
+    });
+    expect(keysOf(model)).toEqual([
+      "id",
+      "title",
+      "#track",
+      "=decade",
+      "=era",
+      "@q1",
+    ]);
+    expect(fieldOf(model, ROOT_ID, "=decade")).toEqual({
+      kind: "computed",
+      key: "=decade",
+      label: "decade",
+      name: "decade",
+      builtIn: false,
+    });
+  });
+
+  it("are read in one query of their own, under the prelude, once the record lands", async () => {
+    serveAlbums(
+      { a1: "Lemonade" },
+      { decade: { a1: "201" }, era: { a1: "201" } },
+    );
+    const model = albumForm();
+    expect(value(model, "decade")).toBeUndefined();
+    model.start();
+    await flush();
+    await flush();
+
+    expect(computedCalls()).toEqual([
+      {
+        base: "album",
+        filter: 'id:="a1"',
+        sort: "",
+        display: "$id $decade $era",
+        definitions: prelude,
+      },
+    ]);
+    expect(value(model, "decade")).toBe("201");
+    expect(value(model, "era")).toBe("201");
+    // Nothing of theirs is the record's own data, nor a change to save.
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["decade"]).toBeUndefined();
+    expect(selectFormModified(s)).toBe(false);
+    expect(selectFieldModified(s, ROOT_ID, "=decade")).toBe(false);
+  });
+
+  it("show what several records share, and that they differ", async () => {
+    serveAlbums(
+      { a1: "Lemonade", a2: "4" },
+      { decade: { a1: "201", a2: "201" }, era: { a1: "x", a2: null } },
+    );
+    const model = albumForm([albumKey("a1"), albumKey("a2")]);
+    model.start();
+    await flush();
+    await flush();
+    expect(value(model, "decade")).toBe("201");
+    expect(value(model, "era")).toBe(VARIED);
+    expect(
+      selectComputedDistinct(model.store.getState(), ROOT_ID, "=era"),
+    ).toBe(2);
+  });
+
+  it("are read one by one when the query of all of them fails, the one at fault saying why", async () => {
+    serveAlbums(
+      { a1: "Lemonade" },
+      { decade: { a1: "201" }, era: new Error("compile: no such column") },
+    );
+    const model = albumForm();
+    model.start();
+    await flush();
+    await flush();
+    await flush();
+
+    expect(computedCalls().map((q) => q.display)).toEqual([
+      "$id $decade $era",
+      "$id $decade",
+      "$id $era",
+    ]);
+    const s = model.store.getState();
+    expect(value(model, "decade")).toBe("201");
+    expect(selectComputedError(s, ROOT_ID, "=decade")).toBeNull();
+    expect(value(model, "era")).toBeUndefined();
+    expect(selectComputedError(s, ROOT_ID, "=era")).toBe("no such column");
+    // The record itself loaded all the same.
+    expect(s.records[ROOT_ID]?.status).toBe("loaded");
+  });
+
+  it("read as empty, unasked, with no expression to compute", async () => {
+    rows = [{ tableName: "album", name: "unwritten", expression: "" }];
+    serveAlbums({ a1: "Lemonade" }, {});
+    const model = albumForm();
+    model.start();
+    await flush();
+    await flush();
+    expect(computedCalls()).toEqual([]);
+    expect(value(model, "unwritten")).toBeNull();
+    expect(
+      selectComputedLoading(model.store.getState(), ROOT_ID, "=unwritten"),
+    ).toBe(false);
+  });
+
+  it("aren't the record's to clear, and open only when cut off", async () => {
+    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    const model = albumForm();
+    model.start();
+    await flush();
+    await flush();
+    const field = fieldOf(model, ROOT_ID, "=decade");
+    model.clearField(ROOT_ID, field);
+    expect(value(model, "decade")).toBe("201");
+    const s = model.store.getState();
+    expect(selectFieldExpandable(s, ROOT_ID, field, false)).toBe(false);
+    expect(selectFieldExpandable(s, ROOT_ID, field, true)).toBe(true);
+    expect(selectIsBulkBlocked(s, ROOT_ID, "=decade")).toBe(false);
+  });
+
+  describe("as the columns change", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+    const settle = () => vi.advanceTimersByTimeAsync(1);
+    /** Past the pause the form waits out before reading them again. */
+    const pause = () => vi.advanceTimersByTimeAsync(400);
+
+    const loaded = async () => {
+      serveAlbums(
+        { a1: "Lemonade" },
+        { decade: { a1: "201" }, era: { a1: "201" }, epoch: { a1: "2" } },
+      );
+      const model = albumForm();
+      model.start();
+      await settle();
+      await settle();
+      return model;
+    };
+
+    it("gains a new one's field, and reads the values again once they've stopped changing", async () => {
+      const model = await loaded();
+      rows = [...rows, { tableName: "album", name: "epoch", expression: "1" }];
+      model.syncComputedColumns();
+      expect(keysOf(model)).toEqual([
+        "id",
+        "title",
+        "#track",
+        "=decade",
+        "=epoch",
+        "=era",
+      ]);
+      expect(value(model, "epoch")).toBeUndefined();
+      // What was there stays on show in the meantime.
+      expect(value(model, "decade")).toBe("201");
+      expect(computedCalls()).toHaveLength(1);
+      await pause();
+      expect(computedCalls()).toHaveLength(2);
+      expect(value(model, "epoch")).toBe("2");
+    });
+
+    it("loses a removed one's field, and what was open on it", async () => {
+      const model = await loaded();
+      model.openExpressionEditor(ROOT_ID, "=era");
+      model.requestRemoveComputed("album", "era");
+      rows = rows.filter((row) => row.name !== "era");
+      model.syncComputedColumns();
+      const s = model.store.getState();
+      expect(keysOf(model)).toEqual(["id", "title", "#track", "=decade"]);
+      expect(s.records[ROOT_ID]?.computed["=era"]).toBeUndefined();
+      expect(selectExpressionEditorOpen(s, ROOT_ID, "=era")).toBe(false);
+      expect(s.removingComputed).toBeNull();
+    });
+
+    it("carries a renamed one's value and open editor over to its new name", async () => {
+      const model = await loaded();
+      model.openExpressionEditor(ROOT_ID, "=era");
+      model.beginRename(ROOT_ID, "=era");
+      rows = rows.map((row) =>
+        row.name === "era" ? { ...row, name: "epoch" } : row,
+      );
+      model.syncComputedColumns();
+      const s = model.store.getState();
+      expect(keysOf(model)).toEqual([
+        "id",
+        "title",
+        "#track",
+        "=decade",
+        "=epoch",
+      ]);
+      // Still showing what it showed, until it's read again under its name.
+      expect(value(model, "epoch")).toBe("201");
+      expect(selectExpressionEditorOpen(s, ROOT_ID, "=epoch")).toBe(true);
+      expect(selectExpressionEditorOpen(s, ROOT_ID, "=era")).toBe(false);
+      expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=epoch")).toBe(true);
+      expect(s.renaming).toBeNull();
+      await pause();
+      expect(value(model, "epoch")).toBe("2");
+    });
+
+    it("reads a changed expression's value again, once", async () => {
+      const model = await loaded();
+      for (const expression of ["y", "ye", "year"]) {
+        rows = rows.map((row) =>
+          row.name === "era" ? { ...row, expression } : row,
+        );
+        model.syncComputedColumns();
+      }
+      await pause();
+      expect(computedCalls()).toHaveLength(2);
+    });
+  });
+
+  it("opens the editor of one just added, by way of a provisional field", async () => {
+    serveAlbums({ a1: "Lemonade" }, {});
+    const model = albumForm();
+    model.start();
+    await flush();
+    model.addProvisional();
+    model.beginAddComputed();
+    expect(model.store.getState().addingComputed).toBe(true);
+    // One thing is added at a time.
+    expect(model.store.getState().provisional).toBeNull();
+
+    rows = [...rows, { tableName: "album", name: "fresh", expression: "" }];
+    model.syncComputedColumns();
+    model.finishAddComputed("fresh");
+    const s = model.store.getState();
+    expect(s.addingComputed).toBe(false);
+    expect(selectExpressionEditorOpen(s, ROOT_ID, "=fresh")).toBe(true);
+    expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=fresh")).toBe(true);
+    model.closeExpressionEditor(ROOT_ID, "=fresh");
+    expect(
+      selectExpressionEditorOpen(model.store.getState(), ROOT_ID, "=fresh"),
+    ).toBe(false);
+    model.dispose();
+  });
+
+  it("reads them again after a save, which may have changed what they compute from", async () => {
+    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    const runDml = vi.fn(() => Promise.resolve({}));
+    const model = createRecordForm({
+      tables: TABLES,
+      table: "album",
+      keys: [albumKey("a1")],
+      schemaJson: "{}",
+      runDml,
+      computedColumns: { list: () => rows, prelude: () => prelude },
+    });
+    model.start();
+    await flush();
+    await flush();
+    expect(computedCalls()).toHaveLength(1);
+    model.commitEdit(ROOT_ID, "title", "Lemonade (Deluxe)");
+    await model.save();
+    await flush();
+    expect(runDml).toHaveBeenCalledTimes(1);
+    expect(computedCalls()).toHaveLength(2);
   });
 });

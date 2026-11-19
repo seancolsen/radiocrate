@@ -301,25 +301,6 @@ export type CompileSource =
       display: Mapped;
     };
 
-/** Querydown definitions (RadioCrate's computed columns + custom comparisons)
- * prepended to every query before compilation — unless the user has customized
- * the prelude, in which case theirs is prepended instead. This is the default
- * behind the `querydown_prelude` setting (`state/settings.ts`); nothing outside
- * that catalogue should reach for it.
- *
- * A table's text search and linked record comparison aren't here: they're the
- * table's settings, which the app builds into definitions of their own ahead of
- * the prelude (`tableSettings.ts`). */
-export const DEFAULT_PRELUDE = `#track.firstplay = #play.timestamp%min
-#track.lastplay = #play.timestamp%max
-#track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)
-#track.year = album.year
-#track.added = file.added
-#track.duration = file.duration
-#track.playcount = #play
-#track.number = track_number
-#track.artist:@x = ++#artist{name:@x}`;
-
 /** Serializes a working definition into the JSON string persisted in the
  * backend's `query.definition` column — the inverse of {@link fromStored}.
  * `full` is omitted when absent so a sectioned query never carries a stray

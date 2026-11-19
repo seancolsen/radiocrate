@@ -258,6 +258,8 @@ export function selectFieldExpandable(
   overflowing: boolean,
 ): boolean {
   if (field.kind === "contextQuery") return selectRunsContextQuery(s, recordId);
+  // What a computed column came to opens out when it's cut off, as text does.
+  if (field.kind === "computed") return overflowing;
   if (field.kind === "multiRecord") {
     // A field with no records anywhere has nothing to open — one base record
     // having some is enough — and one whose table has no record identity at all
@@ -297,6 +299,49 @@ export function selectContextCount(
   const list = s.lists[listId(recordId, fieldKey)];
   return list?.status === "loaded" ? list.childIds.length : undefined;
 }
+
+/** What a computed column's field shows: the value its column came to for
+ * every record, `VARIED` when it differs between them, `undefined` until it's
+ * read (see `formValues.ts`). */
+export const selectComputedValue = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): SharedValue => shared(s.records[recordId]?.computed[fieldKey]?.values);
+
+/** How many different values a computed column came to across the records. */
+export const selectComputedDistinct = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): number =>
+  new Set(s.records[recordId]?.computed[fieldKey]?.values ?? []).size;
+
+/** Why a computed column couldn't be computed for a record, or null. */
+export const selectComputedError = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): string | null => s.records[recordId]?.computed[fieldKey]?.error ?? null;
+
+/** Whether a computed column's value is on its way with nothing to show in
+ * the meantime. */
+export const selectComputedLoading = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): boolean => {
+  const computed = s.records[recordId]?.computed[fieldKey];
+  return computed?.status === "loading" && computed.values === undefined;
+};
+
+/** Whether the editor of a computed column's expression is open under its
+ * field. */
+export const selectExpressionEditorOpen = (
+  s: FormState,
+  recordId: string,
+  fieldKey: string,
+): boolean => s.expressionEditors[fieldItemId(recordId, fieldKey)] === true;
 
 /** Which section of a query a field's editor is showing, or null while the
  * editor is closed. */
@@ -348,7 +393,11 @@ export function selectBeyondBulk(
 ): boolean {
   const node = s.records[recordId];
   if (!node || node.keys.length <= 1) return false;
-  if (field.kind === "multiRecord" || field.kind === "contextQuery") {
+  if (
+    field.kind === "multiRecord" ||
+    field.kind === "contextQuery" ||
+    field.kind === "computed"
+  ) {
     return false;
   }
   return selectSharedValue(s, recordId, field.column) === VARIED;
@@ -438,6 +487,9 @@ function fieldModified(
   let result: boolean;
   const node = s.records[recordId];
   if (!node) {
+    result = false;
+  } else if (field.kind === "computed") {
+    // What a computed column computes is never the form's to change.
     result = false;
   } else if (field.kind === "contextQuery") {
     // What the query found can't be added to or taken from, only edited.

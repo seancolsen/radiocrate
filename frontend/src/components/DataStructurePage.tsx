@@ -39,8 +39,9 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 //     <table>              how many rows and columns it has
 //       Fields             every field of its record editor form
 //         <field>          a column (with its type and statistics), the records
-//                          of another table that refer to it, or a contextual
-//                          query — the last two opening into their Querydown
+//                          of another table that refer to it, a computed
+//                          column, or a contextual query — all but the first
+//                          opening into their Querydown
 //       Query settings
 //         Filter presets   the table's saved presets, a list for each section
 //         Sorting presets  of a query, each opening into its editor
@@ -50,7 +51,7 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 //           comparison
 //         Record picker    the sorting and display the record picker on the
 //                          table opens with
-//   Querydown prelude      the prelude's editor
+//   Querydown prelude      the editor of the user's own prelude
 //
 // The Settings menu's "Data structure", the `presets.manage` command, a
 // builder section menu's "Manage presets" and an error strip's "Edit prelude"

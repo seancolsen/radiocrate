@@ -28,6 +28,9 @@ export function fieldAppearance(field: FormField): {
   if (field.kind === "contextQuery") {
     return { icon: Icons.FieldQuery, tint: "bg-field-query" };
   }
+  if (field.kind === "computed") {
+    return { icon: Icons.FieldComputed, tint: "bg-field-computed" };
+  }
   switch (field.valueType) {
     case "text":
       return { icon: Icons.FieldText, tint: "bg-field-text" };

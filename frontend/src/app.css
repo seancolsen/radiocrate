@@ -130,6 +130,7 @@
   --color-field-records: var(--field-records);
   --color-field-other: var(--field-other);
   --color-field-query: var(--field-query);
+  --color-field-computed: var(--field-computed);
   --color-find-match: var(--find-match);
 }
 
@@ -237,6 +238,9 @@
     /* A contextual query's field: teal, the one hue the other pills leave
        open, so a query reads as neither a link nor a list of records. */
     --field-query: light-dark(#93e4dc, #00544e);
+    /* A computed column's field: orange, between the number's red and the
+       id's yellow, so a value worked out from the others reads as neither. */
+    --field-computed: light-dark(#ffc391, #713d0a);
     /* Find and replace's highlight on the text a Find matches, under --ink:
        a highlighter yellow, and in dark a deep gold the white ink still reads
        on. */

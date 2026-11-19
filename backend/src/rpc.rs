@@ -9,14 +9,16 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, ColumnSummary, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams,
-    FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams,
-    MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams,
-    MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams,
-    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
-    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
-    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow,
-    TableOrder, TableQuerydownSetting, TableSummary, TreeItemKind,
+    AppVersion, ColumnSummary, ComputedColumnRow, FieldMetadataRow, FieldOrder, FieldRef,
+    FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
+    MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
+    MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams,
+    MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams,
+    MetadataTableSetVisibleParams, MultiLink, Placement, Preset, PresetDeleteParams,
+    PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source,
+    SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams, SourceRenameParams,
+    SourceUpdateDefinitionParams, TableMetadataRow, TableOrder, TableQuerydownSetting,
+    TableSummary, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -302,6 +304,30 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 let column = table_querydown_column(p.setting);
                 upsert_table_metadata(conn, &p.table_name, column, &p.text)?;
                 Ok(Value::Null)
+            })
+        }
+        "metadata.computed_column.list" => state.read(|conn| -> Result<Value, String> {
+            let rows = list_computed_columns(conn)?;
+            serde_json::to_value(rows).map_err(|e| e.to_string())
+        }),
+        "metadata.computed_column.set" => {
+            let p: ComputedColumnRow = from_params(params)?;
+            state.write(|conn| {
+                set_computed_column(conn, &p)?;
+                Ok(Value::Null)
+            })
+        }
+        "metadata.computed_column.rename" => {
+            let p: MetadataComputedColumnRenameParams = from_params(params)?;
+            state.write_mut(|conn| {
+                rename_computed_column(conn, &p.table_name, &p.name, &p.new_name)
+                    .map(|()| Value::Null)
+            })
+        }
+        "metadata.computed_column.delete" => {
+            let p: MetadataComputedColumnDeleteParams = from_params(params)?;
+            state.write_mut(|conn| {
+                delete_computed_column(conn, &p.table_name, &p.name).map(|()| Value::Null)
             })
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
@@ -686,7 +712,8 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
             "SELECT table_name, union_extract(field, 'column_name'), \
              union_extract(field, 'multi_link').related_table_name, \
              union_extract(field, 'multi_link').fk_column_name, visible, \"order\", display, \
-             sorting, union_extract(field, 'contextual_query')::text \
+             sorting, union_extract(field, 'contextual_query')::text, \
+             union_extract(field, 'computed_column') \
              FROM metadata.field \
              ORDER BY table_name, union_tag(field)::text, field::text",
         )
@@ -695,10 +722,12 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
         .query_map([], |row| {
             let column_name: Option<String> = row.get(1)?;
             let contextual_query: Option<String> = row.get(8)?;
-            let field = match (column_name, contextual_query) {
-                (Some(name), _) => FieldRef::ColumnName(name),
-                (None, Some(id)) => FieldRef::ContextualQuery(id),
-                (None, None) => FieldRef::MultiLink(MultiLink {
+            let computed_column: Option<String> = row.get(9)?;
+            let field = match (column_name, contextual_query, computed_column) {
+                (Some(name), _, _) => FieldRef::ColumnName(name),
+                (None, Some(id), _) => FieldRef::ContextualQuery(id),
+                (None, None, Some(name)) => FieldRef::ComputedColumn(name),
+                (None, None, None) => FieldRef::MultiLink(MultiLink {
                     related_table_name: row.get(2)?,
                     fk_column_name: row.get(3)?,
                 }),
@@ -729,6 +758,7 @@ fn field_ref_sql(field: &FieldRef) -> (&'static str, Vec<&str>) {
         FieldRef::ContextualQuery(id) => {
             ("union_value(contextual_query := CAST(? AS UUID))", vec![id])
         }
+        FieldRef::ComputedColumn(name) => ("union_value(computed_column := ?)", vec![name]),
     }
 }
 
@@ -839,6 +869,89 @@ fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), S
     for entry in orders {
         upsert_table_metadata(&tx, &entry.table_name, "\"order\"", &entry.order)?;
     }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn list_computed_columns(conn: &Connection) -> Result<Vec<ComputedColumnRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT table_name, name, expression FROM metadata.computed_column \
+             ORDER BY table_name, name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ComputedColumnRow {
+                table_name: row.get(0)?,
+                name: row.get(1)?,
+                expression: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Creates a computed column, or sets the expression of the one of that name.
+fn set_computed_column(conn: &Connection, column: &ComputedColumnRow) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO metadata.computed_column (table_name, name, expression) VALUES (?, ?, ?) \
+         ON CONFLICT (table_name, name) DO UPDATE SET expression = excluded.expression",
+        duckdb::params![column.table_name, column.name, column.expression],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The condition picking out a computed column's row of `metadata.field`, binding
+/// the table's name and then the column's.
+const COMPUTED_COLUMN_FIELD: &str = "table_name = ? AND union_tag(field) = 'computed_column' \
+     AND union_extract(field, 'computed_column') = ?";
+
+/// Renames a computed column, and with it the row of `metadata.field` keyed by its
+/// name, so what's customized about its field stays with it. One transaction: a
+/// name another of the table's computed columns has fails, and changes nothing.
+fn rename_computed_column(
+    conn: &mut Connection,
+    table_name: &str,
+    name: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE metadata.computed_column SET name = ? WHERE table_name = ? AND name = ?",
+        duckdb::params![new_name, table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        &format!(
+            "UPDATE metadata.field SET field = union_value(computed_column := ?) \
+             WHERE {COMPUTED_COLUMN_FIELD}"
+        ),
+        duckdb::params![new_name, table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Deletes a computed column, and with it the row of `metadata.field` keyed by its
+/// name: a later column given the same name starts afresh.
+fn delete_computed_column(
+    conn: &mut Connection,
+    table_name: &str,
+    name: &str,
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM metadata.computed_column WHERE table_name = ? AND name = ?",
+        duckdb::params![table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        &format!("DELETE FROM metadata.field WHERE {COMPUTED_COLUMN_FIELD}"),
+        duckdb::params![table_name, name],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
 
@@ -1326,6 +1439,18 @@ mod tests {
         FieldRef::ContextualQuery(id.to_string())
     }
 
+    fn computed_column(name: &str) -> FieldRef {
+        FieldRef::ComputedColumn(name.to_string())
+    }
+
+    fn computed_row(table_name: &str, name: &str, expression: Option<&str>) -> ComputedColumnRow {
+        ComputedColumnRow {
+            table_name: table_name.to_string(),
+            name: name.to_string(),
+            expression: expression.map(str::to_string),
+        }
+    }
+
     fn field_row(
         table_name: &str,
         field: FieldRef,
@@ -1486,6 +1611,9 @@ mod tests {
             ("track", multi_link("credit", "other_track")),
             ("track", contextual_query(Q1)),
             ("track", contextual_query(Q2)),
+            // Named as a column above is.
+            ("track", computed_column("title")),
+            ("album", computed_column("title")),
             // Spells out how the first query above renders as text.
             ("track", column(Q1)),
             // Spells out how the first link above renders as text.
@@ -1496,7 +1624,7 @@ mod tests {
         ] {
             set_field_visible(&conn, table_name, &field, false).unwrap();
         }
-        assert_eq!(list_field_metadata(&conn).unwrap().len(), 9);
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 11);
     }
 
     #[test]
@@ -1512,12 +1640,14 @@ mod tests {
                     "order": 2.0
                 },
                 { "field": { "contextualQuery": Q1 }, "order": 3.0 },
+                { "field": { "computedColumn": "lastplay" }, "order": 4.0 },
             ],
         }))
         .unwrap();
         assert_eq!(params.orders[0].field, column("title"));
         assert_eq!(params.orders[1].field, multi_link("credit", "track"));
         assert_eq!(params.orders[2].field, contextual_query(Q1));
+        assert_eq!(params.orders[3].field, computed_column("lastplay"));
 
         assert_eq!(
             serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
@@ -1642,10 +1772,219 @@ mod tests {
         crate::db::migrate_through(&mut conn, 12);
 
         assert_eq!(rows(&conn), before);
+        // The rebuilt table still keeps one row per field. Counted rather than
+        // listed: `list_field_metadata` asks for a kind of field a later
+        // migration adds.
+        set_field_visible(&conn, "track", &column("title"), true).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM metadata.field"), 2);
+        assert_eq!(count(&conn, "SELECT count(*) FROM contextual_query"), 0);
+    }
+
+    #[test]
+    fn a_computed_column_is_set_by_table_and_name() {
+        let conn = setup();
+        assert_eq!(list_computed_columns(&conn).unwrap(), vec![]);
+        set_computed_column(&conn, &computed_row("track", "decade", Some("year"))).unwrap();
+        set_computed_column(&conn, &computed_row("album", "decade", Some("year / 10"))).unwrap();
+        set_computed_column(&conn, &computed_row("track", "decade", Some("year / 10"))).unwrap();
+        // One of the app's own, gone back to the app's expression.
+        set_computed_column(&conn, &computed_row("track", "lastplay", None)).unwrap();
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![
+                computed_row("album", "decade", Some("year / 10")),
+                computed_row("track", "decade", Some("year / 10")),
+                computed_row("track", "lastplay", None),
+            ],
+        );
+    }
+
+    #[test]
+    fn renaming_a_computed_column_renames_its_field_metadata() {
+        let mut conn = setup();
+        set_computed_column(&conn, &computed_row("track", "decade", Some("year / 10"))).unwrap();
+        set_computed_column(&conn, &computed_row("album", "decade", Some("year / 10"))).unwrap();
+        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
+        set_field_order(
+            &mut conn,
+            "track",
+            &[order_of(computed_column("decade"), 3.0)],
+        )
+        .unwrap();
+        // Neither another table's column of the name, nor a real column of it,
+        // is the one renamed.
+        set_field_visible(&conn, "album", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "track", &column("decade"), false).unwrap();
+
+        rename_computed_column(&mut conn, "track", "decade", "era").unwrap();
+
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![
+                computed_row("album", "decade", Some("year / 10")),
+                computed_row("track", "era", Some("year / 10")),
+            ],
+        );
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                field_row("album", computed_column("decade"), false, None),
+                field_row("track", column("decade"), false, None),
+                field_row("track", computed_column("era"), false, Some(3.0)),
+            ],
+        );
+        // The renamed field still has the one row.
+        set_field_visible(&conn, "track", &computed_column("era"), true).unwrap();
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_computed_column_cant_take_the_name_of_another() {
+        let mut conn = setup();
+        set_computed_column(&conn, &computed_row("track", "decade", Some("a"))).unwrap();
+        set_computed_column(&conn, &computed_row("track", "era", Some("b"))).unwrap();
+        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
+
+        assert!(rename_computed_column(&mut conn, "track", "decade", "era").is_err());
+
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![
+                computed_row("track", "decade", Some("a")),
+                computed_row("track", "era", Some("b")),
+            ],
+        );
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![field_row("track", computed_column("decade"), false, None)],
+        );
+    }
+
+    #[test]
+    fn deleting_a_computed_column_deletes_its_field_metadata() {
+        let mut conn = setup();
+        set_computed_column(&conn, &computed_row("track", "decade", Some("a"))).unwrap();
+        set_computed_column(&conn, &computed_row("track", "era", Some("b"))).unwrap();
+        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "track", &computed_column("era"), false).unwrap();
+        set_field_visible(&conn, "track", &column("decade"), false).unwrap();
+
+        delete_computed_column(&mut conn, "track", "decade").unwrap();
+
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![computed_row("track", "era", Some("b"))],
+        );
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                field_row("track", column("decade"), false, None),
+                field_row("track", computed_column("era"), false, None),
+            ],
+        );
+    }
+
+    #[test]
+    fn migration_0014_keeps_field_metadata() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 13);
+        set_field_visible(&conn, "track", &column("title"), false).unwrap();
+        set_field_order(
+            &mut conn,
+            "track",
+            &[order_of(multi_link("credit", "track"), 2.0)],
+        )
+        .unwrap();
+        upsert_field_metadata(
+            &conn,
+            "artist",
+            &contextual_query(Q1),
+            "display",
+            &Some("$title"),
+        )
+        .unwrap();
+        // Read as text: `list_field_metadata` asks for a kind of field this schema
+        // doesn't have yet.
+        let rows = |conn: &Connection| -> Vec<String> {
+            conn.prepare(
+                "SELECT concat_ws(' | ', table_name, union_tag(field), field, visible, \
+                 \"order\", display, sorting) FROM metadata.field ORDER BY 1",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+        };
+        let before = rows(&conn);
+        assert_eq!(before.len(), 3);
+
+        crate::db::migrate_through(&mut conn, 14);
+
+        assert_eq!(rows(&conn), before);
         // The rebuilt table still keeps one row per field.
         set_field_visible(&conn, "track", &column("title"), true).unwrap();
-        assert_eq!(list_field_metadata(&conn).unwrap().len(), 2);
-        assert_eq!(count(&conn, "SELECT count(*) FROM contextual_query"), 0);
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 3);
+        assert_eq!(list_computed_columns(&conn).unwrap(), vec![]);
+    }
+
+    /// The `querydown_prelude` setting migration 0014 leaves, having started from
+    /// `prelude`.
+    fn prelude_after_migration_0014(prelude: &str) -> Option<String> {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 13);
+        set_setting(&conn, "querydown_prelude", prelude).unwrap();
+        set_setting(&conn, "other", "#track.year = album.year").unwrap();
+        crate::db::migrate_through(&mut conn, 14);
+        let settings = list_settings(&conn).unwrap();
+        assert!(
+            settings
+                .iter()
+                .any(|s| s.key == "other" && s.value == "#track.year = album.year"),
+            "another setting was touched"
+        );
+        settings
+            .into_iter()
+            .find(|s| s.key == "querydown_prelude")
+            .map(|s| s.value)
+    }
+
+    /// The prelude the app shipped as the setting's default, before migration 0014.
+    const OLD_DEFAULT_PRELUDE: &str = "#track.firstplay = #play.timestamp%min\n\
+        #track.lastplay = #play.timestamp%max\n\
+        #track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)\n\
+        #track.year = album.year\n\
+        #track.added = file.added\n\
+        #track.duration = file.duration\n\
+        #track.playcount = #play\n\
+        #track.number = track_number\n\
+        #track.artist:@x = ++#artist{name:@x}";
+
+    #[test]
+    fn migration_0014_takes_the_old_default_out_of_a_customized_prelude() {
+        // Nothing but the old default, however its lines end: no customization.
+        assert_eq!(prelude_after_migration_0014(OLD_DEFAULT_PRELUDE), None);
+        assert_eq!(
+            prelude_after_migration_0014(&format!(
+                "{}\r\n",
+                OLD_DEFAULT_PRELUDE.replace('\n', "\r\n")
+            )),
+            None,
+        );
+        // The user's own lines stay, and a line of the default they changed is
+        // one of them.
+        let customized = OLD_DEFAULT_PRELUDE
+            .replace("#track.year = album.year", "#track.year = album.year + 1")
+            + "\n@mine = 3";
+        assert_eq!(
+            prelude_after_migration_0014(&customized).as_deref(),
+            Some("#track.year = album.year + 1\n@mine = 3"),
+        );
+        // A line that only starts like one of the default's is the user's too.
+        assert_eq!(
+            prelude_after_migration_0014("#track.playcount = #play{timestamp:<1y}").as_deref(),
+            Some("#track.playcount = #play{timestamp:<1y}"),
+        );
     }
 
     #[test]
@@ -1655,6 +1994,7 @@ mod tests {
             "union_value(column_name := 'title')",
             "union_value(multi_link := {'related_table_name': 'credit', 'fk_column_name': 'track'})",
             "union_value(contextual_query := '00000000-0000-0000-0000-0000000000e1'::uuid)",
+            "union_value(computed_column := 'lastplay')",
         ] {
             let insert =
                 format!("INSERT INTO metadata.field (table_name, field) VALUES ('a', {field})");

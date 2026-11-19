@@ -130,7 +130,7 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The "Add field" menu, with its one way to add one.
+  // The "Add field" menu: a computed column, or a contextual query.
   test(`data-structure/add-field - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
@@ -141,11 +141,56 @@ for (const colorScheme of SCHEMES) {
     await row(stage, "Fields")
       .getByRole("button", { name: "Add field" })
       .click();
-    await expect(
-      page.getByRole("menuitem", { name: "Contextual query" }),
-    ).toBeVisible();
+    await expect(page.getByRole("menuitem")).toHaveText([
+      "Computed column",
+      "Contextual query",
+    ]);
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/add-field", colorScheme),
+    );
+  });
+
+  // A table's computed columns: one of the app's own open on its expression,
+  // another customized, and one of the user's own, open too.
+  test(`data-structure/computed-columns - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/computed-columns",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "firstplay Computed"));
+    await expect(row(stage, "lastplay Computed")).toContainText("Built-in");
+    await expect(row(stage, "year Computed")).toContainText("Customized");
+    await expect(stage.getByLabel("Expression of lastplay")).toHaveText(
+      "#play.timestamp%max",
+    );
+    await expect(stage.getByLabel("Expression of tagcount")).toHaveText(
+      "#track_tag",
+    );
+    // Only the app's own has a default to go back to.
+    await expect(
+      stage.getByRole("button", { name: "Reset to default" }),
+    ).toHaveCount(1);
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/computed-columns", colorScheme),
+    );
+  });
+
+  // A computed column whose expression doesn't fit the schema: the problem
+  // under its editor.
+  test(`data-structure/computed-column-problem - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/computed-column-problem",
+      colorScheme,
+    );
+    await expect(stage.getByRole("alert")).toContainText(
+      "Column yeer not found",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/computed-column-problem", colorScheme),
     );
   });
 
@@ -239,13 +284,34 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The Querydown prelude's editor at the default value: Reset to default and
-  // Save both disabled.
+  // The Querydown prelude's editor on a prelude the user saved: nothing to
+  // save, and no default to go back to.
   test(`data-structure/prelude - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "data-structure/prelude", colorScheme);
+    await expect(stage.getByLabel("Querydown Prelude")).toContainText(
+      "@recent = 1m",
+    );
     await expect(stage.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(
+      stage.getByRole("button", { name: "Reset to default" }),
+    ).toHaveCount(0);
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/prelude", colorScheme),
+    );
+  });
+
+  // As it is until the user writes one: empty, the app having no prelude of
+  // its own.
+  test(`data-structure/prelude-empty - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/prelude-empty",
+      colorScheme,
+    );
+    await expect(stage.getByLabel("Querydown Prelude")).toHaveText("");
+    await expect(stage.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/prelude-empty", colorScheme),
     );
   });
 
@@ -268,7 +334,7 @@ for (const colorScheme of SCHEMES) {
     const stage = await openStory(page, "data-structure/prelude", colorScheme);
     await stage.getByRole("button", { name: "Help" }).hover();
     await expect(page.getByRole("tooltip")).toContainText(
-      "prepend all queries",
+      "ahead of every query",
     );
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/prelude-help", colorScheme),
@@ -591,7 +657,7 @@ test("a field's context menu hides it, and brings it back", async ({
   const fields = row(stage, "Fields");
   const showHidden = fields.getByRole("button", { name: "Show hidden fields" });
   // Nothing hidden, nothing to show.
-  await expect(row(stage, "Fields 10 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   await expect(showHidden).toHaveCount(0);
 
   const title = row(stage, "title Column");
@@ -613,13 +679,13 @@ test("a field's context menu hides it, and brings it back", async ({
     ]);
   // It's gone from the list, and the toggle that shows it is there.
   await expect(title).toHaveCount(0);
-  await expect(row(stage, "Fields 9 fields")).toBeVisible();
+  await expect(row(stage, "Fields 17 fields")).toBeVisible();
   await expect(showHidden).toHaveAttribute("aria-pressed", "false");
 
   // Shown, it's listed faded.
   await showHidden.click();
   await expect(showHidden).toHaveAttribute("aria-pressed", "true");
-  await expect(row(stage, "Fields 10 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   await expect(title.locator(".opacity-60")).toHaveCount(1);
 
   await title.click({ button: "right" });
@@ -684,7 +750,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 }) => {
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the query goes.
-  const fields = row(stage, "Fields 10 fields");
+  const fields = row(stage, "Fields 18 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -703,7 +769,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 
   const added = row(stage, "credits by role Query");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 11 fields")).toBeVisible();
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
   // The filter is guessed from the schema's links, and has the caret.
   const filter = stage.getByLabel("Filter of credits by role");
   await expect(filter).toContainText("track.id:@id");
@@ -711,6 +777,146 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
   await expect
     .poll(async () => (await calls(page, "dml")).length)
     .toBeGreaterThan(0);
+});
+
+test("Add field adds a computed column, and opens it on its expression", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/add-field", "light");
+  // From a closed "Fields": adding opens it, since that's where the column
+  // goes.
+  const fields = row(stage, "Fields 18 fields");
+  await fields.click();
+  await expect(fields).toHaveAttribute("aria-expanded", "false");
+  await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
+  await page.getByRole("menuitem", { name: "Computed column" }).click();
+  await expect(fields).toHaveAttribute("aria-expanded", "true");
+
+  // A name to type over, which is made into one a query can say.
+  const name = stage.getByLabel("Name of the new computed column");
+  await expect(name).toBeFocused();
+  await name.fill("release decade");
+  await name.press("Enter");
+
+  const added = row(stage, "release_decade Computed");
+  await expect(added).toHaveAttribute("aria-expanded", "true");
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
+  expect(await calls(page, "metadata.computed_column.set")).toEqual([
+    {
+      method: "metadata.computed_column.set",
+      params: { tableName: "track", name: "release_decade", expression: "" },
+    },
+  ]);
+  // The expression has the caret, and is written as its row closes.
+  const expression = stage.getByLabel("Expression of release_decade");
+  await expect(expression).toBeFocused();
+  await expect(stage.getByText("isn’t defined yet")).toBeVisible();
+  await page.keyboard.type("album.year");
+  await added.click();
+  await expect
+    .poll(async () =>
+      (await calls(page, "metadata.computed_column.set")).at(-1),
+    )
+    .toEqual({
+      method: "metadata.computed_column.set",
+      params: {
+        tableName: "track",
+        name: "release_decade",
+        expression: "album.year",
+      },
+    });
+});
+
+test("a computed column of the user's is renamed and removed from its menu, one of the app's only hidden", async ({
+  page,
+}) => {
+  const stage = await openStory(
+    page,
+    "data-structure/computed-columns",
+    "light",
+  );
+  // One of the app's own: its name is fixed, and it's there to stay.
+  await row(stage, "year Computed").click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText(["Hide field"]);
+  await page.keyboard.press("Escape");
+
+  const mine = row(stage, "tagcount Computed");
+  await mine.click({ button: "right" });
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Rename",
+    "Hide field",
+    "Remove",
+  ]);
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const name = stage.getByLabel("Name of tagcount");
+  await expect(name).toBeFocused();
+  await name.fill("tags");
+  await name.press("Enter");
+  // Its row goes by the new name, still open on its expression.
+  const renamed = row(stage, "tags Computed");
+  await expect(renamed).toBeFocused();
+  await expect(renamed).toHaveAttribute("aria-expanded", "true");
+  await expect(stage.getByLabel("Expression of tags")).toHaveText("#track_tag");
+  expect(await calls(page, "metadata.computed_column.rename")).toEqual([
+    {
+      method: "metadata.computed_column.rename",
+      params: { tableName: "track", name: "tagcount", newName: "tags" },
+    },
+  ]);
+
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Remove “tags” from every track?");
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect(renamed).toHaveCount(0);
+  await expect
+    .poll(() => calls(page, "metadata.computed_column.delete"))
+    .toEqual([
+      {
+        method: "metadata.computed_column.delete",
+        params: { tableName: "track", name: "tags" },
+      },
+    ]);
+});
+
+test("one of the app's computed columns takes the user's expression, and is reset", async ({
+  page,
+}) => {
+  const stage = await openStory(
+    page,
+    "data-structure/computed-columns",
+    "light",
+  );
+  const lastplay = row(stage, "lastplay Computed");
+  const editor = stage
+    .getByTestId("computed-column-editor")
+    .filter({ has: page.getByLabel("Expression of lastplay") });
+  const expression = editor.getByLabel("Expression of lastplay");
+  const reset = editor.getByRole("button", { name: "Reset to default" });
+  await expect(lastplay).toContainText("Built-in");
+  await expect(reset).toBeDisabled();
+
+  await expression.fill("#play.timestamp%min");
+  await expect(lastplay).toContainText("Customized");
+  await expect(reset).toBeEnabled();
+  // Left blank, the app's expression is the one in force again.
+  await expression.fill("");
+  await expect(lastplay).toContainText("Built-in");
+  await expect(editor.getByText("Blank: the default is used.")).toBeVisible();
+
+  // Reset goes straight out, and the app's own expression is back on show.
+  await reset.click();
+  await expect(expression).toHaveText("#play.timestamp%max");
+  await expect(reset).toBeDisabled();
+  await expect
+    .poll(async () =>
+      (await calls(page, "metadata.computed_column.set")).at(-1),
+    )
+    .toEqual({
+      method: "metadata.computed_column.set",
+      params: { tableName: "track", name: "lastplay", expression: null },
+    });
 });
 
 test("a related-records field's Querydown is written, and restored", async ({

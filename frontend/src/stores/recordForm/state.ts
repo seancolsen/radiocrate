@@ -26,6 +26,18 @@ import type { ColumnValues } from "../../record/formValues";
  * been expanded. */
 export type LoadStatus = "unloaded" | "loading" | "loaded" | "error";
 
+/** What one computed column came to for the records of a node, read in a query
+ * of its own once the node's data has landed (`query/computedColumns.ts`). */
+export interface ComputedValues {
+  status: LoadStatus;
+  /** The value for each record, index-aligned to the node's keys. What was
+   * last read stays while it's read again; undefined until it first is. */
+  values: ColumnValues | undefined;
+  /** Why it couldn't be computed: its expression doesn't compile, or the
+   * database refused it. */
+  error: string | null;
+}
+
 /** One form node: the records it stands for, its fields, and whatever has been
  * loaded into them. Every per-record map below is index-aligned to
  * {@link RecordNode.keys}. */
@@ -53,6 +65,10 @@ export interface RecordNode {
   original: Record<string, ColumnValues>;
   /** Referencing field key (`#credit`) → count of related records, per record. */
   counts: Record<string, readonly number[]>;
+  /** Computed column field key (`=lastplay`) → what the column computes for
+   * these records. Never the user's to edit, so it's kept apart from `values`,
+   * and nothing here is ever saved. */
+  computed: Record<string, ComputedValues>;
   /** Whether this record is being *created* by the form rather than edited: it
    * has no key, nothing to load, and counts as modified in its entirety. */
   isNew: boolean;
@@ -236,6 +252,9 @@ export interface FormState {
    * section of the query it's showing: a contextual query's, or the Querydown
    * behind a field's embedded records. Absent reads as closed. */
   queryEditors: Record<string, Section>;
+  /** The computed column fields whose expression's editor is open under them,
+   * by field item id. Absent reads as closed. */
+  expressionEditors: Record<string, true>;
   /** The field item id whose label is being renamed in place, or null. */
   renaming: string | null;
   /** The contextual query being added, or null. */
@@ -243,6 +262,13 @@ export interface FormState {
   /** The contextual query the user has asked to remove, awaiting their
    * confirmation, or null. */
   removing: string | null;
+  /** Whether a computed column is being added to the root record's table: a
+   * field at the bottom of its fields with its name being typed, which becomes
+   * a computed column once the name is settled on. */
+  addingComputed: boolean;
+  /** The computed column the user has asked to remove, awaiting their
+   * confirmation, or null. */
+  removingComputed: { table: string; name: string } | null;
   /** Whether a save is in flight. */
   saving: boolean;
   /** Why the last save failed, or null. The form keeps the changes it couldn't
@@ -294,9 +320,12 @@ export function initialFormState(): FormState {
     queryEditorFocus: null,
     embedErrors: {},
     queryEditors: {},
+    expressionEditors: {},
     renaming: null,
     provisional: null,
     removing: null,
+    addingComputed: false,
+    removingComputed: null,
     saving: false,
     saveError: null,
   };

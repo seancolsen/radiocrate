@@ -100,6 +100,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   void app.actions.loadSettings();
   void app.actions.loadFieldMetadata();
   void app.actions.loadTableSettings();
+  void app.actions.loadComputedColumns();
   void app.actions.loadContextualQueries();
   void commands.actions.loadKeymap();
 
@@ -137,6 +138,17 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     () => {
       for (const entry of forms.store.getState().entries) {
         entry.model.syncContextualQueries();
+      }
+    },
+  );
+
+  // A computed column shows on every record of its table too, and what it
+  // computes can change under any of them.
+  const unsubscribeComputedColumns = app.store.subscribe(
+    (s) => s.computedColumns.data,
+    () => {
+      for (const entry of forms.store.getState().entries) {
+        entry.model.syncComputedColumns();
       }
     },
   );
@@ -243,6 +255,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     unsubscribeRetain();
     unsubscribeEmbeds();
     unsubscribeContextualQueries();
+    unsubscribeComputedColumns();
     unsubscribeResync();
     unsubscribeRpcFailures();
     unsubscribeRequests();

@@ -7,11 +7,11 @@ import { tableSettingItemId } from "../../query/structure";
 import {
   builtInSetting,
   composePrelude,
+  generatedPrelude,
   isCustomized,
   PICKER_SETTINGS,
   PRELUDE_SETTING_LABELS,
   SETTING_VARIABLE,
-  tablePrelude,
   type PreludeSetting,
 } from "../../query/tableSettings";
 import { selectTableQuerydown, selectUserPrelude } from "../../stores/app";
@@ -126,6 +126,7 @@ function PreludeSettingEditor(props: {
   const text = stored ?? builtIn ?? "";
   const tables = useApp((s) => s.schema.tables);
   const settings = useApp((s) => s.tableSettings.data);
+  const computed = useApp((s) => s.computedColumns.data);
   const user = useApp(selectUserPrelude);
   const { setTableQuerydown, flushTableQuerydown } = useAppActions();
   // Nothing typed waits on the idle queue once the editor has gone.
@@ -138,8 +139,11 @@ function PreludeSettingEditor(props: {
   // check puts last.
   const prelude = useMemo(
     () =>
-      composePrelude(tablePrelude(tables, settings, { table, setting }), user),
-    [tables, settings, table, setting, user],
+      composePrelude(
+        generatedPrelude(tables, settings, computed, { table, setting }),
+        user,
+      ),
+    [tables, settings, computed, table, setting, user],
   );
   const schemaJson = useCheckContext()?.schemaJson;
   const blank = !isCustomized(text);

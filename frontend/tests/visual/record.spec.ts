@@ -1007,7 +1007,8 @@ test.describe("rearranging fields", () => {
       orders: { field: unknown; order: number }[];
     }[];
     expect(sent.tableName).toBe("track");
-    // Every field gets a place, the ones listing related records included.
+    // Every field gets a place, the ones listing related records and the
+    // computed columns included.
     expect(sent.orders.map((entry) => entry.order)).toEqual(
       names.map((_, i) => i + 1),
     );
@@ -1015,9 +1016,14 @@ test.describe("rearranging fields", () => {
       { columnName: "title" },
       { columnName: "id" },
     ]);
-    expect(sent.orders.at(-1)?.field).toMatchObject({
-      multiLink: { fkColumnName: "track" },
-    });
+    expect(
+      sent.orders.some(
+        (entry) =>
+          (entry.field as { multiLink?: { fkColumnName: string } }).multiLink
+            ?.fkColumnName === "track",
+      ),
+    ).toBe(true);
+    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "number" });
 
     await dragLabel(page, stage, "id", "title", 0.1);
     await page.mouse.up();
@@ -1230,6 +1236,310 @@ for (const colorScheme of SCHEMES) {
     );
   });
 }
+
+for (const colorScheme of SCHEMES) {
+  // A computed column's expression being edited, under its field: one of the
+  // app's own, so "Reset to default" is there, with nothing yet to reset.
+  test(`record-editor/computed-expression - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/computed-expression",
+      colorScheme,
+    );
+    await expect(stage.getByText("2016-05-02 21:47:00")).toBeVisible();
+    await fieldLabelOf(stage, "lastplay").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Edit expression" }).click();
+    const expression = embedEditor(stage, "Expression of lastplay");
+    await expect(expression).toBeFocused();
+    await expect(expression).toHaveText("#play.timestamp%max");
+    await expect(
+      stage.getByRole("button", { name: "Reset to default" }),
+    ).toBeDisabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/computed-expression", colorScheme),
+    );
+  });
+
+  // The user's own computed columns after the app's: one with a value, one
+  // saying why it has none, and one with no expression yet.
+  test(`record-editor/computed-columns - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/computed-columns",
+      colorScheme,
+    );
+    await expect(stage.getByText("Column label not found")).toBeVisible();
+    await expect(
+      stage.getByRole("button", {
+        name: "Write the expression of unwritten",
+      }),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/computed-columns", colorScheme),
+    );
+  });
+
+  // A computed column being added: the new field at the bottom, its default
+  // name selected to be typed over.
+  test(`record-editor/provisional-computed - ${colorScheme}`, async ({
+    page,
+  }) => {
+    const stage = await openStory(
+      page,
+      "record-editor/provisional-computed",
+      colorScheme,
+    );
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add computed column" }).click();
+    await expect(
+      stage.getByRole("textbox", { name: "Name of the new computed column" }),
+    ).toBeFocused();
+    await expect(stage).toHaveScreenshot(
+      snapshot("record-editor/provisional-computed", colorScheme),
+    );
+  });
+}
+
+test.describe("computed columns", () => {
+  /** The calls of `method` the page has made, oldest first. */
+  const calls = (page: Page, method: string) =>
+    page.evaluate(
+      (wanted) =>
+        (window.__rpcCalls ?? [])
+          .filter((call) => call.method === wanted)
+          .map((call) => call.params),
+      method,
+    );
+
+  async function opened(page: Page, story: string) {
+    const stage = await openStory(page, story, "light");
+    await expect(stage.locator(".rc-embedded").first()).toContainText(".flac");
+    return stage;
+  }
+
+  /** A computed column's row: its label and what it shows. */
+  const computedRow = (stage: Locator, name: string) =>
+    stage.locator("[data-field-row]").filter({
+      has: stage.page().getByText(name, { exact: true }),
+    });
+
+  test("show what the app's own come to for the record, each read-only", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/items-collapsed");
+    const shown = async (name: string) =>
+      (await computedRow(stage, name).innerText()).replace(/\s+/g, " ").trim();
+    expect(await shown("firstplay")).toBe("firstplay 2016-04-24 08:12:00");
+    expect(await shown("lastplay")).toBe("lastplay 2016-05-02 21:47:00");
+    expect(await shown("artists")).toBe("artists [Beyoncé]");
+    expect(await shown("year")).toBe("year 2016");
+    expect(await shown("playcount")).toBe("playcount 2");
+    expect(await shown("number")).toBe("number 1");
+    // Nothing of theirs is a text box to type into.
+    await expect(computedRow(stage, "year").getByRole("textbox")).toHaveCount(
+      0,
+    );
+  });
+
+  test("show the value several records share, and how many they don't", async ({
+    page,
+  }) => {
+    // Two tracks, whose files differ: there's no one file to wait on.
+    const stage = await openStory(page, "record-editor/bulk", "light");
+    // Both were added at once; only one of them has an album to take a year
+    // from.
+    await expect(computedRow(stage, "added")).toContainText(
+      "2016-04-23 19:04:00",
+    );
+    await expect(computedRow(stage, "year")).toContainText("2 distinct values");
+    await expect(computedRow(stage, "duration")).toContainText(
+      "2 distinct values",
+    );
+  });
+
+  test("one of the app's own can be edited, not renamed or removed", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/computed-expression");
+    await fieldLabelOf(stage, "year").click({ button: "right" });
+    expect(await page.getByRole("menuitem").allInnerTexts()).toEqual([
+      "Edit expression",
+      "Copy",
+      "Hide field",
+    ]);
+    await page.getByRole("menuitem", { name: "Edit expression" }).click();
+    const expression = embedEditor(stage, "Expression of year");
+    await expect(expression).toBeFocused();
+    const reset = stage.getByRole("button", { name: "Reset to default" });
+    await expect(reset).toBeDisabled();
+
+    // The user's expression is the column's at once, and its value follows.
+    await rewrite(page, "track_number");
+    await expect(computedRow(stage, "year").first()).toHaveText(
+      /^year\s*1(?!\d)/,
+    );
+    await expect(reset).toBeEnabled();
+    // The × closes the editor, and what was typed is written as it goes.
+    await stage
+      .getByRole("button", { name: "Close expression editor" })
+      .click();
+    await expect(expression).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "year")).toBeFocused();
+    await expect
+      .poll(() => calls(page, "metadata.computed_column.set"))
+      .toEqual([
+        { tableName: "track", name: "year", expression: "track_number" },
+      ]);
+
+    // Double-clicking the label opens the editor too; resetting goes back to
+    // the app's expression, and is written straight away.
+    await fieldLabelOf(stage, "year").dblclick();
+    await expect(embedEditor(stage, "Expression of year")).toBeFocused();
+    await reset.click();
+    await expect(embedEditor(stage, "Expression of year")).toHaveText(
+      "album.year",
+    );
+    await expect(computedRow(stage, "year").first()).toContainText("2016");
+    // Escape, in the text, closes the editor as the × does.
+    await embedEditor(stage, "Expression of year").press("Escape");
+    await expect(embedEditor(stage, "Expression of year")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "year")).toBeFocused();
+    await expect
+      .poll(async () =>
+        (await calls(page, "metadata.computed_column.set")).at(-1),
+      )
+      .toEqual({ tableName: "track", name: "year", expression: null });
+  });
+
+  test("a problem with an expression shows under it, and in place of the value", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/computed-expression");
+    await fieldLabelOf(stage, "year").dblclick();
+    await rewrite(page, "album.yeer");
+    const editor = stage.getByTestId("computed-column-editor");
+    await expect(editor.getByRole("alert")).toContainText(
+      "Column yeer not found",
+    );
+    await expect(computedRow(stage, "year").first()).toContainText(
+      "Column yeer not found",
+    );
+    // The other columns go on showing what they did.
+    await expect(computedRow(stage, "playcount")).toContainText("2");
+  });
+
+  test("one being added takes a name, then its expression", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/provisional-computed");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add computed column" }).click();
+    await page.keyboard.type("album year");
+    await page.keyboard.press("Enter");
+
+    // Named — as a query can say it — it's a field, with its editor open.
+    await expect(stage.getByTestId("provisional-computed")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "album_year")).toBeVisible();
+    const expression = embedEditor(stage, "Expression of album_year");
+    await expect(expression).toBeFocused();
+    await expect(
+      stage.getByRole("button", { name: "Reset to default" }),
+    ).toHaveCount(0);
+    expect(await calls(page, "metadata.computed_column.set")).toEqual([
+      { tableName: "track", name: "album_year", expression: "" },
+    ]);
+
+    await page.keyboard.type("file.added");
+    await expect(computedRow(stage, "album_year")).toContainText(
+      "2016-04-23 19:04:00",
+    );
+    await stage
+      .getByRole("button", { name: "Close expression editor" })
+      .click();
+    await expect
+      .poll(async () =>
+        (await calls(page, "metadata.computed_column.set")).at(-1),
+      )
+      .toEqual({
+        tableName: "track",
+        name: "album_year",
+        expression: "file.added",
+      });
+  });
+
+  test("Escape drops one being added", async ({ page }) => {
+    const stage = await opened(page, "record-editor/provisional-computed");
+    await stage.getByRole("button", { name: "Record actions" }).click();
+    await page.getByRole("menuitem", { name: "Add computed column" }).click();
+    await page.keyboard.type("nothing");
+    await page.keyboard.press("Escape");
+    await expect(stage.getByTestId("provisional-computed")).toHaveCount(0);
+    await expect(fieldLabelOf(stage, "nothing")).toHaveCount(0);
+    expect(await calls(page, "metadata.computed_column.set")).toEqual([]);
+  });
+
+  test("one of the user's own is renamed, its place going with it, and removed", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/computed-columns");
+    await expect(computedRow(stage, "tagcount")).toContainText("2");
+    await fieldLabelOf(stage, "tagcount").click({ button: "right" });
+    expect(await page.getByRole("menuitem").allInnerTexts()).toEqual([
+      "Edit expression",
+      "Copy",
+      "Rename",
+      "Hide field",
+      "Remove",
+    ]);
+
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const name = stage.getByRole("textbox", { name: "Name of tagcount" });
+    await expect(name).toBeFocused();
+    await page.keyboard.type("tag count");
+    await page.keyboard.press("Enter");
+    // One call renames the column and what's customized about its field.
+    await expect(fieldLabelOf(stage, "tag_count")).toBeFocused();
+    await expect(fieldLabelOf(stage, "tagcount")).toHaveCount(0);
+    await expect(computedRow(stage, "tag_count")).toContainText("2");
+    expect(await calls(page, "metadata.computed_column.rename")).toEqual([
+      { tableName: "track", name: "tagcount", newName: "tag_count" },
+    ]);
+
+    // A name another field has is numbered, never refused.
+    await fieldLabelOf(stage, "tag_count").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    await page.keyboard.type("title");
+    await page.keyboard.press("Enter");
+    await expect(fieldLabelOf(stage, "title_2")).toBeFocused();
+
+    await fieldLabelOf(stage, "title_2").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Remove" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Remove “title_2” from every track?");
+    await dialog.getByRole("button", { name: "Remove" }).click();
+    await expect(fieldLabelOf(stage, "title_2")).toHaveCount(0);
+    await expect
+      .poll(() => calls(page, "metadata.computed_column.delete"))
+      .toEqual([{ tableName: "track", name: "title_2" }]);
+  });
+
+  test("a long value opens out below its label", async ({ page }) => {
+    const stage = await opened(page, "record-editor/computed-expression");
+    await fieldLabelOf(stage, "artists").dblclick();
+    await rewrite(page, "file.path");
+    const row = computedRow(stage, "artists").first();
+    await expect(row).toContainText("./Beyoncé/Lemonade");
+    await page.keyboard.press("Escape");
+    await stage.getByRole("button", { name: "Expand artists" }).click();
+    await expect(
+      stage.getByRole("button", { name: "Collapse artists" }),
+    ).toBeVisible();
+    await expect(row).toContainText("Pray You Catch Me.flac");
+  });
+});
 
 test.describe("contextual queries", () => {
   /** The `dml` requests the page has sent, oldest first. */

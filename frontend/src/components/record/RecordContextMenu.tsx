@@ -5,6 +5,7 @@ import { Icons, type IconComponent } from "../../icons";
 import RecordNavigationItems from "../RecordNavigationItems";
 import {
   isShared,
+  selectComputedValue,
   selectFieldOf,
   selectIsBulkBlocked,
   selectSharedValue,
@@ -26,9 +27,9 @@ import { fieldRef, type FormField } from "../../query/recordForm";
 // what its *kind* can do, an embedded record offers what can be done to the
 // record it previews. Every action here is ephemeral, like every other form
 // modification — nothing reaches the database until the form is saved. The one
-// exceptions are hiding a field and editing the query behind it, which are about
-// the form and not about any record's data: they apply at once,
-// for every record of the table.
+// exceptions are hiding a field, editing the query behind it, and everything a
+// computed column's field offers, which are about the form and not about any
+// record's data: they apply at once, for every record of the table.
 //
 // An entry the form can't carry out across several records at once is shown
 // grayed rather than dropped, so the menu says the same things wherever it's
@@ -57,6 +58,8 @@ function copyValue(text: string): void {
 function menuEntries(
   model: RecordFormModel,
   open: FormMenu,
+  /** The table of the record the target is in. */
+  table: string | undefined,
   field: FormField | undefined,
   /** Whether this field is one the form won't modify while it's on several
    * records — every entry that would change it is grayed out. */
@@ -121,6 +124,44 @@ function menuEntries(
     ];
   }
 
+  // A value the records disagree on is no one value to put on the clipboard.
+  const copy: Entry = {
+    icon: Icons.Duplicate,
+    label: "Copy",
+    disabled: !isShared(value),
+    run: () => copyValue(isShared(value) ? (value ?? "") : ""),
+  };
+
+  // A computed column's field is its expression: that's what there is to
+  // edit, and its value is only ever read. One of the user's own columns can
+  // be renamed and removed too — for every record of the table, at once.
+  if (field.kind === "computed") {
+    const entries: Entry[] = [
+      {
+        icon: Icons.Querydown,
+        label: "Edit expression",
+        run: () => model.openExpressionEditor(recordId, field.key),
+      },
+      copy,
+    ];
+    if (!field.builtIn && table !== undefined) {
+      entries.push(
+        {
+          icon: Icons.Rename,
+          label: "Rename",
+          run: () => model.beginRename(recordId, field.key),
+        },
+        {
+          icon: Icons.Delete,
+          danger: true,
+          label: "Remove",
+          run: () => model.requestRemoveComputed(table, field.name),
+        },
+      );
+    }
+    return entries;
+  }
+
   if (field.kind === "multiRecord") {
     return [
       {
@@ -159,13 +200,6 @@ function menuEntries(
       clear,
     ];
   }
-  // A value the records disagree on is no one value to put on the clipboard.
-  const copy: Entry = {
-    icon: Icons.Duplicate,
-    label: "Copy",
-    disabled: !isShared(value),
-    run: () => copyValue(isShared(value) ? (value ?? "") : ""),
-  };
   // A primary key is issued by the database, not the user — nothing here
   // offers to change it, only to read it.
   if (field.kind === "primitive" && field.readOnly) return [copy];
@@ -223,6 +257,9 @@ export default function RecordContextMenu(props: {
     if (!s.menu) return undefined;
     const { recordId, fieldKey } = s.menu.target;
     const target = selectFieldOf(s, recordId, fieldKey);
+    if (target?.kind === "computed") {
+      return selectComputedValue(s, recordId, fieldKey);
+    }
     return target &&
       (target.kind === "primitive" || target.kind === "scalarLink")
       ? selectSharedValue(s, recordId, target.column)
@@ -230,14 +267,15 @@ export default function RecordContextMenu(props: {
   });
 
   if (!open) return null;
-  const entries = menuEntries(model, open, field, blocked, value);
+  const entries = menuEntries(model, open, table, field, blocked, value);
   if (open.target.kind === "field" && field && table !== undefined) {
     const ref = fieldRef(field);
     const hidden = isFieldHidden(metadata, ref);
-    // Below what the field offers — but above removing a contextual query,
-    // which is the one entry that's best kept last.
+    // Below what the field offers — but above removing a contextual query or
+    // a computed column, which is the one entry that's best kept last.
+    const removes = entries[entries.length - 1]?.label === "Remove";
     entries.splice(
-      field.kind === "contextQuery" ? entries.length - 1 : entries.length,
+      removes ? entries.length - 1 : entries.length,
       0,
       hidden
         ? {

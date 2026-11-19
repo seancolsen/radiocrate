@@ -25,16 +25,17 @@ import init, { compile } from "../../frontend/vendor/querydown-js/querydown_js.j
 import lineageInit, {
   column_sources,
 } from "../../frontend/vendor/track-lineage/track_lineage.js";
-import {
-  DEFAULT_PRELUDE,
-  playlistOrderContent,
-} from "../../frontend/src/query/definition.ts";
+import { playlistOrderContent } from "../../frontend/src/query/definition.ts";
+import { generatedPrelude } from "../../frontend/src/query/tableSettings.ts";
 import {
   assemblePlaylist,
   playlistQuerydown as generate,
   type PlaylistQueryOptions,
 } from "../../frontend/src/query/playlist.ts";
-import { addInferredLinks } from "../../frontend/src/query/schema.ts";
+import {
+  addInferredLinks,
+  parseSchemaTables,
+} from "../../frontend/src/query/schema.ts";
 
 const SAMPLE_DB = "sample-data/realistic/collection/radiocrate.db";
 const migration = process.argv[2] ?? "backend/src/migrations/0006.sql";
@@ -167,12 +168,16 @@ const cases: Record<
   },
 };
 
+// What the app defines ahead of every query: the tables' computed columns and
+// settings, as they are with nothing customized.
+const prelude = generatedPrelude(parseSchemaTables(schema), {}, []).text;
+
 let failed = false;
 for (const [name, { text, entryColumns, rows: expectedRows, noTrackId }] of Object.entries(
   cases,
 )) {
   try {
-    const { sql } = compile(schema, "duckdb", `${DEFAULT_PRELUDE}\n${text}`);
+    const { sql } = compile(schema, "duckdb", `${prelude}\n${text}`);
     const rows = (JSON.parse(duckdb(db, sql, true) || "[]") as unknown[]).length;
     const sources = JSON.parse(column_sources(sql) ?? "null") as [string, string][][] | null;
     const traces = (i: number, table: string, column: string) =>

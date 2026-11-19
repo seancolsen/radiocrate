@@ -8,6 +8,8 @@
 //     <table>                   table:<name>
 //       Fields                  table:<name>/fields
 //         <field>               table:<name>/fields/<fieldRefKey>
+//                               (a computed column's is keyed by its name, so
+//                               renaming one moves what's open with it)
 //       Query settings          table:<name>/query
 //         Filter presets        table:<name>/query/filter
 //           <preset>            preset:<id>
@@ -22,7 +24,13 @@
 // An id is only ever compared whole, never taken apart, so a table named with a
 // `/` or a `:` in it is as good as any other.
 
-import type { ColumnSummary, FieldRef, TableSummary } from "api-client";
+import type {
+  ColumnSummary,
+  ComputedColumnRow,
+  FieldRef,
+  TableSummary,
+} from "api-client";
+import { computedFields } from "./computedColumns";
 import type { ContextualQuery } from "./contextualQuery";
 import { contextFields } from "./contextualQuery";
 import type { Section } from "./definition";
@@ -76,6 +84,17 @@ export function tableSettingPath(
   ];
 }
 
+/** The items to open for the editor of `table`'s computed column `name` to be
+ * on show. */
+export function computedColumnPath(table: string, name: string): string[] {
+  return [
+    TABLES_ITEM,
+    tableItemId(table),
+    fieldsItemId(table),
+    structureFieldId(table, { computedColumn: name }),
+  ];
+}
+
 /** The items to open for `table`'s presets to be on show: all of them down to
  * `section`'s list, or down to "Query settings" without one. */
 export function presetSectionPath(table: string, section?: Section): string[] {
@@ -89,41 +108,58 @@ export function presetSectionPath(table: string, section?: Section): string[] {
 export const DEFAULT_EXPANDED: readonly string[] = [TABLES_ITEM];
 
 /** What kind of thing a field is, as the tree names it. */
-export type StructureFieldKind = "column" | "related" | "query";
+export type StructureFieldKind = "column" | "related" | "computed" | "query";
 
 /** The small label each kind of field wears. */
 export const FIELD_KIND_LABELS: Record<StructureFieldKind, string> = {
   column: "Column",
   related: "Related",
+  computed: "Computed",
   query: "Query",
 };
 
 export function structureFieldKind(field: FormField): StructureFieldKind {
   if (field.kind === "multiRecord") return "related";
   if (field.kind === "contextQuery") return "query";
+  if (field.kind === "computed") return "computed";
   return "column";
 }
 
+/** The fields of a record of `table` in their default order, which is what the
+ * user's arrangement of them starts from: its columns and the tables referring
+ * to it, as the schema has them; then its computed columns; then its contextual
+ * queries. */
+export function defaultFields(
+  tables: readonly SchemaTable[],
+  table: string,
+  computed: readonly ComputedColumnRow[],
+  queries: readonly ContextualQuery[],
+): FormField[] {
+  return [
+    ...buildFormFields(tables, table),
+    ...computedFields(tables, table, computed),
+    ...contextFields(tables, table, queries),
+  ];
+}
+
 /** Every field of `table`'s record editor form, hidden ones included, in the
- * order the user has arranged them: its columns, the tables referring to it,
- * and its contextual queries. */
+ * order the user has arranged them. */
 export function structureFields(
   tables: readonly SchemaTable[],
   table: string,
+  computed: readonly ComputedColumnRow[],
   queries: readonly ContextualQuery[],
   metadata: TableMetadata,
 ): FormField[] {
-  const fields: FormField[] = [
-    ...buildFormFields(tables, table),
-    ...contextFields(tables, table, queries),
-  ];
-  return orderFields(fields, metadata);
+  return orderFields(defaultFields(tables, table, computed, queries), metadata);
 }
 
 /** Whether a field's row opens into anything: its query's editor, for a
- * contextual query or a related-records field. A column has none — a linked
- * one included, whose record's display is the record editor's to write. */
+ * contextual query or a related-records field, and its expression's, for a
+ * computed column. A column has none — a linked one included, whose record's
+ * display is the record editor's to write. */
 export function isFieldExpandable(field: FormField): boolean {
+  if (field.kind === "computed") return true;
   return field.kind !== "scalarLink" && hasQueryEditor(field);
 }
 

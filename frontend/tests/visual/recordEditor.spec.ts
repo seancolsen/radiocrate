@@ -1647,7 +1647,8 @@ test("a scalar linked record field's menu enters a new record", async ({
   // The field points at a record being created: its preview says so, and its
   // form is open below with the caret in the first field the user fills in.
   await expect(embeddedRecords(editor).nth(1)).toHaveText("New");
-  await expect(editor.getByText("year", { exact: true })).toBeVisible();
+  // The album's own `year`, ahead of the track's computed column of the name.
+  await expect(editor.getByText("year", { exact: true }).first()).toBeVisible();
   await expect(valueEditor(editor)).toBeFocused();
   await expect(star(editor, "album")).toBeVisible();
 });

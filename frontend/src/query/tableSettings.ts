@@ -23,15 +23,23 @@
 // before the user's prelude, and a later definition wins, so a prelude written
 // before these settings existed goes on working as it did.
 //
+// The app defines a few custom comparisons of its own beside them
+// (`BUILT_IN_COMPARISONS`), and each table's computed columns ahead of them
+// (`computedColumns.ts`): `generatedPrelude` is all of it, and with the
+// user's prelude after it (`composePrelude`), everything a query is compiled
+// under. The app has no prelude of its own beyond that.
+//
 // The other two are the record picker's sorting and display on the table: what
 // it opens with, from then on edited in it or on the Data structure page, and
 // generated from the schema until they are (`embeddedRecord.ts`).
 
 import type {
+  ComputedColumnRow,
   TableMetadataRow,
   TableOrder,
   TableQuerydownSetting,
 } from "api-client";
+import { computedPrelude } from "./computedColumns";
 import type { Section } from "./definition";
 import type { SchemaTable } from "./schema";
 import { inferLinks } from "./schema";
@@ -145,6 +153,18 @@ export const BUILT_IN_TABLE_QUERYDOWN: Readonly<
   rating: { linkedRecordComparison: "value:@x" },
 };
 
+/** The custom comparisons the app defines on the tables it knows, by table and
+ * then by the name compared: `artist:prince`, in a filter on tracks, finds the
+ * tracks crediting an artist whose name matches. Each is one condition on the
+ * table, with `@x` standing for the value compared. They aren't settings — the
+ * user has nowhere to write one but their own prelude, where a definition of
+ * the same name wins over the one here. */
+export const BUILT_IN_COMPARISONS: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
+  track: { artist: "++#artist{name:@x}" },
+};
+
 /** The app's default for a table's prelude setting, if it has one. */
 export function builtInSetting(
   table: string,
@@ -197,15 +217,16 @@ export function settingDefinition(
   );
 }
 
-/** The definitions the app puts ahead of the user's prelude: each table's
- * prelude settings, for the tables the database has, in the schema's order.
- * `except` leaves one out: the one an editor is checking on its own. */
+/** The definitions built from the tables themselves: each table's prelude
+ * settings, then the app's custom comparisons on it, for the tables the
+ * database has, in the schema's order. `except` leaves one setting out: the
+ * one an editor is checking on its own. */
 export function tablePrelude(
   tables: readonly SchemaTable[],
   settings: TableSettingsByTable,
   except?: { table: string; setting: PreludeSetting },
 ): Mapped {
-  const parts: Mapped[] = [];
+  const parts: (Mapped | string)[] = [];
   for (const { name } of tables) {
     for (const setting of PRELUDE_SETTINGS) {
       if (except?.table === name && except.setting === setting) continue;
@@ -214,12 +235,54 @@ export function tablePrelude(
         parts.push(settingDefinition(name, setting, expression));
       }
     }
+    if (Object.hasOwn(BUILT_IN_COMPARISONS, name)) {
+      for (const [compared, condition] of Object.entries(
+        BUILT_IN_COMPARISONS[name],
+      )) {
+        parts.push(`#${name}.${compared}:${SETTING_VARIABLE} = ${condition}`);
+      }
+    }
   }
   return joinMapped(parts, "\n");
 }
 
-/** The prelude in force: the tables' definitions, then the user's prelude,
- * each traced to where it's edited. */
+/** One of the definitions the app builds with an editor of its own: a table's
+ * prelude setting, or a computed column. */
+export type GeneratedDefinition =
+  | { table: string; setting: PreludeSetting }
+  | { table: string; computedColumn: string };
+
+/** Everything the app defines ahead of the user's prelude: every table's
+ * computed columns (`computedColumns.ts`), then what's built from the tables'
+ * settings (`tablePrelude`). The order between them is only for reading —
+ * a definition can use one that comes after it. `except` leaves one definition
+ * out: the one an editor is checking on its own. */
+export function generatedPrelude(
+  tables: readonly SchemaTable[],
+  settings: TableSettingsByTable,
+  computed: readonly ComputedColumnRow[],
+  except?: GeneratedDefinition,
+): Mapped {
+  const columns = computedPrelude(
+    tables,
+    computed,
+    except && "computedColumn" in except
+      ? { table: except.table, name: except.computedColumn }
+      : undefined,
+  );
+  const fromTables = tablePrelude(
+    tables,
+    settings,
+    except && "setting" in except ? except : undefined,
+  );
+  return joinMapped(
+    [columns, fromTables].filter((part) => part.text !== ""),
+    "\n",
+  );
+}
+
+/** The prelude in force: the app's definitions (`generatedPrelude`), then the
+ * user's prelude, each traced to where it's edited. */
 export function composePrelude(generated: Mapped, user: string): Mapped {
   const own = fromSource(user, { kind: "prelude" });
   if (generated.text === "") return own;

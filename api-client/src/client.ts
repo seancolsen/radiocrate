@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
+import type { AppVersion, ComputedColumnRow, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -123,6 +123,22 @@ export async function metadataTableSetOrder(params: MetadataTableSetOrderParams)
 
 export async function metadataTableSetQuerydown(params: MetadataTableSetQuerydownParams): Promise<null> {
   return (await rpcCall("metadata.table.set_querydown", params)) as null;
+}
+
+export async function metadataComputedColumnList(): Promise<ComputedColumnRow[]> {
+  return (await rpcCall("metadata.computed_column.list", null)) as ComputedColumnRow[];
+}
+
+export async function metadataComputedColumnSet(params: ComputedColumnRow): Promise<null> {
+  return (await rpcCall("metadata.computed_column.set", params)) as null;
+}
+
+export async function metadataComputedColumnRename(params: MetadataComputedColumnRenameParams): Promise<null> {
+  return (await rpcCall("metadata.computed_column.rename", params)) as null;
+}
+
+export async function metadataComputedColumnDelete(params: MetadataComputedColumnDeleteParams): Promise<null> {
+  return (await rpcCall("metadata.computed_column.delete", params)) as null;
 }
 
 export async function tableSummarize(): Promise<TableSummary[]> {

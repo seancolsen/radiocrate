@@ -80,6 +80,7 @@ const TOKENS: readonly string[] = [
   "field-records",
   "field-other",
   "field-query",
+  "field-computed",
   "find-match",
 ];
 
@@ -232,6 +233,16 @@ const FIELDS: readonly { caption: string; field: FormField }[] = [
       keyColumns: ["track", "artist"],
     },
   },
+  {
+    caption: "computed",
+    field: {
+      kind: "computed",
+      key: "=lastplay",
+      label: "lastplay",
+      name: "lastplay",
+      builtIn: true,
+    },
+  },
 ];
 
 function Label(props: {
@@ -284,6 +295,16 @@ function FieldLabels(): JSX.Element {
             <span className="relative">
               <ModifiedStar label="Modified" />
               <Label field={FIELDS[0].field} />
+            </span>
+          </Specimen>
+          {/* A computed column whose expression won't run says why, where its
+              value would be (RecordFields' ComputedRow). */}
+          <Specimen caption="computed, failed">
+            <span className="flex items-center gap-1">
+              <Label field={FIELDS[FIELDS.length - 1].field} />
+              <span className="control text-danger cursor-default">
+                Column yeer not found within table album.
+              </span>
             </span>
           </Specimen>
         </Row>

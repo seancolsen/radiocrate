@@ -334,6 +334,63 @@ function readPath(base: string, row: Row, path: string): string | null {
   return target ? (target[second] ?? null) : null;
 }
 
+/** The computed columns `definitions` defines for `base`, by name, each with
+ * its expression: the `#base.name = expression` lines the app builds into the
+ * prelude (`query/computedColumns.ts`). A later definition wins, as it does
+ * in the compiler. */
+function computedDefinitions(
+  base: string,
+  definitions = "",
+): Map<string, string> {
+  const computed = new Map<string, string>();
+  for (const [, table, name, expression] of definitions.matchAll(
+    /^#(\w+)\.(\w+) = (.*)$/gm,
+  )) {
+    if (table === base) computed.set(name, expression.trim());
+  }
+  return computed;
+}
+
+/** What a display expression comes to for a row: a column's value, a link's,
+ * or — for a name the row has no column of — what the computed column of that
+ * name works out to. The fixture reads the few shapes of expression the app's
+ * own computed columns take, and anything else comes to NULL:
+ *
+ * - a column path, or another computed column (`album.year`);
+ * - a count of related records (`#play`);
+ * - the least, greatest or list of a column across them
+ *   (`#play.timestamp%max`, `#credit.artist.name%list_all(…)`). */
+function readValue(
+  base: string,
+  row: Row,
+  path: string,
+  computed: ReadonlyMap<string, string>,
+): string | null {
+  const expression = computed.get(path);
+  if (expression === undefined || path in row) {
+    return readPath(base, row, path);
+  }
+  const count = /^#(\w+)$/.exec(expression);
+  if (count) return String(relatedCount(count[1], base, row));
+  const aggregate = /^#(\w+)\.([\w.]+)%(\w+)/.exec(expression);
+  if (aggregate) {
+    const [, table, column, fn] = aggregate;
+    const values = (TABLE_ROWS[table] ?? [])
+      .filter((related) => related[base] === row.id)
+      .map((related) => readPath(table, related, column))
+      .filter((value) => value !== null);
+    if (values.length === 0) return null;
+    if (fn === "list_all") return `[${values.join(", ")}]`;
+    const sorted = [...values].sort();
+    if (fn === "min") return sorted[0];
+    if (fn === "max") return sorted[sorted.length - 1];
+    return null;
+  }
+  return /^[\w.]+$/.test(expression)
+    ? readValue(base, row, expression, computed)
+    : null;
+}
+
 /** One sort term: a column path and its direction (`\d` makes it descending). */
 function parseSort(sort: string): { path: string; descending: boolean }[] {
   const terms: { path: string; descending: boolean }[] = [];
@@ -384,11 +441,12 @@ export function fixtureQuery(q: RecordQuery): (string | null)[][] {
     .replace(/@\{(?:[^{}]|\{[^{}]*\})*\}/g, "")
     .split(/\s+/)
     .filter(Boolean);
+  const computed = computedDefinitions(q.base, q.definitions);
   return rows.map((row) =>
     exprs.map((expr) =>
       expr.startsWith("$#")
         ? String(relatedCount(expr.slice(2), q.base, row))
-        : readPath(q.base, row, expr.slice(1)),
+        : readValue(q.base, row, expr.slice(1), computed),
     ),
   );
 }

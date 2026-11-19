@@ -81,7 +81,7 @@ export type KeybindingDeleteParams = { commandId: string, };
 
 export type SettingDeleteParams = { key: string, };
 
-export type FieldRef = { "columnName": string } | { "multiLink": MultiLink } | { "contextualQuery": string };
+export type FieldRef = { "columnName": string } | { "multiLink": MultiLink } | { "contextualQuery": string } | { "computedColumn": string };
 
 export type MultiLink = { relatedTableName: string, fkColumnName: string, };
 
@@ -133,6 +133,17 @@ export type MetadataTableSetOrderParams = { orders: Array<TableOrder>, };
 export type TableQuerydownSetting = "defaultTextSearch" | "linkedRecordComparison" | "recordPickerSorting" | "recordPickerDisplay";
 
 export type MetadataTableSetQuerydownParams = { tableName: string, setting: TableQuerydownSetting, text: string | null, };
+
+export type ComputedColumnRow = { tableName: string, name: string, 
+/**
+ * Querydown: what the column computes. `None` goes by the app's expression,
+ * for one of its own columns.
+ */
+expression: string | null, };
+
+export type MetadataComputedColumnRenameParams = { tableName: string, name: string, newName: string, };
+
+export type MetadataComputedColumnDeleteParams = { tableName: string, name: string, };
 
 export type ColumnSummary = { name: string, 
 /**

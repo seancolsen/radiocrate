@@ -10,6 +10,8 @@ import {
   fieldRefKey,
   groupFieldMetadata,
   orderFields,
+  renameComputedField,
+  withoutField,
   type FieldMetadata,
   type TableMetadata,
 } from "./fieldMetadata";
@@ -68,8 +70,38 @@ describe("fieldRefKey", () => {
       { contextualQuery: "q1" },
       { contextualQuery: "q2" },
       column('{"contextualQuery":"q1"}'),
+      // A computed column named as a column, and as a query's id, is.
+      { computedColumn: "credit" },
+      { computedColumn: "q1" },
+      column('{"computedColumn":"credit"}'),
     ];
     expect(new Set(refs.map(fieldRefKey)).size).toBe(refs.length);
+  });
+});
+
+describe("a computed column's field metadata", () => {
+  const metadata: TableMetadata = {
+    [fieldRefKey({ computedColumn: "decade" })]: fieldMeta(false, 4),
+    [fieldRefKey(column("decade"))]: fieldMeta(true, 1),
+  };
+
+  it("goes on under the column's new name when it's renamed", () => {
+    expect(renameComputedField(metadata, "decade", "era")).toEqual({
+      [fieldRefKey({ computedColumn: "era" })]: fieldMeta(false, 4),
+      // The real column of that name is another field.
+      [fieldRefKey(column("decade"))]: fieldMeta(true, 1),
+    });
+  });
+
+  it("is left as it is when nothing is customized about the column", () => {
+    expect(renameComputedField(metadata, "other", "era")).toBe(metadata);
+  });
+
+  it("goes with the column when it's removed", () => {
+    expect(withoutField(metadata, { computedColumn: "decade" })).toEqual({
+      [fieldRefKey(column("decade"))]: fieldMeta(true, 1),
+    });
+    expect(withoutField(metadata, { computedColumn: "other" })).toBe(metadata);
   });
 });
 

@@ -17,15 +17,19 @@ import IconButton from "../ui/IconButton";
 import { TreeName, TreeNode, useFocusOnReveal } from "./Tree";
 
 // The Querydown prelude, on the Data structure page: an item of the tree that
-// opens into the prelude's editor, under a toolbar of Reset to default · Save ·
-// a "?" whose tooltip says what the prelude is for.
+// opens into the prelude's editor, under a toolbar of Save · a "?" whose
+// tooltip says what the prelude is for.
+//
+// The prelude is the user's own, and empty until they write one: what the app
+// defines for every query — each table's computed columns and settings — has
+// editors of its own, under the tables above.
 //
 // Edits are held in the app store's `preludeDraft` until Save, so closing the
 // item or switching tabs keeps them, and closing the page's tab drops them.
-// "Reset to default" only fills the editor with the default — saving that is
-// what clears the customization, since the store records a value equal to the
-// default as no override at all. The text is checked as it's typed: a problem
-// shows between the toolbar and the editor, and keeps it from being saved.
+// Saving it empty is what clears the customization, since the store records a
+// value equal to the default as no override at all. The text is checked as
+// it's typed: a problem shows between the toolbar and the editor, and keeps it
+// from being saved.
 
 const PRELUDE = SETTINGS.querydown_prelude;
 
@@ -55,15 +59,6 @@ function PreludeEditor(): JSX.Element {
   return (
     <div className="py-1 pr-1 pl-5" data-testid="prelude-editor">
       <div className="flex items-center gap-1 pb-1">
-        <button
-          type="button"
-          disabled={text === PRELUDE.default}
-          className={TOOLBAR_BUTTON}
-          onClick={() => editPrelude(PRELUDE.default)}
-        >
-          <Icons.Revert className="text-ink-weak size-4" />
-          Reset to default
-        </button>
         <button
           type="button"
           disabled={!unsaved || latest !== null}

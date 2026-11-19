@@ -1,4 +1,10 @@
-import type { FieldRef, Preset, Source, SourceKind } from "api-client";
+import type {
+  ComputedColumnRow,
+  FieldRef,
+  Preset,
+  Source,
+  SourceKind,
+} from "api-client";
 import { settingValue, type SettingKey } from "../../state/settings";
 import {
   defsEqual,
@@ -24,11 +30,12 @@ import type { ContextualQuery } from "../../query/contextualQuery";
 import type { Mapped } from "../../query/sourceMap";
 import {
   composePrelude,
+  generatedPrelude,
   NO_TABLE_SETTINGS,
-  tablePrelude,
   type QuerydownSetting,
   type TableSettings,
 } from "../../query/tableSettings";
+import { findComputedRow } from "../../query/computedColumns";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import { queuePositions } from "../../state/playQueue";
@@ -482,6 +489,16 @@ export const selectTableQuerydown = (
   setting: QuerydownSetting,
 ): string | null => s.tableSettings.data[table]?.[setting] ?? null;
 
+/** The user's expression for `table`'s computed column `name`: null while one
+ * of the app's own goes by the app's, and `undefined` when there's no row for
+ * it at all — one of the app's the user has never touched, or no such column. */
+export const selectComputedExpression = (
+  s: AppState,
+  table: string,
+  name: string,
+): string | null | undefined =>
+  findComputedRow(s.computedColumns.data, table, name)?.expression;
+
 /** One contextual query, by id — `undefined` once it's removed. */
 export const selectContextualQuery = (
   s: AppState,
@@ -653,28 +670,35 @@ let preludeMemo:
       user: string;
       tables: AppState["schema"]["tables"];
       settings: AppState["tableSettings"]["data"];
+      computed: readonly ComputedColumnRow[];
       prelude: Mapped;
     }
   | undefined;
 
-/** The Querydown prepended to every compiled query: the definitions built from
- * the tables' settings, then the user's prelude, each traced to where it's
- * edited (`query/tableSettings.ts`). The same reference for as long as what
- * it's built from stays the same, so it's safe to subscribe to. */
+/** The Querydown prepended to every compiled query: the definitions the app
+ * builds from the tables' computed columns and settings, then the user's
+ * prelude, each traced to where it's edited (`query/tableSettings.ts`). The
+ * same reference for as long as what it's built from stays the same, so it's
+ * safe to subscribe to. */
 export function selectPrelude(s: AppState): Mapped {
   const user = selectUserPrelude(s);
   const tables = s.schema.tables;
   const settings = s.tableSettings.data;
+  const computed = s.computedColumns.data;
   const memo = preludeMemo;
   if (
     memo?.user === user &&
     memo.tables === tables &&
-    memo.settings === settings
+    memo.settings === settings &&
+    memo.computed === computed
   ) {
     return memo.prelude;
   }
-  const prelude = composePrelude(tablePrelude(tables, settings), user);
-  preludeMemo = { user, tables, settings, prelude };
+  const prelude = composePrelude(
+    generatedPrelude(tables, settings, computed),
+    user,
+  );
+  preludeMemo = { user, tables, settings, computed, prelude };
   return prelude;
 }
 

@@ -8,6 +8,7 @@ import {
   composePrelude,
   defaultTableSettings,
   effectiveSetting,
+  generatedPrelude,
   groupTableSettings,
   listedTables,
   orderTables,
@@ -105,6 +106,8 @@ describe("tablePrelude", () => {
         "  ++#tag{name:@x}",
         "]",
         "#track.__querydown_linked_record_comparison:@x = title:@x",
+        // The app's own custom comparison, which is no setting.
+        "#track.artist:@x = ++#artist{name:@x}",
       ].join("\n"),
     );
   });
@@ -135,7 +138,65 @@ describe("tablePrelude", () => {
           setting: "defaultTextSearch",
         },
       ).text,
-    ).toBe("#track.__querydown_linked_record_comparison:@x = title:@x");
+    ).toBe(
+      [
+        "#track.__querydown_linked_record_comparison:@x = title:@x",
+        "#track.artist:@x = ++#artist{name:@x}",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("generatedPrelude", () => {
+  const computed = [{ tableName: "role", name: "upper", expression: "name" }];
+
+  it("defines the tables' computed columns, then what their settings say", () => {
+    expect(generatedPrelude(named("rating", "role"), {}, computed).text).toBe(
+      [
+        "#role.upper = name",
+        "#rating.__querydown_linked_record_comparison:@x = value:@x",
+      ].join("\n"),
+    );
+  });
+
+  it("is only the one, where there's nothing of the other", () => {
+    expect(generatedPrelude(named("role"), {}, computed).text).toBe(
+      "#role.upper = name",
+    );
+    expect(generatedPrelude(named("rating"), {}, []).text).toBe(
+      "#rating.__querydown_linked_record_comparison:@x = value:@x",
+    );
+    expect(generatedPrelude(named("role"), {}, []).text).toBe("");
+  });
+
+  it("leaves out the one definition asked to, of either kind", () => {
+    const tables = named("rating", "role");
+    expect(
+      generatedPrelude(tables, {}, computed, {
+        table: "role",
+        computedColumn: "upper",
+      }).text,
+    ).toBe("#rating.__querydown_linked_record_comparison:@x = value:@x");
+    expect(
+      generatedPrelude(tables, {}, computed, {
+        table: "rating",
+        setting: "linkedRecordComparison",
+      }).text,
+    ).toBe("#role.upper = name");
+  });
+
+  it("goes ahead of the user's prelude, each traced to where it's edited", () => {
+    const prelude = composePrelude(
+      generatedPrelude(named("role"), {}, computed),
+      "@mine = 3",
+    );
+    expect(prelude.text).toBe("#role.upper = name\n@mine = 3");
+    expect(
+      locate(prelude, prelude.text.indexOf("name"))?.segment.origin,
+    ).toEqual({ kind: "computedColumn", table: "role", name: "upper" });
+    expect(
+      locate(prelude, prelude.text.indexOf("@mine"))?.segment.origin,
+    ).toEqual({ kind: "prelude" });
   });
 });
 

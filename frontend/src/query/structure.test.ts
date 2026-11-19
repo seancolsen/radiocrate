@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { builtInComputedColumns } from "./computedColumns";
 import type { ContextualQuery } from "./contextualQuery";
 import { emptyDefinition } from "./definition";
 import { fieldRefKey } from "./fieldMetadata";
@@ -6,6 +7,7 @@ import { queryEditorSections } from "./fieldQuery";
 import type { SchemaTable } from "./schema";
 import {
   columnStatsLabel,
+  computedColumnPath,
   countLabel,
   isFieldExpandable,
   presetSectionPath,
@@ -59,21 +61,26 @@ const QUERY: ContextualQuery = {
   definition: { ...emptyDefinition(), base: "track" },
 };
 
+const DECADE = { tableName: "track", name: "decade", expression: "year / 10" };
+
 describe("structureFields", () => {
-  it("lists columns, referring tables and contextual queries", () => {
-    const fields = structureFields(TABLES, "track", [QUERY], {});
+  it("lists columns, referring tables, computed columns and contextual queries", () => {
+    const fields = structureFields(TABLES, "track", [DECADE], [QUERY], {});
     expect(fields.map((f) => [f.label, structureFieldKind(f)])).toEqual([
       ["id", "column"],
       ["title", "column"],
       ["album", "column"],
       ["credits", "related"],
       ["plays", "related"],
+      // The app's own, as the app lists them, then the user's.
+      ...builtInComputedColumns("track").map((c) => [c.name, "computed"]),
+      ["decade", "computed"],
       ["same album", "query"],
     ]);
   });
 
   it("keeps hidden fields, in the order the user arranged", () => {
-    const fields = structureFields(TABLES, "track", [QUERY], {
+    const fields = structureFields(TABLES, "track", [], [QUERY], {
       [fieldRefKey({ columnName: "title" })]: {
         visible: false,
         order: 2,
@@ -95,17 +102,22 @@ describe("structureFields", () => {
   });
 
   it("lists nothing for a table the schema doesn't have", () => {
-    expect(structureFields(TABLES, "nope", [], {})).toEqual([]);
+    expect(structureFields(TABLES, "nope", [], [], {})).toEqual([]);
   });
 });
 
 describe("what a field opens into", () => {
-  const fields = structureFields(TABLES, "track", [QUERY], {});
+  const fields = structureFields(TABLES, "track", [], [QUERY], {});
   const named = (label: string) => fields.find((f) => f.label === label)!;
 
   it("is nothing for a column, linked or not", () => {
     expect(isFieldExpandable(named("title"))).toBe(false);
     expect(isFieldExpandable(named("album"))).toBe(false);
+  });
+
+  it("is its expression for a computed column", () => {
+    expect(isFieldExpandable(named("lastplay"))).toBe(true);
+    expect(queryEditorSections(named("lastplay"))).toEqual([]);
   });
 
   it("is the whole query for a contextual query", () => {
@@ -127,7 +139,7 @@ describe("what a field opens into", () => {
   });
 
   it("is sorting and display for any other related records", () => {
-    const tracks = structureFields(TABLES, "album", [], {}).find(
+    const tracks = structureFields(TABLES, "album", [], [], {}).find(
       (f) => f.label === "tracks",
     )!;
     expect(queryEditorSections(tracks)).toEqual(["sort", "display"]);
@@ -186,5 +198,16 @@ describe("columnStatsLabel", () => {
 
   it("reports no share of NULLs for a table with no rows", () => {
     expect(columnStatsLabel(stats(0, null), 0)).toBe("0 distinct");
+  });
+});
+
+describe("computedColumnPath", () => {
+  it("opens the way down to the column's row", () => {
+    expect(computedColumnPath("track", "lastplay")).toEqual([
+      "tables",
+      "table:track",
+      "table:track/fields",
+      `table:track/fields/${fieldRefKey({ computedColumn: "lastplay" })}`,
+    ]);
   });
 });

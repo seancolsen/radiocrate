@@ -86,8 +86,8 @@ function ToolbarButton(props: {
 
 /** The form's actions menu (⋮): Collapse all, shown only while something is
  * expanded; Copy id, when the record has a UUID `id`; the way to show or hide again the fields the user has hidden, shown
- * only while the form has any; Add contextual query, on a table whose records
- * can have them; and Refresh, which reloads the record from the
+ * only while the form has any; Add computed column; Add contextual query, on a
+ * table whose records can have them; and Refresh, which reloads the record from the
  * database. Refresh is off while there are unsaved changes or a save is in
  * flight, since it would throw the changes away — Reset is the deliberate way to
  * do that. */
@@ -143,6 +143,11 @@ function FormActionsMenu(props: {
             onClick={() => setShowHiddenFields(true)}
           />
         ))}
+      <MenuItem
+        icon={Icons.FieldComputed}
+        label="Add computed column"
+        onClick={() => model.beginAddComputed()}
+      />
       {canQuery && (
         <MenuItem
           icon={Icons.FieldQuery}
@@ -383,6 +388,10 @@ function PanelForm(props: {
         },
         openContextualQuery: (queryId, value) =>
           stores.app.actions.openContextualQueryTab(tabId, queryId, value),
+        computedColumns: {
+          list: () => stores.app.store.getState().computedColumns.data,
+          prelude: () => selectPreludeText(stores.app.store.getState()),
+        },
         // The save is a write *from* result rows, so it goes through the
         // store: what it changed is read back into the rows the editor was
         // opened on (see `query/rowDml.ts`).

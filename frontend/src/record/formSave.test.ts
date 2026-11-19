@@ -82,6 +82,7 @@ function loaded(
     values: perRecord(values),
     original: perRecord(values),
     counts: {},
+    computed: {},
     isNew: false,
   };
 }

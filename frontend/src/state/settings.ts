@@ -1,5 +1,4 @@
 import type { Setting } from "api-client";
-import { DEFAULT_PRELUDE } from "../query/definition";
 
 // The catalogue of user-configurable settings: every key the app knows, what it
 // defaults to when the user hasn't customized it, and how to describe it in the
@@ -23,11 +22,15 @@ export interface SettingDefinition {
 
 /** Every setting, keyed by the string stored in `settings.settings."key"`. */
 export const SETTINGS = {
+  // Empty until the user writes one. What the app defines for every query —
+  // each table's computed columns and its settings — isn't here: it's built
+  // into definitions of its own, ahead of this (`query/computedColumns.ts`,
+  // `query/tableSettings.ts`).
   querydown_prelude: {
     name: "Querydown Prelude",
     description:
-      "This Querydown code will prepend all queries for the purpose of defining share variables and functions.",
-    default: DEFAULT_PRELUDE,
+      "Querydown definitions of your own, put ahead of every query: constants, functions, custom comparisons. They come after the definitions the app builds from each table's computed columns and settings, so one here wins over one of those.",
+    default: "",
   },
 } satisfies Record<string, SettingDefinition>;
 

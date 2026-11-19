@@ -22,6 +22,10 @@ import {
   settingDelete,
   settingList,
   settingSet,
+  metadataComputedColumnDelete,
+  metadataComputedColumnList,
+  metadataComputedColumnRename,
+  metadataComputedColumnSet,
   metadataFieldList,
   metadataFieldSetDisplay,
   metadataFieldSetOrder,
@@ -31,6 +35,7 @@ import {
   metadataTableSetOrder,
   metadataTableSetQuerydown,
   metadataTableSetVisible,
+  type ComputedColumnRow,
   type FieldRef,
   type DmlOperation,
   type DmlResult,
@@ -147,9 +152,12 @@ import {
   type SectionContent,
 } from "../../query/definition";
 import {
+  computedColumnPath,
+  defaultFields,
   PRELUDE_ITEM,
   presetItemId,
   presetSectionPath,
+  structureFieldId,
   tableSettingPath,
 } from "../../query/structure";
 import {
@@ -182,7 +190,13 @@ import {
   type RecordQuery,
 } from "../../query/recordForm";
 import {
-  contextFields,
+  availableComputedName,
+  builtInExpression,
+  findComputedRow,
+  takenComputedNames,
+  withComputedExpression,
+} from "../../query/computedColumns";
+import {
   contextTabDefinition,
   DEFAULT_CONTEXTUAL_QUERY_NAME,
   seedDefinition,
@@ -203,6 +217,8 @@ import {
   fieldRefKey,
   defaultFieldMetadata,
   groupFieldMetadata,
+  renameComputedField,
+  withoutField,
   type EmbedSection,
 } from "../../query/fieldMetadata";
 import {
@@ -485,6 +501,37 @@ export interface AppActions {
   flushTableQuerydown: (table: string, setting: QuerydownSetting) => void;
   /** Lists the hidden tables on the Data structure page, or stops. */
   setShowHiddenTables: (show: boolean) => void;
+
+  /** Loads the user's side of every table's computed columns. */
+  loadComputedColumns: () => Promise<void>;
+  /** Defines a computed column for `table`, with no expression yet, at the end
+   * of the table's fields. It's named for what the user `typed`, made into a
+   * name a query can say and one nothing else on the table has
+   * (`availableComputedName`): the name it got is what's returned. */
+  addComputedColumn: (table: string, typed: string) => string;
+  /** Renames one of the user's computed columns, for what they `typed`, as
+   * `addComputedColumn` names one. What's customized about the column's field
+   * — its place, whether it's hidden — goes on under the new name, here and in
+   * the database. Returns the name the column has afterwards: the one it had,
+   * when there was nothing to change (or it's one of the app's own, whose name
+   * is fixed). */
+  renameComputedColumn: (table: string, name: string, typed: string) => string;
+  /** Sets what a computed column computes. For one of the app's own, this is
+   * the user's expression in place of the app's, and null goes back to the
+   * app's. Shows at once, in every query compiled from then on; the write waits
+   * for the app to go quiet, as a table's Querydown setting's does — except
+   * null, which goes straight out. */
+  setComputedColumnExpression: (
+    table: string,
+    name: string,
+    expression: string | null,
+  ) => void;
+  /** Sends a write `setComputedColumnExpression` is holding back, the user
+   * having left its editor. */
+  flushComputedColumn: (table: string, name: string) => void;
+  /** Deletes one of the user's computed columns, its field going from every
+   * record editor, along with what was customized about it. */
+  removeComputedColumn: (table: string, name: string) => void;
 
   /** Loads every table's contextual queries. */
   loadContextualQueries: () => Promise<void>;
@@ -1010,7 +1057,8 @@ export interface AppActions {
   toggleExpandPreset: (tabId: string, presetId: string) => void;
   /** Take the user to the editor holding the problem page `tabId` shows —
    * the error strip's "Show": its section opened with the caret in it, its
-   * preset expanded, or the prelude's setting raised. */
+   * preset expanded, or — on the Data structure page — the prelude, the
+   * table's setting or the computed column it's in opened. */
   revealDiagnostic: (tabId: string) => void;
 
   /** Move a tab's query onto another base table, keeping the hand-written filter
@@ -1183,11 +1231,12 @@ export interface AppActions {
 }
 
 /** What `openStructureTab` opens the tree down to: a table's presets (all three
- * sections, or one of them), the editor of one of a table's prelude settings,
- * or the Querydown prelude's editor. */
+ * sections, or one of them), the editor of one of a table's prelude settings
+ * or of one of its computed columns, or the Querydown prelude's editor. */
 export type StructureReveal =
   | { table: string; section?: Section }
   | { table: string; setting: PreludeSetting }
+  | { table: string; computedColumn: string }
   | "prelude";
 
 /** How long a confirmation toast stays on screen. */
@@ -3377,12 +3426,56 @@ export function createAppActions(
     return fieldMetadataWrites;
   };
   /** Every field of `table`'s form, by what metadata keys it on, in their
-   * default order: the schema's, then the table's contextual queries. */
+   * default order (`defaultFields`). */
   const tableFieldRefs = (s: AppState, table: string): FieldRef[] =>
-    [
-      ...buildFormFields(s.schema.tables, table),
-      ...contextFields(s.schema.tables, table, s.contextualQueries.data),
-    ].map(fieldRef);
+    defaultFields(
+      s.schema.tables,
+      table,
+      s.computedColumns.data,
+      s.contextualQueries.data,
+    ).map(fieldRef);
+
+  /** Puts `field`, just added to `table`, at the end of its fields — in state
+   * now, and in the database once `after`, the write that makes the field,
+   * has landed: its order refers to it. */
+  const appendField = (
+    table: string,
+    field: FieldRef,
+    after: Promise<unknown>,
+  ) => {
+    const orders = appendFieldOrders(
+      tableFieldRefs(get(), table),
+      selectTableMetadata(get(), table),
+      field,
+    );
+    if (orders.length === 0) return;
+    set((s) => {
+      const fields = (s.fieldMetadata.data[table] ??= {});
+      for (const { field: placed, order } of orders) {
+        (fields[fieldRefKey(placed)] ??= defaultFieldMetadata()).order = order;
+      }
+    });
+    void after.then(() =>
+      writeFieldMetadata(() =>
+        metadataFieldSetOrder({ tableName: table, orders }),
+      ),
+    );
+  };
+
+  // A computed column's writes go out in the field metadata's queue: renaming
+  // or deleting one rewrites the metadata of its field, which a change to that
+  // metadata made just before must already have reached.
+  const writeComputedColumn = (write: () => Promise<unknown>) =>
+    writeFieldMetadata(() =>
+      write().catch((err: unknown) => {
+        // As a field metadata write's failure: what's stored goes back on
+        // screen, the columns as well as their fields' metadata.
+        void actions.loadComputedColumns();
+        throw err;
+      }),
+    );
+  const computedColumnSaveKey = (table: string, name: string) =>
+    `computed-column\n${table}\n${name}`;
 
   // Contextual query writes go out one at a time too, for the same reason.
   let contextualQueryWrites: Promise<unknown> = Promise.resolve();
@@ -3677,6 +3770,153 @@ export function createAppActions(
         s.showHiddenTables = show;
       }),
 
+    loadComputedColumns: async () => {
+      try {
+        const rows = (await metadataComputedColumnList()) ?? [];
+        set((s) => {
+          // An expression still waiting to be written stays on screen.
+          let data: readonly ComputedColumnRow[] = rows;
+          for (const local of s.computedColumns.data) {
+            if (saves.has(computedColumnSaveKey(local.tableName, local.name))) {
+              data = withComputedExpression(
+                data,
+                local.tableName,
+                local.name,
+                local.expression,
+              );
+            }
+          }
+          s.computedColumns = { status: "ready", data: castDraft(data) };
+        });
+      } catch (err) {
+        // Every table has the app's own computed columns, as the app has them.
+        console.error("computed column list failed", err);
+        set((s) => {
+          s.computedColumns.status = "error";
+        });
+      }
+    },
+    addComputedColumn: (table, typed) => {
+      const s0 = get();
+      const name = availableComputedName(
+        typed,
+        takenComputedNames(s0.schema.tables, s0.computedColumns.data, table),
+      );
+      const row: ComputedColumnRow = { tableName: table, name, expression: "" };
+      set((s) => {
+        s.computedColumns.data = [...s.computedColumns.data, row];
+      });
+      appendField(
+        table,
+        { computedColumn: name },
+        writeComputedColumn(() => metadataComputedColumnSet(row)),
+      );
+      return name;
+    },
+    renameComputedColumn: (table, name, typed) => {
+      const s0 = get();
+      const rows = s0.computedColumns.data;
+      if (
+        typed.trim() === "" ||
+        builtInExpression(table, name) !== null ||
+        !findComputedRow(rows, table, name)
+      ) {
+        return name;
+      }
+      const next = availableComputedName(
+        typed,
+        takenComputedNames(s0.schema.tables, rows, table, name),
+      );
+      if (next === name) return name;
+      // What's waiting to be written is the old name's: it goes first.
+      saves.flush(computedColumnSaveKey(table, name));
+      set((s) => {
+        s.computedColumns.data = s.computedColumns.data.map((row) =>
+          row.tableName === table && row.name === name
+            ? { ...row, name: next }
+            : row,
+        );
+        const metadata = s.fieldMetadata.data[table];
+        if (metadata) {
+          s.fieldMetadata.data[table] = castDraft(
+            renameComputedField(metadata, name, next),
+          );
+        }
+        // What's open on the Data structure page stays open.
+        const m = s.structure;
+        const before = structureFieldId(table, { computedColumn: name });
+        const after = structureFieldId(table, { computedColumn: next });
+        if (m.expanded[before]) m.expanded[after] = true;
+        delete m.expanded[before];
+        if (m.reveal === before) m.reveal = after;
+      });
+      void writeComputedColumn(() =>
+        metadataComputedColumnRename({
+          tableName: table,
+          name,
+          newName: next,
+        }),
+      );
+      // The rows on screen were compiled under the column's old name.
+      rerunOpenPages();
+      return next;
+    },
+    setComputedColumnExpression: (table, name, expression) => {
+      const stored = findComputedRow(get().computedColumns.data, table, name);
+      if ((stored?.expression ?? null) === expression && stored) return;
+      // One of the app's own, never customized, has no row to go back from.
+      if (!stored && expression === null) return;
+      set((s) => {
+        s.computedColumns.data = withComputedExpression(
+          s.computedColumns.data,
+          table,
+          name,
+          expression,
+        );
+      });
+      const key = computedColumnSaveKey(table, name);
+      saves.defer(key, () => {
+        // What's written is what's on screen when it goes out — unless the
+        // column has gone in the meantime.
+        const latest = findComputedRow(get().computedColumns.data, table, name);
+        if (!latest) return Promise.resolve();
+        // The rows on screen were compiled under the expression before it.
+        rerunOpenPages();
+        return writeComputedColumn(() => metadataComputedColumnSet(latest));
+      });
+      if (expression === null) saves.flush(key);
+    },
+    flushComputedColumn: (table, name) =>
+      saves.flush(computedColumnSaveKey(table, name)),
+    removeComputedColumn: (table, name) => {
+      const rows = get().computedColumns.data;
+      if (
+        builtInExpression(table, name) !== null ||
+        !findComputedRow(rows, table, name)
+      ) {
+        return;
+      }
+      saves.cancel(computedColumnSaveKey(table, name));
+      const field: FieldRef = { computedColumn: name };
+      set((s) => {
+        s.computedColumns.data = s.computedColumns.data.filter(
+          (row) => !(row.tableName === table && row.name === name),
+        );
+        const metadata = s.fieldMetadata.data[table];
+        if (metadata) {
+          s.fieldMetadata.data[table] = castDraft(
+            withoutField(metadata, field),
+          );
+        }
+        delete s.structure.expanded[structureFieldId(table, field)];
+      });
+      void writeComputedColumn(() =>
+        metadataComputedColumnDelete({ tableName: table, name }),
+      );
+      // The rows on screen may have been compiled with the column.
+      rerunOpenPages();
+    },
+
     loadContextualQueries: async () => {
       try {
         const data = await fetchContextualQueries();
@@ -3713,28 +3953,12 @@ export function createAppActions(
       set((s) => {
         s.contextualQueries.data = [...s.contextualQueries.data, query];
       });
-      const ref: FieldRef = { contextualQuery: query.id };
-      const orders = appendFieldOrders(
-        tableFieldRefs(get(), table),
-        selectTableMetadata(get(), table),
-        ref,
-      );
-      if (orders.length > 0) {
-        set((s) => {
-          const fields = (s.fieldMetadata.data[table] ??= {});
-          for (const { field, order } of orders) {
-            (fields[fieldRefKey(field)] ??= defaultFieldMetadata()).order =
-              order;
-          }
-        });
-      }
       // The field's order refers to the query, so the query goes first.
-      void writeContextualQuery(() => insertContextualQuery(query)).then(() => {
-        if (orders.length === 0) return;
-        void writeFieldMetadata(() =>
-          metadataFieldSetOrder({ tableName: table, orders }),
-        );
-      });
+      appendField(
+        table,
+        { contextualQuery: query.id },
+        writeContextualQuery(() => insertContextualQuery(query)),
+      );
       return query.id;
     },
     renameContextualQuery: (id, name) => {
@@ -4782,6 +5006,11 @@ export function createAppActions(
           table: origin.table,
           setting: origin.setting,
         });
+      } else if (origin.kind === "computedColumn") {
+        actions.openStructureTab({
+          table: origin.table,
+          computedColumn: origin.name,
+        });
       } else if (origin.kind === "full") {
         // There's only the one editor; any section's focus request opens it.
         actions.focusBuilderSection(tabId, "filter");
@@ -5259,12 +5488,22 @@ export function createAppActions(
         }
         s.activeTabId = STRUCTURE_TAB_ID;
         if (reveal === undefined) return;
-        const path =
-          reveal === "prelude"
-            ? [PRELUDE_ITEM]
-            : "setting" in reveal
-              ? tableSettingPath(reveal.table, reveal.setting)
-              : presetSectionPath(reveal.table, reveal.section);
+        let path: string[];
+        if (reveal === "prelude") {
+          path = [PRELUDE_ITEM];
+        } else if ("setting" in reveal) {
+          path = tableSettingPath(reveal.table, reveal.setting);
+        } else if ("computedColumn" in reveal) {
+          path = computedColumnPath(reveal.table, reveal.computedColumn);
+          // Hidden, its row wouldn't be there to open.
+          const hidden =
+            s.fieldMetadata.data[reveal.table]?.[
+              fieldRefKey({ computedColumn: reveal.computedColumn })
+            ]?.visible === false;
+          if (hidden) s.showHiddenFields = true;
+        } else {
+          path = presetSectionPath(reveal.table, reveal.section);
+        }
         const m = s.structure;
         for (const item of path) m.expanded[item] = true;
         m.reveal = path[path.length - 1];

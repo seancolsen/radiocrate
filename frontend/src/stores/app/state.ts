@@ -1,4 +1,5 @@
 import type {
+  ComputedColumnRow,
   DmlOperation,
   DmlResult,
   Preset,
@@ -210,7 +211,8 @@ export interface ShortcutsTab {
 }
 
 /** The Data structure tab: a tree of every table — its fields and their
- * statistics, and its query presets — and the Querydown prelude. There is at
+ * statistics, its computed columns, and its query presets — and the Querydown
+ * prelude. There is at
  * most one; its UI state is the app store's `structure`, and the prelude text
  * being edited in it, until it's saved, is `preludeDraft`. */
 export interface StructureTab {
@@ -649,6 +651,12 @@ export interface AppState {
    * versions: an edit shows here at once and is written once the app goes quiet,
    * as a query's is. Loaded once, as raw SQL. */
   contextualQueries: ResourceState<readonly ContextualQuery[]>;
+  /** The user's side of every table's computed columns: the ones they've
+   * defined, and their expressions for the app's own (loads via
+   * `metadata.computed_column.list`; see `query/computedColumns.ts`). The live
+   * versions: an edit shows here at once — in every query compiled from then
+   * on — and an expression is written once the app goes quiet. */
+  computedColumns: ResourceState<readonly ComputedColumnRow[]>;
   /** Whether record editors, and the Data structure page's lists of fields,
    * show the fields the user has hidden. For the whole app rather than for one
    * form, since a form lasts only as long as the selection stays on its
@@ -842,6 +850,7 @@ export function initialState(env: AppEnv): AppState {
     fieldMetadata: { status: "loading", data: {} },
     tableSettings: { status: "loading", data: {} },
     contextualQueries: { status: "loading", data: [] },
+    computedColumns: { status: "loading", data: [] },
     showHiddenFields: false,
     showHiddenTables: false,
     audioQuality: storedAudioQuality(env),

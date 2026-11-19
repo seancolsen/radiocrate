@@ -18,10 +18,12 @@ import { FakePlayer, fakeEnv } from "./testEnv";
 import { TOAST_MS } from "./actions";
 import { buildResultFromStringRows } from "../../query/result";
 import {
+  computedColumnPath,
   DEFAULT_EXPANDED,
   PRELUDE_ITEM,
   presetItemId,
   presetSectionPath,
+  structureFieldId,
   tableSettingPath,
 } from "../../query/structure";
 import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
@@ -45,6 +47,10 @@ vi.mock("api-client", async (importOriginal) => {
     metadataTableSetVisible: vi.fn(() => Promise.resolve(null)),
     metadataTableSetOrder: vi.fn(() => Promise.resolve(null)),
     metadataTableSetQuerydown: vi.fn(() => Promise.resolve(null)),
+    metadataComputedColumnList: vi.fn(() => Promise.resolve([])),
+    metadataComputedColumnSet: vi.fn(() => Promise.resolve(null)),
+    metadataComputedColumnRename: vi.fn(() => Promise.resolve(null)),
+    metadataComputedColumnDelete: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
     folderAdd: vi.fn(() => Promise.resolve(null)),
@@ -128,6 +134,10 @@ vi.mock("../../query/lineage", () => ({
 
 import {
   collectionRescan,
+  metadataComputedColumnDelete,
+  metadataComputedColumnList,
+  metadataComputedColumnRename,
+  metadataComputedColumnSet,
   metadataFieldList,
   metadataFieldSetOrder,
   metadataFieldSetDisplay,
@@ -185,6 +195,7 @@ import {
   selectQueryTab,
   selectRowContext,
   selectSortApplied,
+  selectComputedExpression,
   selectFieldQuerydown,
   selectPrelude,
   selectTableMetadata,
@@ -1104,6 +1115,28 @@ describe("the Data structure page", () => {
     expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
     expect(s.structure.expanded[PRELUDE_ITEM]).toBe(true);
     expect(s.structure.reveal).toBe(PRELUDE_ITEM);
+  });
+
+  it("opens the Data structure page on the computed column a problem is in", () => {
+    openQueryTab(bundle, "a");
+    bundle.actions.toggleBuilderSection("a", "filter");
+    bundle.store.setState((s) => {
+      s.pages["a"].diagnostic = {
+        kind: "compile",
+        reason: "nope",
+        hint: null,
+        origin: { kind: "computedColumn", table: "track", name: "year" },
+        source: "album.yeer",
+        range: null,
+        notes: [],
+      };
+    });
+    bundle.actions.revealDiagnostic("a");
+    const s = bundle.store.getState();
+    const path = computedColumnPath("track", "year");
+    expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
+    expect(path.every((item) => s.structure.expanded[item])).toBe(true);
+    expect(s.structure.reveal).toBe(path[path.length - 1]);
   });
 
   it("reveals an item of the tree, opening it", () => {
@@ -5695,11 +5728,12 @@ describe("table settings", () => {
         "linkedRecordComparison",
         "year:@x",
       );
+      bundle.actions.saveSetting("querydown_prelude", "@mine = 3");
       const prelude = selectPrelude(state()).text;
       expect(prelude).toContain(
         "#album.__querydown_linked_record_comparison:@x = year:@x",
       );
-      expect(prelude.endsWith(SETTINGS.querydown_prelude.default)).toBe(true);
+      expect(prelude.endsWith("\n@mine = 3")).toBe(true);
       // The same prelude, for as long as nothing it's built from changes.
       expect(selectPrelude(state())).toBe(selectPrelude(state()));
     });
@@ -5748,5 +5782,314 @@ describe("table settings", () => {
       expect(state().structure.expanded[item]).toBe(true);
     }
     expect(state().structure.reveal).toBe(path[path.length - 1]);
+  });
+});
+
+describe("computed columns", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.mocked(metadataComputedColumnList).mockClear();
+    vi.mocked(metadataComputedColumnSet).mockClear();
+    vi.mocked(metadataComputedColumnRename).mockClear();
+    vi.mocked(metadataComputedColumnDelete).mockClear();
+    vi.mocked(metadataFieldSetOrder).mockClear();
+    vi.mocked(metadataFieldSetVisible).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+  });
+  afterEach(() => bundle.dispose());
+  const state = () => bundle.store.getState();
+  const rows = () => state().computedColumns.data;
+  /** Lets the queued writes reach the mocks. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
+  const field = (name: string): FieldRef => ({ computedColumn: name });
+  const metadataOf = (table: string, name: string) =>
+    selectTableMetadata(state(), table)[fieldRefKey(field(name))];
+
+  it("loads the user's rows", async () => {
+    vi.mocked(metadataComputedColumnList).mockResolvedValueOnce([
+      { tableName: "album", name: "decade", expression: "year / 10" },
+    ]);
+    await bundle.actions.loadComputedColumns();
+    expect(state().computedColumns.status).toBe("ready");
+    expect(selectComputedExpression(state(), "album", "decade")).toBe(
+      "year / 10",
+    );
+    // One of the app's own, untouched, has no row.
+    expect(selectComputedExpression(state(), "track", "year")).toBeUndefined();
+  });
+
+  it("defines the app's own in the prelude with nothing loaded at all", () => {
+    const prelude = selectPrelude(state()).text;
+    expect(prelude).toContain("#track.lastplay = #play.timestamp%max");
+    expect(prelude).toContain("#track.artist:@x = ++#artist{name:@x}");
+    // No prelude of the user's, and none of the app's beyond what it builds.
+    expect(SETTINGS.querydown_prelude.default).toBe("");
+  });
+
+  it("adds one, named to be legal and free, and places its field last", async () => {
+    const name = bundle.actions.addComputedColumn("album", "release decade");
+    expect(name).toBe("release_decade");
+    expect(rows()).toEqual([
+      { tableName: "album", name: "release_decade", expression: "" },
+    ]);
+    const others = buildFormFields(state().schema.tables, "album").length;
+    expect(metadataOf("album", name)?.order).toBe(others + 1);
+    // A second of the same name, and one named as a column is, are numbered.
+    expect(bundle.actions.addComputedColumn("album", "release decade")).toBe(
+      "release_decade_2",
+    );
+    expect(bundle.actions.addComputedColumn("album", "Title")).toBe("Title_2");
+    // As is one named as one of the app's own.
+    expect(bundle.actions.addComputedColumn("track", "year")).toBe("year_2");
+
+    await settle();
+    expect(metadataComputedColumnSet).toHaveBeenCalledWith({
+      tableName: "album",
+      name: "release_decade",
+      expression: "",
+    });
+    // Its order goes out once the column it's about exists.
+    await settle();
+    expect(metadataFieldSetOrder).toHaveBeenCalled();
+    const [column] = vi.mocked(metadataComputedColumnSet).mock
+      .invocationCallOrder;
+    const [order] = vi.mocked(metadataFieldSetOrder).mock.invocationCallOrder;
+    expect(column).toBeLessThan(order!);
+  });
+
+  it("defines one in the prelude once it has an expression", () => {
+    const name = bundle.actions.addComputedColumn("album", "decade");
+    expect(selectPrelude(state()).text).not.toContain("#album.decade");
+    bundle.actions.setComputedColumnExpression("album", name, "year / 10");
+    expect(selectPrelude(state()).text).toContain("#album.decade = year / 10");
+    // The same prelude, for as long as nothing it's built from changes.
+    expect(selectPrelude(state())).toBe(selectPrelude(state()));
+  });
+
+  describe("renaming one", () => {
+    it("renames what's customized about its field with it", async () => {
+      bundle.actions.addComputedColumn("album", "decade");
+      bundle.actions.setFieldHidden("album", field("decade"), true);
+      const before = metadataOf("album", "decade");
+      const open = structureFieldId("album", field("decade"));
+      bundle.actions.revealStructureItem(open);
+      await settle();
+      vi.mocked(metadataFieldSetVisible).mockClear();
+
+      expect(
+        bundle.actions.renameComputedColumn("album", "decade", "era"),
+      ).toBe("era");
+      expect(rows()).toEqual([
+        { tableName: "album", name: "era", expression: "" },
+      ]);
+      expect(metadataOf("album", "decade")).toBeUndefined();
+      expect(metadataOf("album", "era")).toEqual(before);
+      expect(before).toMatchObject({ visible: false });
+      // Its row on the Data structure page stays open, and in view.
+      const renamed = structureFieldId("album", field("era"));
+      expect(state().structure.expanded[open]).toBeUndefined();
+      expect(state().structure.expanded[renamed]).toBe(true);
+      expect(state().structure.reveal).toBe(renamed);
+
+      await settle();
+      // One call renames both in the database: no metadata is written apart.
+      expect(metadataComputedColumnRename).toHaveBeenCalledTimes(1);
+      expect(metadataComputedColumnRename).toHaveBeenCalledWith({
+        tableName: "album",
+        name: "decade",
+        newName: "era",
+      });
+      expect(metadataFieldSetVisible).not.toHaveBeenCalled();
+    });
+
+    it("goes out after a change to its field's metadata made just before", async () => {
+      bundle.actions.addComputedColumn("album", "decade");
+      await settle();
+      await settle();
+      bundle.actions.setFieldHidden("album", field("decade"), true);
+      bundle.actions.renameComputedColumn("album", "decade", "era");
+      await settle();
+      const [hidden] = vi.mocked(metadataFieldSetVisible).mock
+        .invocationCallOrder;
+      const [renamed] = vi.mocked(metadataComputedColumnRename).mock
+        .invocationCallOrder;
+      expect(hidden).toBeLessThan(renamed!);
+    });
+
+    it("writes an expression held back under the old name first", async () => {
+      vi.useFakeTimers();
+      try {
+        bundle.actions.addComputedColumn("album", "decade");
+        await vi.advanceTimersByTimeAsync(0);
+        vi.mocked(metadataComputedColumnSet).mockClear();
+        bundle.actions.setComputedColumnExpression("album", "decade", "year");
+        bundle.actions.renameComputedColumn("album", "decade", "era");
+        await vi.advanceTimersByTimeAsync(0);
+        expect(metadataComputedColumnSet).toHaveBeenCalledWith({
+          tableName: "album",
+          name: "decade",
+          expression: "year",
+        });
+        const [set] = vi.mocked(metadataComputedColumnSet).mock
+          .invocationCallOrder;
+        const [renamed] = vi.mocked(metadataComputedColumnRename).mock
+          .invocationCallOrder;
+        expect(set).toBeLessThan(renamed!);
+        expect(rows()).toEqual([
+          { tableName: "album", name: "era", expression: "year" },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("makes the name legal and free, and leaves it be when nothing changes", async () => {
+      bundle.actions.addComputedColumn("album", "decade");
+      bundle.actions.addComputedColumn("album", "era");
+      const rename = bundle.actions.renameComputedColumn;
+      expect(rename("album", "decade", "  ")).toBe("decade");
+      expect(rename("album", "decade", "decade")).toBe("decade");
+      expect(rename("album", "decade", "era")).toBe("era_2");
+      expect(rename("album", "era_2", "the era")).toBe("the_era");
+      // A change of case alone is still the column's own name to take.
+      expect(rename("album", "the_era", "The_Era")).toBe("The_Era");
+      await settle();
+      expect(metadataComputedColumnRename).toHaveBeenCalledTimes(3);
+    });
+
+    it("leaves one of the app's own as it's named", async () => {
+      bundle.actions.setComputedColumnExpression("track", "year", "1999");
+      expect(bundle.actions.renameComputedColumn("track", "year", "y")).toBe(
+        "year",
+      );
+      await settle();
+      expect(metadataComputedColumnRename).not.toHaveBeenCalled();
+    });
+  });
+
+  it("removes one, and what was customized about its field", async () => {
+    bundle.actions.addComputedColumn("album", "decade");
+    bundle.actions.addComputedColumn("album", "era");
+    bundle.actions.setFieldHidden("album", field("decade"), true);
+    bundle.actions.revealStructureItem(
+      structureFieldId("album", field("decade")),
+    );
+    bundle.actions.removeComputedColumn("album", "decade");
+    expect(rows().map((row) => row.name)).toEqual(["era"]);
+    expect(metadataOf("album", "decade")).toBeUndefined();
+    expect(metadataOf("album", "era")).toBeDefined();
+    expect(
+      state().structure.expanded[structureFieldId("album", field("decade"))],
+    ).toBeUndefined();
+    await settle();
+    expect(metadataComputedColumnDelete).toHaveBeenCalledWith({
+      tableName: "album",
+      name: "decade",
+    });
+  });
+
+  it("never removes one of the app's own", async () => {
+    bundle.actions.setComputedColumnExpression("track", "year", "1999");
+    bundle.actions.removeComputedColumn("track", "year");
+    bundle.actions.removeComputedColumn("track", "lastplay");
+    expect(selectComputedExpression(state(), "track", "year")).toBe("1999");
+    await settle();
+    expect(metadataComputedColumnDelete).not.toHaveBeenCalled();
+  });
+
+  describe("an expression", () => {
+    const IDLE = 5000;
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("shows at once, and the last of a burst is written once the app goes quiet", async () => {
+      const { setComputedColumnExpression } = bundle.actions;
+      bundle.actions.addComputedColumn("album", "decade");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(metadataComputedColumnSet).mockClear();
+      setComputedColumnExpression("album", "decade", "year /");
+      setComputedColumnExpression("album", "decade", "year / 10");
+      expect(selectComputedExpression(state(), "album", "decade")).toBe(
+        "year / 10",
+      );
+      await vi.advanceTimersByTimeAsync(IDLE - 1);
+      expect(metadataComputedColumnSet).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(metadataComputedColumnSet).toHaveBeenCalledTimes(1);
+      expect(metadataComputedColumnSet).toHaveBeenCalledWith({
+        tableName: "album",
+        name: "decade",
+        expression: "year / 10",
+      });
+    });
+
+    it("of the user's stands in for the app's own, until it's reset", async () => {
+      const { setComputedColumnExpression } = bundle.actions;
+      setComputedColumnExpression("track", "year", "album.year + 1");
+      expect(rows()).toEqual([
+        { tableName: "track", name: "year", expression: "album.year + 1" },
+      ]);
+      expect(selectPrelude(state()).text).toContain(
+        "#track.year = album.year + 1",
+      );
+      // Reset goes straight out, ahead of the edit held back.
+      setComputedColumnExpression("track", "year", null);
+      expect(selectPrelude(state()).text).toContain(
+        "#track.year = album.year\n",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataComputedColumnSet).toHaveBeenCalledTimes(1);
+      expect(metadataComputedColumnSet).toHaveBeenCalledWith({
+        tableName: "track",
+        name: "year",
+        expression: null,
+      });
+    });
+
+    it("of the app's own has nothing to reset before it's customized", async () => {
+      bundle.actions.setComputedColumnExpression("track", "year", null);
+      expect(rows()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(IDLE);
+      expect(metadataComputedColumnSet).not.toHaveBeenCalled();
+    });
+
+    it("is sent when the user leaves its editor", async () => {
+      bundle.actions.setComputedColumnExpression("track", "year", "1999");
+      bundle.actions.flushComputedColumn("track", "year");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataComputedColumnSet).toHaveBeenCalledWith({
+        tableName: "track",
+        name: "year",
+        expression: "1999",
+      });
+    });
+
+    it("held back is kept through a reload, and dropped with its column", async () => {
+      bundle.actions.addComputedColumn("album", "decade");
+      await vi.advanceTimersByTimeAsync(0);
+      vi.mocked(metadataComputedColumnSet).mockClear();
+      bundle.actions.setComputedColumnExpression("album", "decade", "year");
+      vi.mocked(metadataComputedColumnList).mockResolvedValueOnce([
+        { tableName: "album", name: "decade", expression: "" },
+      ]);
+      await bundle.actions.loadComputedColumns();
+      expect(selectComputedExpression(state(), "album", "decade")).toBe("year");
+
+      bundle.actions.removeComputedColumn("album", "decade");
+      await vi.advanceTimersByTimeAsync(IDLE);
+      expect(metadataComputedColumnSet).not.toHaveBeenCalled();
+    });
+  });
+
+  it("opens the Data structure page on one, hidden or not", () => {
+    bundle.actions.setFieldHidden("track", field("year"), true);
+    bundle.actions.openStructureTab({ table: "track", computedColumn: "year" });
+    const path = computedColumnPath("track", "year");
+    for (const item of path) {
+      expect(state().structure.expanded[item]).toBe(true);
+    }
+    expect(state().structure.reveal).toBe(path[path.length - 1]);
+    expect(state().showHiddenFields).toBe(true);
   });
 });

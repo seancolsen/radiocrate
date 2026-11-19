@@ -24,6 +24,10 @@ describe("settingValue", () => {
     expect(settingValue({}, "querydown_prelude")).toBe(DEFAULT_PRELUDE);
   });
 
+  it("has no prelude of the app's own for the default", () => {
+    expect(DEFAULT_PRELUDE).toBe("");
+  });
+
   it("returns the customized value when there is one", () => {
     expect(
       settingValue({ querydown_prelude: "#track.x = 1" }, "querydown_prelude"),

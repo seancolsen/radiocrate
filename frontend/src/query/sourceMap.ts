@@ -23,6 +23,9 @@ export type SourceOrigin =
   /** A table's setting the app builds into the prelude, ahead of the user's
    * (`tableSettings.ts`). */
   | { kind: "tableSetting"; table: string; setting: PreludeSetting }
+  /** A computed column's expression, which the app builds into the prelude
+   * too (`computedColumns.ts`). */
+  | { kind: "computedColumn"; table: string; name: string }
   /** A full-Querydown query's text. */
   | { kind: "full" };
 
@@ -156,6 +159,9 @@ export function sameOrigin(
   }
   if (a.kind === "tableSetting" && b.kind === "tableSetting") {
     return a.table === b.table && a.setting === b.setting;
+  }
+  if (a.kind === "computedColumn" && b.kind === "computedColumn") {
+    return a.table === b.table && a.name === b.name;
   }
   return true;
 }

@@ -257,7 +257,7 @@ pub struct SettingDeleteParams {
 }
 
 /// Which field of a table's record editor form a [`FieldMetadataRow`] is about:
-/// the `field` union of `metadata.field`. See migrations 0010 and 0012.
+/// the `field` union of `metadata.field`. See migrations 0010, 0012 and 0014.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum FieldRef {
@@ -267,6 +267,9 @@ pub enum FieldRef {
     MultiLink(MultiLink),
     /// The field showing the results of the `contextual_query` with this id.
     ContextualQuery(String),
+    /// The field showing the value of the table's computed column of this name:
+    /// one of the app's own, or a row of `metadata.computed_column`.
+    ComputedColumn(String),
 }
 
 /// The records of `related_table_name` that reference a record through their
@@ -339,6 +342,37 @@ pub struct MetadataFieldSetSortingParams {
     pub table_name: String,
     pub field: FieldRef,
     pub sorting: Option<String>,
+}
+
+/// One row of `metadata.computed_column`: a computed column the user has defined
+/// for a table, or their expression for one of the app's own. See migration 0014.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputedColumnRow {
+    pub table_name: String,
+    pub name: String,
+    /// Querydown: what the column computes. `None` goes by the app's expression,
+    /// for one of its own columns.
+    pub expression: Option<String>,
+}
+
+/// Params for `metadata.computed_column.rename`. The column's field metadata is
+/// renamed with it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataComputedColumnRenameParams {
+    pub table_name: String,
+    pub name: String,
+    pub new_name: String,
+}
+
+/// Params for `metadata.computed_column.delete`. The column's field metadata
+/// goes with it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataComputedColumnDeleteParams {
+    pub table_name: String,
+    pub name: String,
 }
 
 /// One row of `metadata.table`: what the user has customized about one table as a
@@ -633,6 +667,30 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "metadata.computed_column.list",
+        func: "metadataComputedColumnList",
+        params: None,
+        result: "ComputedColumnRow[]",
+    },
+    Method {
+        wire: "metadata.computed_column.set",
+        func: "metadataComputedColumnSet",
+        params: Some("ComputedColumnRow"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.computed_column.rename",
+        func: "metadataComputedColumnRename",
+        params: Some("MetadataComputedColumnRenameParams"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.computed_column.delete",
+        func: "metadataComputedColumnDelete",
+        params: Some("MetadataComputedColumnDeleteParams"),
+        result: "null",
+    },
+    Method {
         wire: "table.summarize",
         func: "tableSummarize",
         params: None,
@@ -704,6 +762,9 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", MetadataTableSetOrderParams::decl(&cfg)),
         format!("export {}", TableQuerydownSetting::decl(&cfg)),
         format!("export {}", MetadataTableSetQuerydownParams::decl(&cfg)),
+        format!("export {}", ComputedColumnRow::decl(&cfg)),
+        format!("export {}", MetadataComputedColumnRenameParams::decl(&cfg)),
+        format!("export {}", MetadataComputedColumnDeleteParams::decl(&cfg)),
         format!("export {}", ColumnSummary::decl(&cfg)),
         format!("export {}", TableSummary::decl(&cfg)),
     ]

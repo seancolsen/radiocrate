@@ -44,6 +44,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import {
   dml,
+  type ComputedColumnRow,
   type DmlOperation,
   type DmlResult,
   type Preset,
@@ -58,7 +59,9 @@ import {
   fieldRef,
   isDataField,
   keySignature,
+  keyConditions,
   recordDataQuery,
+  type ComputedField,
   type ContextQueryField,
   type FormField,
   type MultiRecordField,
@@ -90,6 +93,14 @@ import {
 } from "../../query/fieldMetadata";
 import type { ColumnMetadata } from "../../query/columns";
 import {
+  computedDisplay,
+  computedFieldKey,
+  computedFields,
+  findComputedRow,
+  hasExpression,
+  tableComputedColumns,
+} from "../../query/computedColumns";
+import {
   contextDefinitions,
   contextFields,
   contextKeyColumn,
@@ -106,6 +117,7 @@ import {
 import { embedPreview } from "../../query/embedPreview";
 import {
   isCompileError,
+  compileErrorReason,
   runDisplayQuery,
   runRecordQuery,
   type RecordResult,
@@ -163,6 +175,7 @@ import {
   type EmbedNode,
   type FormMenu,
   type FormState,
+  type ComputedValues,
   type ItemHandle,
   type ListNode,
   type LoadStatus,
@@ -211,6 +224,20 @@ export interface RecordFormOptions {
    * is `value` somewhere other than the form — the query page opens them in a new
    * query tab. */
   openContextualQuery?: (queryId: string, value: string) => void;
+  /** The computed columns defined for each table, and the prelude that defines
+   * them — read whenever a record's fields are built and whenever their values
+   * are. A change reaches the form through `syncComputedColumns`. Absent,
+   * records have none. */
+  computedColumns?: ComputedColumnSource;
+}
+
+/** Where the form reads computed columns from (see
+ * `RecordFormOptions.computedColumns`): the user's rows, which the app's own
+ * columns are worked out beside, and the prelude a query needs to refer to any
+ * of them. */
+export interface ComputedColumnSource {
+  list: () => readonly ComputedColumnRow[];
+  prelude: () => string;
 }
 
 /** Where the form reads contextual queries from (see
@@ -246,6 +273,28 @@ export interface RecordFormActions {
    * query whose Querydown has changed runs again where it's expanded, once it has
    * stopped changing, and is left to run afresh next time where it isn't. */
   syncContextualQueries: () => void;
+  /** Brings every record's computed column fields into line with the columns as
+   * they stand now: new ones appear, removed ones go, and a renamed one keeps
+   * what it had open. Their values are read again once the columns have
+   * stopped changing. */
+  syncComputedColumns: () => void;
+  /** Opens the editor of a computed column's expression under its field, with
+   * the caret in it; and closes it. */
+  openExpressionEditor: (recordId: string, fieldKey: string) => void;
+  closeExpressionEditor: (recordId: string, fieldKey: string) => void;
+  /** Starts adding a computed column to the root record's table: a field at the
+   * bottom of its fields with its name being typed, which becomes a computed
+   * column once the user settles on the name (`finishAddComputed`). */
+  beginAddComputed: () => void;
+  cancelAddComputed: () => void;
+  /** The field being added became computed column `name`: it gives way to that
+   * column's field, whose editor opens — the expression being the one thing
+   * the user has yet to write. */
+  finishAddComputed: (name: string) => void;
+  /** Asks the user to confirm removing a computed column, and drops the
+   * question (whether or not they did). */
+  requestRemoveComputed: (table: string, name: string) => void;
+  cancelRemoveComputed: () => void;
   /** Opens the query editor under a field, on `section` (the first the field
    * offers, unless said otherwise — a contextual query's filter), with the caret
    * in it: a contextual query's, or the one for the Querydown behind a field's
@@ -262,8 +311,9 @@ export interface RecordFormActions {
   /** Hands a contextual query's records, for the record its field is on, to
    * `openContextualQuery`. */
   openContextRecords: (recordId: string, field: ContextQueryField) => void;
-  /** Puts a field's label into rename mode — a contextual query's, the one kind
-   * of field the user names — or takes it out of it. */
+  /** Puts a field's label into rename mode — a contextual query's, or a computed
+   * column's of the user's own, the kinds of field the user names — or takes
+   * it out of it. */
   beginRename: (recordId: string, fieldKey: string) => void;
   endRename: () => void;
   /** Starts adding a contextual query to the root record's table: a field at the
@@ -640,6 +690,12 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       ? contextFields(opts.tables, table, opts.contextualQueries.list())
       : [];
 
+  /** The computed column fields of a record of `table` the database holds. */
+  const computedFieldsOf = (table: string): ComputedField[] =>
+    opts.computedColumns
+      ? computedFields(opts.tables, table, opts.computedColumns.list())
+      : [];
+
   /** A record node the form knows exists, before anything is loaded into it. */
   const recordNode = (
     table: string,
@@ -652,6 +708,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     hidden,
     fields: [
       ...buildFormFields(opts.tables, table, hidden),
+      ...computedFieldsOf(table),
       ...contextFieldsOf(table),
     ],
     status,
@@ -659,6 +716,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     values: seedValues(keys),
     original: seedValues(keys),
     counts: {},
+    computed: {},
     isNew: false,
   });
 
@@ -677,6 +735,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
 
   // Per-node load tokens: only the newest load for a node may write its result.
   const tokens = new Map<string, number>();
+  /** The same for a node's computed columns, which load apart from its data. */
+  const computedTokens = new Map<string, number>();
+  /** The pending re-read of every node's computed columns. */
+  let computedRefresh: ReturnType<typeof setTimeout> | undefined;
   /** The same for embedded record previews. Kept apart from {@link tokens}
    * because a record and its preview share an id, and load independently: the
    * record behind a scalar linked record field starts loading the moment the
@@ -692,6 +754,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   const cancelLoads = (id: string) => {
     tokens.set(id, ++tokenSeq);
     embedTokens.set(id, ++tokenSeq);
+    computedTokens.set(id, ++tokenSeq);
   };
   /** Distinguishes the records the form creates, whose ids can't come from a
    * position in a loaded list. */
@@ -826,6 +889,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         values,
         original: blank,
         counts,
+        computed: {},
         isNew: true,
       });
     });
@@ -1104,10 +1168,12 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   const loadRecord = async (id: string) => {
     const node = get().records[id];
     if (!node || node.status === "loading") return;
-    // A contextual query's field is no part of the record's own data.
+    // A contextual query's field is no part of the record's own data, nor is
+    // a computed column's.
     const data = node.fields.filter(isDataField);
     if (data.length === 0) {
       patchRecord(id, { status: "loaded" });
+      void loadComputed(id);
       return;
     }
     const keys = node.keys;
@@ -1160,10 +1226,120 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         n.status = "loaded";
       });
       loadScalarEmbeds(id);
+      void loadComputed(id);
       restoreFields(id);
     } catch (err) {
       if (tokens.get(id) !== token) return;
       patchRecord(id, { status: "error", error: errorMessage(err) });
+    }
+  };
+
+  /** Reads what a node's computed columns come to for its records, in a query
+   * of their own under the prelude that defines them — apart from the node's
+   * data, so that an expression that won't run costs its own field and nothing
+   * else. What a field showed stays until the new answer lands.
+   *
+   * One query reads them all. Should it fail, each is read by itself, and the
+   * ones at fault say why. A column with no expression yet defines nothing, and
+   * reads as empty without being asked for. */
+  const loadComputed = async (id: string) => {
+    const node = get().records[id];
+    const source = opts.computedColumns;
+    const keys = node?.keys ?? [];
+    const keyColumns = (keys[0] ?? []).map((part) => part.column);
+    if (!node || !source || node.isNew || keyColumns.length === 0) return;
+    const fields = node.fields.filter((f) => f.kind === "computed");
+    if (fields.length === 0) return;
+    const token = ++tokenSeq;
+    computedTokens.set(id, token);
+
+    const columns = tableComputedColumns(node.table, source.list());
+    const defined = fields.filter((field) =>
+      hasExpression(columns.find((c) => c.name === field.name)?.expression),
+    );
+    set((s) => {
+      const n = s.records[id];
+      if (!n) return;
+      for (const field of fields) {
+        n.computed[field.key] = defined.includes(field)
+          ? {
+              status: "loading",
+              values: n.computed[field.key]?.values,
+              error: null,
+            }
+          : { status: "loaded", values: keys.map(() => null), error: null };
+      }
+    });
+    if (defined.length === 0) return;
+
+    const definitions = source.prelude();
+    /** The values of `asked`, one list per field, each index-aligned to the
+     * node's keys. */
+    const read = async (asked: readonly ComputedField[]) => {
+      const rows = await runRecordQuery(
+        {
+          base: node.table,
+          filter: keyConditions(keys),
+          sort: "",
+          display: computedDisplay(
+            keyColumns,
+            asked.map((field) => field.name),
+          ),
+          definitions,
+        },
+        opts.schemaJson,
+      );
+      const byKey = new Map(
+        rows.map((row) => [keySignature(row.slice(0, keyColumns.length)), row]),
+      );
+      const matched = keys.map((key) =>
+        byKey.get(keySignature(key.map((part) => part.value))),
+      );
+      return asked.map((_, i) =>
+        matched.map((row) => row?.[keyColumns.length + i] ?? null),
+      );
+    };
+    const write = (field: ComputedField, result: ComputedValues) => {
+      if (computedTokens.get(id) !== token) return;
+      set((s) => {
+        const n = s.records[id];
+        // A column that has gone in the meantime has no field to show it.
+        if (n?.fields.some((f) => f.key === field.key)) {
+          n.computed[field.key] = castDraft(result);
+        }
+      });
+    };
+    const loaded = (values: ColumnValues): ComputedValues => ({
+      status: "loaded",
+      values,
+      error: null,
+    });
+    try {
+      const values = await read(defined);
+      defined.forEach((field, i) => write(field, loaded(values[i])));
+    } catch {
+      await Promise.all(
+        defined.map(async (field) => {
+          try {
+            write(field, loaded((await read([field]))[0]));
+          } catch (err) {
+            write(field, {
+              status: "error",
+              values: undefined,
+              error: compileErrorReason(err) ?? errorMessage(err),
+            });
+          }
+        }),
+      );
+    }
+  };
+
+  /** Reads every loaded node's computed columns again: what any of them
+   * computes may have changed with what the form just saved, or with the
+   * columns themselves. */
+  const reloadComputed = () => {
+    for (const [id, node] of Object.entries(get().records)) {
+      if (node.status === "loaded") void loadComputed(id);
     }
   };
 
@@ -1891,7 +2067,11 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     const s = get();
     for (const [parentId, parent] of Object.entries(s.records)) {
       for (const field of parent.fields) {
-        if (field.kind === "primitive" || field.kind === "contextQuery") {
+        if (
+          field.kind === "primitive" ||
+          field.kind === "contextQuery" ||
+          field.kind === "computed"
+        ) {
           continue;
         }
         const holds =
@@ -1921,8 +2101,13 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         if (!n) return;
         n.isNew = false;
         n.keys = castDraft(n.keys.map((_, index) => keyOf(n, index)));
-        // A record the database holds has its table's contextual queries.
-        n.fields = castDraft([...n.fields, ...contextFieldsOf(n.table)]);
+        // A record the database holds has its table's computed columns and
+        // contextual queries.
+        n.fields = castDraft([
+          ...n.fields,
+          ...computedFieldsOf(n.table),
+          ...contextFieldsOf(n.table),
+        ]);
       });
       const node = get().records[recordId];
       const key = node?.keys[0];
@@ -2208,6 +2393,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       embedRefreshes.clear();
       for (const timer of contextRefreshes.values()) clearTimeout(timer);
       contextRefreshes.clear();
+      clearTimeout(computedRefresh);
+      computedTokens.clear();
       tokens.clear();
       embedTokens.clear();
       items.clear();
@@ -2292,6 +2479,123 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         );
       }
     },
+    syncComputedColumns: () => {
+      set((s) => {
+        for (const [recordId, node] of Object.entries(s.records)) {
+          if (node.isNew) continue;
+          const current = node.fields.filter((f) => f.kind === "computed");
+          const next = computedFieldsOf(node.table);
+          if (JSON.stringify(current) === JSON.stringify(next)) continue;
+          const gone = current.filter(
+            (field) => !next.some((f) => f.key === field.key),
+          );
+          const added = next.filter(
+            (field) => !current.some((f) => f.key === field.key),
+          );
+          // One going as one comes is a rename: nothing else the user does
+          // changes both at once. What the old name had goes on under the new.
+          const renamed =
+            gone.length === 1 && added.length === 1
+              ? { from: gone[0].key, to: added[0].key }
+              : undefined;
+          for (const field of gone) {
+            const itemId = fieldItemId(recordId, field.key);
+            const values = node.computed[field.key];
+            const editing = s.expressionEditors[itemId];
+            const expanded = s.expanded[itemId];
+            delete node.computed[field.key];
+            delete s.expressionEditors[itemId];
+            delete s.expanded[itemId];
+            if (s.renaming === itemId) s.renaming = null;
+            if (!renamed) {
+              // A menu raised on the field has nothing left to act on.
+              const target = s.menu?.target;
+              if (
+                target?.recordId === recordId &&
+                target.fieldKey === field.key
+              ) {
+                s.menu = null;
+              }
+              continue;
+            }
+            const nextId = fieldItemId(recordId, renamed.to);
+            if (values) node.computed[renamed.to] = values;
+            if (editing) s.expressionEditors[nextId] = true;
+            if (expanded !== undefined) s.expanded[nextId] = expanded;
+            if (s.queryEditorFocus === itemId) s.queryEditorFocus = nextId;
+          }
+          const at = (field: FormField) =>
+            field.kind === "contextQuery"
+              ? 2
+              : field.kind === "computed"
+                ? 1
+                : 0;
+          node.fields = castDraft(
+            [...node.fields.filter((f) => f.kind !== "computed"), ...next].sort(
+              (a, b) => at(a) - at(b),
+            ),
+          );
+        }
+        const removing = s.removingComputed;
+        if (
+          removing &&
+          !findComputedRow(
+            opts.computedColumns?.list() ?? [],
+            removing.table,
+            removing.name,
+          )
+        ) {
+          s.removingComputed = null;
+        }
+      });
+      // What they compute is read again once they stop changing, as embedded
+      // records are while their Querydown is typed.
+      clearTimeout(computedRefresh);
+      computedRefresh = setTimeout(() => {
+        computedRefresh = undefined;
+        reloadComputed();
+      }, EMBED_REFRESH_DEBOUNCE_MS);
+    },
+    openExpressionEditor: (recordId, fieldKey) => {
+      const itemId = fieldItemId(recordId, fieldKey);
+      set((s) => {
+        s.menu = null;
+        s.expressionEditors[itemId] = true;
+        s.queryEditorFocus = itemId;
+      });
+    },
+    closeExpressionEditor: (recordId, fieldKey) =>
+      set((s) => {
+        delete s.expressionEditors[fieldItemId(recordId, fieldKey)];
+      }),
+    beginAddComputed: () =>
+      set((s) => {
+        s.renaming = null;
+        s.provisional = null;
+        s.addingComputed = true;
+      }),
+    cancelAddComputed: () =>
+      set((s) => {
+        s.addingComputed = false;
+      }),
+    finishAddComputed: (name) => {
+      set((s) => {
+        s.addingComputed = false;
+      });
+      const key = computedFieldKey(name);
+      if (get().records[ROOT_ID]?.fields.some((f) => f.key === key)) {
+        model.openExpressionEditor(ROOT_ID, key);
+      }
+    },
+    requestRemoveComputed: (table, name) =>
+      set((s) => {
+        s.menu = null;
+        s.removingComputed = { table, name };
+      }),
+    cancelRemoveComputed: () =>
+      set((s) => {
+        s.removingComputed = null;
+      }),
     openQueryEditor: (recordId, field, section) => {
       const itemId = fieldItemId(recordId, field.key);
       const shown = section ?? queryEditorSections(field)[0];
@@ -2333,6 +2637,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     addProvisional: () =>
       set((s) => {
         s.renaming = null;
+        s.addingComputed = false;
         s.provisional = {
           recordId: ROOT_ID,
           name: DEFAULT_CONTEXTUAL_QUERY_NAME,
@@ -2491,6 +2796,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         if (plan.operations.length > 0) {
           const runDml = opts.runDml ?? ((operations) => dml({ operations }));
           applySave(plan, await runDml(plan.operations));
+          // What was written may be what a computed column computes from.
+          reloadComputed();
         }
         set({ saving: false, saveError: null });
       } catch (err) {
@@ -2595,8 +2902,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     },
 
     clearField: (recordId, field) => {
-      // What a contextual query found isn't the record's to clear.
-      if (field.kind === "contextQuery") return;
+      // What a contextual query found isn't the record's to clear, nor is what
+      // a computed column computes.
+      if (field.kind === "contextQuery" || field.kind === "computed") return;
       const itemId = fieldItemId(recordId, field.key);
       // Clearing is a modification like any other, so a field the form can't
       // reach across the records it's on isn't cleared either.

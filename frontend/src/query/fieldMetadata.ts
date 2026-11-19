@@ -43,11 +43,15 @@ export const NO_TABLE_METADATA: TableMetadata = {};
 
 /** A field's identity as one string, for looking it up in a {@link TableMetadata}.
  * Two different fields never share one, whatever their columns are named: the
- * length of the array tells a column from a link, a contextual query is an object
- * rather than an array, and JSON keeps the parts apart. */
+ * length of the array tells a column from a link, a contextual query and a
+ * computed column are objects rather than arrays, and JSON keeps the parts
+ * apart. */
 export function fieldRefKey(field: FieldRef): string {
   if ("contextualQuery" in field) {
     return JSON.stringify({ contextualQuery: field.contextualQuery });
+  }
+  if ("computedColumn" in field) {
+    return JSON.stringify({ computedColumn: field.computedColumn });
   }
   return JSON.stringify(
     "columnName" in field
@@ -212,4 +216,31 @@ export function fieldMoveOrders(
     above,
     below,
   ).map(({ item, order }) => ({ field: item, order }));
+}
+
+/** `metadata` after its table's computed column `from` is renamed `to`: what's
+ * customized about the column's field goes on under the new name, as the
+ * database's row does (`metadata.computed_column.rename`). `metadata` itself,
+ * when nothing is customized about it. */
+export function renameComputedField(
+  metadata: TableMetadata,
+  from: string,
+  to: string,
+): TableMetadata {
+  const before = fieldRefKey({ computedColumn: from });
+  if (!Object.hasOwn(metadata, before)) return metadata;
+  const { [before]: moved, ...rest } = metadata;
+  return { ...rest, [fieldRefKey({ computedColumn: to })]: moved };
+}
+
+/** `metadata` without what's customized about `field`, which is gone. */
+export function withoutField(
+  metadata: TableMetadata,
+  field: FieldRef,
+): TableMetadata {
+  const key = fieldRefKey(field);
+  if (!Object.hasOwn(metadata, key)) return metadata;
+  const rest = { ...metadata };
+  delete rest[key];
+  return rest;
 }

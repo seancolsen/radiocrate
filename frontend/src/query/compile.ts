@@ -43,6 +43,7 @@ import {
   type Mapped,
   type SourceOrigin,
 } from "./sourceMap";
+import { computedDefinition } from "./computedColumns";
 import type { SchemaTable } from "./schema";
 import {
   preludeMapped,
@@ -158,9 +159,9 @@ function retraceFilterError(
  * formatters, and which columns are hidden.
  *
  * `prelude` is the Querydown prepended to the query — the definitions built
- * from the tables' settings and the `querydown_prelude` setting's value in
- * force, which the caller reads from the store (a bare string is the latter
- * alone). It's a
+ * from the tables' computed columns and settings, and then the user's own
+ * `querydown_prelude` setting, which the caller reads from the store (a bare
+ * string is the latter alone). It's a
  * parameter rather than a module constant so that compiling stays a pure
  * function of what it's handed: the user can change the prelude mid-session,
  * and a run must use the value as of that run. */
@@ -294,6 +295,35 @@ export function checkSetting(
       filter: unmapped(check.filter),
       sort: empty,
       display: empty,
+    });
+    return null;
+  } catch (err) {
+    return toDiagnostic(err);
+  }
+}
+
+/** The problem with a computed column's `expression`, if it has one, as its
+ * editor checks it while it's typed in: compiled as the column's definition,
+ * after `prelude`, in a query on its table that displays it — so that it's
+ * resolved against the schema, which a definition nothing uses never is. The
+ * problem is traced to the column's editor. */
+export function checkComputedColumn(
+  schemaJson: string,
+  table: string,
+  name: string,
+  expression: string,
+  prelude: Prelude,
+): QueryDiagnostic | null {
+  const definitions = joinMapped(
+    [preludeMapped(prelude), computedDefinition(table, name, expression)],
+    "\n",
+  );
+  const empty = unmapped("");
+  try {
+    compileSections(schemaJson, table, definitions, {
+      filter: empty,
+      sort: empty,
+      display: unmapped(`$${name}`),
     });
     return null;
   } catch (err) {
