@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -17,17 +16,14 @@ import EmbedQuerydownEditor from "./EmbedQuerydownEditor";
 import Pager from "../ui/Pager";
 import EmbeddedRecord from "./EmbeddedRecord";
 import ExpansionToggle from "./ExpansionToggle";
-import FieldLabel, {
-  fieldAppearance,
-  LabelNameInput,
-  type RenameEnd,
-} from "./FieldLabel";
+import FieldLabel, { fieldAppearance, type RenameEnd } from "./FieldLabel";
 import FieldValue, {
   OneLineValue,
   ValueInput,
   type EditExit,
 } from "./FieldValue";
 import ModifiedStar from "./ModifiedStar";
+import ProvisionalQueryRow from "./ProvisionalQueryRow";
 import { FindReplacePanel, ReplacePreview } from "./FindReplace";
 import type { ValueAutocomplete } from "./ValueSuggestions";
 import {
@@ -77,15 +73,11 @@ import { embedText } from "../../query/embedPreview";
 import { compileFind, hasMatch } from "../../record/findReplace";
 import { arrangeFields, isFieldHidden } from "../../query/fieldMetadata";
 import { nounFor } from "../../query/entityNames";
-import {
-  contextKeyColumn,
-  isRunnable,
-  listableTables,
-} from "../../query/contextualQuery";
+import { contextKeyColumn, isRunnable } from "../../query/contextualQuery";
 import DragChip, { dragChipTransform } from "../ui/DragChip";
 import IconButton from "../ui/IconButton";
 import { useTooltip } from "../ui/Tooltip";
-import { cx } from "../ui/cx";
+import { COUNT_BUBBLE_CLASS, cx } from "../ui/cx";
 import LoadingRegion from "../ui/LoadingRegion";
 import {
   fieldRef,
@@ -135,8 +127,7 @@ const NO_CELLS: readonly (string | null)[] = [];
 
 /** The bubble a count is drawn in — a field's related-record count, or the
  * number of records one row of such a field stands for. */
-const BUBBLE =
-  "bg-edge/50 text-ink-weak shrink-0 rounded-full px-2 text-xs leading-[18px]";
+const BUBBLE = COUNT_BUBBLE_CLASS;
 
 /** How many records a multi-record field holds. On several base records that's
  * a *range* — the fewest any one of them has, and the most — drawn as two
@@ -774,10 +765,6 @@ function OrderedNote(): JSX.Element {
   );
 }
 
-/** The classes of a `<select>`, as every one in the app has them. */
-const SELECT =
-  "control bg-panel border-edge text-ink focus:border-accent h-[26px] rounded-md py-0 outline-none";
-
 /** Where focus goes once a label's rename ends: back to the label, and on along
  * the fields for a Tab. A rename ended by focus going elsewhere leaves it there. */
 function focusAfterRename(
@@ -957,10 +944,9 @@ function ContextQueryRow(props: {
   );
 }
 
-/** A contextual query being added (`RecordFormActions.addProvisional`) — not a
- * field yet, but what makes one: a name, being typed as it appears, and the table
- * the query is to list, chosen from the Base selector beside it, which turns this
- * into the query's field. Escape while it's being named, or the ×, drops it. */
+/** A contextual query being added to the form (`RecordFormActions.addProvisional`):
+ * the row that names it and chooses its table (`ProvisionalQueryRow`), over the
+ * form's own state for the two. */
 function ProvisionalRow(props: {
   model: RecordFormModel;
   /** The table of the record whose fields it's among. */
@@ -969,77 +955,18 @@ function ProvisionalRow(props: {
   const { model } = props;
   const name = useFormState(model, (s) => s.provisional?.name ?? "");
   const naming = useFormState(model, (s) => s.provisional?.naming === true);
-  const tables = useApp((s) => s.schema.tables);
   const { addContextualQuery } = useAppActions();
-  const selectRef = useRef<HTMLSelectElement>(null);
-  const selectId = useId();
-
-  const choose = (base: string) => {
-    if (base === "") return;
-    model.finishProvisional(addContextualQuery(props.table, name, base));
-  };
-
   return (
-    <div
-      className="flex min-h-[30px] items-center gap-1 py-0.5"
-      data-testid="provisional-query"
-    >
-      <span className="size-4 shrink-0" aria-hidden="true" />
-      <span
-        className="text-ink bg-field-query flex shrink-0 cursor-default items-center gap-1 rounded-md border-2 border-transparent px-1.5 py-px text-xs/5 select-none"
-        onDoubleClick={() => model.setProvisionalNaming(true)}
-      >
-        <Icons.FieldQuery className="size-3.5 shrink-0 opacity-70" />
-        {naming ? (
-          <LabelNameInput
-            label="Name of the new query"
-            name={name}
-            rename={{
-              onCommit: (next, end) => {
-                model.setProvisionalName(next.trim() || name);
-                model.setProvisionalNaming(false);
-                // Named, it wants a table to list next.
-                if (end === "enter" || end === "tab") {
-                  queueMicrotask(() => selectRef.current?.focus());
-                }
-              },
-              onCancel: () => model.discardProvisional(),
-            }}
-          />
-        ) : (
-          <span className="max-w-40 truncate">{name}</span>
-        )}
-      </span>
-      <label
-        htmlFor={selectId}
-        className="text-ink-weak flex shrink-0 items-center gap-0.5 pl-1 text-xs"
-      >
-        <Icons.Base className="size-4" />
-        Base
-      </label>
-      <select
-        ref={selectRef}
-        id={selectId}
-        className={cx(SELECT, "min-w-0 flex-1")}
-        value=""
-        onChange={(e) => choose(e.currentTarget.value)}
-      >
-        <option value="" disabled>
-          Choose a table…
-        </option>
-        {listableTables(tables).map((table) => (
-          <option key={table.name} value={table.name}>
-            {table.name}
-          </option>
-        ))}
-      </select>
-      <IconButton
-        icon={Icons.Close}
-        label="Discard new query"
-        size="sm"
-        onClick={() => model.discardProvisional()}
-      />
-    </div>
+    <ProvisionalQueryRow
+      name={name}
+      naming={naming}
+      onName={(next) => model.setProvisionalName(next)}
+      onNaming={(next) => model.setProvisionalNaming(next)}
+      onChoose={(base) =>
+        model.finishProvisional(addContextualQuery(props.table, name, base))
+      }
+      onDiscard={() => model.discardProvisional()}
+    />
   );
 }
 

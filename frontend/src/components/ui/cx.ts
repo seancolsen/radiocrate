@@ -31,3 +31,8 @@ export const NESTED_FOCUS_CLASS =
  * whatever fill the control has, and focus is an outline drawn inside the
  * button, so it can't be painted over by a neighbor. */
 export const NESTED_BUTTON_CLASS = `enabled:hover:bg-ink/10 ${NESTED_FOCUS_CLASS}`;
+
+/** The bubble a count is drawn in, beside what it counts: a field's related
+ * records, the tables of the database. */
+export const COUNT_BUBBLE_CLASS =
+  "bg-edge/50 text-ink-weak shrink-0 rounded-full px-2 text-xs leading-[18px]";
