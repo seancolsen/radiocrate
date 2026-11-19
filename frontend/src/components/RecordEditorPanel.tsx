@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX, type ReactNode } from "react";
 import {
   selectEffectivePresets,
-  selectPrelude,
+  selectPreludeText,
   selectRecordEditor,
   type RecordEditorTarget,
   type RecordRef,
@@ -379,7 +379,7 @@ function PanelForm(props: {
         contextualQueries: {
           list: () => stores.app.store.getState().contextualQueries.data,
           presets: () => selectEffectivePresets(stores.app.store.getState()),
-          prelude: () => selectPrelude(stores.app.store.getState()),
+          prelude: () => selectPreludeText(stores.app.store.getState()),
         },
         openContextualQuery: (queryId, value) =>
           stores.app.actions.openContextualQueryTab(tabId, queryId, value),

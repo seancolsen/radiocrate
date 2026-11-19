@@ -1,6 +1,7 @@
 import type { JSX, ReactNode } from "react";
 import { Icons } from "../../icons";
 import { sectionLabel } from "../../query/definition";
+import { PRELUDE_SETTING_LABELS } from "../../query/tableSettings";
 import {
   lineColumn,
   type QueryDiagnostic,
@@ -19,6 +20,9 @@ export function diagnosticPlace(
     return presetName ? `Preset “${presetName}”` : "Preset";
   }
   if (origin?.kind === "prelude") return "Querydown prelude";
+  if (origin?.kind === "tableSetting") {
+    return `${PRELUDE_SETTING_LABELS[origin.setting]} of ${origin.table}`;
+  }
   if (origin?.kind === "full") return "Querydown";
   return d.kind === "run" ? "Database" : "Query";
 }

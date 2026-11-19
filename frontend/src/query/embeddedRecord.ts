@@ -259,6 +259,17 @@ export function embeddedRecordQuery(
   };
 }
 
+/** The sorting and display the record picker on a table opens with, until the
+ * user writes their own for the table: what's generated for previewing its
+ * records (`embedSpec`, with no contextual filter). */
+export function recordPickerDefaults(
+  tables: readonly SchemaTable[],
+  table: string,
+): { sort: string; display: string } {
+  const spec = embedSpec(tables, table);
+  return { sort: spec.sort, display: spec.display.join(" ") };
+}
+
 /** The query behind the modal record picker: the records of `table` the user's
  * filter admits, previewed the same way the form's embedded records are.
  *

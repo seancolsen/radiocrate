@@ -1,7 +1,7 @@
 import { useRef, type JSX } from "react";
 import {
   selectEditorDiagnostic,
-  selectPrelude,
+  selectPreludeText,
   selectQueryTab,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
@@ -17,7 +17,7 @@ export default function FullBuilder(props: { tabId: string }): JSX.Element {
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "full"),
   );
-  const prelude = useApp(selectPrelude);
+  const prelude = useApp(selectPreludeText);
   const { setFullText } = useAppActions();
 
   // The `query.focus_*` commands have no section to aim at here, so any of

@@ -12,10 +12,11 @@ use api_schema::{
     AppVersion, ColumnSummary, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams,
     FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams,
     MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams,
+    MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams,
     MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
     Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
-    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableSummary,
-    TreeItemKind,
+    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow,
+    TableOrder, TableQuerydownSetting, TableSummary, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -277,6 +278,29 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
             let p: MetadataFieldSetSortingParams = from_params(params)?;
             state.write(|conn| {
                 upsert_field_metadata(conn, &p.table_name, &p.field, "sorting", &p.sorting)?;
+                Ok(Value::Null)
+            })
+        }
+        "metadata.table.list" => state.read(|conn| -> Result<Value, String> {
+            let rows = list_table_metadata(conn)?;
+            serde_json::to_value(rows).map_err(|e| e.to_string())
+        }),
+        "metadata.table.set_visible" => {
+            let p: MetadataTableSetVisibleParams = from_params(params)?;
+            state.write(|conn| {
+                upsert_table_metadata(conn, &p.table_name, "visible", &p.visible)?;
+                Ok(Value::Null)
+            })
+        }
+        "metadata.table.set_order" => {
+            let p: MetadataTableSetOrderParams = from_params(params)?;
+            state.write_mut(|conn| set_table_order(conn, &p.orders).map(|()| Value::Null))
+        }
+        "metadata.table.set_querydown" => {
+            let p: MetadataTableSetQuerydownParams = from_params(params)?;
+            state.write(|conn| {
+                let column = table_querydown_column(p.setting);
+                upsert_table_metadata(conn, &p.table_name, column, &p.text)?;
                 Ok(Value::Null)
             })
         }
@@ -752,6 +776,68 @@ fn set_field_order(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for entry in orders {
         upsert_field_metadata(&tx, table_name, &entry.field, "\"order\"", &entry.order)?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn list_table_metadata(conn: &Connection) -> Result<Vec<TableMetadataRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT table_name, visible, \"order\", default_text_search, \
+             linked_record_comparison, record_picker_sorting, record_picker_display \
+             FROM metadata.\"table\" ORDER BY table_name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TableMetadataRow {
+                table_name: row.get(0)?,
+                visible: row.get(1)?,
+                order: row.get(2)?,
+                default_text_search: row.get(3)?,
+                linked_record_comparison: row.get(4)?,
+                record_picker_sorting: row.get(5)?,
+                record_picker_display: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// The column of `metadata.table` that holds `setting`.
+fn table_querydown_column(setting: TableQuerydownSetting) -> &'static str {
+    match setting {
+        TableQuerydownSetting::DefaultTextSearch => "default_text_search",
+        TableQuerydownSetting::LinkedRecordComparison => "linked_record_comparison",
+        TableQuerydownSetting::RecordPickerSorting => "record_picker_sorting",
+        TableQuerydownSetting::RecordPickerDisplay => "record_picker_display",
+    }
+}
+
+/// Creates the row of one table if it has none, or sets `column` on the one it has,
+/// leaving the rest of that row as it is.
+fn upsert_table_metadata(
+    conn: &Connection,
+    table_name: &str,
+    column: &'static str,
+    value: &dyn duckdb::ToSql,
+) -> Result<(), String> {
+    let sql = format!(
+        "INSERT INTO metadata.\"table\" (table_name, {column}) VALUES (?, ?) \
+         ON CONFLICT (table_name) DO UPDATE SET {column} = excluded.{column}"
+    );
+    conn.execute(&sql, duckdb::params![table_name, value])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Sets the sort keys of tables in one transaction, creating the rows of any table
+/// not customized yet. Leaves the rest of their rows as they are.
+fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for entry in orders {
+        upsert_table_metadata(&tx, &entry.table_name, "\"order\"", &entry.order)?;
     }
     tx.commit().map_err(|e| e.to_string())
 }
@@ -1443,6 +1529,78 @@ mod tests {
                 "display": null,
                 "sorting": null,
             }),
+        );
+    }
+
+    fn table_row(table_name: &str, visible: bool, order: Option<f64>) -> TableMetadataRow {
+        TableMetadataRow {
+            table_name: table_name.to_string(),
+            visible,
+            order,
+            default_text_search: None,
+            linked_record_comparison: None,
+            record_picker_sorting: None,
+            record_picker_display: None,
+        }
+    }
+
+    #[test]
+    fn table_metadata_starts_empty() {
+        let conn = setup();
+        assert_eq!(list_table_metadata(&conn).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_tables_metadata_is_set_a_column_at_a_time() {
+        let mut conn = setup();
+        upsert_table_metadata(&conn, "role", "visible", &false).unwrap();
+        set_table_order(
+            &mut conn,
+            &[
+                TableOrder {
+                    table_name: "track".to_string(),
+                    order: 1.0,
+                },
+                TableOrder {
+                    table_name: "role".to_string(),
+                    order: 2.0,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            list_table_metadata(&conn).unwrap(),
+            vec![
+                table_row("role", false, Some(2.0)),
+                table_row("track", true, Some(1.0)),
+            ],
+        );
+
+        let set = |setting, text: Option<&str>| {
+            upsert_table_metadata(&conn, "track", table_querydown_column(setting), &text).unwrap();
+        };
+        set(TableQuerydownSetting::DefaultTextSearch, Some("title:@x"));
+        set(
+            TableQuerydownSetting::LinkedRecordComparison,
+            Some("title:@x"),
+        );
+        set(
+            TableQuerydownSetting::RecordPickerSorting,
+            Some("\\\\title"),
+        );
+        set(TableQuerydownSetting::RecordPickerDisplay, Some("$title"));
+        set(TableQuerydownSetting::LinkedRecordComparison, None);
+        assert_eq!(
+            list_table_metadata(&conn).unwrap(),
+            vec![
+                table_row("role", false, Some(2.0)),
+                TableMetadataRow {
+                    default_text_search: Some("title:@x".to_string()),
+                    record_picker_sorting: Some("\\\\title".to_string()),
+                    record_picker_display: Some("$title".to_string()),
+                    ..table_row("track", true, Some(1.0))
+                },
+            ],
         );
     }
 

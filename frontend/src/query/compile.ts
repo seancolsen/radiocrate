@@ -43,8 +43,13 @@ import {
   type Mapped,
   type SourceOrigin,
 } from "./sourceMap";
-
-const PRELUDE: SourceOrigin = { kind: "prelude" };
+import type { SchemaTable } from "./schema";
+import {
+  preludeMapped,
+  settingCheck,
+  type Prelude,
+  type PreludeSetting,
+} from "./tableSettings";
 
 /** Runs a compile, turning a compiler error into a {@link DiagnosticError}
  * traced through `textFor` (see `fromQuerydownError`). */
@@ -65,11 +70,12 @@ function diagnosed(
 function compileSections(
   schemaJson: string,
   base: string,
-  prelude: string,
+  prelude: Prelude,
   sections: { filter: Mapped; sort: Mapped; display: Mapped },
 ): CompileResult {
+  const definitions = preludeMapped(prelude);
   const texts: Record<QuerydownSection, Mapped> = {
-    definitions: fromSource(prelude, PRELUDE),
+    definitions,
     conditions: sections.filter,
     sorting: sections.sort,
     display: sections.display,
@@ -80,7 +86,7 @@ function compileSections(
         schemaJson,
         "duckdb",
         base,
-        prelude,
+        definitions.text,
         sections.filter.text,
         sections.sort.text,
         sections.display.text,
@@ -92,10 +98,10 @@ function compileSections(
 /** Compiles a whole query, `text`, with the prelude prepended. */
 function compileWhole(
   schemaJson: string,
-  prelude: string,
+  prelude: Prelude,
   text: Mapped,
 ): CompileResult {
-  const whole = joinMapped([fromSource(prelude, PRELUDE), text], "\n");
+  const whole = joinMapped([preludeMapped(prelude), text], "\n");
   return diagnosed(
     () => compile(schemaJson, "duckdb", whole.text),
     () => whole,
@@ -151,8 +157,10 @@ function retraceFilterError(
  * drive the grid's widths, fonts, colors, alignment, prefixes/suffixes,
  * formatters, and which columns are hidden.
  *
- * `prelude` is the Querydown prepended to the query — the `querydown_prelude`
- * setting's value in force, which the caller reads from the store. It's a
+ * `prelude` is the Querydown prepended to the query — the definitions built
+ * from the tables' settings and the `querydown_prelude` setting's value in
+ * force, which the caller reads from the store (a bare string is the latter
+ * alone). It's a
  * parameter rather than a module constant so that compiling stays a pure
  * function of what it's handed: the user can change the prelude mid-session,
  * and a run must use the value as of that run. */
@@ -160,7 +168,7 @@ export function compileSavedQuery(
   def: QueryDefinition,
   presets: Preset[],
   schemaJson: string,
-  prelude: string,
+  prelude: Prelude,
 ): CompileResult {
   const a = assemble(def, presets);
   if (a.kind === "full") return compileWhole(schemaJson, prelude, a.text);
@@ -192,7 +200,7 @@ export function compilePlaylist(
   def: PlaylistDefinition,
   presets: Preset[],
   schemaJson: string,
-  prelude: string,
+  prelude: Prelude,
   options: PlaylistQueryOptions = {},
 ): CompileResult {
   const text = playlistQuerydownMapped(
@@ -247,7 +255,7 @@ export function checkPrelude(
  * problem is traced to `origin` — the preset, or the new one being written. */
 export function checkFragment(
   schemaJson: string,
-  prelude: string,
+  prelude: Prelude,
   baseTable: string,
   section: Section,
   text: string,
@@ -260,6 +268,32 @@ export function checkFragment(
       filter: section === "filter" ? fragment : empty,
       sort: section === "sort" ? fragment : empty,
       display: section === "display" ? fragment : empty,
+    });
+    return null;
+  } catch (err) {
+    return toDiagnostic(err);
+  }
+}
+
+/** The problem with a table's prelude setting, `expression`, if it has one, as
+ * its editor checks it while it's typed in: compiled into the definitions of a
+ * query that uses it (see `settingCheck`), after `prelude`. The problem is
+ * traced to the setting's editor. */
+export function checkSetting(
+  schemaJson: string,
+  tables: readonly SchemaTable[],
+  table: string,
+  setting: PreludeSetting,
+  expression: string,
+  prelude: Prelude,
+): QueryDiagnostic | null {
+  const check = settingCheck(tables, table, setting, expression, prelude);
+  const empty = unmapped("");
+  try {
+    compileSections(schemaJson, check.base, check.definitions, {
+      filter: unmapped(check.filter),
+      sort: empty,
+      display: empty,
     });
     return null;
   } catch (err) {

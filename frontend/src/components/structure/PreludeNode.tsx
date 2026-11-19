@@ -3,7 +3,7 @@ import { Icons } from "../../icons";
 import { checkPrelude } from "../../query/compile";
 import { PRELUDE_ITEM } from "../../query/structure";
 import { SETTINGS } from "../../state/settings";
-import { selectPrelude } from "../../stores/app";
+import { selectUserPrelude } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import DiagnosticMessage, {
   diagnosticPlace,
@@ -34,7 +34,7 @@ const TOOLBAR_BUTTON =
 
 /** The prelude's editor and its toolbar. Mounted only while the item is open. */
 function PreludeEditor(): JSX.Element {
-  const value = useApp(selectPrelude);
+  const value = useApp(selectUserPrelude);
   const draft = useApp((s) => s.preludeDraft);
   const { editPrelude, savePrelude } = useAppActions();
   const text = draft ?? value;

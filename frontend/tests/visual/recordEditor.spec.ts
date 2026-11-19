@@ -1712,6 +1712,41 @@ test("the pencil on a NULL linked field opens the picker", async ({ page }) => {
   await expect(embeddedRecords(editor).nth(1)).toContainText("Lemonade");
 });
 
+test("the picker's sorting and display are the table's, for the next picker on it", async ({
+  page,
+}) => {
+  const writes: unknown[] = [];
+  page.on("request", (request) => {
+    if (!request.url().endsWith("/api/rpc")) return;
+    const body = request.postDataJSON() as { method: string; params: unknown };
+    if (body.method === "metadata.table.set_querydown")
+      writes.push(body.params);
+  });
+  await openGrid(page);
+  await openEditor(page);
+  const editor = editorPanel(page);
+
+  await formItem(editor, "r:album").dblclick();
+  await picker(page).getByRole("button", { name: "Display" }).click();
+  const display = picker(page).getByPlaceholder("Display", { exact: true });
+  await display.fill("$title");
+  // Written as the picker goes, without waiting for the app to go quiet.
+  await picker(page)
+    .getByRole("button", { name: "Close record picker" })
+    .click();
+  await expect(picker(page)).toBeHidden();
+  await expect
+    .poll(() => writes)
+    .toEqual([
+      { tableName: "album", setting: "recordPickerDisplay", text: "$title" },
+    ]);
+
+  // The next picker on albums opens with it.
+  await formItem(editor, "r:album").dblclick();
+  await picker(page).getByRole("button", { name: "Display" }).click();
+  await expect(display).toHaveText("$title");
+});
+
 test("double-clicking a linked field's label opens the picker, filled or not", async ({
   page,
 }) => {

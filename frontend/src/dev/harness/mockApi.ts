@@ -74,6 +74,7 @@ function rpcResult(method: string, params: unknown): unknown {
     case "keybinding.list":
     case "setting.list":
     case "metadata.field.list":
+    case "metadata.table.list":
       return [];
     case "table.summarize":
       return TABLE_SUMMARIES_FIXTURE;

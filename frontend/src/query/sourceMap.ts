@@ -10,6 +10,7 @@
 // preset) is left unmapped.
 
 import type { Section } from "./definition";
+import type { PreludeSetting } from "./tableSettings";
 
 /** An editor Querydown text comes from. */
 export type SourceOrigin =
@@ -19,6 +20,9 @@ export type SourceOrigin =
   | { kind: "preset"; id: string; section: Section }
   /** The `querydown_prelude` setting. */
   | { kind: "prelude" }
+  /** A table's setting the app builds into the prelude, ahead of the user's
+   * (`tableSettings.ts`). */
+  | { kind: "tableSetting"; table: string; setting: PreludeSetting }
   /** A full-Querydown query's text. */
   | { kind: "full" };
 
@@ -149,6 +153,9 @@ export function sameOrigin(
     return a.section === b.section;
   if (a.kind === "preset" && b.kind === "preset") {
     return a.id === b.id && a.section === b.section;
+  }
+  if (a.kind === "tableSetting" && b.kind === "tableSetting") {
+    return a.table === b.table && a.setting === b.setting;
   }
   return true;
 }

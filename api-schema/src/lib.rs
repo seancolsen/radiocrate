@@ -341,6 +341,70 @@ pub struct MetadataFieldSetSortingParams {
     pub sorting: Option<String>,
 }
 
+/// One row of `metadata.table`: what the user has customized about one table as a
+/// whole. A table with no row is visible, in its default place, and goes by the
+/// app's defaults for all of its Querydown. See migration 0013.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TableMetadataRow {
+    pub table_name: String,
+    pub visible: bool,
+    pub order: Option<f64>,
+    /// The condition a bare string searches the table's records with.
+    pub default_text_search: Option<String>,
+    /// The condition a link to the table compares a linked record with.
+    pub linked_record_comparison: Option<String>,
+    /// The sorting section of the record picker's query on the table.
+    pub record_picker_sorting: Option<String>,
+    /// The display section of that query.
+    pub record_picker_display: Option<String>,
+}
+
+/// Params for `metadata.table.set_visible`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataTableSetVisibleParams {
+    pub table_name: String,
+    pub visible: bool,
+}
+
+/// A table's new sort key, within one `metadata.table.set_order` call.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TableOrder {
+    pub table_name: String,
+    pub order: f64,
+}
+
+/// Params for `metadata.table.set_order`: every sort key that changes because of
+/// one rearrangement, applied in one transaction.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataTableSetOrderParams {
+    pub orders: Vec<TableOrder>,
+}
+
+/// Which of a table's Querydown columns of `metadata.table` a
+/// [`MetadataTableSetQuerydownParams`] sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum TableQuerydownSetting {
+    DefaultTextSearch,
+    LinkedRecordComparison,
+    RecordPickerSorting,
+    RecordPickerDisplay,
+}
+
+/// Params for `metadata.table.set_querydown`. `None` goes back to the app's
+/// default.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataTableSetQuerydownParams {
+    pub table_name: String,
+    pub setting: TableQuerydownSetting,
+    pub text: Option<String>,
+}
+
 /// One column of a [`TableSummary`]: what `DuckDB`'s `SUMMARIZE` counts in it. Its
 /// type isn't repeated here: introspection has it, under the name the schema
 /// gives it rather than `SUMMARIZE`'s spelled-out one (an enum's every value).
@@ -545,6 +609,30 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "metadata.table.list",
+        func: "metadataTableList",
+        params: None,
+        result: "TableMetadataRow[]",
+    },
+    Method {
+        wire: "metadata.table.set_visible",
+        func: "metadataTableSetVisible",
+        params: Some("MetadataTableSetVisibleParams"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.table.set_order",
+        func: "metadataTableSetOrder",
+        params: Some("MetadataTableSetOrderParams"),
+        result: "null",
+    },
+    Method {
+        wire: "metadata.table.set_querydown",
+        func: "metadataTableSetQuerydown",
+        params: Some("MetadataTableSetQuerydownParams"),
+        result: "null",
+    },
+    Method {
         wire: "table.summarize",
         func: "tableSummarize",
         params: None,
@@ -610,6 +698,12 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", MetadataFieldSetOrderParams::decl(&cfg)),
         format!("export {}", MetadataFieldSetDisplayParams::decl(&cfg)),
         format!("export {}", MetadataFieldSetSortingParams::decl(&cfg)),
+        format!("export {}", TableMetadataRow::decl(&cfg)),
+        format!("export {}", MetadataTableSetVisibleParams::decl(&cfg)),
+        format!("export {}", TableOrder::decl(&cfg)),
+        format!("export {}", MetadataTableSetOrderParams::decl(&cfg)),
+        format!("export {}", TableQuerydownSetting::decl(&cfg)),
+        format!("export {}", MetadataTableSetQuerydownParams::decl(&cfg)),
         format!("export {}", ColumnSummary::decl(&cfg)),
         format!("export {}", TableSummary::decl(&cfg)),
     ]

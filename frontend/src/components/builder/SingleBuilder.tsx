@@ -6,7 +6,7 @@ import {
   selectEditorDiagnostic,
   selectPageBase,
   selectPageSections,
-  selectPrelude,
+  selectPreludeText,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -27,7 +27,7 @@ export default function SingleBuilder(props: {
     (s) => selectPageSections(s, props.tabId)?.[props.section],
   );
   const base = useApp((s) => selectPageBase(s, props.tabId));
-  const prelude = useApp(selectPrelude);
+  const prelude = useApp(selectPreludeText);
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, props.section),
   );

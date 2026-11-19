@@ -13,6 +13,10 @@
 //           <preset>            preset:<id>
 //         Sorting presets       table:<name>/query/sort
 //         Display presets       table:<name>/query/display
+//         Text search           table:<name>/query/defaultTextSearch
+//         Linked record comparison
+//                               table:<name>/query/linkedRecordComparison
+//         Record picker         table:<name>/query/recordPicker
 //   Querydown prelude           prelude
 //
 // An id is only ever compared whole, never taken apart, so a table named with a
@@ -26,6 +30,7 @@ import { fieldRefKey, orderFields, type TableMetadata } from "./fieldMetadata";
 import { hasQueryEditor } from "./fieldQuery";
 import { buildFormFields, type FormField } from "./recordForm";
 import type { SchemaTable } from "./schema";
+import type { PreludeSetting } from "./tableSettings";
 
 /** The "Tables" item, at the top of the tree. */
 export const TABLES_ITEM = "tables";
@@ -48,6 +53,28 @@ export const presetSectionItemId = (table: string, section: Section): string =>
   `${querySettingsItemId(table)}/${section}`;
 
 export const presetItemId = (presetId: string): string => `preset:${presetId}`;
+
+/** A table's settings under "Query settings" that aren't presets: its two
+ * prelude settings, and its record picker. */
+export type TableSettingItem = PreludeSetting | "recordPicker";
+
+export const tableSettingItemId = (
+  table: string,
+  item: TableSettingItem,
+): string => `${querySettingsItemId(table)}/${item}`;
+
+/** The items to open for one of `table`'s settings to be on show. */
+export function tableSettingPath(
+  table: string,
+  item: TableSettingItem,
+): string[] {
+  return [
+    TABLES_ITEM,
+    tableItemId(table),
+    querySettingsItemId(table),
+    tableSettingItemId(table, item),
+  ];
+}
 
 /** The items to open for `table`'s presets to be on show: all of them down to
  * `section`'s list, or down to "Query settings" without one. */

@@ -9,6 +9,7 @@ import {
   querySettingsItemId,
 } from "../../query/structure";
 import { useApp, useAppActions } from "../../stores/react";
+import { PRELUDE_SETTINGS } from "../../query/tableSettings";
 import PresetRow from "../builder/PresetRow";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
@@ -19,9 +20,10 @@ import {
   TreeNode,
   useTreeRowProps,
 } from "./Tree";
+import { PreludeSettingNode, RecordPickerNode } from "./TableSettingNodes";
 
 // A table's query settings on the Data structure page: its presets, a list for
-// each section of a query. A preset is the same row, with the same editor, as in
+// each section of a query, then its other settings (`TableSettingNodes.tsx`). A preset is the same row, with the same editor, as in
 // a query's builder (and the same preset, so a change made in one shows in the
 // other), and any number can be open; its ⋮ menu duplicates or deletes it. Each
 // list's "+" starts a new preset, unsaved, at the top of it.
@@ -135,10 +137,15 @@ function PresetSectionNode(props: {
   );
 }
 
-/** A table's "Query settings": its presets, by section. */
+/** A table's "Query settings": its presets, by section, and — for a table the
+ * database has — its text search, its linked record comparison and its record
+ * picker (`TableSettingNodes.tsx`). */
 export function QuerySettingsNode(props: {
   table: string;
   sections: readonly PresetSectionGroup[];
+  /** Whether the database has the table: one it hasn't is listed for its
+   * presets alone. */
+  inSchema: boolean;
 }): JSX.Element {
   return (
     <TreeNode
@@ -159,6 +166,15 @@ export function QuerySettingsNode(props: {
           presets={group.presets}
         />
       ))}
+      {props.inSchema &&
+        PRELUDE_SETTINGS.map((setting) => (
+          <PreludeSettingNode
+            key={setting}
+            table={props.table}
+            setting={setting}
+          />
+        ))}
+      {props.inSchema && <RecordPickerNode table={props.table} />}
     </TreeNode>
   );
 }

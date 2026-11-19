@@ -17,10 +17,13 @@ export interface FieldDropTarget {
  * around it.
  *
  * `listRef` is the element whose direct children are the rows (each marked
- * `data-field-row`, in `keys` order). */
+ * `data-field-row`, or `rowAttribute`, in `keys` order). The Data structure
+ * page's list of tables is rearranged the same way. */
 export function useFieldDrag(opts: {
   listRef: RefObject<HTMLElement | null>;
   keys: readonly string[];
+  /** The attribute marking a row, `data-field-row` unless said otherwise. */
+  rowAttribute?: string;
   /** Makes the drop; returns whether anything actually moved. */
   onDrop: (key: string, target: FieldDropTarget) => boolean;
   /** A touch held on the label and let go without moving it — the touch
@@ -28,6 +31,7 @@ export function useFieldDrag(opts: {
   onHold: (key: string, x: number, y: number) => void;
 }) {
   const { listRef, keys, onDrop, onHold } = opts;
+  const rowAttribute = opts.rowAttribute ?? "data-field-row";
 
   const locate = (
     key: string,
@@ -38,7 +42,7 @@ export function useFieldDrag(opts: {
     const list = listRef.current;
     if (!list) return none;
     const rows = Array.from(list.children).filter((el) =>
-      el.hasAttribute("data-field-row"),
+      el.hasAttribute(rowAttribute),
     );
     if (rows.length !== keys.length) return none;
 

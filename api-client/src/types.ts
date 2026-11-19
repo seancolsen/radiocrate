@@ -106,6 +106,34 @@ export type MetadataFieldSetDisplayParams = { tableName: string, field: FieldRef
 
 export type MetadataFieldSetSortingParams = { tableName: string, field: FieldRef, sorting: string | null, };
 
+export type TableMetadataRow = { tableName: string, visible: boolean, order: number | null, 
+/**
+ * The condition a bare string searches the table's records with.
+ */
+defaultTextSearch: string | null, 
+/**
+ * The condition a link to the table compares a linked record with.
+ */
+linkedRecordComparison: string | null, 
+/**
+ * The sorting section of the record picker's query on the table.
+ */
+recordPickerSorting: string | null, 
+/**
+ * The display section of that query.
+ */
+recordPickerDisplay: string | null, };
+
+export type MetadataTableSetVisibleParams = { tableName: string, visible: boolean, };
+
+export type TableOrder = { tableName: string, order: number, };
+
+export type MetadataTableSetOrderParams = { orders: Array<TableOrder>, };
+
+export type TableQuerydownSetting = "defaultTextSearch" | "linkedRecordComparison" | "recordPickerSorting" | "recordPickerDisplay";
+
+export type MetadataTableSetQuerydownParams = { tableName: string, setting: TableQuerydownSetting, text: string | null, };
+
 export type ColumnSummary = { name: string, 
 /**
  * How many different values the column holds, not counting NULL. An

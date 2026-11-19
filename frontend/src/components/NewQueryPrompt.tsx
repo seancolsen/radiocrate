@@ -1,4 +1,5 @@
-import type { JSX } from "react";
+import { useMemo, type JSX } from "react";
+import { listedTables } from "../query/tableSettings";
 import { selectQueryTab } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 
@@ -11,12 +12,18 @@ export default function NewQueryPrompt(props: { tabId: string }): JSX.Element {
   const base = useApp(
     (s) => selectQueryTab(s, props.tabId)?.live.base.trim() ?? "",
   );
+  const settings = useApp((s) => s.tableSettings.data);
   const { setBase, runQuery } = useAppActions();
   const selectId = `new-query-base-${props.tabId}`;
-  // Until the schema loads, the base the query already has is the only choice.
-  const names = tables.some((t) => t.name === base)
-    ? tables.map((t) => t.name)
-    : [base, ...tables.map((t) => t.name)];
+  // The tables the user hasn't hidden, in their order — and the base the query
+  // already has, hidden or not, which until the schema loads is the only
+  // choice.
+  const names = useMemo(() => {
+    const listed = listedTables(tables, settings, { keep: base }).map(
+      (t) => t.name,
+    );
+    return listed.includes(base) ? listed : [base, ...listed];
+  }, [tables, settings, base]);
 
   return (
     <div

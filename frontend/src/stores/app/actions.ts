@@ -27,6 +27,10 @@ import {
   metadataFieldSetOrder,
   metadataFieldSetSorting,
   metadataFieldSetVisible,
+  metadataTableList,
+  metadataTableSetOrder,
+  metadataTableSetQuerydown,
+  metadataTableSetVisible,
   type FieldRef,
   type DmlOperation,
   type DmlResult,
@@ -146,6 +150,7 @@ import {
   PRELUDE_ITEM,
   presetItemId,
   presetSectionPath,
+  tableSettingPath,
 } from "../../query/structure";
 import {
   DIAGNOSTIC_SETTLE_MS,
@@ -200,6 +205,15 @@ import {
   groupFieldMetadata,
   type EmbedSection,
 } from "../../query/fieldMetadata";
+import {
+  anyTableHidden,
+  defaultTableSettings,
+  groupTableSettings,
+  QUERYDOWN_SETTINGS,
+  tableMoveOrders,
+  type PreludeSetting,
+  type QuerydownSetting,
+} from "../../query/tableSettings";
 import {
   analyzeColumnSources,
   recordKeyColumns,
@@ -257,6 +271,7 @@ import {
   selectPageBase,
   selectPageTab,
   selectPrelude,
+  selectUserPrelude,
   selectQueryTab,
   selectRowContext,
   selectRowForRecord,
@@ -438,6 +453,38 @@ export interface AppActions {
   ) => void;
   /** Shows the hidden fields in every record editor, or hides them again. */
   setShowHiddenFields: (show: boolean) => void;
+
+  /** Loads what the user has customized about each table as a whole. */
+  loadTableSettings: () => Promise<void>;
+  /** Hides a table from the app's lists of tables, or un-hides it. Shows at
+   * once; the write follows. */
+  setTableHidden: (table: string, hidden: boolean) => void;
+  /** Moves a table between the two tables shown just above and just below
+   * where it was dropped (`undefined` at an edge), writing as few sort keys as
+   * it can (`tableMoveOrders`). `tables` is every table the list could show,
+   * hidden ones included. Shows at once; the write follows. Returns whether the
+   * table moved. */
+  moveTable: (
+    tables: readonly string[],
+    table: string,
+    above: string | undefined,
+    below: string | undefined,
+  ) => boolean;
+  /** Sets one of a table's Querydown settings; null goes back to the app's
+   * default. Shows at once — a prelude setting in every query compiled from
+   * then on. The write waits for the app to go quiet, as a query's does (open
+   * pages then run again, under the new prelude) — except null, which is the
+   * user finishing, not a keystroke, and goes straight out. */
+  setTableQuerydown: (
+    table: string,
+    setting: QuerydownSetting,
+    text: string | null,
+  ) => void;
+  /** Sends a write `setTableQuerydown` is holding back, the user having left
+   * its editor. */
+  flushTableQuerydown: (table: string, setting: QuerydownSetting) => void;
+  /** Lists the hidden tables on the Data structure page, or stops. */
+  setShowHiddenTables: (show: boolean) => void;
 
   /** Loads every table's contextual queries. */
   loadContextualQueries: () => Promise<void>;
@@ -1136,8 +1183,12 @@ export interface AppActions {
 }
 
 /** What `openStructureTab` opens the tree down to: a table's presets (all three
- * sections, or one of them), or the Querydown prelude's editor. */
-export type StructureReveal = { table: string; section?: Section } | "prelude";
+ * sections, or one of them), the editor of one of a table's prelude settings,
+ * or the Querydown prelude's editor. */
+export type StructureReveal =
+  | { table: string; section?: Section }
+  | { table: string; setting: PreludeSetting }
+  | "prelude";
 
 /** How long a confirmation toast stays on screen. */
 export const TOAST_MS = 4000;
@@ -3357,6 +3408,34 @@ export function createAppActions(
       s.contextualQueries.data = next;
     });
 
+  // Table settings writes go out one at a time too.
+  let tableSettingsWrites: Promise<unknown> = Promise.resolve();
+  const writeTableSettings = (write: () => Promise<unknown>) => {
+    tableSettingsWrites = tableSettingsWrites.then(write).catch((err) => {
+      // As a field metadata write's failure: what's stored goes back on
+      // screen.
+      console.error("table settings write failed", err);
+      return actions.loadTableSettings();
+    });
+    return tableSettingsWrites;
+  };
+  const tableQuerydownSaveKey = (table: string, setting: QuerydownSetting) =>
+    `table-querydown\n${table}\n${setting}`;
+
+  /** Runs every open page again whose rows were compiled under what's just
+   * changed — a setting the compiler is handed. A pristine query has no rows
+   * to be stale. */
+  const rerunOpenPages = () => {
+    for (const t of get().tabs) {
+      if (
+        (t.kind === "query" || t.kind === "playlist") &&
+        !selectIsPristine(get(), t.id)
+      ) {
+        runEdited(t.id);
+      }
+    }
+  };
+
   const fieldQuerydownSaveKey = (
     table: string,
     field: FieldRef,
@@ -3511,6 +3590,91 @@ export function createAppActions(
     setShowHiddenFields: (show) =>
       set((s) => {
         s.showHiddenFields = show;
+      }),
+
+    loadTableSettings: async () => {
+      try {
+        const rows = await metadataTableList();
+        set((s) => {
+          // A setting still waiting to be written stays on screen.
+          const local = s.tableSettings.data;
+          const data = { ...groupTableSettings(rows ?? []) };
+          for (const [table, settings] of Object.entries(local)) {
+            for (const setting of QUERYDOWN_SETTINGS) {
+              if (!saves.has(tableQuerydownSaveKey(table, setting))) continue;
+              (data[table] ??= defaultTableSettings())[setting] =
+                settings[setting];
+            }
+          }
+          s.tableSettings = { status: "ready", data };
+        });
+      } catch (err) {
+        // Every table is listed, in name order, with the app's defaults.
+        console.error("table settings list failed", err);
+        set((s) => {
+          s.tableSettings.status = "error";
+        });
+      }
+    },
+    setTableHidden: (table, hidden) => {
+      set((s) => {
+        (s.tableSettings.data[table] ??= defaultTableSettings()).visible =
+          !hidden;
+        // As for fields: with nothing left hidden, the next table hidden goes
+        // away rather than staying up, dimmed.
+        if (!anyTableHidden(s.tableSettings.data)) s.showHiddenTables = false;
+      });
+      void writeTableSettings(() =>
+        metadataTableSetVisible({ tableName: table, visible: !hidden }),
+      );
+    },
+    moveTable: (tables, table, above, below) => {
+      const orders = tableMoveOrders(
+        tables,
+        get().tableSettings.data,
+        table,
+        above,
+        below,
+      );
+      if (orders.length === 0) return false;
+      set((s) => {
+        for (const { tableName, order } of orders) {
+          (s.tableSettings.data[tableName] ??= defaultTableSettings()).order =
+            order;
+        }
+      });
+      void writeTableSettings(() => metadataTableSetOrder({ orders }));
+      return true;
+    },
+    setTableQuerydown: (table, setting, text) => {
+      if ((get().tableSettings.data[table]?.[setting] ?? null) === text) return;
+      set((s) => {
+        (s.tableSettings.data[table] ??= defaultTableSettings())[setting] =
+          text;
+      });
+      const key = tableQuerydownSaveKey(table, setting);
+      const prelude =
+        setting === "defaultTextSearch" || setting === "linkedRecordComparison";
+      saves.defer(key, () => {
+        // What's written is what's on screen when it goes out.
+        const latest = get().tableSettings.data[table]?.[setting] ?? null;
+        // The rows on screen were compiled under the prelude before it.
+        if (prelude) rerunOpenPages();
+        return writeTableSettings(() =>
+          metadataTableSetQuerydown({
+            tableName: table,
+            setting,
+            text: latest,
+          }),
+        );
+      });
+      if (text === null) saves.flush(key);
+    },
+    flushTableQuerydown: (table, setting) =>
+      saves.flush(tableQuerydownSaveKey(table, setting)),
+    setShowHiddenTables: (show) =>
+      set((s) => {
+        s.showHiddenTables = show;
       }),
 
     loadContextualQueries: async () => {
@@ -4613,6 +4777,11 @@ export function createAppActions(
       if (!origin) return;
       if (origin.kind === "prelude") {
         actions.openStructureTab("prelude");
+      } else if (origin.kind === "tableSetting") {
+        actions.openStructureTab({
+          table: origin.table,
+          setting: origin.setting,
+        });
       } else if (origin.kind === "full") {
         // There's only the one editor; any section's focus request opens it.
         actions.focusBuilderSection(tabId, "filter");
@@ -5093,7 +5262,9 @@ export function createAppActions(
         const path =
           reveal === "prelude"
             ? [PRELUDE_ITEM]
-            : presetSectionPath(reveal.table, reveal.section);
+            : "setting" in reveal
+              ? tableSettingPath(reveal.table, reveal.setting)
+              : presetSectionPath(reveal.table, reveal.section);
         const m = s.structure;
         for (const item of path) m.expanded[item] = true;
         m.reveal = path[path.length - 1];
@@ -5144,6 +5315,7 @@ export function createAppActions(
     },
     refreshStructure: () => {
       void actions.loadSchema();
+      void actions.loadTableSettings();
       void actions.loadTableSummaries();
     },
     toggleManagedPreset: (id) =>
@@ -5357,18 +5529,10 @@ export function createAppActions(
       // Every setting so far feeds the compiler, and the rows on screen were
       // compiled under the old value — so they're now stale. Re-run each open
       // page rather than leave results that no longer answer what they claim.
-      // A pristine query has no rows to be stale.
-      for (const t of get().tabs) {
-        if (
-          (t.kind === "query" || t.kind === "playlist") &&
-          !selectIsPristine(get(), t.id)
-        ) {
-          runEdited(t.id);
-        }
-      }
+      rerunOpenPages();
     },
     editPrelude: (text) => {
-      const draft = text === selectPrelude(get()) ? null : text;
+      const draft = text === selectUserPrelude(get()) ? null : text;
       set((s) => {
         s.preludeDraft = draft;
       });

@@ -25,6 +25,8 @@ import { usePlacement } from "./useMenu";
 export default function HelpPopover(props: {
   label: string;
   align?: "start" | "end";
+  /** The button's size, as `IconButton`'s. */
+  size?: "sm";
   children: ReactNode;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -35,6 +37,7 @@ export default function HelpPopover(props: {
         ref={buttonRef}
         icon={Icons.Help}
         label={props.label}
+        size={props.size}
         tooltipAlign={props.align}
         active={open}
         onClick={() => setOpen((o) => !o)}

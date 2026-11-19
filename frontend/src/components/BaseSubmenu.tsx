@@ -1,6 +1,7 @@
-import type { JSX } from "react";
+import { useMemo, type JSX } from "react";
 import { Icons } from "../icons";
 import type { SchemaTable } from "../query/schema";
+import { listedTables } from "../query/tableSettings";
 import { selectIsFullQuery, selectQueryTab } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import {
@@ -10,8 +11,9 @@ import {
   MenuToggleItem,
 } from "./ui/Menu";
 
-/** The wrench menu's "Base ▸" submenu: every table in the schema as an exclusive
- * choice of what the query is built on, then — below a separator — the "Full
+/** The wrench menu's "Base ▸" submenu: every table in the schema the user
+ * hasn't hidden, in the order they've arranged them, as an exclusive choice of
+ * what the query is built on, then — below a separator — the "Full
  * Querydown" escape hatch, which flattens the query into one hand-written
  * Querydown query.
  *
@@ -25,12 +27,18 @@ export default function BaseSubmenu(props: { tabId: string }): JSX.Element {
     (s) => selectQueryTab(s, props.tabId)?.live.base.trim() ?? "",
   );
   const fullMode = useApp((s) => selectIsFullQuery(s, props.tabId));
+  const settings = useApp((s) => s.tableSettings.data);
   const { setBase, convertToFull } = useAppActions();
+  // A hidden base is still listed, checked, while the query is on it.
+  const listed = useMemo(
+    () => listedTables(tables, settings, { keep: fullMode ? null : base }),
+    [tables, settings, fullMode, base],
+  );
 
   return (
     <MenuSubmenu icon={Icons.Base} label="Base">
       <BaseTableItems
-        tables={tables}
+        tables={listed}
         base={fullMode ? null : base}
         onChoose={(table) => setBase(props.tabId, table)}
       />

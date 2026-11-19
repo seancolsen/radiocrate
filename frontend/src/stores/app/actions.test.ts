@@ -22,6 +22,7 @@ import {
   PRELUDE_ITEM,
   presetItemId,
   presetSectionPath,
+  tableSettingPath,
 } from "../../query/structure";
 import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
 import { PLAYLIST_SOURCE } from "../../dev/fixtures";
@@ -40,6 +41,10 @@ vi.mock("api-client", async (importOriginal) => {
     metadataFieldSetOrder: vi.fn(() => Promise.resolve(null)),
     metadataFieldSetDisplay: vi.fn(() => Promise.resolve(null)),
     metadataFieldSetSorting: vi.fn(() => Promise.resolve(null)),
+    metadataTableList: vi.fn(() => Promise.resolve([])),
+    metadataTableSetVisible: vi.fn(() => Promise.resolve(null)),
+    metadataTableSetOrder: vi.fn(() => Promise.resolve(null)),
+    metadataTableSetQuerydown: vi.fn(() => Promise.resolve(null)),
     settingDelete: vi.fn(() => Promise.resolve(null)),
     dml: vi.fn(() => Promise.resolve({})),
     folderAdd: vi.fn(() => Promise.resolve(null)),
@@ -128,6 +133,10 @@ import {
   metadataFieldSetDisplay,
   metadataFieldSetSorting,
   metadataFieldSetVisible,
+  metadataTableList,
+  metadataTableSetOrder,
+  metadataTableSetQuerydown,
+  metadataTableSetVisible,
   type FieldRef,
   dml,
   folderAdd,
@@ -177,7 +186,10 @@ import {
   selectRowContext,
   selectSortApplied,
   selectFieldQuerydown,
+  selectPrelude,
   selectTableMetadata,
+  selectTableQuerydown,
+  selectTableSettings,
 } from "./selectors";
 
 function openQueryTab(bundle: AppStoreBundle, id: string) {
@@ -5587,5 +5599,154 @@ describe("the play queue", () => {
     expect(player.queue).toEqual(["b1", "b2", "b3"]);
     player.skipNext();
     expect(playing()).toEqual(["b1", "b", 0]);
+  });
+});
+
+describe("table settings", () => {
+  let bundle: AppStoreBundle;
+  beforeEach(() => {
+    vi.mocked(metadataTableList).mockClear();
+    vi.mocked(metadataTableSetVisible).mockClear();
+    vi.mocked(metadataTableSetOrder).mockClear();
+    vi.mocked(metadataTableSetQuerydown).mockClear();
+    bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+  });
+  afterEach(() => bundle.dispose());
+  const state = () => bundle.store.getState();
+  /** Lets the queued writes reach the mocks. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
+
+  it("loads rows by table", async () => {
+    vi.mocked(metadataTableList).mockResolvedValueOnce([
+      {
+        tableName: "role",
+        visible: false,
+        order: 3,
+        defaultTextSearch: null,
+        linkedRecordComparison: "name:@x",
+        recordPickerSorting: null,
+        recordPickerDisplay: null,
+      },
+    ]);
+    await bundle.actions.loadTableSettings();
+    expect(state().tableSettings.status).toBe("ready");
+    expect(selectTableSettings(state(), "role")).toMatchObject({
+      visible: false,
+      order: 3,
+      linkedRecordComparison: "name:@x",
+    });
+    expect(selectTableSettings(state(), "track").visible).toBe(true);
+  });
+
+  it("hides a table at once, then writes it, and stops showing hidden ones once none are", async () => {
+    bundle.actions.setTableHidden("role", true);
+    bundle.actions.setShowHiddenTables(true);
+    expect(selectTableSettings(state(), "role").visible).toBe(false);
+    await settle();
+    expect(metadataTableSetVisible).toHaveBeenCalledWith({
+      tableName: "role",
+      visible: false,
+    });
+    bundle.actions.setTableHidden("role", false);
+    expect(state().showHiddenTables).toBe(false);
+  });
+
+  it("moves a table, writing every key the first time", async () => {
+    const tables = ["album", "artist", "track"];
+    expect(bundle.actions.moveTable(tables, "track", undefined, "album")).toBe(
+      true,
+    );
+    expect(selectTableSettings(state(), "track").order).toBe(1);
+    expect(selectTableSettings(state(), "artist").order).toBe(3);
+    await settle();
+    expect(metadataTableSetOrder).toHaveBeenCalledTimes(1);
+    expect(bundle.actions.moveTable(tables, "track", undefined, "album")).toBe(
+      false,
+    );
+  });
+
+  describe("Querydown settings", () => {
+    const IDLE = 5000;
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("show at once, and write the last of a burst once the app goes quiet", async () => {
+      const { setTableQuerydown } = bundle.actions;
+      setTableQuerydown("track", "defaultTextSearch", "title:");
+      setTableQuerydown("track", "defaultTextSearch", "title:@x");
+      expect(selectTableQuerydown(state(), "track", "defaultTextSearch")).toBe(
+        "title:@x",
+      );
+      await vi.advanceTimersByTimeAsync(IDLE - 1);
+      expect(metadataTableSetQuerydown).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(metadataTableSetQuerydown).toHaveBeenCalledTimes(1);
+      expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
+        tableName: "track",
+        setting: "defaultTextSearch",
+        text: "title:@x",
+      });
+    });
+
+    it("go into the prelude at once, ahead of the user's", () => {
+      bundle.actions.setTableQuerydown(
+        "album",
+        "linkedRecordComparison",
+        "year:@x",
+      );
+      const prelude = selectPrelude(state()).text;
+      expect(prelude).toContain(
+        "#album.__querydown_linked_record_comparison:@x = year:@x",
+      );
+      expect(prelude.endsWith(SETTINGS.querydown_prelude.default)).toBe(true);
+      // The same prelude, for as long as nothing it's built from changes.
+      expect(selectPrelude(state())).toBe(selectPrelude(state()));
+    });
+
+    it("restore the default straight away, ahead of any edit held back", async () => {
+      const { setTableQuerydown } = bundle.actions;
+      setTableQuerydown("track", "recordPickerDisplay", "$title");
+      setTableQuerydown("track", "recordPickerDisplay", null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataTableSetQuerydown).toHaveBeenCalledTimes(1);
+      expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
+        tableName: "track",
+        setting: "recordPickerDisplay",
+        text: null,
+      });
+    });
+
+    it("send what's held back when the user leaves the editor", async () => {
+      bundle.actions.setTableQuerydown("track", "recordPickerSorting", "");
+      bundle.actions.flushTableQuerydown("track", "recordPickerSorting");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
+        tableName: "track",
+        setting: "recordPickerSorting",
+        text: "",
+      });
+    });
+
+    it("keep an edit held back through a reload", async () => {
+      bundle.actions.setTableQuerydown("track", "defaultTextSearch", "a:@x");
+      vi.mocked(metadataTableList).mockResolvedValueOnce([]);
+      await bundle.actions.loadTableSettings();
+      expect(selectTableQuerydown(state(), "track", "defaultTextSearch")).toBe(
+        "a:@x",
+      );
+    });
+  });
+
+  it("opens the Data structure page on a setting", () => {
+    bundle.actions.openStructureTab({
+      table: "track",
+      setting: "defaultTextSearch",
+    });
+    const path = tableSettingPath("track", "defaultTextSearch");
+    for (const item of path) {
+      expect(state().structure.expanded[item]).toBe(true);
+    }
+    expect(state().structure.reveal).toBe(path[path.length - 1]);
   });
 });

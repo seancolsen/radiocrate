@@ -99,6 +99,7 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   void app.actions.loadSchema();
   void app.actions.loadSettings();
   void app.actions.loadFieldMetadata();
+  void app.actions.loadTableSettings();
   void app.actions.loadContextualQueries();
   void commands.actions.loadKeymap();
 

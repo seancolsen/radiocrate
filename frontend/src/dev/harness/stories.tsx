@@ -46,7 +46,12 @@ import {
   presetSectionPath,
   structureFieldId,
   tableItemId,
+  tableSettingPath,
 } from "../../query/structure";
+import {
+  defaultTableSettings,
+  type TableSettings,
+} from "../../query/tableSettings";
 import type { ContextualQuery } from "../../query/contextualQuery";
 import type { AnnotationValue } from "querydown-js";
 import { columnMetadataFromAnnotation } from "../../query/columns";
@@ -322,6 +327,24 @@ function seedTrackFields(stores: Stores): void {
       ),
     };
     s.showHiddenFields = true;
+  });
+}
+
+/** Customizes tables as a story needs them: `settings` for each one named. */
+function seedTableSettings(
+  stores: Stores,
+  settings: Record<string, Partial<TableSettings>>,
+): void {
+  stores.app.store.setState((s) => {
+    s.tableSettings = {
+      status: "ready",
+      data: Object.fromEntries(
+        Object.entries(settings).map(([table, own]) => [
+          table,
+          { ...defaultTableSettings(), ...own },
+        ]),
+      ),
+    };
   });
 }
 
@@ -1606,6 +1629,21 @@ export const STORIES: Record<string, Story> = {
   // As it first opens: "Tables" open on every table of the schema, each closed,
   // with its columns and rows counted, and the prelude closed below them.
   "data-structure/tables": dataStructure({ height: 420 }, []),
+  // The tables as the user has arranged them: `track` and `album` dragged to
+  // the top, and `role` hidden — listed faded, under the pressed "Show hidden
+  // tables".
+  "data-structure/tables-arranged": dataStructure(
+    { height: 420 },
+    [],
+    (stores) => {
+      seedTableSettings(stores, {
+        track: { order: 1 },
+        album: { order: 2 },
+        role: { visible: false },
+      });
+      stores.app.actions.setShowHiddenTables(true);
+    },
+  ),
   // A table's fields: its columns with their types and statistics, the tables
   // referring to it, and a contextual query — `disc_number` and the credits
   // hidden, listed faded under the pressed "Show hidden fields".
@@ -1691,6 +1729,35 @@ export const STORIES: Record<string, Story> = {
       );
       stores.app.actions.duplicatePreset(BY_ARTIST_PRESET_ID);
     },
+  ),
+  // `track`'s text search opened into its editor, at the app's default —
+  // "Reset to default" disabled — and the rest of its query settings closed:
+  // its linked record comparison (built in too), and its record picker.
+  "data-structure/text-search": dataStructure(
+    { height: 520 },
+    tableSettingPath("track", "defaultTextSearch"),
+    (stores) => stores.app.actions.setStructureExpanded(["tables"], true),
+  ),
+  // `album`'s linked record comparison, customized to a column it hasn't got:
+  // the problem under the editor, the column marked in it, and "Customized"
+  // on its row.
+  "data-structure/setting-problem": dataStructure(
+    { height: 420 },
+    tableSettingPath("album", "linkedRecordComparison"),
+    (stores) =>
+      seedTableSettings(stores, {
+        album: { linkedRecordComparison: "titel:@x" },
+      }),
+  ),
+  // `album`'s record picker opened into its editor, on its sorting, with a
+  // display of the user's: "Customized" on its row.
+  "data-structure/record-picker": dataStructure(
+    { height: 420 },
+    tableSettingPath("album", "recordPicker"),
+    (stores) =>
+      seedTableSettings(stores, {
+        album: { recordPickerDisplay: "$title $year" },
+      }),
   ),
   // The Querydown prelude's editor, holding the default value — the state it
   // opens in for anyone who hasn't customized it: Reset to default and Save

@@ -6,6 +6,7 @@ import {
   selectPresetExpanded,
   selectPresetName,
 } from "../stores/app";
+import { PRELUDE_SETTING_LABELS } from "../query/tableSettings";
 import { useApp, useAppActions } from "../stores/react";
 import DiagnosticMessage, {
   diagnosticPlace,
@@ -30,7 +31,13 @@ export default function QueryDiagnosticBar(props: {
   );
   // Whether the editor the problem is in is already on screen.
   const inView = useApp((s) => {
-    if (origin === null || origin.kind === "prelude") return false;
+    if (
+      origin === null ||
+      origin.kind === "prelude" ||
+      origin.kind === "tableSetting"
+    ) {
+      return false;
+    }
     if (origin.kind === "full") return selectFullEditorOpen(s, props.tabId);
     if (selectBuilderSection(s, props.tabId) !== origin.section) return false;
     return (
@@ -42,7 +49,11 @@ export default function QueryDiagnosticBar(props: {
   if (!diagnostic || (origin?.kind === "preset" && inView)) return null;
 
   const action =
-    origin?.kind === "prelude" ? "Edit prelude" : origin && !inView && "Show";
+    origin?.kind === "prelude"
+      ? "Edit prelude"
+      : origin?.kind === "tableSetting"
+        ? `Edit ${PRELUDE_SETTING_LABELS[origin.setting].toLowerCase()}`
+        : origin && !inView && "Show";
 
   return (
     <div

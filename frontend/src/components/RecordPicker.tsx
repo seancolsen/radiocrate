@@ -20,9 +20,11 @@ import { buildResultFromStringRows } from "../query/result";
 // filter section does; the sort and display sections behind the two icon
 // buttons take the same code and open pre-filled with whatever the caller
 // hands in as `initialSort` / `initialDisplay` — in the record editor, that's
-// what the points-based generator picked for this table (see
-// `query/embeddedRecord.ts`), so the results read as the embedded records they
-// are about to become. The user can overrule that choice for one search.
+// what the user last settled on for the table, or until they have, what the
+// points-based generator picked for it (see `query/embeddedRecord.ts`), so the
+// results read as the embedded records they are about to become. What the user
+// changes them to is handed back as they type (`onSortChange` /
+// `onDisplayChange`), for the caller to keep.
 //
 // What it does *not* do is behave like the query page's search: the query runs
 // as the user types rather than on a keystroke, the search box holds one line,
@@ -47,6 +49,10 @@ interface RecordPickerProps {
   /** Querydown the sort / display builders open pre-filled with. */
   initialSort: string;
   initialDisplay: string;
+  /** The user changed the sorting or the display: the record editor keeps it
+   * for the table, for the next picker opened on it. */
+  onSortChange?: (text: string) => void;
+  onDisplayChange?: (text: string) => void;
   /** Runs one picker query. The picker builds the query (it knows its own
    * column order); the caller decides how it reaches a database. */
   runQuery: (query: RecordQuery) => Promise<RecordResult>;
@@ -254,6 +260,15 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
     gridRef.current?.revealRow(index);
   }, [index]);
 
+  const changeSort = (text: string) => {
+    setSort(text);
+    props.onSortChange?.(text);
+  };
+  const changeDisplay = (text: string) => {
+    setDisplay(text);
+    props.onDisplayChange?.(text);
+  };
+
   const toggleSection = (which: "sort" | "display") =>
     setSection((open) => (open === which ? null : which));
 
@@ -305,8 +320,8 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
             value={sort}
             context={{ grammar: "sorting", baseTable: props.table }}
             hint="Sort"
-            onInput={setSort}
-            onClear={() => setSort("")}
+            onInput={changeSort}
+            onClear={() => changeSort("")}
           />
         </div>
       )}
@@ -316,8 +331,8 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
             value={display}
             context={{ grammar: "display", baseTable: props.table }}
             hint="Display"
-            onInput={setDisplay}
-            onClear={() => setDisplay("")}
+            onInput={changeDisplay}
+            onClear={() => changeDisplay("")}
           />
         </div>
       )}

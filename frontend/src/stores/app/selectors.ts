@@ -21,6 +21,14 @@ import {
   type TableMetadata,
 } from "../../query/fieldMetadata";
 import type { ContextualQuery } from "../../query/contextualQuery";
+import type { Mapped } from "../../query/sourceMap";
+import {
+  composePrelude,
+  NO_TABLE_SETTINGS,
+  tablePrelude,
+  type QuerydownSetting,
+  type TableSettings,
+} from "../../query/tableSettings";
 import { rowEntry } from "../../query/playlistEntries";
 import { canRedo, canUndo, hasUnrunEdit } from "../../state/undoHistory";
 import { queuePositions } from "../../state/playQueue";
@@ -459,6 +467,21 @@ export const selectTableMetadata = (
   table: string,
 ): TableMetadata => s.fieldMetadata.data[table] ?? NO_TABLE_METADATA;
 
+/** What's customized about `table` as a whole, or a shared default object for
+ * a table with nothing customized. */
+export const selectTableSettings = (
+  s: AppState,
+  table: string,
+): TableSettings => s.tableSettings.data[table] ?? NO_TABLE_SETTINGS;
+
+/** The Querydown the user has written for one of a table's settings, or null
+ * when it goes by the app's default. */
+export const selectTableQuerydown = (
+  s: AppState,
+  table: string,
+  setting: QuerydownSetting,
+): string | null => s.tableSettings.data[table]?.[setting] ?? null;
+
 /** One contextual query, by id — `undefined` once it's removed. */
 export const selectContextualQuery = (
   s: AppState,
@@ -619,9 +642,45 @@ export const selectPresetsReady = (s: AppState): boolean =>
 export const selectSettingValue = (s: AppState, key: SettingKey): string =>
   settingValue(s.settingOverrides, key);
 
-/** The Querydown prepended to every compiled query, as the user has it. */
-export const selectPrelude = (s: AppState): string =>
+/** The user's Querydown prelude: the `querydown_prelude` setting, which its
+ * editor on the Data structure page edits. */
+export const selectUserPrelude = (s: AppState): string =>
   selectSettingValue(s, "querydown_prelude");
+
+/** The last prelude {@link selectPrelude} built, and what it was built from. */
+let preludeMemo:
+  | {
+      user: string;
+      tables: AppState["schema"]["tables"];
+      settings: AppState["tableSettings"]["data"];
+      prelude: Mapped;
+    }
+  | undefined;
+
+/** The Querydown prepended to every compiled query: the definitions built from
+ * the tables' settings, then the user's prelude, each traced to where it's
+ * edited (`query/tableSettings.ts`). The same reference for as long as what
+ * it's built from stays the same, so it's safe to subscribe to. */
+export function selectPrelude(s: AppState): Mapped {
+  const user = selectUserPrelude(s);
+  const tables = s.schema.tables;
+  const settings = s.tableSettings.data;
+  const memo = preludeMemo;
+  if (
+    memo?.user === user &&
+    memo.tables === tables &&
+    memo.settings === settings
+  ) {
+    return memo.prelude;
+  }
+  const prelude = composePrelude(tablePrelude(tables, settings), user);
+  preludeMemo = { user, tables, settings, prelude };
+  return prelude;
+}
+
+/** {@link selectPrelude}'s text: the definitions a query's editors complete
+ * from. */
+export const selectPreludeText = (s: AppState): string => selectPrelude(s).text;
 
 /** The preset list to run/preview against: the saved presets, and the unsaved
  * ones queries can already run with. Builds a fresh array on every call —

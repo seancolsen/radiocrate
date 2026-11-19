@@ -305,7 +305,11 @@ export type CompileSource =
  * prepended to every query before compilation — unless the user has customized
  * the prelude, in which case theirs is prepended instead. This is the default
  * behind the `querydown_prelude` setting (`state/settings.ts`); nothing outside
- * that catalogue should reach for it. */
+ * that catalogue should reach for it.
+ *
+ * A table's text search and linked record comparison aren't here: they're the
+ * table's settings, which the app builds into definitions of their own ahead of
+ * the prelude (`tableSettings.ts`). */
 export const DEFAULT_PRELUDE = `#track.firstplay = #play.timestamp%min
 #track.lastplay = #play.timestamp%max
 #track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)
@@ -314,12 +318,6 @@ export const DEFAULT_PRELUDE = `#track.firstplay = #play.timestamp%min
 #track.duration = file.duration
 #track.playcount = #play
 #track.number = track_number
-#track.__querydown_default_text_search:@x = [
-  title:@x
-  album.title:@x
-  ++#artist{name:@x}
-  ++#tag{name:@x}
-]
 #track.artist:@x = ++#artist{name:@x}`;
 
 /** Serializes a working definition into the JSON string persisted in the

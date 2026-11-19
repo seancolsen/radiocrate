@@ -35,6 +35,7 @@
 // The module deals only in *reading the row back*; where those cells then go
 // (into the tab's stored result, in place) is the store's business.
 
+import type { Prelude } from "./tableSettings";
 import type { Table } from "apache-arrow";
 import {
   dml,
@@ -90,9 +91,9 @@ interface RowContextCommon {
   presets: Preset[];
   /** The enriched introspection JSON the compiler takes. */
   schemaJson: string;
-  /** The Querydown prelude in force (the `querydown_prelude` setting), so the
-   * re-read compiles against exactly what the displayed rows came from. */
-  prelude: string;
+  /** The Querydown prelude in force (`selectPrelude`), so the re-read compiles
+   * against exactly what the displayed rows came from. */
+  prelude: Prelude;
   /** Every record the row identifies — one per table whose key it carries (what
    * the store's `rowRecords` returns). The base table's entry narrows the query;
    * all of them together find the row again in a whole-query re-run. */

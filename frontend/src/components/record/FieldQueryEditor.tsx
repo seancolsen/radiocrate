@@ -7,6 +7,7 @@ import {
   useCheckContext,
   useSettledDiagnostic,
 } from "../builder/useDiagnostics";
+import HelpPopover from "../ui/HelpPopover";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem } from "../ui/Menu";
 import { Icons, type IconComponent } from "../../icons";
@@ -35,6 +36,7 @@ import {
   type ScalarLinkField,
 } from "../../query/recordForm";
 import { sectionGrammar } from "../../editor/querydownEditor";
+import { listedTables } from "../../query/tableSettings";
 import { selectContextualQuery, selectFieldQuerydown } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 
@@ -122,10 +124,15 @@ const ContextQuerySource = forwardRef<
     (s) => selectContextualQuery(s, field.queryId)?.definition,
   );
   const tables = useApp((s) => s.schema.tables);
-  const listable = useMemo(() => listableTables(tables), [tables]);
+  const settings = useApp((s) => s.tableSettings.data);
   const base = definition?.base ?? field.table;
+  // The tables the user hasn't hidden, in their order, and the query's own.
+  const listable = useMemo(
+    () => listableTables(listedTables(tables, settings, { keep: base.trim() })),
+    [tables, settings, base],
+  );
   const definitions = contextDefinitions(
-    useCheckContext()?.prelude ?? "",
+    useCheckContext()?.prelude.text ?? "",
     props.idValue ?? "",
   );
   // Nothing typed waits on the idle queue once the editor has gone.
@@ -138,6 +145,7 @@ const ContextQuerySource = forwardRef<
     <QuerySectionsView
       ref={ref}
       {...props}
+      subject={field.label}
       sections={queryEditorSections(field)}
       base={base}
       definitions={definitions}
@@ -207,6 +215,7 @@ const EmbedQuerySource = forwardRef<
     <QuerySectionsView
       ref={editorRef}
       {...props}
+      subject={field.label}
       sections={sections}
       section={section}
       base={field.table}
@@ -225,12 +234,20 @@ const EmbedQuerySource = forwardRef<
   );
 });
 
-/** What the editor draws, whichever query is behind it. The text is checked
- * as it's typed, compiled as the section shown of a query on `base` under
- * `definitions`, and a problem with it shows below. */
-const QuerySectionsView = forwardRef<
+/** What the editor draws, whichever query is behind it — a field's, or a
+ * table's record picker's (`structure/TableSettingNodes.tsx`). The text is
+ * checked as it's typed, compiled as the section shown of a query on `base`
+ * under `definitions`, and a problem with it shows below. `subject` names
+ * whose query it is, for the editor's accessible names. */
+export const QuerySectionsView = forwardRef<
   HTMLElement,
-  SourceProps<QueryEditorField> & {
+  {
+    subject: string;
+    section: Section;
+    onSection: (section: Section) => void;
+    onClose?: () => void;
+    onEscape: () => void;
+    refused?: string;
     sections: readonly Section[];
     /** The table the query lists. */
     base: string;
@@ -240,12 +257,15 @@ const QuerySectionsView = forwardRef<
     onChange: (text: string) => void;
     /** Buttons at the toolbar's end, ahead of the "?". */
     tools?: ReactNode;
-    help?: string;
+    /** Help, in a tooltip on a "?" — or, given as more than a string, in a
+     * popover. */
+    help?: ReactNode;
     /** The rows of the ⋮ inside the text, when there are any. */
     inputActions?: ReactNode;
   }
 >(function QuerySectionsView(props, editorRef) {
-  const { field, section, base, definitions, text, onEscape, onClose } = props;
+  const { subject, section, base, definitions, text, onEscape, onClose } =
+    props;
   const schemaJson = useCheckContext()?.schemaJson;
   const latest = useMemo(
     () =>
@@ -265,7 +285,7 @@ const QuerySectionsView = forwardRef<
       <div className="flex items-center gap-0.5 pb-0.5">
         <div
           role="group"
-          aria-label={`Sections of ${field.label}`}
+          aria-label={`Sections of ${subject}`}
           className="flex items-center gap-0.5"
         >
           {props.sections.map((s) => (
@@ -285,7 +305,7 @@ const QuerySectionsView = forwardRef<
             sections. */}
         {onClose && <div className="flex-1" />}
         {props.tools}
-        {props.help !== undefined && (
+        {typeof props.help === "string" ? (
           <IconButton
             icon={Icons.Help}
             label="Help"
@@ -293,6 +313,16 @@ const QuerySectionsView = forwardRef<
             size="sm"
             tooltipAlign={onClose ? "end" : undefined}
           />
+        ) : (
+          props.help !== undefined && (
+            <HelpPopover
+              label="Help"
+              size="sm"
+              align={onClose ? "end" : undefined}
+            >
+              {props.help}
+            </HelpPopover>
+          )
         )}
         {onClose && (
           <IconButton
@@ -308,7 +338,7 @@ const QuerySectionsView = forwardRef<
           // One editor per section, each opening on that section's text.
           key={section}
           ref={editorRef}
-          label={`${place} of ${field.label}`}
+          label={`${place} of ${subject}`}
           value={text}
           context={{
             grammar: sectionGrammar(section),

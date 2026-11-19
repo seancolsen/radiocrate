@@ -17,6 +17,7 @@ import type { Rating } from "../../query/ratings";
 import type { QueryResult } from "../../query/result";
 import type { ContextualQuery } from "../../query/contextualQuery";
 import type { MetadataByTable } from "../../query/fieldMetadata";
+import type { TableSettingsByTable } from "../../query/tableSettings";
 import type { SchemaTable } from "../../query/schema";
 import { loadLog, type LogEntry } from "../../log/log";
 import type { SettingOverrides } from "../../state/settings";
@@ -639,6 +640,11 @@ export interface AppState {
    * (loads via `metadata.field.list`; see `query/fieldMetadata.ts`). Applied as
    * the form renders, so one change reaches every open form on that table. */
   fieldMetadata: ResourceState<MetadataByTable>;
+  /** What the user has customized about each table as a whole — whether it's
+   * listed, where, and its Querydown settings (loads via `metadata.table.list`;
+   * see `query/tableSettings.ts`). The live versions: an edit shows here at
+   * once, and a Querydown setting is written once the app goes quiet. */
+  tableSettings: ResourceState<TableSettingsByTable>;
   /** Every table's contextual queries (`query/contextualQuery.ts`), the live
    * versions: an edit shows here at once and is written once the app goes quiet,
    * as a query's is. Loaded once, as raw SQL. */
@@ -648,6 +654,8 @@ export interface AppState {
    * form, since a form lasts only as long as the selection stays on its
    * records. */
   showHiddenFields: boolean;
+  /** Whether the Data structure page lists the tables the user has hidden. */
+  showHiddenTables: boolean;
   /** The audio-streaming quality preference (persisted, like theme). */
   audioQuality: AudioQualityPref;
   /** The toggles beside the record editor's Find box — match case, whole
@@ -832,8 +840,10 @@ export function initialState(env: AppEnv): AppState {
     schema: { status: "loading", json: undefined, tables: [] },
     settingOverrides: {},
     fieldMetadata: { status: "loading", data: {} },
+    tableSettings: { status: "loading", data: {} },
     contextualQueries: { status: "loading", data: [] },
     showHiddenFields: false,
+    showHiddenTables: false,
     audioQuality: storedAudioQuality(env),
     findOptions: storedFindOptions(env),
     recordSidebarWidth: storedRecordSidebarWidth(env),

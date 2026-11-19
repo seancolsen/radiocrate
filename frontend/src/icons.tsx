@@ -113,6 +113,9 @@ import HigherQuality from "~icons/material-symbols/high-quality";
 import LowerBandwidth from "~icons/material-symbols/data-saver-on";
 import AudioFile from "~icons/material-symbols/audio-file";
 import ProgressActivity from "~icons/material-symbols/progress-activity";
+import TextSearch from "~icons/material-symbols/find-in-page";
+import LinkedComparison from "~icons/material-symbols/compare-arrows";
+import RecordPicker from "~icons/material-symbols/ads-click";
 
 /** What every icon in {@link Icons} is: a component taking ordinary SVG props
  * (`className` chief among them — every call site sizes and colors an icon
@@ -200,6 +203,9 @@ export const Icons = {
   Structure, // the Data structure page: its Settings-menu entry and tab handle
   Tables, // the Data structure page: the list of the database's tables
   Fields, // the Data structure page: a table's fields
+  TextSearch, // the Data structure page: a table's text search
+  LinkedComparison, // the Data structure page: a table's linked record comparison
+  RecordPicker, // the Data structure page: a table's record picker
   About, // Settings footer: "About RadioCrate" (versions + update actions)
   Help, // a "?" help: a tooltip (the prelude's editor) or a popover (the log)
   Log, // the Logging page: its Settings-menu entry and tab handle

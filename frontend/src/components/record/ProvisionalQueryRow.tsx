@@ -1,6 +1,7 @@
-import { useId, useRef, type JSX } from "react";
+import { useId, useMemo, useRef, type JSX } from "react";
 import { Icons } from "../../icons";
 import { listableTables } from "../../query/contextualQuery";
+import { listedTables } from "../../query/tableSettings";
 import { useApp } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { cx } from "../ui/cx";
@@ -30,6 +31,11 @@ export default function ProvisionalQueryRow(props: {
 }): JSX.Element {
   const { name } = props;
   const tables = useApp((s) => s.schema.tables);
+  const settings = useApp((s) => s.tableSettings.data);
+  const choices = useMemo(
+    () => listableTables(listedTables(tables, settings)),
+    [tables, settings],
+  );
   const selectRef = useRef<HTMLSelectElement>(null);
   const selectId = useId();
 
@@ -84,7 +90,7 @@ export default function ProvisionalQueryRow(props: {
         <option value="" disabled>
           Choose a table…
         </option>
-        {listableTables(tables).map((table) => (
+        {choices.map((table) => (
           <option key={table.name} value={table.name}>
             {table.name}
           </option>

@@ -9,6 +9,7 @@ import {
   querydownLoaded,
   subscribeQuerydownLoaded,
 } from "../../query/querydown";
+import type { Mapped } from "../../query/sourceMap";
 import { selectPrelude } from "../../stores/app";
 import { useApp } from "../../stores/react";
 
@@ -16,7 +17,7 @@ import { useApp } from "../../stores/react";
  * in force — or `undefined` until both the schema and the compiler have
  * loaded, when there's no checking anything. */
 export function useCheckContext():
-  { schemaJson: string; prelude: string } | undefined {
+  { schemaJson: string; prelude: Mapped } | undefined {
   const loaded = useSyncExternalStore(
     subscribeQuerydownLoaded,
     querydownLoaded,

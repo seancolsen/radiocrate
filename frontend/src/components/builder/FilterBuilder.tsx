@@ -3,7 +3,7 @@ import {
   selectEditorDiagnostic,
   selectPageBase,
   selectPageSections,
-  selectPrelude,
+  selectPreludeText,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import CustomInput from "./CustomInput";
@@ -19,7 +19,7 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const base = useApp((s) => selectPageBase(s, props.tabId));
   const canSave = base !== "";
-  const prelude = useApp(selectPrelude);
+  const prelude = useApp(selectPreludeText);
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "filter"),
   );

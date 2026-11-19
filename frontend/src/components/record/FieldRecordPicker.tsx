@@ -1,19 +1,23 @@
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import RecordPicker from "../RecordPicker";
 import {
   fieldItemId,
   selectFieldOf,
   type RecordFormModel,
 } from "../../stores/recordForm";
-import { useFormState } from "../../stores/react";
+import { selectTableQuerydown } from "../../stores/app";
+import { useAppActions, useFormState, useStores } from "../../stores/react";
 import { runDisplayQuery } from "../../query/recordData";
 import type { ScalarLinkField } from "../../query/recordForm";
 
 /** The record picker for whichever field has one open, or nothing. Rendered
  * once per form, beside its context menu. Adapts the generic `RecordPicker` to
  * the record editor: resolves the field the open picker belongs to, seeds it
- * with what the field's embedded record shows, so what's picked already reads as
- * one, and wires its callbacks back into the form model. */
+ * with the sorting and display the user has settled on for the table it picks
+ * from — or, until they have, with what the field's embedded record shows, so
+ * what's picked already reads as one — and wires its callbacks back into the
+ * form model. What the user changes the sorting or display to is the table's
+ * from then on, for every picker on it (`setTableQuerydown`). */
 export default function FieldRecordPicker(props: {
   model: RecordFormModel;
   schemaJson: string;
@@ -57,7 +61,28 @@ function PickerAdapter(props: {
   // One instance belongs to one field for its whole life (the key above
   // rebuilds it otherwise), so its subject is read once.
   const [itemId] = useState(() => fieldItemId(recordId, field.key));
-  const [spec] = useState(() => model.fieldSpec(recordId, field));
+  const stores = useStores();
+  const [initial] = useState(() => {
+    const spec = model.fieldSpec(recordId, field);
+    const app = stores.app.store.getState();
+    return {
+      sort:
+        selectTableQuerydown(app, field.table, "recordPickerSorting") ??
+        spec.sort,
+      display:
+        selectTableQuerydown(app, field.table, "recordPickerDisplay") ??
+        spec.display.join(" "),
+    };
+  });
+  const { setTableQuerydown, flushTableQuerydown } = useAppActions();
+  // Nothing typed waits on the idle queue once the picker has gone.
+  useEffect(
+    () => () => {
+      flushTableQuerydown(field.table, "recordPickerSorting");
+      flushTableQuerydown(field.table, "recordPickerDisplay");
+    },
+    [field.table, flushTableQuerydown],
+  );
 
   /** Puts the user back on the field they came from, once the modal is gone.
    * Deferred a tick, since the field's row only regains its focusable label as
@@ -69,8 +94,14 @@ function PickerAdapter(props: {
     <RecordPicker
       table={field.table}
       keyColumn={field.keyColumn}
-      initialSort={spec.sort}
-      initialDisplay={spec.display.join(" ")}
+      initialSort={initial.sort}
+      initialDisplay={initial.display}
+      onSortChange={(text) =>
+        setTableQuerydown(field.table, "recordPickerSorting", text)
+      }
+      onDisplayChange={(text) =>
+        setTableQuerydown(field.table, "recordPickerDisplay", text)
+      }
       runQuery={(query) => runDisplayQuery(query, schemaJson)}
       onPick={(keyValue, cells, columns) => {
         if (distinct) {

@@ -8,6 +8,7 @@ import {
   type JSX,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -198,7 +199,11 @@ export function useTreeRowProps(item: {
  * Ctrl+Click — and stays in view while what's under it is scrolled: it sticks to
  * the top of the page, under the rows of the items it's within.
  *
- * `dimmed` draws the row's label faded: something the user has hidden. */
+ * `dimmed` draws the row's label faded: something the user has hidden.
+ *
+ * `onPointerDown` makes the row something the user can pick up, to rearrange
+ * (`usePressDrag`): its context menu is then the caller's to hold back while a
+ * touch rests on it. */
 export function TreeNode(props: {
   id: string;
   /** Whether the item has anything under it. */
@@ -207,6 +212,11 @@ export function TreeNode(props: {
   actions?: ReactNode;
   dimmed?: boolean;
   onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
+  onPointerDown?: (e: PointerEvent<HTMLElement>) => void;
+  /** Whether the item is in hand, being dragged: it stays where it is, grayed
+   * out. Set at all, the item is one of a list the user rearranges, which finds
+   * it by its `data-drag-row`. */
+  dragging?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const { id, expandable } = props;
@@ -228,6 +238,8 @@ export function TreeNode(props: {
       data-tree-node=""
       data-item-id={id}
       data-expandable={expandable ? "" : undefined}
+      data-drag-row={props.dragging !== undefined ? "" : undefined}
+      className={cx({ "opacity-50": props.dragging })}
     >
       <div
         ref={rowRef}
@@ -243,6 +255,7 @@ export function TreeNode(props: {
         // which would otherwise be painted over the menu.
         className={cx(
           "group/row bg-panel outline-none select-none",
+          props.onPointerDown && "[-webkit-touch-callout:none]",
           expandable &&
             `sticky has-[[role=menu]]:z-10 ${STICKY_LAYERS[Math.min(depth, STICKY_LAYERS.length - 1)]}`,
         )}
@@ -260,6 +273,7 @@ export function TreeNode(props: {
           })
         }
         onContextMenu={props.onContextMenu}
+        onPointerDown={props.onPointerDown}
       >
         <div
           className={cx(
@@ -290,6 +304,7 @@ export function TreeNode(props: {
             <div
               className="ml-1 flex shrink-0 cursor-default items-center gap-0.5"
               onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               {props.actions}
             </div>

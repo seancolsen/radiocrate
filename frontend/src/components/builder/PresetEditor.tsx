@@ -117,7 +117,7 @@ export default function PresetEditor(props: {
         context={{
           grammar: sectionGrammar(section),
           baseTable,
-          definitions: prelude,
+          definitions: prelude.text,
         }}
         onChange={(text) => patchPreset(presetId, { definition: text })}
         diagnostic={problem?.origin?.kind === "preset" ? problem : null}

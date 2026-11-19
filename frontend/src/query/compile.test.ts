@@ -10,9 +10,16 @@ import { FIXTURE_SCHEMA_JSON } from "../dev/recordFixture";
 import {
   checkFragment,
   checkPrelude,
+  checkSetting,
   compilePlaylist,
   compileSavedQuery,
 } from "./compile";
+import { parseSchemaTables } from "./schema";
+import {
+  composePrelude,
+  defaultTableSettings,
+  tablePrelude,
+} from "./tableSettings";
 import {
   DEFAULT_PRELUDE,
   emptyDefinition,
@@ -309,5 +316,149 @@ describe("checkFragment", () => {
         origin,
       ),
     ).toMatchObject({ kind: "compile", origin, range: { start: 0, end: 4 } });
+  });
+});
+
+describe("the tables' settings in the prelude", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+  const withSettings = (textSearch: string | null, user = DEFAULT_PRELUDE) =>
+    composePrelude(
+      tablePrelude(tables, {
+        track: { ...defaultTableSettings(), defaultTextSearch: textSearch },
+      }),
+      user,
+    );
+
+  it("searches a table by its text search", () => {
+    const { sql } = compileSavedQuery(
+      query({ filter: { custom: '"love"', presets: [] } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      withSettings(null),
+    );
+    // The default: the title, the album's, the artists' names and the tags.
+    expect(sql).toContain('"album"."title"');
+    expect(sql).toContain('"tag"');
+  });
+
+  it("compares a link by the linked table's comparison", () => {
+    const { sql } = compileSavedQuery(
+      query({ filter: { custom: "rating:2", presets: [] } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      withSettings(null),
+    );
+    expect(sql).toContain('"rating"."value" = 2');
+  });
+
+  it("traces a problem in a setting to its editor", () => {
+    const d = failure(() =>
+      compileSavedQuery(
+        query({ filter: { custom: '"love"', presets: [] } }),
+        PRESETS,
+        FIXTURE_SCHEMA_JSON,
+        withSettings("titel:@x"),
+      ),
+    );
+    expect(d).toMatchObject({
+      kind: "compile",
+      origin: {
+        kind: "tableSetting",
+        table: "track",
+        setting: "defaultTextSearch",
+      },
+      source: "titel:@x",
+      range: { start: 0, end: 5 },
+    });
+  });
+
+  it("traces a problem in the user's prelude to its own text", () => {
+    const user = "#track.x = (";
+    const d = failure(() =>
+      compileSavedQuery(
+        query({}),
+        PRESETS,
+        FIXTURE_SCHEMA_JSON,
+        withSettings(null, user),
+      ),
+    );
+    expect(d).toMatchObject({
+      kind: "syntax",
+      origin: { kind: "prelude" },
+      source: user,
+      range: { start: user.length - 1, end: user.length },
+    });
+  });
+
+  it("lets the user's prelude override a setting, defining it later", () => {
+    const { sql } = compileSavedQuery(
+      query({ filter: { custom: '"love"', presets: [] } }),
+      PRESETS,
+      FIXTURE_SCHEMA_JSON,
+      withSettings(
+        null,
+        "#track.__querydown_default_text_search:@x = album.title:@x",
+      ),
+    );
+    expect(sql).not.toContain('strip_accents("track"."title")');
+    expect(sql).toContain('strip_accents("album"."title")');
+  });
+});
+
+describe("checkSetting", () => {
+  const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
+
+  it("passes the defaults", () => {
+    expect(
+      checkSetting(
+        FIXTURE_SCHEMA_JSON,
+        tables,
+        "track",
+        "defaultTextSearch",
+        "[\n  title:@x\n  ++#artist{name:@x}\n]",
+        DEFAULT_PRELUDE,
+      ),
+    ).toBeNull();
+    expect(
+      checkSetting(
+        FIXTURE_SCHEMA_JSON,
+        tables,
+        "rating",
+        "linkedRecordComparison",
+        "value:@x",
+        "",
+      ),
+    ).toBeNull();
+  });
+
+  it("locates a problem in the expression's own text", () => {
+    expect(
+      checkSetting(
+        FIXTURE_SCHEMA_JSON,
+        tables,
+        "track",
+        "defaultTextSearch",
+        "[\n  title:@x\n",
+        "",
+      ),
+    ).toMatchObject({
+      kind: "syntax",
+      origin: { kind: "tableSetting", table: "track" },
+      range: { start: 0, end: 1 },
+    });
+    expect(
+      checkSetting(
+        FIXTURE_SCHEMA_JSON,
+        tables,
+        "album",
+        "linkedRecordComparison",
+        "nope:@x",
+        "",
+      ),
+    ).toMatchObject({
+      kind: "compile",
+      origin: { kind: "tableSetting", setting: "linkedRecordComparison" },
+      range: { start: 0, end: 4 },
+    });
   });
 });

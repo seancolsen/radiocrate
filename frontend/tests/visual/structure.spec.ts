@@ -291,6 +291,131 @@ for (const colorScheme of SCHEMES) {
   });
 }
 
+/** The tables listed, top to bottom, by name. */
+async function tableNames(stage: Locator): Promise<string[]> {
+  const rows = stage.locator(
+    '[data-item-id^="table:"]:not([data-item-id*="/"]) > [role="treeitem"]',
+  );
+  return (await rows.allInnerTexts()).map((text) => text.split(/\s/)[0]);
+}
+
+/** Presses on table `from`'s row and moves the mouse to a fraction `at` of the
+ * way down table `to`'s row, leaving the button down. */
+async function dragTable(
+  page: Page,
+  stage: Locator,
+  from: string,
+  to: string,
+  at: number,
+) {
+  const a = (await row(stage, `${from} `).boundingBox())!;
+  const b = (await row(stage, `${to} `).boundingBox())!;
+  await page.mouse.move(a.x + 40, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 40, b.y + b.height * at, { steps: 8 });
+}
+
+for (const colorScheme of SCHEMES) {
+  // The tables as the user has arranged them: two dragged to the top, and a
+  // hidden one listed faded under the pressed "Show hidden tables".
+  test(`data-structure/tables-arranged - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/tables-arranged",
+      colorScheme,
+    );
+    expect((await tableNames(stage)).slice(0, 3)).toEqual([
+      "track",
+      "album",
+      "artist",
+    ]);
+    await expect(
+      row(stage, "Tables").getByRole("button", { name: "Show hidden tables" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/tables-arranged", colorScheme),
+    );
+  });
+
+  // A table in hand: dimmed where it is, its chip by the pointer, and the drop
+  // line in the gap it would land in.
+  test(`data-structure/table-drag - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "data-structure/tables", colorScheme);
+    await dragTable(page, stage, "role", "artist", 0.1);
+    await expect(stage.locator("[data-drag-row].opacity-50")).toHaveCount(1);
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/table-drag", colorScheme),
+    );
+  });
+
+  // A table's text search, open at the app's default.
+  test(`data-structure/text-search - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/text-search",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "Query settings"));
+    await expect(stage.getByLabel("Text search of track")).toContainText(
+      "++#artist{name:@x}",
+    );
+    await expect(
+      stage.getByRole("button", { name: "Reset to default" }),
+    ).toBeDisabled();
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/text-search", colorScheme),
+    );
+  });
+
+  // Its "?": the help, in a popover.
+  test(`data-structure/text-search-help - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/text-search",
+      colorScheme,
+    );
+    await stage.getByRole("button", { name: "About text search" }).click();
+    const help = page.getByTestId("help-popover");
+    await expect(help).toContainText("searches for in a filter on track");
+    await expect(help).toHaveScreenshot(
+      snapshot("data-structure/text-search-help", colorScheme),
+    );
+  });
+
+  // A linked record comparison naming a column its table hasn't got.
+  test(`data-structure/setting-problem - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/setting-problem",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "Query settings"));
+    await expect(stage.getByRole("alert")).toContainText("titel");
+    await expect(row(stage, "Linked record comparison")).toContainText(
+      "Customized",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/setting-problem", colorScheme),
+    );
+  });
+
+  // A table's record picker, open on its sorting.
+  test(`data-structure/record-picker - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/record-picker",
+      colorScheme,
+    );
+    await scrollToTop(row(stage, "Query settings"));
+    await expect(
+      stage.getByLabel("Sorting of the record picker on album"),
+    ).toBeVisible();
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/record-picker", colorScheme),
+    );
+  });
+}
+
 // ── How the tree behaves ─────────────────────────────────────────────────────
 
 test("the arrow keys move between rows, and open and close them", async ({
@@ -411,7 +536,7 @@ test("Ctrl+Click on a row opens or closes every row beside it", async ({
   const tables = stage
     .getByRole("group")
     .first()
-    .locator(":scope > div > [role=treeitem]");
+    .locator("[data-drag-row] > [role=treeitem]");
   await expect(tables).toHaveCount(10);
   await row(stage, /^track \d/).click({ modifiers: ["ControlOrMeta"] });
   for (const table of await tables.all()) {
@@ -631,6 +756,144 @@ test("a related-records field's Querydown is written, and restored", async ({
   await expect(sorting).toHaveText(generated ?? "");
   await openOptions();
   await expect(restore).toBeDisabled();
+});
+
+test("a table's context menu hides it, and brings it back", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/tables", "light");
+  const tables = row(stage, "Tables");
+  const showHidden = tables.getByRole("button", { name: "Show hidden tables" });
+  await expect(showHidden).toHaveCount(0);
+
+  const role = row(stage, "role ");
+  await role.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Hide table" }).click();
+  await expect
+    .poll(() => calls(page, "metadata.table.set_visible"))
+    .toEqual([
+      {
+        method: "metadata.table.set_visible",
+        params: { tableName: "role", visible: false },
+      },
+    ]);
+  await expect(role).toHaveCount(0);
+  await expect(row(stage, "Tables 9 tables")).toBeVisible();
+
+  await showHidden.click();
+  await expect(role.locator(".opacity-60")).toHaveCount(1);
+  await role.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Un-hide table" }).click();
+  await expect(role.locator(".opacity-60")).toHaveCount(0);
+  await expect(showHidden).toHaveCount(0);
+});
+
+test("a table dropped in a new place moves there, and is written", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/tables", "light");
+  const before = await tableNames(stage);
+  expect(before.slice(0, 2)).toEqual(["album", "artist"]);
+
+  await dragTable(page, stage, "role", "artist", 0.1);
+  // Nothing moves until it's dropped.
+  expect(await tableNames(stage)).toEqual(before);
+  await page.mouse.up();
+
+  const after = before.filter((name) => name !== "role");
+  after.splice(1, 0, "role");
+  await expect.poll(() => tableNames(stage)).toEqual(after);
+  const writes = await calls(page, "metadata.table.set_order");
+  expect(writes).toHaveLength(1);
+  // The first move gives every table a key, in the new order.
+  expect(writes[0].params).toEqual({
+    orders: after.map((tableName, i) => ({ tableName, order: i + 1 })),
+  });
+  // The release's click didn't open the table.
+  await expect(row(stage, "role ")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a table is picked up by a long press, and held without a move raises its menu", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/tables", "light");
+  const before = await tableNames(stage);
+  const cdp = await page.context().newCDPSession(page);
+  const from = (await row(stage, "role ").boundingBox())!;
+  const to = (await row(stage, "artist ").boundingBox())!;
+  const x = from.x + 40;
+
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x, y: from.y + from.height / 2 }],
+  });
+  await page.waitForTimeout(700);
+  await expect(stage.locator("[data-drag-row].opacity-50")).toHaveCount(1);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{ x, y: to.y + 2 }],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  const moved = before.filter((name) => name !== "role");
+  moved.splice(1, 0, "role");
+  await expect.poll(() => tableNames(stage)).toEqual(moved);
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
+
+  const held = (await row(stage, "track ").boundingBox())!;
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: held.x + 40, y: held.y + held.height / 2 }],
+  });
+  await page.waitForTimeout(700);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect(
+    page.getByRole("menuitem", { name: "Hide table" }),
+  ).toBeVisible();
+  expect(await tableNames(stage)).toEqual(moved);
+});
+
+test("a text search is written once its editor closes, and reset", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/text-search", "light");
+  const editor = stage.getByLabel("Text search of track");
+  const reset = stage.getByRole("button", { name: "Reset to default" });
+  const settingRow = row(stage, "Text search");
+  const defaultText = await editor.textContent();
+
+  await editor.fill("title:@x");
+  await expect(settingRow).toContainText("Customized");
+  await expect(reset).toBeEnabled();
+  // Written as the editor goes, without waiting for the app to go quiet.
+  await settingRow.click();
+  await expect
+    .poll(() => calls(page, "metadata.table.set_querydown"))
+    .toEqual([
+      {
+        method: "metadata.table.set_querydown",
+        params: {
+          tableName: "track",
+          setting: "defaultTextSearch",
+          text: "title:@x",
+        },
+      },
+    ]);
+
+  await settingRow.click();
+  await reset.click();
+  await expect(editor).toHaveText(defaultText ?? "");
+  await expect(settingRow).toContainText("Built-in");
+  await expect
+    .poll(async () =>
+      (await calls(page, "metadata.table.set_querydown")).at(-1),
+    )
+    .toMatchObject({ params: { text: null } });
 });
 
 // ── In the assembled app ─────────────────────────────────────────────────────
