@@ -6,8 +6,8 @@ import {
 } from "../../src/dev/fixtures";
 import type { AppStoreFacade } from "../../src/dev/seed";
 
-// Presets in the assembled app, all the way to the RPC: the preset manager,
-// reached from the Settings menu, creating, renaming and deleting one; and a
+// Presets in the assembled app, all the way to the RPC: the Data structure
+// page, reached from the Settings menu, creating, renaming and deleting one; and a
 // query's own presets, which it folds into its custom Querydown, takes out,
 // and can run with before they've ever been saved.
 
@@ -46,23 +46,25 @@ async function mockRpc(
   return calls;
 }
 
-test("the preset manager creates, renames and deletes a preset", async ({
+test("the Data structure page creates, renames and deletes a preset", async ({
   page,
 }) => {
   const calls = await mockRpc(page);
   const methods = () => calls.map((c) => c.method);
-  await page.goto("/?sidebar=open");
+  await page.goto("/?sidebar=open&recordFixture=1");
 
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("menuitem", { name: "Query presets" }).click();
-  const manager = page.getByTestId("preset-manager");
-  // Every table starts collapsed.
-  const track = manager.getByRole("button", { name: /^track \d/ });
+  await page.getByRole("menuitem", { name: "Data structure" }).click();
+  const manager = page.getByTestId("data-structure");
+  // Every table starts closed, and its query settings under it.
+  const track = manager.getByRole("treeitem", { name: /^track / });
   await expect(track).toHaveAttribute("aria-expanded", "false");
   await track.click();
+  await manager.getByRole("treeitem", { name: /^Query settings/ }).click();
+  await manager.getByRole("treeitem", { name: /^Filter presets/ }).click();
   await expect(manager.getByRole("button", { name: /^vetted/ })).toBeVisible();
 
-  // Create: a sort for `track`, from its section heading's "+", inline.
+  // Create: a sort for `track`, from its list's "+" — which opens the list.
   await manager
     .getByRole("button", { name: "New sorting preset for track" })
     .click();
@@ -108,34 +110,6 @@ test("the preset manager creates, renames and deletes a preset", async ({
     0,
   );
   await expect.poll(methods).toContain("preset.delete");
-});
-
-test("Ctrl+Click on a table expands or collapses every table", async ({
-  page,
-}) => {
-  await mockRpc(page);
-  await page.goto("/?sidebar=open");
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("menuitem", { name: "Query presets" }).click();
-  const manager = page.getByTestId("preset-manager");
-  const headings = manager.getByRole("heading").getByRole("button");
-  await expect(headings.first()).toBeVisible();
-  const count = await headings.count();
-  expect(count).toBeGreaterThan(1);
-
-  await manager
-    .getByRole("button", { name: /^track \d/ })
-    .click({ modifiers: ["ControlOrMeta"] });
-  await expect(
-    manager.getByRole("heading").getByRole("button", { expanded: true }),
-  ).toHaveCount(count);
-
-  await manager
-    .getByRole("button", { name: /^album \d/ })
-    .click({ modifiers: ["ControlOrMeta"] });
-  await expect(
-    manager.getByRole("heading").getByRole("button", { expanded: true }),
-  ).toHaveCount(0);
 });
 
 /** The active tab's working definition, read out of the exposed store. */
@@ -308,18 +282,25 @@ test("switching a sort from a preset to custom leaves the custom sort empty", as
     .toEqual({ custom: "" });
 });
 
-test("Manage presets opens the manager at the query's table", async ({
+test("Manage presets opens the Data structure page at the section's presets", async ({
   page,
 }) => {
   await mockRpc(page);
   await openQuery(page, RUNNABLE);
   await openOptions(page, "Filter");
   await page.getByRole("menuitem", { name: "Manage presets" }).click();
-  const manager = page.getByTestId("preset-manager");
-  await expect(
-    manager.getByRole("button", { name: /^track \d/ }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    manager.getByRole("heading").getByRole("button", { expanded: true }),
-  ).toHaveCount(1);
+  const manager = page.getByTestId("data-structure");
+  const item = (name: RegExp) => manager.getByRole("treeitem", { name });
+  // The tree is open down to the table's filter presets, and no further.
+  for (const name of [/^track /, /^Query settings/, /^Filter presets/]) {
+    await expect(item(name)).toHaveAttribute("aria-expanded", "true");
+  }
+  await expect(item(/^Sorting presets/)).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(item(/^album /)).toHaveAttribute("aria-expanded", "false");
+  // They're what the keyboard is on, in view under the rows they're within.
+  await expect(item(/^Filter presets/)).toBeFocused();
+  await expect(item(/^Filter presets/)).toBeInViewport();
 });

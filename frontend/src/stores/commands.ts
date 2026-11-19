@@ -418,7 +418,7 @@ export function createCommandsStore(
         app.actions.openShortcutsTab();
         break;
       case "presets.manage":
-        app.actions.openPresetsTab();
+        app.actions.openStructureTab();
         break;
       // The About panel runs a check as it opens, so this is the check *and*
       // somewhere to see its answer.

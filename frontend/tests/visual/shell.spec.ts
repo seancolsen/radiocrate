@@ -22,7 +22,7 @@ async function dragTab(page: Page, from: string, to: string, x: number) {
 
 // The app's furniture, each piece on its own: the left sidebar in both of its
 // layouts, the explorer that fills it, the tab bar, the settings menu with the
-// prelude page and rebind dialog it raises,
+// log page and rebind dialog it raises,
 // the client-update and failed-RPC bars and the About dialog, the now-playing bar
 // and its menu,
 // and the command palette.
@@ -144,42 +144,6 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // The Querydown prelude's page at the default value: Reset to default and
-  // Save both disabled.
-  test(`settings/prelude - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(page, "settings/prelude", colorScheme);
-    await expect(stage.getByRole("button", { name: "Save" })).toBeDisabled();
-    await expect(stage).toHaveScreenshot(
-      snapshot("settings/prelude", colorScheme),
-    );
-  });
-
-  // The prelude edited and not yet saved: the ✱ on Save.
-  test(`settings/prelude-unsaved - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(
-      page,
-      "settings/prelude-unsaved",
-      colorScheme,
-    );
-    await expect(stage.getByRole("button", { name: "Save" })).toBeEnabled();
-    await expect(stage.getByTestId("prelude-unsaved")).toBeVisible();
-    await expect(stage).toHaveScreenshot(
-      snapshot("settings/prelude-unsaved", colorScheme),
-    );
-  });
-
-  // The "?" hovered: the help in our own tooltip, not the browser's.
-  test(`settings/prelude-help - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(page, "settings/prelude-help", colorScheme);
-    await stage.getByRole("button", { name: "Help" }).hover();
-    await expect(page.getByRole("tooltip")).toContainText(
-      "prepend all queries",
-    );
-    await expect(stage).toHaveScreenshot(
-      snapshot("settings/prelude-help", colorScheme),
-    );
-  });
-
   // The Logging page, logging, with a stretch of log.
   test(`settings/logging - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(page, "settings/logging", colorScheme);
@@ -224,21 +188,6 @@ for (const colorScheme of SCHEMES) {
     await page.keyboard.press("Escape");
     await expect(popover).toHaveCount(0);
     await expect(help).toBeFocused();
-  });
-
-  // The prelude holding a prelude that doesn't parse: the problem under the
-  // toolbar, and Save disabled.
-  test(`settings/prelude-problem - ${colorScheme}`, async ({ page }) => {
-    const stage = await openStory(
-      page,
-      "settings/prelude-problem",
-      colorScheme,
-    );
-    await expect(stage.getByRole("alert")).toContainText("Unclosed");
-    await expect(stage.getByRole("button", { name: "Save" })).toBeDisabled();
-    await expect(stage).toHaveScreenshot(
-      snapshot("settings/prelude-problem", colorScheme),
-    );
   });
 
   // The rebind dialog, holding a chord another command already owns — so the

@@ -1,5 +1,5 @@
-// How the preset manager lists presets: by table, then by section, then by
-// name. Pure, like the rest of `query/`.
+// How the Data structure page lists presets: by table, then by section, then
+// by name. Pure, like the rest of `query/`.
 
 import type { Preset } from "api-client";
 import { asSection, SECTIONS, type Section } from "./definition";
@@ -22,8 +22,8 @@ export interface PresetTableGroup {
 const byName = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: "base" });
 
-/** The tables the preset manager lists, in name order: every one of `tables`
- * (the schema's), and any other a preset is for. */
+/** The tables the Data structure page lists, in name order: every one of
+ * `tables` (the schema's), and any other a preset is for. */
 export function presetTables(
   presets: readonly Preset[],
   tables: readonly string[],

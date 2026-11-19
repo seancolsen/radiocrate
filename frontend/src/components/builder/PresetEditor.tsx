@@ -16,9 +16,9 @@ import QuerydownEditor from "./QuerydownEditor";
 import DiagnosticMessage, { diagnosticPlace } from "./DiagnosticMessage";
 import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
 
-/** Inline detail editor for an open preset — in a query's builder, or in the
- * preset manager: its editable name and definition, and the "Apply by default"
- * checkbox with the caller's `actions` beside it. When the panel is too narrow
+/** Inline detail editor for an open preset — in a query's builder, or on the
+ * Data structure page: its editable name and definition, and the "Apply by
+ * default" checkbox with the caller's `actions` beside it. When the panel is too narrow
  * to hold them all in a row, the checkbox and actions wrap together under the
  * name.
  *

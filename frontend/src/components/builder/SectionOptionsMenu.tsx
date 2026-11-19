@@ -29,8 +29,8 @@ import {
  * the default) first; then the always-present "Custom …" entry, then
  * (sort-of-track only) the built-in Shuffle preset under a BUILT-IN heading,
  * then the user presets, with "Add new" (a preset in force in the section,
- * before it's ever saved) and "Manage presets" (the manager, opened at this
- * table) at their end. */
+ * before it's ever saved) and "Manage presets" (the Data structure page,
+ * opened at this table's presets for the section) at their end. */
 export default function SectionOptionsMenu(props: {
   tabId: string;
   section: Section;
@@ -48,7 +48,7 @@ export default function SectionOptionsMenu(props: {
     toggleFilterPreset,
     reshuffle,
     addNewPreset,
-    openPresetsTab,
+    openStructureTab,
   } = useAppActions();
 
   const kind = props.section === "filter" ? "checkbox" : "radio";
@@ -148,7 +148,11 @@ export default function SectionOptionsMenu(props: {
       <MenuItem
         icon={Icons.Presets}
         label="Manage presets"
-        onClick={() => openPresetsTab(base === "" ? undefined : base)}
+        onClick={() =>
+          openStructureTab(
+            base === "" ? undefined : { table: base, section: props.section },
+          )
+        }
       />
     </>
   );

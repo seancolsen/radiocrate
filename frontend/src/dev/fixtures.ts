@@ -1,4 +1,4 @@
-import type { Preset, Source } from "api-client";
+import type { Preset, Source, TableSummary } from "api-client";
 import type { QueryDefinition } from "../query/definition";
 
 // The canned backend answers shared by the visual-test harness (`dev/harness/`,
@@ -130,3 +130,78 @@ export const SHUFFLE_DEF: QueryDefinition = {
   sort: { builtin: { preset: "shuffle", seed: "TESTSEED0000000000AA" } },
   display: { custom: "" },
 };
+
+/** One table's `table.summarize` answer: its row count, and for each column
+ * how many distinct values it holds and the share of its rows that are NULL. */
+const summary = (
+  name: string,
+  rowCount: number,
+  columns: [string, number, number][],
+): TableSummary => ({
+  name,
+  rowCount,
+  columns: columns.map(([column, approxUnique, nullPercentage]) => ({
+    name: column,
+    approxUnique,
+    nullPercentage,
+  })),
+});
+
+/** `table.summarize` for the tables of the record fixture's schema
+ * (`recordFixture.ts`): a collection of some twelve thousand tracks. */
+export const TABLE_SUMMARIES_FIXTURE: TableSummary[] = [
+  summary("album", 1204, [
+    ["id", 1204, 0],
+    ["title", 1187, 0.42],
+    ["year", 71, 18.6],
+  ]),
+  summary("artist", 2318, [
+    ["id", 2318, 0],
+    ["name", 2318, 0],
+  ]),
+  summary("credit", 15872, [
+    ["track", 12480, 0],
+    ["artist", 2301, 0],
+    ["order", 9, 0],
+    ["role", 6, 81.25],
+  ]),
+  summary("file", 12509, [
+    ["id", 12509, 0],
+    ["path", 12509, 0],
+    ["size", 12466, 0],
+    ["format", 4, 0],
+    ["duration", 9120, 0],
+    ["added", 3055, 0],
+  ]),
+  summary("play", 48211, [
+    ["track", 9876, 0],
+    ["timestamp", 48211, 0],
+  ]),
+  summary("rating", 11, [
+    ["id", 11, 0],
+    ["value", 11, 0],
+    ["symbol", 11, 0],
+    ["description", 4, 63.64],
+  ]),
+  summary("role", 6, [
+    ["id", 6, 0],
+    ["name", 6, 0],
+  ]),
+  summary("tag", 37, [
+    ["id", 37, 0],
+    ["name", 37, 0],
+  ]),
+  summary("track", 12509, [
+    ["id", 12509, 0],
+    ["file", 12509, 0],
+    ["title", 11876, 0],
+    ["album", 1198, 4.21],
+    ["disc_number", 4, 71.3],
+    ["track_number", 45, 20],
+    ["rating", 9, 38.07],
+  ]),
+  summary("track_tag", 3105, [
+    ["track", 2764, 0],
+    ["tag", 37, 0],
+  ]),
+];

@@ -2,7 +2,6 @@ import type { JSX } from "react";
 import { Icons, type IconComponent } from "../icons";
 import type { AudioQualityPref, ThemePref } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
-import { SETTINGS } from "../state/settings";
 import {
   MenuHeading,
   MenuItem,
@@ -28,9 +27,8 @@ const AUDIO_QUALITY_OPTIONS: {
 ];
 
 /** The Settings menu body: a Light/Dark/System theme picker, a Higher
- * quality/Lower bandwidth audio streaming picker, the Querydown Prelude, Query
- * presets, Keyboard shortcuts, Logging and About entries, and the collection
- * re-scan. */
+ * quality/Lower bandwidth audio streaming picker, the Data structure, Keyboard
+ * shortcuts, Logging and About entries, and the collection re-scan. */
 export default function SettingsMenu(): JSX.Element {
   const theme = useApp((s) => s.theme);
   const audioQuality = useApp((s) => s.audioQuality);
@@ -64,15 +62,10 @@ export default function SettingsMenu(): JSX.Element {
       ))}
       <MenuSeparator />
       <MenuItem
-        icon={Icons.Querydown}
-        label={SETTINGS.querydown_prelude.name}
-        onClick={() => actions.openPreludeTab()}
-      />
-      <MenuItem
-        icon={Icons.Presets}
-        label="Query presets"
+        icon={Icons.Structure}
+        label="Data structure"
         command="presets.manage"
-        onClick={() => actions.openPresetsTab()}
+        onClick={() => actions.openStructureTab()}
       />
       <MenuItem
         icon={Icons.Keyboard}

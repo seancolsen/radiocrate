@@ -10,7 +10,7 @@ import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import PresetRow, { PresetRowView } from "./PresetRow";
 
-/** A preset in a query's builder: what the preset manager shows, opening
+/** A preset in a query's builder: what the Data structure page shows, opening
  * independently of the page's other presets, with what a query can do about
  * one of its presets — remove it (beside the name while it's closed, in the
  * heading's top right corner while it's open), and fold it into the custom

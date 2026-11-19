@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAppStore,
   IDLE_PLAYBACK,
-  initialPresetManager,
   presetUsageLabel,
   presetUsers,
   selectEffectivePresets,
@@ -10,8 +9,7 @@ import {
   selectPresetsFor,
   selectPresetUnsaved,
   selectRangeOrigin,
-  PRELUDE_TAB_ID,
-  PRESETS_TAB_ID,
+  STRUCTURE_TAB_ID,
   LOG_TAB_ID,
   type AppStoreBundle,
   type PreparedStep,
@@ -19,7 +17,12 @@ import {
 import { FakePlayer, fakeEnv } from "./testEnv";
 import { TOAST_MS } from "./actions";
 import { buildResultFromStringRows } from "../../query/result";
-import { presetTables } from "../../query/presetGroups";
+import {
+  DEFAULT_EXPANDED,
+  PRELUDE_ITEM,
+  presetItemId,
+  presetSectionPath,
+} from "../../query/structure";
 import { FIXTURE_SCHEMA_JSON } from "../../dev/recordFixture";
 import { PLAYLIST_SOURCE } from "../../dev/fixtures";
 import type { QueryDefinition } from "../../query/definition";
@@ -52,6 +55,7 @@ vi.mock("api-client", async (importOriginal) => {
     presetUpdate: vi.fn(() => Promise.resolve(null)),
     presetDelete: vi.fn(() => Promise.resolve(null)),
     presetList: vi.fn(() => Promise.resolve([])),
+    tableSummarize: vi.fn(() => Promise.resolve([])),
   };
 });
 // A playlist's entries, read as raw SQL, so duplicating and deleting one can be
@@ -133,6 +137,7 @@ import {
   presetDelete,
   presetUpdate,
   presetList,
+  tableSummarize,
   queryAdd,
   sourceArrange,
   queryDelete,
@@ -803,7 +808,7 @@ describe("default presets", () => {
   });
 });
 
-describe("the preset manager", () => {
+describe("the Data structure page", () => {
   const preset = (
     id: string,
     section: "filter" | "sort" | "display",
@@ -819,12 +824,18 @@ describe("the preset manager", () => {
     modifiedAt: 0,
   });
   const presets = (bundle: AppStoreBundle) => bundle.store.getState().presets;
+  /** The tree items that are open, in no particular order. */
+  const expanded = (b: AppStoreBundle = bundle) =>
+    Object.keys(b.store.getState().structure.expanded).sort();
+  const sorted = (ids: readonly string[]) => [...ids].sort();
 
   let bundle: AppStoreBundle;
   beforeEach(() => {
     vi.mocked(presetAdd).mockClear();
     vi.mocked(presetUpdate).mockClear();
     vi.mocked(presetDelete).mockClear();
+    vi.mocked(tableSummarize).mockReset();
+    vi.mocked(tableSummarize).mockResolvedValue([]);
     bundle = createAppStore(fakeEnv());
     bundle.store.setState((s) => {
       s.presets.push(preset("f", "filter"), preset("s", "sort", true));
@@ -832,45 +843,126 @@ describe("the preset manager", () => {
   });
 
   it("opens one tab, however often it's asked for", () => {
-    bundle.actions.openPresetsTab();
+    bundle.actions.openStructureTab();
     bundle.actions.openTab({ id: "a", name: "a", definition: "{}" });
-    bundle.actions.openPresetsTab();
+    bundle.actions.openStructureTab();
     const s = bundle.store.getState();
-    expect(s.tabs.map((t) => t.kind)).toEqual(["presets", "query"]);
-    expect(s.activeTabId).toBe(PRESETS_TAB_ID);
+    expect(s.tabs.map((t) => t.kind)).toEqual(["structure", "query"]);
+    expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
   });
 
-  it("starts afresh once its tab has closed", () => {
-    bundle.actions.openPresetsTab();
-    bundle.actions.toggleManagedTable("track", false);
+  it("starts with the tables listed and nothing else open", () => {
+    expect(expanded()).toEqual(sorted(DEFAULT_EXPANDED));
+  });
+
+  it("opens and closes items, and remembers which are open", () => {
+    const env = fakeEnv();
+    const before = createAppStore(env);
+    before.actions.setStructureExpanded(["table:track", "prelude"], true);
+    before.actions.setStructureExpanded(["tables"], false);
+    expect(expanded(before)).toEqual(["prelude", "table:track"]);
+    before.dispose();
+
+    const after = createAppStore(env);
+    expect(expanded(after)).toEqual(["prelude", "table:track"]);
+    // Everything closed is a state of its own, not a first visit.
+    after.actions.setStructureExpanded(["table:track", "prelude"], false);
+    after.dispose();
+    const again = createAppStore(env);
+    expect(expanded(again)).toEqual([]);
+    again.dispose();
+  });
+
+  it("keeps what's open once its tab has closed, but not what was being written", () => {
+    bundle.actions.openStructureTab();
+    bundle.actions.setStructureExpanded(["table:track"], true);
     bundle.actions.toggleManagedPreset("f");
+    bundle.actions.patchPreset("f", { name: "renamed" });
     bundle.actions.openPresetDraft("track", "sort");
-    bundle.actions.closeTab(PRESETS_TAB_ID);
+    bundle.actions.editPrelude("custom prelude");
+    const draft = bundle.store.getState().unsavedPresets[0].id;
+    bundle.actions.closeTab(STRUCTURE_TAB_ID);
     const s = bundle.store.getState();
-    expect(s.presetManager).toEqual(initialPresetManager());
-    // The unsaved preset it was writing goes with it.
+    // The unsaved preset it was writing goes with it, and the prelude's edit.
     expect(s.unsavedPresets).toEqual([]);
-  });
-
-  it("expands one table, or every table on a Ctrl+Click", () => {
-    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-    const all = presetTables(
-      presets(bundle),
-      bundle.store.getState().schema.tables.map((t) => t.name),
+    expect(s.structure.drafts).toEqual([]);
+    expect(s.preludeDraft).toBeNull();
+    expect(expanded()).toEqual(
+      sorted([...presetSectionPath("track", "sort"), presetItemId("f")]),
     );
-    const expanded = () => bundle.store.getState().presetManager.expandedTables;
-    bundle.actions.toggleManagedTable("track", false);
-    expect(expanded()).toEqual(["track"]);
-    // A collapsed table expands them all…
-    bundle.actions.toggleManagedTable("album", true);
-    expect([...expanded()].sort()).toEqual([...all].sort());
-    expect(all.length).toBeGreaterThan(2);
-    // …and an expanded one collapses them all.
-    bundle.actions.toggleManagedTable("album", true);
-    expect(expanded()).toEqual([]);
+    expect(expanded()).not.toContain(presetItemId(draft));
+    // A preset still open is listed under the name it has now.
+    expect(s.structure.listedNames).toEqual({ f: "renamed" });
   });
 
-  it("duplicates a preset as an ordinary one, opened in the manager", () => {
+  it("notes the name of a preset restored open, once the presets load", async () => {
+    const env = fakeEnv();
+    env.storage.setItem(
+      "structureExpanded",
+      JSON.stringify([presetItemId("f"), presetItemId("gone")]),
+    );
+    const restored = createAppStore(env);
+    expect(restored.store.getState().structure.listedNames).toEqual({});
+    vi.mocked(presetList).mockResolvedValueOnce([preset("f", "filter")]);
+    await restored.actions.loadPresets();
+    expect(restored.store.getState().structure.listedNames).toEqual({ f: "f" });
+    restored.dispose();
+  });
+
+  it("reads the tables' statistics once as it opens, and again on Refresh", async () => {
+    const summary = [{ name: "track", rowCount: 3, columns: [] }];
+    vi.mocked(tableSummarize).mockResolvedValue(summary);
+    expect(bundle.store.getState().tableSummaries.status).toBe("idle");
+    bundle.actions.ensureTableSummaries();
+    // A second call while they're on their way asks for nothing.
+    bundle.actions.ensureTableSummaries();
+    expect(bundle.store.getState().tableSummaries.status).toBe("loading");
+    await vi.waitFor(() =>
+      expect(bundle.store.getState().tableSummaries).toEqual({
+        status: "ready",
+        data: summary,
+      }),
+    );
+    bundle.actions.ensureTableSummaries();
+    expect(tableSummarize).toHaveBeenCalledTimes(1);
+
+    await bundle.actions.loadTableSummaries();
+    expect(tableSummarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the statistics it has when reading them again fails", async () => {
+    const summary = [{ name: "track", rowCount: 3, columns: [] }];
+    vi.mocked(tableSummarize).mockResolvedValueOnce(summary);
+    await bundle.actions.loadTableSummaries();
+    vi.mocked(tableSummarize).mockRejectedValueOnce(new Error("no"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await bundle.actions.loadTableSummaries();
+    error.mockRestore();
+    expect(bundle.store.getState().tableSummaries).toEqual({
+      status: "error",
+      data: summary,
+    });
+  });
+
+  it("reads the statistics afresh after its tab has closed", async () => {
+    let land: (value: never[]) => void = () => {};
+    vi.mocked(tableSummarize).mockReturnValueOnce(
+      new Promise((resolve) => {
+        land = resolve;
+      }),
+    );
+    bundle.actions.openStructureTab();
+    bundle.actions.ensureTableSummaries();
+    bundle.actions.closeTab(STRUCTURE_TAB_ID);
+    // A read that lands after the tab has gone is nobody's.
+    land([]);
+    await Promise.resolve();
+    expect(bundle.store.getState().tableSummaries.status).toBe("idle");
+    bundle.actions.ensureTableSummaries();
+    expect(tableSummarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("duplicates a preset as an ordinary one, opened on the page", () => {
     bundle.actions.duplicatePreset("s");
     const draft = bundle.store.getState().unsavedPresets[0];
     expect(draft).toMatchObject({
@@ -879,7 +971,7 @@ describe("the preset manager", () => {
       section: "sort",
       isDefault: false,
     });
-    expect(bundle.store.getState().presetManager.drafts).toEqual([draft.id]);
+    expect(bundle.store.getState().structure.drafts).toEqual([draft.id]);
     bundle.actions.savePreset(draft.id);
     const s = bundle.store.getState();
     const copy = s.presets.at(-1)!;
@@ -893,20 +985,20 @@ describe("the preset manager", () => {
     // The original stays the default.
     expect(s.presets.find((p) => p.id === "s")?.isDefault).toBe(true);
     expect(s.unsavedPresets).toEqual([]);
-    expect(s.presetManager).toMatchObject({
-      drafts: [],
-      expandedTables: ["track"],
-      expanded: [copy.id],
-    });
+    expect(s.structure.drafts).toEqual([]);
+    // The tree is open down to it, and it's open itself.
+    expect(expanded()).toEqual(
+      sorted([...presetSectionPath("track", "sort"), presetItemId(copy.id)]),
+    );
     expect(presetAdd).toHaveBeenCalledWith(copy);
   });
 
   it("creates a preset on another table, taking over its default", () => {
     bundle.actions.openPresetDraft("album", "sort");
-    expect(bundle.store.getState().presetManager.expandedTables).toEqual([
-      "album",
-    ]);
     const id = bundle.store.getState().unsavedPresets[0].id;
+    expect(expanded()).toEqual(
+      sorted([...presetSectionPath("album", "sort"), presetItemId(id)]),
+    );
     bundle.actions.patchPreset(id, { name: "by year", isDefault: true });
     bundle.actions.savePreset(id);
     // The album's default sort doesn't displace the track's.
@@ -927,8 +1019,8 @@ describe("the preset manager", () => {
     const s = bundle.store.getState();
     expect(s.pendingPresetDelete).toBeNull();
     expect(s.unsavedPresets).toEqual([]);
-    expect(s.presetManager.drafts).toEqual([]);
-    expect(s.presetManager.expanded).toEqual([]);
+    expect(s.structure.drafts).toEqual([]);
+    expect(expanded()).not.toContain(presetItemId(id));
   });
 
   it("won't create a preset without a name", () => {
@@ -946,28 +1038,67 @@ describe("the preset manager", () => {
     bundle.actions.toggleManagedPreset("f");
     bundle.actions.toggleManagedPreset("s");
     bundle.actions.patchPreset("f", { name: "zebra" });
-    const { expanded, listedNames } = bundle.store.getState().presetManager;
-    expect(expanded).toEqual(["f", "s"]);
-    expect(listedNames).toEqual({ f: "f", s: "s" });
+    expect(expanded()).toEqual(
+      sorted([...DEFAULT_EXPANDED, presetItemId("f"), presetItemId("s")]),
+    );
+    expect(bundle.store.getState().structure.listedNames).toEqual({
+      f: "f",
+      s: "s",
+    });
     bundle.actions.toggleManagedPreset("f");
-    const m = bundle.store.getState().presetManager;
-    expect(m.expanded).toEqual(["s"]);
-    expect(m.listedNames).toEqual({ s: "s" });
+    expect(expanded()).toEqual(
+      sorted([...DEFAULT_EXPANDED, presetItemId("s")]),
+    );
+    expect(bundle.store.getState().structure.listedNames).toEqual({ s: "s" });
   });
 
-  it("opens at a table, bringing it into view", () => {
-    bundle.actions.openPresetsTab("album");
-    expect(bundle.store.getState().presetManager).toMatchObject({
-      expandedTables: ["album"],
-      revealTable: "album",
+  it("opens at a table's presets, bringing them into view", () => {
+    bundle.actions.setStructureExpanded(["tables"], false);
+    bundle.actions.openStructureTab({ table: "album" });
+    expect(expanded()).toEqual(sorted(presetSectionPath("album")));
+    expect(bundle.store.getState().structure.reveal).toBe("table:album/query");
+    bundle.actions.clearStructureReveal();
+    expect(bundle.store.getState().structure.reveal).toBeNull();
+
+    bundle.actions.openStructureTab({ table: "track", section: "sort" });
+    expect(expanded()).toEqual(
+      sorted([
+        ...presetSectionPath("album"),
+        ...presetSectionPath("track", "sort").slice(1),
+      ]),
+    );
+    expect(bundle.store.getState().structure.reveal).toBe(
+      "table:track/query/sort",
+    );
+  });
+
+  it("opens at the prelude, for a query whose problem is in it", () => {
+    bundle.actions.openTab({ id: "a", name: "a", definition: "{}" });
+    // Any page write makes the tab's page; this one has nothing else to it.
+    bundle.actions.toggleBuilderSection("a", "filter");
+    bundle.store.setState((s) => {
+      s.pages["a"].diagnostic = {
+        kind: "definition",
+        reason: "nope",
+        hint: null,
+        origin: { kind: "prelude" },
+        source: "",
+        range: null,
+        notes: [],
+      };
     });
-    bundle.actions.clearPresetManagerReveal();
-    bundle.actions.openPresetsTab("album");
-    bundle.actions.openPresetsTab("track");
-    expect(bundle.store.getState().presetManager).toMatchObject({
-      expandedTables: ["album", "track"],
-      revealTable: "track",
-    });
+    bundle.actions.revealDiagnostic("a");
+    const s = bundle.store.getState();
+    expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
+    expect(s.structure.expanded[PRELUDE_ITEM]).toBe(true);
+    expect(s.structure.reveal).toBe(PRELUDE_ITEM);
+  });
+
+  it("reveals an item of the tree, opening it", () => {
+    bundle.actions.revealStructureItem("table:track/fields/x");
+    const { structure } = bundle.store.getState();
+    expect(structure.expanded["table:track/fields/x"]).toBe(true);
+    expect(structure.reveal).toBe("table:track/fields/x");
   });
 
   it("deletes a preset, and whatever was open on it", () => {
@@ -987,7 +1118,8 @@ describe("the preset manager", () => {
     const s = bundle.store.getState();
     expect(s.presets.map((p) => p.id)).toEqual(["s"]);
     expect(s.presetSaves).toEqual({});
-    expect(s.presetManager.expanded).toEqual([]);
+    expect(expanded()).not.toContain(presetItemId("f"));
+    expect(s.structure.listedNames).toEqual({});
     expect(s.pages["a"]?.expandedPresets).toEqual([]);
     expect(s.pendingPresetDelete).toBeNull();
     expect(presetDelete).toHaveBeenCalledWith({ id: "f" });
@@ -2038,17 +2170,18 @@ describe("logging", () => {
 });
 
 describe("prelude editor", () => {
-  it("opens as one tab, whose edit is dropped when it closes", () => {
+  it("opens in the Data structure tab, whose closing drops its edit", () => {
     const bundle = createAppStore(fakeEnv());
-    bundle.actions.openPreludeTab();
-    bundle.actions.openPreludeTab();
+    bundle.actions.openStructureTab("prelude");
+    bundle.actions.openStructureTab("prelude");
     let s = bundle.store.getState();
-    expect(s.tabs.map((t) => t.id)).toEqual([PRELUDE_TAB_ID]);
-    expect(s.activeTabId).toBe(PRELUDE_TAB_ID);
+    expect(s.tabs.map((t) => t.id)).toEqual([STRUCTURE_TAB_ID]);
+    expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
+    expect(s.structure.expanded[PRELUDE_ITEM]).toBe(true);
 
     bundle.actions.editPrelude("custom prelude");
     expect(bundle.store.getState().preludeDraft).toBe("custom prelude");
-    bundle.actions.closeTab(PRELUDE_TAB_ID);
+    bundle.actions.closeTab(STRUCTURE_TAB_ID);
     s = bundle.store.getState();
     expect(s.tabs).toEqual([]);
     expect(s.preludeDraft).toBeNull();

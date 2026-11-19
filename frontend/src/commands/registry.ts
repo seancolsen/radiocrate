@@ -152,9 +152,11 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   },
   {
     // Ships unbound, like the shortcuts editor beside it: a settings page,
-    // reached from the palette and the Settings menu.
+    // reached from the palette and the Settings menu. It opens the Data
+    // structure page, which is where presets are managed now; the id is from
+    // when they had a page to themselves, and stays as it shipped.
     id: "presets.manage",
-    title: "Presets: Manage query presets",
+    title: "App: Open data structure",
     when: "always",
     defaultChord: null,
   },
@@ -442,7 +444,7 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
   {
     // Renames the query or playlist behind the active tab. `queryTab` is
     // exactly "the active tab is a renamable source": the settings-like tabs
-    // (shortcuts, presets, prelude) have a fixed name and no such object.
+    // (shortcuts, data structure, log) have a fixed name and no such object.
     id: "tabs.rename_active",
     title: "Tabs: Rename current tab",
     when: "queryTab",

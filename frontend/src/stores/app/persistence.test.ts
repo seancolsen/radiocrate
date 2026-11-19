@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyDefinition } from "../../query/definition";
 import { createAppStore } from "./index";
-import {
-  LOG_TAB_ID,
-  PRELUDE_TAB_ID,
-  PRESETS_TAB_ID,
-  SHORTCUTS_TAB_ID,
-} from "./state";
+import { LOG_TAB_ID, SHORTCUTS_TAB_ID, STRUCTURE_TAB_ID } from "./state";
 import { fakeEnv } from "./testEnv";
 
 describe("open tabs", () => {
@@ -19,8 +14,7 @@ describe("open tabs", () => {
     before.actions.setTabDefinitions("q1", emptyDefinition(), live);
     before.actions.duplicateQuery("q1");
     before.actions.openShortcutsTab();
-    before.actions.openPresetsTab();
-    before.actions.openPreludeTab();
+    before.actions.openStructureTab();
     before.actions.openLogTab();
     before.actions.selectTab("q1");
     before.dispose();
@@ -32,12 +26,11 @@ describe("open tabs", () => {
       "query",
       "query",
       "shortcuts",
-      "presets",
-      "prelude",
+      "structure",
       "log",
     ]);
     expect(s.activeTabId).toBe("q1");
-    const [restored, duplicate, shortcuts, presets, prelude, log] = s.tabs;
+    const [restored, duplicate, shortcuts, structure, log] = s.tabs;
     expect(restored).toMatchObject({
       id: "q1",
       name: "Lemonade",
@@ -52,15 +45,10 @@ describe("open tabs", () => {
       persisted: false,
     });
     expect(shortcuts.id).toBe(SHORTCUTS_TAB_ID);
-    expect(presets).toEqual({
-      kind: "presets",
-      id: PRESETS_TAB_ID,
-      name: "Query presets",
-    });
-    expect(prelude).toEqual({
-      kind: "prelude",
-      id: PRELUDE_TAB_ID,
-      name: "Querydown Prelude",
+    expect(structure).toEqual({
+      kind: "structure",
+      id: STRUCTURE_TAB_ID,
+      name: "Data structure",
     });
     expect(log).toEqual({ kind: "log", id: LOG_TAB_ID, name: "Logging" });
     after.dispose();
@@ -146,6 +134,34 @@ describe("open tabs", () => {
     }
   });
 
+  it("bring the Query presets and Querydown Prelude tabs back as Data structure", () => {
+    for (const activeTabId of [
+      "settings:query-presets",
+      "settings:querydown-prelude",
+    ]) {
+      const env = fakeEnv();
+      env.storage.setItem(
+        "openTabs",
+        JSON.stringify({
+          version: 1,
+          activeTabId,
+          tabs: [
+            { kind: "shortcuts" },
+            { kind: "presets" },
+            { kind: "prelude" },
+          ],
+        }),
+      );
+      const bundle = createAppStore(env);
+      const s = bundle.store.getState();
+      // One tab for the two, where the first of them was, and active as
+      // whichever of them was.
+      expect(s.tabs.map((t) => t.kind)).toEqual(["shortcuts", "structure"]);
+      expect(s.activeTabId).toBe(STRUCTURE_TAB_ID);
+      bundle.dispose();
+    }
+  });
+
   it("fall back to the first tab when the active one wasn't restored", () => {
     const env = fakeEnv();
     env.storage.setItem(
@@ -159,5 +175,19 @@ describe("open tabs", () => {
     const bundle = createAppStore(env);
     expect(bundle.store.getState().activeTabId).toBe(SHORTCUTS_TAB_ID);
     bundle.dispose();
+  });
+});
+
+describe("the Data structure tree", () => {
+  it("opens as it does by default when what's stored can't be read", () => {
+    for (const raw of ["not json", JSON.stringify({ tables: true }), "null"]) {
+      const env = fakeEnv();
+      env.storage.setItem("structureExpanded", raw);
+      const bundle = createAppStore(env);
+      expect(bundle.store.getState().structure.expanded).toEqual({
+        tables: true,
+      });
+      bundle.dispose();
+    }
   });
 });

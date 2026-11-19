@@ -1,5 +1,9 @@
 import type { AppVersion, DmlResult } from "api-client";
-import { PRESETS_FIXTURE, SOURCES_FIXTURE } from "../fixtures";
+import {
+  PRESETS_FIXTURE,
+  SOURCES_FIXTURE,
+  TABLE_SUMMARIES_FIXTURE,
+} from "../fixtures";
 
 // The harness's stand-in backend: a `fetch` patch answering the two endpoints
 // the app talks to, from the canned fixtures. It's installed by the harness
@@ -71,6 +75,8 @@ function rpcResult(method: string, params: unknown): unknown {
     case "setting.list":
     case "metadata.field.list":
       return [];
+    case "table.summarize":
+      return TABLE_SUMMARIES_FIXTURE;
     // Constant, never the real `__BUILD_ID__`: a story that showed the build
     // this checkout happens to be would rewrite its baseline on every commit.
     case "app.version":

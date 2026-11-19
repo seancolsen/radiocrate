@@ -539,7 +539,7 @@ fn query_returning_row(
 
 /// Quotes a SQL identifier, doubling any embedded quotes. Every table/column name we interpolate into
 /// SQL goes through this; values are always bound as parameters, never interpolated.
-fn quote_ident(name: &str) -> String {
+pub(crate) fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 

@@ -91,7 +91,7 @@ export function fullQueryBase(text: string): string {
 /** The three query sections with builder UIs and saveable presets. */
 export type Section = "filter" | "sort" | "display";
 
-/** The sections in the order the builder (and the preset manager) lists
+/** The sections in the order the builder (and the Data structure page) lists
  * them. */
 export const SECTIONS: readonly Section[] = ["filter", "sort", "display"];
 

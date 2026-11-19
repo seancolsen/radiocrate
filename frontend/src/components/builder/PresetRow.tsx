@@ -1,4 +1,9 @@
-import { useMemo, type JSX, type ReactNode } from "react";
+import {
+  useMemo,
+  type ButtonHTMLAttributes,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { Icons } from "../../icons";
 import {
   presetUsageLabel,
@@ -12,6 +17,13 @@ import PresetEditor from "./PresetEditor";
 
 /** Marks what toggles a preset open or closed, for its frame's hover border. */
 const TOGGLE = "preset-toggle";
+
+/** What a caller adds to a preset's heading button, which is the preset's one
+ * keyboard control: the keys and the marker of a list it's a row of (the Data
+ * structure page's tree). */
+export type PresetToggleProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  "data-tree-item"?: string;
+};
 
 /** A preset's look, given what it shows: as wide as its heading (chevron, name,
  * "Default" badge, ✱ marker, then the caller's `actions`), unless it's open,
@@ -30,6 +42,7 @@ export function PresetRowView(props: {
   usage?: ReactNode;
   /** Shown at the heading's far right while it's open. */
   openActions?: ReactNode;
+  toggleProps?: PresetToggleProps;
   children?: ReactNode;
 }): JSX.Element {
   const { expanded } = props;
@@ -46,6 +59,7 @@ export function PresetRowView(props: {
     >
       <div className="flex items-center">
         <button
+          {...props.toggleProps}
           type="button"
           aria-expanded={expanded}
           className={cx(
@@ -126,8 +140,9 @@ function PresetUsage(props: { id: string }): JSX.Element {
   return <>{presetUsageLabel(users)}</>;
 }
 
-/** A saved or unsaved preset — in a query's builder or the preset manager, which
- * bring their own `actions` and say what's open — with its editor below it when
+/** A saved or unsaved preset — in a query's builder or on the Data structure
+ * page, which bring their own `actions` and say what's open — with its editor
+ * below it when
  * it's open. Its own component so a row's subscriptions are narrow to its own
  * preset. Renders nothing for a preset that's gone. */
 export default function PresetRow(props: {
@@ -140,6 +155,7 @@ export default function PresetRow(props: {
   openActions?: ReactNode;
   /** Shown in the open editor, beside "Apply by default". */
   editorActions?: ReactNode;
+  toggleProps?: PresetToggleProps;
 }): JSX.Element | null {
   const preset = useApp((s) => selectPreset(s, props.id));
   const unsaved = useApp((s) => selectPresetUnsaved(s, props.id));
@@ -155,6 +171,7 @@ export default function PresetRow(props: {
       actions={props.actions}
       usage={<PresetUsage id={props.id} />}
       openActions={props.openActions}
+      toggleProps={props.toggleProps}
     >
       {props.expanded && (
         <PresetEditor presetId={props.id} actions={props.editorActions} />

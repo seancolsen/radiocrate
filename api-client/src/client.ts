@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams } from "./types";
+import type { AppVersion, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableSummary } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -107,6 +107,10 @@ export async function metadataFieldSetDisplay(params: MetadataFieldSetDisplayPar
 
 export async function metadataFieldSetSorting(params: MetadataFieldSetSortingParams): Promise<null> {
   return (await rpcCall("metadata.field.set_sorting", params)) as null;
+}
+
+export async function tableSummarize(): Promise<TableSummary[]> {
+  return (await rpcCall("table.summarize", null)) as TableSummary[];
 }
 
 export async function collectionRescan(): Promise<null> {

@@ -68,8 +68,9 @@ test("a prelude that doesn't parse can't be saved", async ({ page }) => {
   await mockRpc(page);
   await page.goto("/?sidebar=open&recordFixture=1");
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("menuitem", { name: "Querydown Prelude" }).click();
-  const prelude = page.getByTestId("prelude-page");
+  await page.getByRole("menuitem", { name: "Data structure" }).click();
+  await page.getByRole("treeitem", { name: "Querydown prelude" }).click();
+  const prelude = page.getByTestId("prelude-editor");
   const field = prelude.getByLabel("Querydown Prelude");
   const save = prelude.getByRole("button", { name: "Save" });
   await expect(save).toBeDisabled();
@@ -96,9 +97,10 @@ test("a new preset's definition is checked as it's written", async ({
   await mockRpc(page);
   await page.goto("/?sidebar=open&recordFixture=1");
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("menuitem", { name: "Query presets" }).click();
-  const manager = page.getByTestId("preset-manager");
-  await manager.getByRole("button", { name: /^track \d/ }).click();
+  await page.getByRole("menuitem", { name: "Data structure" }).click();
+  const manager = page.getByTestId("data-structure");
+  await manager.getByRole("treeitem", { name: /^track / }).click();
+  await manager.getByRole("treeitem", { name: /^Query settings/ }).click();
   await manager
     .getByRole("button", { name: "New sorting preset for track" })
     .click();

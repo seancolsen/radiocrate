@@ -105,3 +105,17 @@ export type MetadataFieldSetOrderParams = { tableName: string, orders: Array<Fie
 export type MetadataFieldSetDisplayParams = { tableName: string, field: FieldRef, display: string | null, };
 
 export type MetadataFieldSetSortingParams = { tableName: string, field: FieldRef, sorting: string | null, };
+
+export type ColumnSummary = { name: string, 
+/**
+ * How many different values the column holds, not counting NULL. An
+ * estimate (`approx_unique`), so it can be a little off on a large table.
+ */
+approxUnique: number, 
+/**
+ * The share of rows holding NULL, from 0 to 100. Absent for a table with no
+ * rows, where there's no share to take.
+ */
+nullPercentage: number | null, };
+
+export type TableSummary = { name: string, rowCount: number, columns: Array<ColumnSummary>, };

@@ -23,6 +23,7 @@ const ACTIONS: Record<string, string> = {
   "setting.list": "Loading settings",
   "setting.set": "Saving the setting",
   "setting.delete": "Resetting the setting",
+  "table.summarize": "Reading the tables' statistics",
   dml: "Writing to the database",
 };
 

@@ -36,8 +36,17 @@ import {
 import {
   defsEqual,
   emptyDefinition,
+  SECTIONS,
   type QueryDefinition,
 } from "../../query/definition";
+import {
+  fieldsItemId,
+  PRELUDE_ITEM,
+  presetSectionItemId,
+  presetSectionPath,
+  structureFieldId,
+  tableItemId,
+} from "../../query/structure";
 import type { ContextualQuery } from "../../query/contextualQuery";
 import type { AnnotationValue } from "querydown-js";
 import { columnMetadataFromAnnotation } from "../../query/columns";
@@ -54,8 +63,7 @@ import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import PresetDeleteModal from "../../components/PresetDeleteModal";
-import PresetManager from "../../components/PresetManager";
-import PreludePage from "../../components/PreludePage";
+import DataStructurePage from "../../components/DataStructurePage";
 import LogPage from "../../components/LogPage";
 import type { LogEntry } from "../../log/log";
 import {
@@ -200,7 +208,7 @@ function RoadTripSortOptions(): JSX.Element | null {
 }
 
 /** Adds three `track` presets to the fixture's two — a default filter, a sort
- * and a default display — so the preset manager has a table with something
+ * and a default display — so the Data structure page has a table with something
  * in every section, and one with an empty section or two. With no schema
  * loaded, those two are the tables it lists. */
 /** The filter section's options menu on "Lemonade", once it's open. */
@@ -234,6 +242,7 @@ const ANNOTATED_EMBED_COLUMNS = EMBED_ANNOTATIONS.map(
 );
 
 const LOVED_PRESET_ID = "00000000-0000-0000-0000-0000000000b1";
+const BY_ARTIST_PRESET_ID = "00000000-0000-0000-0000-0000000000b2";
 
 function seedManagedPresets(stores: Stores): void {
   const preset = (
@@ -261,12 +270,57 @@ function seedManagedPresets(stores: Stores): void {
   });
 }
 
-/** {@link seedManagedPresets}, with the two tables that have presets
- * expanded in the manager. */
-function seedExpandedTables(stores: Stores): void {
-  seedManagedPresets(stores);
-  stores.app.actions.toggleManagedTable("album", false);
-  stores.app.actions.toggleManagedTable("track", false);
+/** A Data structure page story: the page alone, over the canned schema, with
+ * the tree items `open` showing what's under them besides "Tables" itself,
+ * which is open as the page first comes up. `setup` runs after that. */
+function dataStructure(
+  size: { width?: number; height: number },
+  open: readonly string[],
+  setup?: (stores: Stores) => void,
+): Story {
+  return {
+    width: size.width ?? 720,
+    height: size.height,
+    frame: "flex flex-col",
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      stores.app.actions.setStructureExpanded(open, true);
+      setup?.(stores);
+    },
+    render: () => <DataStructurePage />,
+  };
+}
+
+/** The presets of the two tables that have any, each of their sections open. */
+const PRESET_LISTS = ["album", "track"].flatMap((table) =>
+  presetSectionPath(table).concat(
+    SECTIONS.map((section) => presetSectionItemId(table, section)),
+  ),
+);
+
+/** The `track` table's fields, in the Data structure page's tree. */
+const TRACK_FIELDS = [tableItemId("track"), fieldsItemId("track")];
+
+/** `track` as the field stories have it: a contextual query among its fields,
+ * and `disc_number` and the credits hidden. */
+function seedTrackFields(stores: Stores): void {
+  stores.app.store.setState((s) => {
+    s.contextualQueries = {
+      status: "ready",
+      data: castDraft([FEATURED_QUERY]),
+    };
+    s.fieldMetadata.data = {
+      track: Object.fromEntries(
+        [
+          { columnName: "disc_number" },
+          { multiLink: { relatedTableName: "credit", fkColumnName: "track" } },
+        ].map((field: FieldRef) => [
+          fieldRefKey(field),
+          { ...defaultFieldMetadata(), visible: false },
+        ]),
+      ),
+    };
+  });
 }
 
 /** Opens "Lemonade" carrying `def` as its (saved) query. */
@@ -984,40 +1038,6 @@ export const STORIES: Record<string, Story> = {
       </Menu>
     ),
   },
-  // The Querydown prelude editor's page, holding the default value — the
-  // state it opens in for anyone who hasn't customized it: Reset to default
-  // and Save both disabled.
-  "settings/prelude": {
-    width: 720,
-    height: 420,
-    frame: "flex flex-col",
-    setup: (stores) => {
-      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-    },
-    render: () => <PreludePage />,
-  },
-  // The prelude edited and not yet saved: the ✱ on Save, and Reset to default
-  // enabled.
-  "settings/prelude-unsaved": {
-    width: 720,
-    height: 420,
-    frame: "flex flex-col",
-    setup: (stores) => {
-      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-      stores.app.actions.editPrelude(
-        `${SETTINGS.querydown_prelude.default}\n#track.loud = rating.value:>=4`,
-      );
-    },
-    render: () => <PreludePage />,
-  },
-  // The page with its "?" hovered: the help in a tooltip below it, kept
-  // inside the right edge. (The hover is the test's.)
-  "settings/prelude-help": {
-    width: 720,
-    height: 420,
-    frame: "flex flex-col",
-    render: () => <PreludePage />,
-  },
   // The Logging page with logging on and a stretch of log: Stop logging, Copy
   // log and Clear log, and entries from several parts of the app, details
   // under their messages, under the date they were written.
@@ -1048,18 +1068,6 @@ export const STORIES: Record<string, Story> = {
     height: 680,
     frame: "flex flex-col",
     render: () => <LogPage />,
-  },
-  // The prelude holding a syntax error: the problem between the toolbar and
-  // the editor — located, with the line marked — and Save disabled.
-  "settings/prelude-problem": {
-    width: 720,
-    height: 420,
-    frame: "flex flex-col",
-    setup: (stores) => {
-      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-      stores.app.actions.editPrelude(BROKEN_PRELUDE);
-    },
-    render: () => <PreludePage />,
   },
   // The rebind dialog holding a chord another command already owns, so the
   // "currently bound to" warning shows too (⌘/Ctrl+S is "Record editor: Save
@@ -1592,74 +1600,127 @@ export const STORIES: Record<string, Story> = {
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },
 
-  // ── The preset manager ───────────────────────────────────────────────────
-  // As it opens: every table of the schema collapsed, with its preset count.
-  "preset-manager/collapsed": {
-    width: 720,
-    height: 520,
-    frame: "flex flex-col",
-    setup: (stores) => {
-      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
-      seedManagedPresets(stores);
-    },
-    render: () => <PresetManager />,
-  },
-  // Two tables' presets, by section: `album` with only a (default) sort,
-  // `track` with something in every section.
-  "preset-manager/basic": {
-    width: 720,
-    height: 640,
-    frame: "flex flex-col",
-    setup: seedExpandedTables,
-    render: () => <PresetManager />,
-  },
-  // Phone width.
-  "preset-manager/narrow": {
-    width: 360,
-    height: 720,
-    frame: "flex flex-col",
-    setup: seedExpandedTables,
-    render: () => <PresetManager />,
-  },
+  // ── The Data structure page ──────────────────────────────────────────────
+  // As it first opens: "Tables" open on every table of the schema, each closed,
+  // with its columns and rows counted, and the prelude closed below them.
+  "data-structure/tables": dataStructure({ height: 420 }, []),
+  // A table's fields: its columns with their types and statistics, the tables
+  // referring to it, and a contextual query — `disc_number` and the credits
+  // hidden, and so faded.
+  "data-structure/fields": dataStructure(
+    { height: 600 },
+    TRACK_FIELDS,
+    seedTrackFields,
+  ),
+  // Phone width: a field's statistics give way before its type does, and both
+  // before its name.
+  "data-structure/fields-narrow": dataStructure(
+    { width: 360, height: 600 },
+    TRACK_FIELDS,
+    seedTrackFields,
+  ),
+  // A contextual query's field and a related-records field, each opened into
+  // its editor: the query's with all three sections, on its filter; the
+  // related records' with only sorting and display, and "Restore default".
+  "data-structure/field-editors": dataStructure(
+    { height: 680 },
+    [
+      ...TRACK_FIELDS,
+      structureFieldId("track", { contextualQuery: FEATURED_QUERY.id }),
+      structureFieldId("track", {
+        multiLink: { relatedTableName: "play", fkColumnName: "track" },
+      }),
+    ],
+    seedTrackFields,
+  ),
+  // A table's fields as the database gives them, for the test to act on: the
+  // "Add field" menu (which it opens, and shoots), a contextual query being
+  // added, a field's context menu.
+  "data-structure/add-field": dataStructure({ height: 420 }, TRACK_FIELDS),
+  // A long way down a table's fields: the rows of everything they're within
+  // stuck to the top of the page. (The scrolling is the test's.)
+  "data-structure/sticky": dataStructure(
+    { height: 300 },
+    [
+      ...TRACK_FIELDS,
+      ...presetSectionPath("track", "filter"),
+      tableItemId("album"),
+      fieldsItemId("album"),
+      // Something under them, to scroll them up over.
+      tableItemId("track_tag"),
+      fieldsItemId("track_tag"),
+    ],
+    seedTrackFields,
+  ),
+  // Two tables' query settings: `album` with only a (default) sort, `track`
+  // with something in every section.
+  "data-structure/presets": dataStructure(
+    { height: 640 },
+    PRESET_LISTS,
+    seedManagedPresets,
+  ),
   // "vetted" and "loved" open at once in the builders' inline editor, with an
   // edit to the first on its way to the backend: nothing to do about it, so no
   // ✱ on the row and no save in the editor.
-  "preset-manager/expanded": {
-    width: 720,
-    height: 640,
-    frame: "flex flex-col",
-    setup: (stores) => {
-      seedExpandedTables(stores);
+  "data-structure/presets-expanded": dataStructure(
+    { height: 640 },
+    PRESET_LISTS,
+    (stores) => {
+      seedManagedPresets(stores);
       stores.app.actions.toggleManagedPreset(VETTED_PRESET_ID);
       stores.app.actions.toggleManagedPreset(LOVED_PRESET_ID);
       stores.app.actions.patchPreset(VETTED_PRESET_ID, {
         definition: "rating.value:>=4",
       });
     },
-    render: () => <PresetManager />,
-  },
+  ),
   // A new `track` filter being written at the top of its section, and a copy
-  // of `album`'s default sort at the top of its own.
-  "preset-manager/draft": {
-    width: 720,
-    height: 640,
-    frame: "flex flex-col",
-    setup: (stores) => {
+  // of its "by artist" sort at the top of its own.
+  "data-structure/presets-draft": dataStructure(
+    { height: 640 },
+    [],
+    (stores) => {
       seedManagedPresets(stores);
       stores.app.actions.openPresetDraft("track", "filter");
       stores.app.actions.patchPreset(
         stores.app.store.getState().unsavedPresets[0].id,
         { name: "nineties", definition: "year:>=1990 year:<2000" },
       );
-      const albumSort = stores.app.store
-        .getState()
-        .presets.find((p) => p.baseTable === "album");
-      if (albumSort) stores.app.actions.duplicatePreset(albumSort.id);
+      stores.app.actions.duplicatePreset(BY_ARTIST_PRESET_ID);
     },
-    render: () => <PresetManager />,
-  },
+  ),
+  // The Querydown prelude's editor, holding the default value — the state it
+  // opens in for anyone who hasn't customized it: Reset to default and Save
+  // both disabled. (The test hovers its "?" for the help story.)
+  "data-structure/prelude": dataStructure(
+    { height: 420 },
+    [PRELUDE_ITEM],
+    (stores) => stores.app.actions.setStructureExpanded(["tables"], false),
+  ),
+  // The prelude edited and not yet saved: the ✱ on Save, and Reset to default
+  // enabled.
+  "data-structure/prelude-unsaved": dataStructure(
+    { height: 420 },
+    [PRELUDE_ITEM],
+    (stores) => {
+      stores.app.actions.setStructureExpanded(["tables"], false);
+      stores.app.actions.editPrelude(
+        `${SETTINGS.querydown_prelude.default}\n#track.loud = rating.value:>=4`,
+      );
+    },
+  ),
+  // The prelude holding a syntax error: the problem between the toolbar and
+  // the editor — located, with the line marked — and Save disabled.
+  "data-structure/prelude-problem": dataStructure(
+    { height: 420 },
+    [PRELUDE_ITEM],
+    (stores) => {
+      stores.app.actions.setStructureExpanded(["tables"], false);
+      stores.app.actions.editPrelude(BROKEN_PRELUDE);
+    },
+  ),
   // Deleting "vetted", which a saved query and an open playlist both use.
-  "preset-manager/delete": {
+  "data-structure/preset-delete": {
     setup: (stores) => {
       stores.app.store.setState((s) => {
         s.sources.data[0].definition = JSON.stringify(FILTER_DEF);

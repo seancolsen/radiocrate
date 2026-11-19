@@ -16,8 +16,7 @@ import TabBar from "./components/TabBar";
 import NoTabsPage from "./components/NoTabsPage";
 import QueryPage from "./components/QueryPage";
 import ShortcutsPage from "./components/ShortcutsPage";
-import PresetManager from "./components/PresetManager";
-import PreludePage from "./components/PreludePage";
+import DataStructurePage from "./components/DataStructurePage";
 import LogPage from "./components/LogPage";
 import NowPlaying from "./components/NowPlaying";
 import CommandPalette from "./components/CommandPalette";
@@ -45,8 +44,7 @@ function TabPage(props: { tabId: string }): JSX.Element | null {
     return <QueryPage tabId={props.tabId} />;
   }
   if (kind === "shortcuts") return <ShortcutsPage />;
-  if (kind === "presets") return <PresetManager />;
-  if (kind === "prelude") return <PreludePage />;
+  if (kind === "structure") return <DataStructurePage />;
   if (kind === "log") return <LogPage />;
   return null;
 }

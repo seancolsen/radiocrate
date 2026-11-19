@@ -9,12 +9,13 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams,
-    Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams,
-    MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MultiLink, Placement, Preset,
-    PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams,
-    Source, SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams,
-    SourceRenameParams, SourceUpdateDefinitionParams, TreeItemKind,
+    AppVersion, ColumnSummary, FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams,
+    FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataFieldSetDisplayParams,
+    MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams,
+    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
+    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
+    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableSummary,
+    TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -318,6 +319,15 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
                 Ok(Value::Null)
             })
         }
+        // Statistics for every table at once, for the Data structure page. It
+        // reads every row of every table under the connection lock, so on a
+        // large collection it holds the other API methods up for as long as that
+        // takes — which is why it's asked for by that page alone, and not at
+        // boot alongside the introspection the compiler needs.
+        "table.summarize" => state.read(|conn| -> Result<Value, String> {
+            let tables = summarize_tables(conn)?;
+            serde_json::to_value(tables).map_err(|e| e.to_string())
+        }),
         // Re-scans the collection the server was started against — the same
         // pass `radiocrate-server scan` runs, and the one `serve` runs at boot
         // unless `--no-scan` is given. It takes no params: which directory to
@@ -810,6 +820,59 @@ fn delete_setting(conn: &Connection, key: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// What `SUMMARIZE` reports for every table (and view) introspection lists: those
+/// of the `main` schema of the database itself, which leaves out the `metadata` and
+/// `settings` schemas and any session's temp tables. In table name order.
+fn summarize_tables(conn: &Connection) -> Result<Vec<TableSummary>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT table_catalog, table_name FROM information_schema.tables \
+             WHERE table_schema = 'main' AND table_catalog = current_database() \
+             ORDER BY table_name",
+        )
+        .map_err(|e| e.to_string())?;
+    let names: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    names
+        .into_iter()
+        .map(|(catalog, name)| summarize_table(conn, &catalog, name))
+        .collect()
+}
+
+/// One table's `SUMMARIZE`. The table is named in full, catalog and all: a temp
+/// table of the same name sits in a `main` schema of its own.
+fn summarize_table(conn: &Connection, catalog: &str, name: String) -> Result<TableSummary, String> {
+    let sql = format!(
+        "SELECT column_name, approx_unique, null_percentage::DOUBLE, \"count\" \
+         FROM (SUMMARIZE {}.main.{})",
+        crate::dml::quote_ident(catalog),
+        crate::dml::quote_ident(&name),
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    // Every column's row reports the table's row count; a table has at least one.
+    let mut row_count = 0;
+    let columns = stmt
+        .query_map([], |row| {
+            row_count = row.get(3)?;
+            Ok(ColumnSummary {
+                name: row.get(0)?,
+                approx_unique: row.get(1)?,
+                null_percentage: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(TableSummary {
+        name,
+        row_count,
+        columns,
+    })
 }
 
 /// Writes `definition` to whichever row (query or playlist) the source wraps,
@@ -1450,6 +1513,53 @@ mod tests {
             .unwrap();
         let schema = introspection::Schema::parse(&json).unwrap();
         assert!(schema.table("field").is_none());
+    }
+
+    #[test]
+    fn summarize_reports_every_main_table_with_its_column_statistics() {
+        let conn = setup();
+        conn.execute_batch(
+            "INSERT INTO album (id, title, year) VALUES \
+             (uuid(), 'Blue', 1971), (uuid(), 'Blue', NULL), (uuid(), 'Hejira', NULL), \
+             (uuid(), NULL, NULL);
+             CREATE TEMP TABLE artist (only_in_temp integer);",
+        )
+        .unwrap();
+        let tables = summarize_tables(&conn).unwrap();
+
+        // The same tables introspection lists, in the same order.
+        let json: String = conn
+            .query_row(introspection::introspection_sql(), [], |row| row.get(0))
+            .unwrap();
+        let schema = introspection::Schema::parse(&json).unwrap();
+        let names = |tables: &[TableSummary]| -> Vec<String> {
+            tables.iter().map(|t| t.name.clone()).collect()
+        };
+        let introspected: Vec<String> = schema.tables.iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names(&tables), introspected);
+
+        let album = tables.iter().find(|t| t.name == "album").unwrap();
+        assert_eq!(album.row_count, 4);
+        let column = |name: &str| album.columns.iter().find(|c| c.name == name).unwrap();
+        assert_eq!(
+            album.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            ["id", "title", "year"]
+        );
+        assert_eq!(column("id").null_percentage, Some(0.0));
+        assert_eq!(column("id").approx_unique, 4);
+        assert_eq!(column("title").approx_unique, 2);
+        assert_eq!(column("title").null_percentage, Some(25.0));
+        assert_eq!(column("year").null_percentage, Some(75.0));
+
+        // An empty table has no share of NULLs to report, and the temp table that
+        // shares its name is passed over for the real one.
+        let artist = tables.iter().find(|t| t.name == "artist").unwrap();
+        assert_eq!(artist.row_count, 0);
+        assert_eq!(
+            artist.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            ["id", "name"]
+        );
+        assert_eq!(artist.columns[0].null_percentage, None);
     }
 
     #[test]

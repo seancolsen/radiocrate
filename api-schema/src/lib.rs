@@ -341,6 +341,33 @@ pub struct MetadataFieldSetSortingParams {
     pub sorting: Option<String>,
 }
 
+/// One column of a [`TableSummary`]: what `DuckDB`'s `SUMMARIZE` counts in it. Its
+/// type isn't repeated here: introspection has it, under the name the schema
+/// gives it rather than `SUMMARIZE`'s spelled-out one (an enum's every value).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnSummary {
+    pub name: String,
+    /// How many different values the column holds, not counting NULL. An
+    /// estimate (`approx_unique`), so it can be a little off on a large table.
+    #[ts(type = "number")]
+    pub approx_unique: i64,
+    /// The share of rows holding NULL, from 0 to 100. Absent for a table with no
+    /// rows, where there's no share to take.
+    pub null_percentage: Option<f64>,
+}
+
+/// One table as `table.summarize` reports it: how many rows it holds, and the
+/// statistics of each of its columns, in column order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TableSummary {
+    pub name: String,
+    #[ts(type = "number")]
+    pub row_count: i64,
+    pub columns: Vec<ColumnSummary>,
+}
+
 /// One method in the RPC surface, as consumed by the client generator.
 ///
 /// The registry ([`METHODS`]) is the one hand-maintained list here; it names each
@@ -518,6 +545,12 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "table.summarize",
+        func: "tableSummarize",
+        params: None,
+        result: "TableSummary[]",
+    },
+    Method {
         wire: "collection.rescan",
         func: "collectionRescan",
         params: None,
@@ -577,5 +610,7 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", MetadataFieldSetOrderParams::decl(&cfg)),
         format!("export {}", MetadataFieldSetDisplayParams::decl(&cfg)),
         format!("export {}", MetadataFieldSetSortingParams::decl(&cfg)),
+        format!("export {}", ColumnSummary::decl(&cfg)),
+        format!("export {}", TableSummary::decl(&cfg)),
     ]
 }

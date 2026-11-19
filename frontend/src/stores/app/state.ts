@@ -5,6 +5,7 @@ import type {
   Source,
   SourceFolder,
   SourceKind,
+  TableSummary,
 } from "api-client";
 import type { AudioQualityPref, LoadedRange } from "../../audio/engine";
 import type { TreeItemRef } from "../../query/explorerTree";
@@ -18,7 +19,7 @@ import type { ContextualQuery } from "../../query/contextualQuery";
 import type { MetadataByTable } from "../../query/fieldMetadata";
 import type { SchemaTable } from "../../query/schema";
 import { loadLog, type LogEntry } from "../../log/log";
-import { SETTINGS, type SettingOverrides } from "../../state/settings";
+import type { SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
 import type { FindOptions } from "../../record/findReplace";
 import type { AppEnv } from "../env";
@@ -29,6 +30,7 @@ import {
   storedExplorerWidth,
   storedRecordSidebarWidth,
   storedSidebarOpen,
+  storedStructureExpanded,
   storedTabs,
   storedTheme,
 } from "./persistence";
@@ -65,15 +67,24 @@ export interface PresetSave {
   isDefault: boolean;
 }
 
-/** The preset manager's own state: what it shows open, and the presets being
- * written in it. Kept in the store (not the page) so the actions that create a
- * preset can steer it — a new preset opens expanded. */
-export interface PresetManagerState {
-  /** The tables whose sections are shown; every other table is collapsed to
-   * its heading. */
-  expandedTables: string[];
-  /** The presets whose inline editors are open. */
-  expanded: string[];
+/** The statistics behind the Data structure page — `table.summarize`, which
+ * the page asks for as it opens. `"idle"` until it has: nothing else in the
+ * app needs them, and they cost a read of every table. */
+export interface TableSummariesState {
+  status: "idle" | ResourceStatus;
+  data: readonly TableSummary[];
+}
+
+/** The Data structure page's own state: which items of its tree are open, and
+ * the presets being written in it. Kept in the store (not the page) so the
+ * actions that create a preset can steer it — a new preset opens expanded — and
+ * so anything that sends the user there can open the way to what it's about. */
+export interface StructureState {
+  /** The tree items showing what's under them, by item id
+   * (`query/structure.ts`). Persisted, so the tree comes back as it was left.
+   * An id whose item has gone (a dropped table, a deleted preset) just sits
+   * here, naming nothing. */
+  expanded: Record<string, true>;
   /** The unsaved presets begun here (in `unsavedPresets`), which it lists
    * until they're saved or discarded, or it closes. */
   drafts: string[];
@@ -82,19 +93,8 @@ export interface PresetManagerState {
    * place until it's closed, rather than moving under the caret as it's
    * renamed. */
   listedNames: Record<string, string>;
-  /** The table to scroll into view once the page is showing, if any. */
-  revealTable: string | null;
-}
-
-/** The preset manager as it opens: every table collapsed, nothing open. */
-export function initialPresetManager(): PresetManagerState {
-  return {
-    expandedTables: [],
-    expanded: [],
-    drafts: [],
-    listedNames: {},
-    revealTable: null,
-  };
+  /** The item to scroll into view once the page is showing, if any. */
+  reveal: string | null;
 }
 
 /** Which of a page's result rows "Export results data" writes out. */
@@ -123,19 +123,12 @@ export const SHORTCUTS_TAB_ID = "settings:keyboard-shortcuts";
  * surface (the tab bar, the explorer's "Opened" list) reads one field. */
 export const SHORTCUTS_TAB_NAME = "Keyboard Shortcuts";
 
-/** A fixed sentinel id for the singleton preset manager tab, namespaced like
+/** A fixed sentinel id for the singleton Data structure tab, namespaced like
  * {@link SHORTCUTS_TAB_ID}. */
-export const PRESETS_TAB_ID = "settings:query-presets";
+export const STRUCTURE_TAB_ID = "settings:data-structure";
 
-/** The preset manager tab's handle text. */
-export const PRESETS_TAB_NAME = "Query presets";
-
-/** A fixed sentinel id for the singleton Querydown prelude editor tab,
- * namespaced like {@link SHORTCUTS_TAB_ID}. */
-export const PRELUDE_TAB_ID = "settings:querydown-prelude";
-
-/** The prelude editor tab's handle text: the setting's own name. */
-export const PRELUDE_TAB_NAME = SETTINGS.querydown_prelude.name;
+/** The Data structure tab's handle text. */
+export const STRUCTURE_TAB_NAME = "Data structure";
 
 /** A fixed sentinel id for the singleton Logging tab, namespaced like
  * {@link SHORTCUTS_TAB_ID}. */
@@ -215,20 +208,13 @@ export interface ShortcutsTab {
   name: string;
 }
 
-/** The preset manager tab, which lists, edits, creates and deletes every
- * table's presets. There is at most one; its UI state is the app store's
- * `presetManager`. */
-export interface PresetsTab {
-  kind: "presets";
-  id: typeof PRESETS_TAB_ID;
-  name: string;
-}
-
-/** The Querydown prelude editor tab. There is at most one; the text being
- * edited in it, until it's saved, is the app store's `preludeDraft`. */
-export interface PreludeTab {
-  kind: "prelude";
-  id: typeof PRELUDE_TAB_ID;
+/** The Data structure tab: a tree of every table — its fields and their
+ * statistics, and its query presets — and the Querydown prelude. There is at
+ * most one; its UI state is the app store's `structure`, and the prelude text
+ * being edited in it, until it's saved, is `preludeDraft`. */
+export interface StructureTab {
+  kind: "structure";
+  id: typeof STRUCTURE_TAB_ID;
   name: string;
 }
 
@@ -241,13 +227,12 @@ export interface LogTab {
 }
 
 /** An open tab: a query page, a playlist page, or one of the singleton
- * settings pages (the keyboard-shortcuts editor, the preset manager, the
- * prelude editor, the log). More page kinds (artists, …) slot in here as
+ * settings pages (the keyboard-shortcuts editor, the Data structure page, the
+ * log). More page kinds (artists, …) slot in here as
  * further variants — the tab bar, the explorer's "Opened" list and the tab
  * commands all work off the shared `kind` / `id` / `name` fields, and only
  * `selectQueryTab` / `selectPageTab` narrow to a page's own state. */
-export type Tab =
-  QueryTab | PlaylistTab | ShortcutsTab | PresetsTab | PreludeTab | LogTab;
+export type Tab = QueryTab | PlaylistTab | ShortcutsTab | StructureTab | LogTab;
 
 /** A tab whose page is the results page — a query's or a playlist's: a working
  * definition built with the filter, sort and display builders, run, and shown
@@ -566,14 +551,16 @@ export interface AppState {
   /** Saved presets with changes the backend hasn't acknowledged. */
   presetSaves: Record<string, PresetSaveState>;
   /** Presets the backend has never heard of: being written, in a query that
-   * already runs with them or in the preset manager. A query can use one
+   * already runs with them or on the Data structure page. A query can use one
    * like any other, but what it stores leaves the reference out until the
    * preset is saved. */
   unsavedPresets: Preset[];
   /** The "Save as preset" dialog, when open. */
   presetSave: PresetSave | null;
-  /** The preset manager's listing state. */
-  presetManager: PresetManagerState;
+  /** The Data structure page's tree state. */
+  structure: StructureState;
+  /** Every table's statistics, for the Data structure page. */
+  tableSummaries: TableSummariesState;
   /** The preset pending delete confirmation (modal), by id, when open. */
   pendingPresetDelete: string | null;
   /** The compiled SQL shown by the "View SQL" dialog, when open. */
@@ -610,7 +597,7 @@ export interface AppState {
   logEntries: readonly LogEntry[];
   /** The prelude editor's text while it differs from the prelude in force:
    * edited, and not yet saved (null when there's no such edit). Dropped when
-   * its tab closes. */
+   * the Data structure tab, which holds the editor, closes. */
   preludeDraft: string | null;
   /** Whether a `collection.rescan` call is in flight. One at a time, and only
    * from the Settings menu's "Re-scan collection" — which stays open, with the
@@ -735,7 +722,7 @@ export function reconcileTabHistory(
 export const EMPTY_SELECTION: ReadonlySet<number> = new Set<number>();
 
 /** The open tabs a previous visit left (see `storedTabs`), as tabs: the
- * settings pages (the shortcuts editor, the preset manager, the prelude editor)
+ * settings pages (the shortcuts editor, the Data structure page, the log)
  * get their fixed ids and names back, and an active id that names
  * no restored tab falls back to the first one. A restored query or playlist tab
  * has no page yet; its query runs again when it's first viewed. */
@@ -753,20 +740,49 @@ function restoredTabs(env: AppEnv): {
           id: SHORTCUTS_TAB_ID,
           name: SHORTCUTS_TAB_NAME,
         };
-      case "presets":
-        return { kind: "presets", id: PRESETS_TAB_ID, name: PRESETS_TAB_NAME };
-      case "prelude":
-        return { kind: "prelude", id: PRELUDE_TAB_ID, name: PRELUDE_TAB_NAME };
+      case "structure":
+        return {
+          kind: "structure",
+          id: STRUCTURE_TAB_ID,
+          name: STRUCTURE_TAB_NAME,
+        };
       case "log":
         return { kind: "log", id: LOG_TAB_ID, name: LOG_TAB_NAME };
       default:
         return { ...t, saveFailed: false };
     }
   });
-  const activeTabId = tabs.some((t) => t.id === stored.activeTabId)
-    ? stored.activeTabId
+  // The two pages the Data structure page took over went by ids of their own.
+  const storedActive =
+    stored.activeTabId !== null &&
+    FORMER_STRUCTURE_TAB_IDS.includes(stored.activeTabId)
+      ? STRUCTURE_TAB_ID
+      : stored.activeTabId;
+  const activeTabId = tabs.some((t) => t.id === storedActive)
+    ? storedActive
     : (tabs[0]?.id ?? null);
   return { tabs, activeTabId, unsavedPresets: stored.unsavedPresets };
+}
+
+/** The ids of the "Query presets" and "Querydown Prelude" tabs, which became the
+ * Data structure page: an open-tabs record written before then may name one as
+ * the active tab. */
+const FORMER_STRUCTURE_TAB_IDS: readonly string[] = [
+  "settings:query-presets",
+  "settings:querydown-prelude",
+];
+
+/** The Data structure page's state as the app starts: its tree open where it
+ * was left, and nothing being written in it. */
+export function initialStructure(env: AppEnv): StructureState {
+  return {
+    expanded: Object.fromEntries(
+      storedStructureExpanded(env).map((id) => [id, true]),
+    ),
+    drafts: [],
+    listedNames: {},
+    reveal: null,
+  };
 }
 
 export function initialState(env: AppEnv): AppState {
@@ -790,7 +806,8 @@ export function initialState(env: AppEnv): AppState {
     presetSaves: {},
     unsavedPresets,
     presetSave: null,
-    presetManager: initialPresetManager(),
+    structure: initialStructure(env),
+    tableSummaries: { status: "idle", data: [] },
     pendingPresetDelete: null,
     viewSql: null,
     exportData: null,

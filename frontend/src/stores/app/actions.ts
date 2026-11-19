@@ -18,6 +18,7 @@ import {
   sourceRename,
   sourceUpdateDefinition,
   collectionRescan,
+  tableSummarize,
   settingDelete,
   settingList,
   settingSet,
@@ -141,7 +142,11 @@ import {
   type Section,
   type SectionContent,
 } from "../../query/definition";
-import { presetTables } from "../../query/presetGroups";
+import {
+  PRELUDE_ITEM,
+  presetItemId,
+  presetSectionPath,
+} from "../../query/structure";
 import {
   DIAGNOSTIC_SETTLE_MS,
   nextShown,
@@ -229,6 +234,7 @@ import {
   persistExplorerWidth,
   persistRecordSidebarWidth,
   persistSidebar,
+  persistStructureExpanded,
   persistTabs,
   persistTheme,
 } from "./persistence";
@@ -266,16 +272,13 @@ import {
 } from "./selectors";
 import {
   EMPTY_SELECTION,
-  PRELUDE_TAB_ID,
-  PRELUDE_TAB_NAME,
   LOG_TAB_ID,
   LOG_TAB_NAME,
-  PRESETS_TAB_ID,
-  PRESETS_TAB_NAME,
   SHORTCUTS_TAB_ID,
   SHORTCUTS_TAB_NAME,
+  STRUCTURE_TAB_ID,
+  STRUCTURE_TAB_NAME,
   emptyPage,
-  initialPresetManager,
   reconcileTabHistory,
   type AppState,
   type CurrentTrack,
@@ -1012,25 +1015,33 @@ export interface AppActions {
   patchPresetSave: (patch: Partial<PresetSave>) => void;
   confirmPresetSave: (tabId: string) => void;
 
-  // The preset manager. Its presets are the builders', so a change made in one
-  // shows in the other.
-  /** Open (or focus) the singleton preset manager tab — the Settings menu's
-   * and the `presets.manage` command's action. Given a `table`, it also opens
-   * that table's sections and brings them into view. */
-  openPresetsTab: (table?: string) => void;
-  /** Clear the pending scroll to a table once it has been applied. */
-  clearPresetManagerReveal: () => void;
-  /** Expand table `table`'s sections in the manager, or collapse them if
-   * they're shown. With `all` (a Ctrl+Click), every table follows suit. */
-  toggleManagedTable: (table: string, all: boolean) => void;
-  /** Open preset `id`'s inline editor in the manager, or close it if it's
+  // The Data structure page. Its presets are the builders', so a change made
+  // in one shows in the other.
+  /** Open (or focus) the singleton Data structure tab — the Settings menu's
+   * and the `presets.manage` command's action. Given something to `reveal`, it
+   * also opens the tree down to it and brings it into view. */
+  openStructureTab: (reveal?: StructureReveal) => void;
+  /** Open tree item `id` and bring it into view, the page being up already. */
+  revealStructureItem: (id: string) => void;
+  /** Clear the pending scroll to an item once it has been applied. */
+  clearStructureReveal: () => void;
+  /** Open the tree items `ids` (`query/structure.ts`), or close them. */
+  setStructureExpanded: (ids: readonly string[], open: boolean) => void;
+  /** Load every table's statistics, as the page does when it opens: a no-op
+   * once they're loaded or on their way. */
+  ensureTableSummaries: () => void;
+  /** Load every table's statistics (`table.summarize`). */
+  loadTableSummaries: () => Promise<void>;
+  /** Read the tables again, and their statistics: the page's Refresh. */
+  refreshStructure: () => void;
+  /** Open preset `id`'s inline editor on the page, or close it if it's
    * open. */
   toggleManagedPreset: (id: string) => void;
-  /** Start a new, unsaved preset at the top of `baseTable`'s `section` in the
-   * manager (a section heading's "+"), expanding the table. */
+  /** Start a new, unsaved preset at the top of `baseTable`'s `section` on the
+   * page (a section heading's "+"), opening the tree down to it. */
   openPresetDraft: (baseTable: string, section: Section) => void;
-  /** Start an unsaved copy of preset `id` at the top of its own section in the
-   * manager. */
+  /** Start an unsaved copy of preset `id` at the top of its own section on the
+   * page. */
   duplicatePreset: (id: string) => void;
   /** Asks to delete preset `id`. An unsaved one has nothing to lose but its
    * text, and is discarded there and then. */
@@ -1094,9 +1105,6 @@ export interface AppActions {
   /** Store a setting's value and re-run the open queries under it. A value
    * equal to the default is stored as a *deletion* — the reset path. */
   saveSetting: (key: SettingKey, value: string) => void;
-  /** Open (or focus) the singleton Querydown prelude editor tab — the Settings
-   * menu's entry, and an error strip's "Edit prelude". */
-  openPreludeTab: () => void;
   /** Record the prelude editor's text as the user edits it. Text equal to the
    * prelude in force is no edit at all. */
   editPrelude: (text: string) => void;
@@ -1121,6 +1129,10 @@ export interface AppActions {
   /** Take the confirmation toast off the screen before its time is up. */
   dismissToast: () => void;
 }
+
+/** What `openStructureTab` opens the tree down to: a table's presets (all three
+ * sections, or one of them), or the Querydown prelude's editor. */
+export type StructureReveal = { table: string; section?: Section } | "prelude";
 
 /** How long a confirmation toast stays on screen. */
 export const TOAST_MS = 4000;
@@ -1149,6 +1161,12 @@ export function createAppActions(
     ([tabs, activeTabId, unsavedPresets]) =>
       persistTabs(env, tabs, activeTabId, unsavedPresets),
     { equalityFn: shallow },
+  );
+
+  // So does the Data structure page's tree: which of its items are open.
+  const stopPersistingStructure = store.subscribe(
+    (s) => s.structure.expanded,
+    (expanded) => persistStructureExpanded(env, Object.keys(expanded)),
   );
 
   // The tab stack: whichever way a tab becomes active (opened, selected,
@@ -2041,7 +2059,7 @@ export function createAppActions(
       s.unsavedPresets = s.unsavedPresets.filter((p) => p.id !== id);
       s.presets.push(preset);
       if (preset.isDefault) displaceDefault(s, preset);
-      const m = s.presetManager;
+      const m = s.structure;
       m.drafts = m.drafts.filter((d) => d !== id);
     });
     const key = presetSaveKey(id);
@@ -2069,12 +2087,12 @@ export function createAppActions(
   };
 
   /** Drops the unsaved presets nothing can reach any more. One stays while a
-   * page uses it, the manager lists it, or an undo or redo could bring it back
-   * into a page. */
+   * page uses it, the Data structure page lists it, or an undo or redo could
+   * bring it back into a page. */
   const sweepUnsavedPresets = () => {
-    const { tabs, pages, presetManager, unsavedPresets } = get();
+    const { tabs, pages, structure, unsavedPresets } = get();
     const reachable = (id: string) =>
-      presetManager.drafts.includes(id) ||
+      structure.drafts.includes(id) ||
       tabs.some((t) => {
         if (t.kind !== "query" && t.kind !== "playlist") return false;
         if (usesPreset(t.live, id)) return true;
@@ -2144,18 +2162,40 @@ export function createAppActions(
     };
   };
 
-  /** Lists `preset`, unsaved, at the top of its section in the manager, open
-   * and expanded. */
+  /** Lists `preset`, unsaved, at the top of its section on the Data structure
+   * page, with the tree open down to it and its editor open. */
   const addManagerDraft = (preset: Preset) =>
     set((s) => {
       s.unsavedPresets.push(preset);
-      const m = s.presetManager;
-      if (!m.expandedTables.includes(preset.baseTable))
-        m.expandedTables.push(preset.baseTable);
+      const m = s.structure;
+      for (const item of presetSectionPath(
+        preset.baseTable,
+        asSection(preset.section),
+      )) {
+        m.expanded[item] = true;
+      }
       m.drafts.push(preset.id);
-      m.expanded.push(preset.id);
+      m.expanded[presetItemId(preset.id)] = true;
       m.listedNames[preset.id] = "";
     });
+
+  /** Notes the name of every open preset that has none noted, as the name it's
+   * listed by (`StructureState.listedNames`): one restored open from a previous
+   * visit, which never went through `toggleManagedPreset`. */
+  const noteListedNames = (s: Draft<AppState>) => {
+    const m = s.structure;
+    for (const preset of [...s.presets, ...s.unsavedPresets]) {
+      if (
+        m.expanded[presetItemId(preset.id)] &&
+        m.listedNames[preset.id] === undefined
+      ) {
+        m.listedNames[preset.id] = preset.name;
+      }
+    }
+  };
+
+  // Only the latest request for the tables' statistics lands.
+  let summariesToken = 0;
 
   /** Closes the tab `id`, dropping its cached state and selecting the tab
    * below it in the stack (`AppState.tabHistory`).
@@ -2167,10 +2207,21 @@ export function createAppActions(
       if (idx === -1) return;
       s.tabs.splice(idx, 1);
       delete s.pages[id];
-      // The manager's listing state is its tab's: reopened, it starts afresh.
-      if (id === PRESETS_TAB_ID) s.presetManager = initialPresetManager();
-      // So is the prelude editor's unsaved text.
-      if (id === PRELUDE_TAB_ID) s.preludeDraft = null;
+      if (id === STRUCTURE_TAB_ID) {
+        // What was being written on the page is its tab's: its new presets and
+        // the prelude's unsaved text go with it. Which items are open stays —
+        // that's how the tree comes back — but a preset reopened later is
+        // listed under the name it has by then.
+        const m = s.structure;
+        for (const draft of m.drafts) delete m.expanded[presetItemId(draft)];
+        m.drafts = [];
+        m.listedNames = {};
+        m.reveal = null;
+        noteListedNames(s);
+        s.preludeDraft = null;
+        // And its statistics are read afresh the next time it opens.
+        s.tableSummaries = { status: "idle", data: [] };
+      }
       s.tabHistory = s.tabHistory.filter((h) => h !== id);
       if (s.activeTabId === id) {
         // Select the next tab down the stack — the one the user was on before
@@ -2185,6 +2236,8 @@ export function createAppActions(
         track.rowIndex = null;
       }
     });
+    // A read of the tables' statistics still on its way has no page to land on.
+    if (id === STRUCTURE_TAB_ID) summariesToken++;
     sweepUnsavedPresets();
     // There's nothing left to wait for: no more edits are coming to fold into
     // a closed tab's save.
@@ -3345,6 +3398,7 @@ export function createAppActions(
             return local.get(p.id) ?? p;
           });
           s.presetsStatus = "ready";
+          noteListedNames(s);
         });
       } catch (err) {
         console.error("preset list failed", err);
@@ -4538,7 +4592,7 @@ export function createAppActions(
       const origin = get().pages[tabId]?.diagnostic?.origin;
       if (!origin) return;
       if (origin.kind === "prelude") {
-        actions.openPreludeTab();
+        actions.openStructureTab("prelude");
       } else if (origin.kind === "full") {
         // There's only the one editor; any section's focus request opens it.
         actions.focusBuilderSection(tabId, "filter");
@@ -4902,9 +4956,9 @@ export function createAppActions(
           if (section !== null) removePresetFromPage(t.id, section, id);
         }
         set((s) => {
-          const m = s.presetManager;
+          const m = s.structure;
           m.drafts = m.drafts.filter((d) => d !== id);
-          m.expanded = m.expanded.filter((e) => e !== id);
+          delete m.expanded[presetItemId(id)];
           delete m.listedNames[id];
         });
         sweepUnsavedPresets();
@@ -5004,52 +5058,83 @@ export function createAppActions(
         s.presetSave = null;
       });
     },
-    openPresetsTab: (table) => {
+    openStructureTab: (reveal) => {
       set((s) => {
         // A singleton, like the shortcuts editor.
-        if (!s.tabs.some((t) => t.kind === "presets")) {
+        if (!s.tabs.some((t) => t.kind === "structure")) {
           s.tabs.push({
-            kind: "presets",
-            id: PRESETS_TAB_ID,
-            name: PRESETS_TAB_NAME,
+            kind: "structure",
+            id: STRUCTURE_TAB_ID,
+            name: STRUCTURE_TAB_NAME,
           });
         }
-        s.activeTabId = PRESETS_TAB_ID;
-        if (table === undefined) return;
-        const m = s.presetManager;
-        if (!m.expandedTables.includes(table)) m.expandedTables.push(table);
-        m.revealTable = table;
+        s.activeTabId = STRUCTURE_TAB_ID;
+        if (reveal === undefined) return;
+        const path =
+          reveal === "prelude"
+            ? [PRELUDE_ITEM]
+            : presetSectionPath(reveal.table, reveal.section);
+        const m = s.structure;
+        for (const item of path) m.expanded[item] = true;
+        m.reveal = path[path.length - 1];
       });
     },
-    clearPresetManagerReveal: () =>
+    revealStructureItem: (id) =>
       set((s) => {
-        s.presetManager.revealTable = null;
+        s.structure.expanded[id] = true;
+        s.structure.reveal = id;
       }),
-    toggleManagedTable: (table, all) =>
+    clearStructureReveal: () =>
       set((s) => {
-        const m = s.presetManager;
-        const open = m.expandedTables.includes(table);
-        if (all) {
-          m.expandedTables = open
-            ? []
-            : presetTables(
-                s.presets,
-                s.schema.tables.map((t) => t.name),
-              );
-        } else if (open) {
-          m.expandedTables = m.expandedTables.filter((t) => t !== table);
-        } else {
-          m.expandedTables.push(table);
+        s.structure.reveal = null;
+      }),
+    setStructureExpanded: (ids, open) =>
+      set((s) => {
+        const m = s.structure;
+        for (const id of ids) {
+          if (open) m.expanded[id] = true;
+          else delete m.expanded[id];
         }
       }),
+    ensureTableSummaries: () => {
+      if (get().tableSummaries.status === "idle") {
+        void actions.loadTableSummaries();
+      }
+    },
+    loadTableSummaries: async () => {
+      const token = ++summariesToken;
+      set((s) => {
+        s.tableSummaries.status = "loading";
+      });
+      try {
+        const data = await tableSummarize();
+        if (token !== summariesToken) return;
+        set((s) => {
+          s.tableSummaries = { status: "ready", data: castDraft(data ?? []) };
+        });
+      } catch (err) {
+        // The error bar reports it. What was read before stays on show: a
+        // table's size a moment out of date still says more than none.
+        console.error("table summarize failed", err);
+        if (token !== summariesToken) return;
+        set((s) => {
+          s.tableSummaries.status = "error";
+        });
+      }
+    },
+    refreshStructure: () => {
+      void actions.loadSchema();
+      void actions.loadTableSummaries();
+    },
     toggleManagedPreset: (id) =>
       set((s) => {
-        const m = s.presetManager;
-        if (m.expanded.includes(id)) {
-          m.expanded = m.expanded.filter((e) => e !== id);
+        const m = s.structure;
+        const item = presetItemId(id);
+        if (m.expanded[item]) {
+          delete m.expanded[item];
           delete m.listedNames[id];
         } else {
-          m.expanded.push(id);
+          m.expanded[item] = true;
           const preset = [...s.presets, ...s.unsavedPresets].find(
             (p) => p.id === id,
           );
@@ -5089,8 +5174,8 @@ export function createAppActions(
         s.pendingPresetDelete = null;
         s.presets = s.presets.filter((p) => p.id !== id);
         delete s.presetSaves[id];
-        const m = s.presetManager;
-        m.expanded = m.expanded.filter((e) => e !== id);
+        const m = s.structure;
+        delete m.expanded[presetItemId(id)];
         delete m.listedNames[id];
         for (const page of Object.values(s.pages)) {
           page.expandedPresets = page.expandedPresets.filter((p) => p !== id);
@@ -5262,18 +5347,6 @@ export function createAppActions(
         }
       }
     },
-    openPreludeTab: () =>
-      set((s) => {
-        // A singleton, like the shortcuts editor.
-        if (!s.tabs.some((t) => t.kind === "prelude")) {
-          s.tabs.push({
-            kind: "prelude",
-            id: PRELUDE_TAB_ID,
-            name: PRELUDE_TAB_NAME,
-          });
-        }
-        s.activeTabId = PRELUDE_TAB_ID;
-      }),
     editPrelude: (text) => {
       const draft = text === selectPrelude(get()) ? null : text;
       set((s) => {
@@ -5354,6 +5427,7 @@ export function createAppActions(
   const dispose = () => {
     stopWatchingSystemTheme();
     stopPersistingTabs();
+    stopPersistingStructure();
     stopTrackingTabHistory();
     for (const timer of runTimers.values()) clearTimeout(timer);
     runTimers.clear();

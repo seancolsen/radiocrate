@@ -83,6 +83,9 @@ import ClearQueue from "~icons/material-symbols/clear-all";
 import Keyboard from "~icons/material-symbols/keyboard-alt";
 import Commands from "~icons/material-symbols/terminal";
 import Presets from "~icons/material-symbols/tune";
+import Structure from "~icons/material-symbols/architecture";
+import Tables from "~icons/material-symbols/database-outline";
+import Fields from "~icons/material-symbols/list-alt-outline";
 import About from "~icons/material-symbols/info";
 import Help from "~icons/material-symbols/help-outline";
 import Log from "~icons/material-symbols/receipt-long";
@@ -193,9 +196,12 @@ export const Icons = {
   ClearQueue, // now-playing menu: empty the queue
   Keyboard, // shortcuts editor: "Record keys" search toggle
   Commands, // the explorer footer's way into the command palette
-  Presets, // the preset manager: its Settings-menu entry and tab handle
+  Presets, // "Manage presets", on a builder section's menu
+  Structure, // the Data structure page: its Settings-menu entry and tab handle
+  Tables, // the Data structure page: the list of the database's tables
+  Fields, // the Data structure page: a table's fields
   About, // Settings footer: "About RadioCrate" (versions + update actions)
-  Help, // a page's "?" help: a tooltip (the prelude editor) or a popover (the log)
+  Help, // a "?" help: a tooltip (the prelude's editor) or a popover (the log)
   Log, // the Logging page: its Settings-menu entry and tab handle
   StartLogging, // Logging page toolbar: "Start logging"
   StopLogging, // Logging page toolbar: "Stop logging"
