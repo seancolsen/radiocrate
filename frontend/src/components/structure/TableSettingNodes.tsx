@@ -23,7 +23,7 @@ import {
   useSettledDiagnostic,
 } from "../builder/useDiagnostics";
 import { QuerySectionsView } from "../record/FieldQueryEditor";
-import HelpPopover from "../ui/HelpPopover";
+import IconButton from "../ui/IconButton";
 import { MenuItem } from "../ui/Menu";
 import { TreeName, TreeNode, TreeNote, useFocusOnReveal } from "./Tree";
 
@@ -63,40 +63,12 @@ function settingState(customized: boolean, hasDefault: boolean): string {
   return hasDefault ? "Built-in" : "None";
 }
 
-/** Inline Querydown, or a name, in a help popover. */
-function code(text: string): JSX.Element {
-  return (
-    <code className="bg-hover rounded px-0.5 font-mono text-xs">{text}</code>
-  );
-}
-
-/** A setting's help: what it does, in the popover behind its "?". */
-function SettingHelp(props: {
-  table: string;
-  setting: PreludeSetting;
-}): JSX.Element {
-  const { table } = props;
-  if (props.setting === "defaultTextSearch") {
-    return (
-      <p>
-        When you enter bare words into a Querydown filter for {code(table)}{" "}
-        records, this setting customizes how a filter condition is constructed
-        from the text you enter. Use {code(SETTING_VARIABLE)} in this field to
-        represent the text entered.
-      </p>
-    );
+/** A setting's help: what it does, in the tooltip of its "?". */
+function settingHelp(table: string, setting: PreludeSetting): string {
+  if (setting === "defaultTextSearch") {
+    return `When you enter bare words into a Querydown filter for ${table} records, this setting customizes how a filter condition is constructed from the text you enter. Use ${SETTING_VARIABLE} in this field to represent the text entered.`;
   }
-  return (
-    <p>
-      When a column in another table refers to records in this table, this
-      setting lets you control the behavior of comparisons in the other table
-      which include that linked record column. To customize the behavior, write
-      a Querydown comparison expression here, in the context of this table,
-      using {code(SETTING_VARIABLE)} to represent the compared value. For
-      example, if this table has a {code("name")} column, you can write{" "}
-      {code("name:@x")} to compare linked records by name.
-    </p>
-  );
+  return `When a column in another table refers to records in this table, this setting lets you control the behavior of comparisons in the other table which include that linked record column. To customize the behavior, write a Querydown comparison expression here, in the context of this table, using ${SETTING_VARIABLE} to represent the compared value. For example, if this table has a name column, you can write name:@x to compare linked records by name.`;
 }
 
 /** The editor of one of a table's prelude settings: its toolbar, the
@@ -166,9 +138,11 @@ function PreludeSettingEditor(props: {
           <Icons.Revert className="text-ink-weak size-4" />
           Reset to default
         </button>
-        <HelpPopover label={`About ${label.toLowerCase()}`}>
-          <SettingHelp table={table} setting={setting} />
-        </HelpPopover>
+        <IconButton
+          icon={Icons.Help}
+          label="Help"
+          description={settingHelp(table, setting)}
+        />
       </div>
       <QuerydownEditor
         ref={editorRef}
@@ -235,14 +209,9 @@ export function PreludeSettingNode(props: {
   );
 }
 
-/** The record picker's help, behind its "?". */
-function RecordPickerHelp(props: { table: string }): JSX.Element {
-  return (
-    <p>
-      When selecting a {code(props.table)} record, these settings allow you to
-      customize the sorting and display of such records.
-    </p>
-  );
+/** The record picker's help, in the tooltip of its "?". */
+function recordPickerHelp(table: string): string {
+  return `When selecting a ${table} record, these settings allow you to customize the sorting and display of such records.`;
 }
 
 /** The editor of a table's record picker: its sorting and display, written or
@@ -282,7 +251,7 @@ function RecordPickerEditor(props: { table: string }): JSX.Element {
         text={stored ?? generated[section]}
         onChange={(text) => setTableQuerydown(table, part, text)}
         onEscape={() => focusOwnRow(wrapRef.current)}
-        help={<RecordPickerHelp table={table} />}
+        help={recordPickerHelp(table)}
         inputActions={
           <MenuItem
             icon={Icons.Revert}

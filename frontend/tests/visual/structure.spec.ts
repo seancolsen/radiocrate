@@ -433,15 +433,16 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
-  // Its "?": the help, in a popover.
+  // Its "?" hovered: the help, in a tooltip.
   test(`data-structure/text-search-help - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(
       page,
       "data-structure/text-search",
       colorScheme,
     );
-    await stage.getByRole("button", { name: "About text search" }).click();
-    const help = page.getByTestId("help-popover");
+    await scrollToTop(row(stage, "Query settings"));
+    await stage.getByRole("button", { name: "Help" }).hover();
+    const help = page.getByRole("tooltip");
     await expect(help).toContainText(
       "When you enter bare words into a Querydown filter for track records",
     );
@@ -1045,6 +1046,38 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
   await expect(artist).toHaveText("++#artist{name:@x}");
   await expect(row(stage, /^artist (Built-in|Customized)$/)).toContainText(
     "Built-in",
+  );
+});
+
+test('each setting\'s "?" shows its help on hover, naming the table', async ({
+  page,
+}) => {
+  const stage = await openStory(
+    page,
+    "data-structure/custom-comparisons",
+    "light",
+  );
+  const tooltip = page.getByRole("tooltip");
+  // The "?" in the editor under an item's row: the row's parent is the item.
+  const helpUnder = (item: string) =>
+    row(stage, item)
+      .locator("..")
+      .getByRole("button", { name: "Help" })
+      .first();
+
+  for (const [item, text] of [
+    ["Linked record comparison", "comparisons in the other table"],
+    ["Record picker", "When selecting a track record"],
+  ] as const) {
+    await row(stage, item).click();
+    await helpUnder(item).hover();
+    await expect(tooltip).toContainText(text);
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toHaveCount(0);
+  }
+  await helpUnder("albumtitle").hover();
+  await expect(tooltip).toContainText(
+    "When a Querydown filter for track records compares albumtitle",
   );
 });
 

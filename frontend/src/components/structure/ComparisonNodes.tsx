@@ -35,7 +35,6 @@ import {
   type RenameEnd,
 } from "../record/FieldLabel";
 import { ContextMenu } from "../ui/ContextMenu";
-import HelpPopover from "../ui/HelpPopover";
 import IconButton from "../ui/IconButton";
 import { MenuItem } from "../ui/Menu";
 import { Modal } from "../ui/Modal";
@@ -72,19 +71,9 @@ function focusOwnRow(el: HTMLElement | null): void {
     ?.focus();
 }
 
-/** A comparison's help, behind its "?". */
-function ComparisonHelp(props: { table: string; name: string }): JSX.Element {
-  const code = (text: string) => (
-    <code className="bg-hover rounded px-0.5 font-mono text-xs">{text}</code>
-  );
-  return (
-    <p>
-      When a Querydown filter for {code(props.table)} records compares{" "}
-      {code(props.name)} with a value, as in {code(`${props.name}:foo`)}, this
-      condition is what's tested, with {code(COMPARED_VARIABLE)} standing for
-      the value.
-    </p>
-  );
+/** A comparison's help, in the tooltip of its "?". */
+function comparisonHelp(table: string, name: string): string {
+  return `When a Querydown filter for ${table} records compares ${name} with a value, as in ${name}:foo, this condition is what's tested, with ${COMPARED_VARIABLE} standing for the value.`;
 }
 
 /** The editor of a comparison's condition: its toolbar, the condition, and a
@@ -160,9 +149,11 @@ function ComparisonEditor(props: {
             Reset to default
           </button>
         )}
-        <HelpPopover label="About custom comparisons">
-          <ComparisonHelp table={table} name={name} />
-        </HelpPopover>
+        <IconButton
+          icon={Icons.Help}
+          label="Help"
+          description={comparisonHelp(table, name)}
+        />
       </div>
       <QuerydownEditor
         ref={editorRef}
