@@ -45,7 +45,6 @@ import {
   selectDistinctCount,
   selectDistinctEdit,
   selectDistinctText,
-  selectExpressionEditorOpen,
   selectFieldExpandable,
   selectFieldModified,
   selectFindReplace,
@@ -993,10 +992,6 @@ function ComputedRow(props: {
 
   // Whether the value is cut off, as a text field's row tracks it.
   const [overflowing, setOverflowing] = useState(false);
-  const overflowingRef = useRef(overflowing);
-  useEffect(() => {
-    overflowingRef.current = overflowing;
-  }, [overflowing]);
 
   const expanded = useFormState(model, (s) => selectIsExpanded(s, itemId));
   const value: SharedValue = useFormState(model, (s) =>
@@ -1017,9 +1012,6 @@ function ComputedRow(props: {
     );
   });
   const renaming = useFormState(model, (s) => s.renaming === itemId);
-  const editing = useFormState(model, (s) =>
-    selectExpressionEditorOpen(s, recordId, field.key),
-  );
   /** Whether the column has an expression to compute anything with. */
   const defined = useApp((s) =>
     isComputedDefined(s.computedColumns.data, table, field.name),
@@ -1028,12 +1020,15 @@ function ComputedRow(props: {
 
   const text = typeof value === "string" ? value : "";
   const filled = error === null && text !== "";
-  const expandable = filled && overflowing;
+  /** Whether the value is shown whole, under the label, rather than cut off
+   * beside it: when the field is open, and only when it doesn't fit. */
+  const whole = expanded && filled && overflowing;
 
   useEffect(() => {
     model.registerItem(itemId, {
       group: recordId,
-      expandable: () => overflowingRef.current,
+      // Every computed column opens onto its expression.
+      expandable: () => true,
       setExpanded: (open) => model.toggleField(recordId, field, open),
       // What a column computes isn't the record's to delete.
       remove: () => {},
@@ -1055,8 +1050,8 @@ function ComputedRow(props: {
     <>
       <div className="flex min-h-[30px] items-center gap-1 py-0.5">
         <ExpansionToggle
-          expandable={expandable}
-          expanded={expanded && expandable}
+          expandable
+          expanded={expanded}
           label={field.label}
           onToggle={(siblings) =>
             siblings
@@ -1129,7 +1124,7 @@ function ComputedRow(props: {
           />
         ) : (
           filled &&
-          !(expanded && expandable) && (
+          !whole && (
             <OneLineValue
               text={text}
               className="control text-ink block min-w-0 flex-1 cursor-default truncate"
@@ -1140,17 +1135,8 @@ function ComputedRow(props: {
         )}
       </div>
 
-      {editing && (
-        <FormExpressionEditor
-          model={model}
-          recordId={recordId}
-          table={table}
-          field={field}
-        />
-      )}
-
       {/* The whole value, given the full width below the label. */}
-      {expanded && expandable && (
+      {whole && (
         <Subtree>
           <div className="pr-1 pb-1">
             <span
@@ -1162,14 +1148,24 @@ function ComputedRow(props: {
           </div>
         </Subtree>
       )}
+
+      {expanded && (
+        <FormExpressionEditor
+          model={model}
+          recordId={recordId}
+          table={table}
+          field={field}
+        />
+      )}
     </>
   );
 }
 
 /** The editor of a computed column's expression (`ComputedColumnEditor`), as
- * the form has it under the column's field: the caret comes to it when the
- * user asks for it and only then, and closing it — the ×, or Escape — hands
- * the keyboard back to the field. */
+ * the form has it under the column's field while the field is open. There's
+ * nothing to close: collapsing the field does that. The caret comes to it when
+ * the user asks for it (`openExpressionEditor`) and only then — not when the
+ * chevron opens it — and Escape hands the keyboard back to the field. */
 function FormExpressionEditor(props: {
   model: RecordFormModel;
   recordId: string;
@@ -1191,20 +1187,12 @@ function FormExpressionEditor(props: {
     model.noteQueryEditorFocused();
   }, [model, focusAsked]);
 
-  /** The user has finished, and the keyboard goes back to the field. What they
-   * wrote is written as the editor goes. */
-  const close = () => {
-    model.closeExpressionEditor(recordId, field.key);
-    queueMicrotask(() => model.focusItem(itemId));
-  };
-
   return (
     <ComputedColumnEditor
       ref={editorRef}
       table={props.table}
       name={field.name}
-      onClose={close}
-      onEscape={close}
+      onEscape={() => model.focusItem(itemId)}
     />
   );
 }

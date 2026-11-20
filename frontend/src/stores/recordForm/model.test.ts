@@ -72,10 +72,10 @@ import {
   selectComputedLoading,
   selectComputedValue,
   selectContextCount,
-  selectExpressionEditorOpen,
   selectCountMax,
   selectCountMin,
   selectFieldExpandable,
+  selectIsExpanded,
   selectFindReplace,
   selectQueryEditor,
   selectQueryEditorFocusAsked,
@@ -95,6 +95,7 @@ import {
   VARIED,
   variedChildId,
   type ExpansionMemory,
+  type FormState,
   type RecordFormModel,
   type RecordFormOptions,
 } from ".";
@@ -2467,6 +2468,9 @@ describe("contextual queries", () => {
 });
 
 describe("computed columns", () => {
+  /** Whether a field of the root record is open onto its expression's editor. */
+  const editorOpen = (s: FormState, key: string) =>
+    selectIsExpanded(s, fieldItemId(ROOT_ID, key));
   // The user's rows, as the app store holds them: the form reads them whenever
   // it builds a record's fields. `album` has none of the app's own, so what's
   // here is all there is.
@@ -2644,7 +2648,7 @@ describe("computed columns", () => {
     ).toBe(false);
   });
 
-  it("aren't the record's to clear, and open only when cut off", async () => {
+  it("aren't the record's to clear, and always open onto their expression", async () => {
     serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
     const model = albumForm();
     model.start();
@@ -2654,9 +2658,28 @@ describe("computed columns", () => {
     model.clearField(ROOT_ID, field);
     expect(value(model, "decade")).toBe("201");
     const s = model.store.getState();
-    expect(selectFieldExpandable(s, ROOT_ID, field, false)).toBe(false);
-    expect(selectFieldExpandable(s, ROOT_ID, field, true)).toBe(true);
+    expect(selectFieldExpandable(s, ROOT_ID, field, false)).toBe(true);
     expect(selectIsBulkBlocked(s, ROOT_ID, "=decade")).toBe(false);
+  });
+
+  it("open onto the editor of their expression, which asks for the caret only when asked for", async () => {
+    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    const model = albumForm();
+    model.start();
+    await flush();
+    await flush();
+    const field = fieldOf(model, ROOT_ID, "=decade");
+    model.toggleField(ROOT_ID, field);
+    let s = model.store.getState();
+    expect(editorOpen(s, "=decade")).toBe(true);
+    expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=decade")).toBe(false);
+    model.toggleField(ROOT_ID, field);
+    expect(editorOpen(model.store.getState(), "=decade")).toBe(false);
+    model.openExpressionEditor(ROOT_ID, "=decade");
+    s = model.store.getState();
+    expect(editorOpen(s, "=decade")).toBe(true);
+    expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=decade")).toBe(true);
+    model.dispose();
   });
 
   describe("as the columns change", () => {
@@ -2708,7 +2731,7 @@ describe("computed columns", () => {
       const s = model.store.getState();
       expect(keysOf(model)).toEqual(["id", "title", "#track", "=decade"]);
       expect(s.records[ROOT_ID]?.computed["=era"]).toBeUndefined();
-      expect(selectExpressionEditorOpen(s, ROOT_ID, "=era")).toBe(false);
+      expect(editorOpen(s, "=era")).toBe(false);
       expect(s.removingComputed).toBeNull();
     });
 
@@ -2730,8 +2753,8 @@ describe("computed columns", () => {
       ]);
       // Still showing what it showed, until it's read again under its name.
       expect(value(model, "epoch")).toBe("201");
-      expect(selectExpressionEditorOpen(s, ROOT_ID, "=epoch")).toBe(true);
-      expect(selectExpressionEditorOpen(s, ROOT_ID, "=era")).toBe(false);
+      expect(editorOpen(s, "=epoch")).toBe(true);
+      expect(editorOpen(s, "=era")).toBe(false);
       expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=epoch")).toBe(true);
       expect(s.renaming).toBeNull();
       await pause();
@@ -2767,12 +2790,10 @@ describe("computed columns", () => {
     model.finishAddComputed("fresh");
     const s = model.store.getState();
     expect(s.addingComputed).toBe(false);
-    expect(selectExpressionEditorOpen(s, ROOT_ID, "=fresh")).toBe(true);
+    expect(editorOpen(s, "=fresh")).toBe(true);
     expect(selectQueryEditorFocusAsked(s, ROOT_ID, "=fresh")).toBe(true);
-    model.closeExpressionEditor(ROOT_ID, "=fresh");
-    expect(
-      selectExpressionEditorOpen(model.store.getState(), ROOT_ID, "=fresh"),
-    ).toBe(false);
+    model.toggleField(ROOT_ID, fieldOf(model, ROOT_ID, "=fresh"), false);
+    expect(editorOpen(model.store.getState(), "=fresh")).toBe(false);
     model.dispose();
   });
 

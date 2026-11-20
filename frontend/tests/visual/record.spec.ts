@@ -1154,9 +1154,11 @@ test("the record editor reopens what was left expanded", async ({ page }) => {
   let stage = await openStory(page, "record-editor/items-expanded", "light");
   await stage.getByRole("button", { name: "Expand credits" }).click();
   await stage.getByRole("button", { name: /^Expand Beyoncé/ }).click();
-  await stage.getByRole("button", { name: "Expand artist" }).click();
+  await stage
+    .getByRole("button", { name: "Expand artist", exact: true })
+    .click();
   await expect(
-    stage.getByRole("button", { name: "Collapse artist" }),
+    stage.getByRole("button", { name: "Collapse artist", exact: true }),
   ).toBeVisible();
 
   // Track 5, which the user hasn't opened anything on, on a new visit.
@@ -1168,7 +1170,7 @@ test("the record editor reopens what was left expanded", async ({ page }) => {
     stage.getByRole("button", { name: /^Collapse Beyoncé/ }),
   ).toBeVisible();
   await expect(
-    stage.getByRole("button", { name: "Collapse artist" }),
+    stage.getByRole("button", { name: "Collapse artist", exact: true }),
   ).toBeVisible();
   await expect(
     stage.getByRole("button", { name: /^Expand The Weeknd/ }),
@@ -1376,6 +1378,21 @@ test.describe("computed columns", () => {
     );
   });
 
+  test("its chevron opens the editor of its expression, leaving the caret where it was", async ({
+    page,
+  }) => {
+    const stage = await opened(page, "record-editor/computed-expression");
+    const expression = embedEditor(stage, "Expression of year");
+    await expect(expression).toHaveCount(0);
+    await stage.getByRole("button", { name: "Expand year" }).click();
+    await expect(expression).toHaveText("album.year");
+    await expect(expression).not.toBeFocused();
+    // The value stays beside the label.
+    await expect(computedRow(stage, "year").first()).toContainText("2016");
+    await stage.getByRole("button", { name: "Collapse year" }).click();
+    await expect(expression).toHaveCount(0);
+  });
+
   test("one of the app's own can be edited, not renamed or removed", async ({
     page,
   }) => {
@@ -1398,12 +1415,17 @@ test.describe("computed columns", () => {
       /^year\s*1(?!\d)/,
     );
     await expect(reset).toBeEnabled();
-    // The × closes the editor, and what was typed is written as it goes.
-    await stage
-      .getByRole("button", { name: "Close expression editor" })
-      .click();
-    await expect(expression).toHaveCount(0);
+    // Escape, in the text, gives the field back the keyboard, leaving the
+    // editor open — once the first has closed the completions typing raised.
+    await expression.press("Escape");
+    await expect(expression).toBeFocused();
+    await expression.press("Escape");
     await expect(fieldLabelOf(stage, "year")).toBeFocused();
+    await expect(expression).toBeVisible();
+    // Collapsing the field closes the editor, and what was typed is written as
+    // it goes.
+    await stage.getByRole("button", { name: "Collapse year" }).click();
+    await expect(expression).toHaveCount(0);
     await expect
       .poll(() => calls(page, "metadata.computed_column.set"))
       .toEqual([
@@ -1419,10 +1441,8 @@ test.describe("computed columns", () => {
       "album.year",
     );
     await expect(computedRow(stage, "year").first()).toContainText("2016");
-    // Escape, in the text, closes the editor as the × does.
-    await embedEditor(stage, "Expression of year").press("Escape");
+    await stage.getByRole("button", { name: "Collapse year" }).click();
     await expect(embedEditor(stage, "Expression of year")).toHaveCount(0);
-    await expect(fieldLabelOf(stage, "year")).toBeFocused();
     await expect
       .poll(async () =>
         (await calls(page, "metadata.computed_column.set")).at(-1),
@@ -1472,9 +1492,7 @@ test.describe("computed columns", () => {
     await expect(computedRow(stage, "album_year")).toContainText(
       "2016-04-23 19:04:00",
     );
-    await stage
-      .getByRole("button", { name: "Close expression editor" })
-      .click();
+    await stage.getByRole("button", { name: "Collapse album_year" }).click();
     await expect
       .poll(async () =>
         (await calls(page, "metadata.computed_column.set")).at(-1),
@@ -1542,18 +1560,22 @@ test.describe("computed columns", () => {
       .toEqual([{ tableName: "track", name: "title_2" }]);
   });
 
-  test("a long value opens out below its label", async ({ page }) => {
+  test("a long value, open, shows whole below its label", async ({ page }) => {
     const stage = await opened(page, "record-editor/computed-expression");
     await fieldLabelOf(stage, "artists").dblclick();
     await rewrite(page, "file.path");
-    const row = computedRow(stage, "artists").first();
-    await expect(row).toContainText("./Beyoncé/Lemonade");
-    await page.keyboard.press("Escape");
-    await stage.getByRole("button", { name: "Expand artists" }).click();
-    await expect(
-      stage.getByRole("button", { name: "Collapse artists" }),
-    ).toBeVisible();
-    await expect(row).toContainText("Pray You Catch Me.flac");
+    // Open, the field gives the value the width it needs, over the editor,
+    // where it wraps rather than being cut off beside the label.
+    const whole = stage.locator(".whitespace-pre-wrap", {
+      hasText: "Pray You Catch Me.flac",
+    });
+    await expect(whole).toBeVisible();
+    // Closed, it's cut off beside the label.
+    await stage.getByRole("button", { name: "Collapse artists" }).click();
+    await expect(whole).toHaveCount(0);
+    await expect(computedRow(stage, "artists").first()).toContainText(
+      "./Beyoncé/Lemonade",
+    );
   });
 });
 

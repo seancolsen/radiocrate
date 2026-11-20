@@ -11,16 +11,15 @@ import {
   useCheckContext,
   useSettledDiagnostic,
 } from "../builder/useDiagnostics";
-import IconButton from "../ui/IconButton";
 
 const TOOLBAR_BUTTON =
   "text-ink hover:bg-hover flex h-[26px] shrink-0 items-center gap-1.5 rounded px-2 text-sm disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** The editor of a computed column's expression, wherever it's edited: under
  * the column's field in the record editor, and under its row on the Data
- * structure page. A toolbar — "Reset to default", for one of the app's own
- * columns, and the × when there's a way out — over the expression, with a
- * problem with it below.
+ * structure page — in both, what opening the field or row shows, and gone when
+ * it closes. "Reset to default", for one of the app's own columns, over the
+ * expression, with a problem with it below.
  *
  * The expression is checked as it's typed: compiled as the column's
  * definition, under the rest of the prelude, in a query that displays the
@@ -34,14 +33,11 @@ const ComputedColumnEditor = forwardRef<
   {
     table: string;
     name: string;
-    /** The way out, as an × at the toolbar's end. Absent, there's none: the
-     * editor goes when what holds it closes. */
-    onClose?: () => void;
     /** Escape, in the text. */
     onEscape: () => void;
   }
 >(function ComputedColumnEditor(props, ref) {
-  const { table, name, onClose } = props;
+  const { table, name } = props;
   const stored = useApp((s) => selectComputedExpression(s, table, name));
   const builtIn = builtInExpression(table, name);
   const text = stored ?? builtIn ?? "";
@@ -83,27 +79,17 @@ const ComputedColumnEditor = forwardRef<
 
   return (
     <div className="py-1 pr-1 pl-5" data-testid="computed-column-editor">
-      {(builtIn !== null || onClose) && (
+      {builtIn !== null && (
         <div className="flex items-center gap-1 pb-1">
-          {builtIn !== null && (
-            <button
-              type="button"
-              disabled={stored == null}
-              className={TOOLBAR_BUTTON}
-              onClick={() => setComputedColumnExpression(table, name, null)}
-            >
-              <Icons.Revert className="text-ink-weak size-4" />
-              Reset to default
-            </button>
-          )}
-          {onClose && <div className="flex-1" />}
-          {onClose && (
-            <IconButton
-              icon={Icons.Close}
-              label="Close expression editor"
-              onClick={onClose}
-            />
-          )}
+          <button
+            type="button"
+            disabled={stored == null}
+            className={TOOLBAR_BUTTON}
+            onClick={() => setComputedColumnExpression(table, name, null)}
+          >
+            <Icons.Revert className="text-ink-weak size-4" />
+            Reset to default
+          </button>
         </div>
       )}
       <QuerydownEditor

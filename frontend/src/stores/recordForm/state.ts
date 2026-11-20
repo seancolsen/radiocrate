@@ -260,9 +260,6 @@ export interface FormState {
    * section of the query it's showing: a contextual query's, or the Querydown
    * behind a field's embedded records. Absent reads as closed. */
   queryEditors: Record<string, Section>;
-  /** The computed column fields whose expression's editor is open under them,
-   * by field item id. Absent reads as closed. */
-  expressionEditors: Record<string, true>;
   /** The field item id whose label is being renamed in place, or null. */
   renaming: string | null;
   /** The contextual query being added, or null. */
@@ -328,7 +325,6 @@ export function initialFormState(): FormState {
     queryEditorFocus: null,
     embedErrors: {},
     queryEditors: {},
-    expressionEditors: {},
     renaming: null,
     provisional: null,
     removing: null,

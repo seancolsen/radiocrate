@@ -258,8 +258,9 @@ export function selectFieldExpandable(
   overflowing: boolean,
 ): boolean {
   if (field.kind === "contextQuery") return selectRunsContextQuery(s, recordId);
-  // What a computed column came to opens out when it's cut off, as text does.
-  if (field.kind === "computed") return overflowing;
+  // A computed column opens onto the editor of its expression, whatever it
+  // came to.
+  if (field.kind === "computed") return true;
   if (field.kind === "multiRecord") {
     // A field with no records anywhere has nothing to open — one base record
     // having some is enough — and one whose table has no record identity at all
@@ -336,14 +337,6 @@ export const selectComputedLoading = (
   const computed = s.records[recordId]?.computed[fieldKey];
   return computed?.status === "loading" && computed.values === undefined;
 };
-
-/** Whether the editor of a computed column's expression is open under its
- * field. */
-export const selectExpressionEditorOpen = (
-  s: FormState,
-  recordId: string,
-  fieldKey: string,
-): boolean => s.expressionEditors[fieldItemId(recordId, fieldKey)] === true;
 
 /** Which section of a query a field's editor is showing, or null while the
  * editor is closed. */

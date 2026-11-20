@@ -1330,7 +1330,9 @@ test("a change deep in the tree stars the collapsed field above it", async ({
   await editor.getByRole("button", { name: /^Expand Jack White/ }).click();
   // The primitive edited deep in the tree is the name of the credit's artist.
   // Enter on a focused label is the field's "do the thing" key.
-  await editor.getByRole("button", { name: "Expand artist" }).click();
+  await editor
+    .getByRole("button", { name: "Expand artist", exact: true })
+    .click();
   await formItem(editor, "r##credit[1]>artist:name").click();
   await page.keyboard.press("Enter");
   await valueEditor(editor).fill("42");

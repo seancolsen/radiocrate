@@ -279,10 +279,9 @@ export interface RecordFormActions {
    * what it had open. Their values are read again once the columns have
    * stopped changing. */
   syncComputedColumns: () => void;
-  /** Opens the editor of a computed column's expression under its field, with
-   * the caret in it; and closes it. */
+  /** Expands a computed column's field onto the editor of its expression, with
+   * the caret in it. (Collapsing the field, as any other, closes it.) */
   openExpressionEditor: (recordId: string, fieldKey: string) => void;
-  closeExpressionEditor: (recordId: string, fieldKey: string) => void;
   /** Starts adding a computed column to the root record's table: a field at the
    * bottom of its fields with its name being typed, which becomes a computed
    * column once the user settles on the name (`finishAddComputed`). */
@@ -2538,10 +2537,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           for (const field of gone) {
             const itemId = fieldItemId(recordId, field.key);
             const values = node.computed[field.key];
-            const editing = s.expressionEditors[itemId];
             const expanded = s.expanded[itemId];
             delete node.computed[field.key];
-            delete s.expressionEditors[itemId];
             delete s.expanded[itemId];
             if (s.renaming === itemId) s.renaming = null;
             if (!renamed) {
@@ -2557,7 +2554,6 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
             }
             const nextId = fieldItemId(recordId, renamed.to);
             if (values) node.computed[renamed.to] = values;
-            if (editing) s.expressionEditors[nextId] = true;
             if (expanded !== undefined) s.expanded[nextId] = expanded;
             if (s.queryEditorFocus === itemId) s.queryEditorFocus = nextId;
           }
@@ -2594,17 +2590,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       }, EMBED_REFRESH_DEBOUNCE_MS);
     },
     openExpressionEditor: (recordId, fieldKey) => {
-      const itemId = fieldItemId(recordId, fieldKey);
+      const field = selectFieldOf(get(), recordId, fieldKey);
+      if (field?.kind !== "computed") return;
       set((s) => {
         s.menu = null;
-        s.expressionEditors[itemId] = true;
-        s.queryEditorFocus = itemId;
+        s.queryEditorFocus = fieldItemId(recordId, fieldKey);
       });
+      model.toggleField(recordId, field, true);
     },
-    closeExpressionEditor: (recordId, fieldKey) =>
-      set((s) => {
-        delete s.expressionEditors[fieldItemId(recordId, fieldKey)];
-      }),
     beginAddComputed: () =>
       set((s) => {
         s.renaming = null;
