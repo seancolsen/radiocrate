@@ -1,6 +1,6 @@
 # Live updates across devices
 
-**Status:** proposed · **Date:** 2026-11-21
+**Status:** accepted · **Date:** 2026-11-21
 
 RadioCrate has one user and several devices. When that user changes their
 setup on one device (renames a playlist, rebinds a shortcut, edits the
@@ -115,7 +115,7 @@ it's a separate change: move it into `settings.settings`, and it rides the
 
 ## 3. The server side
 
-### Change topics
+### 3.1 Change topics
 
 A topic is a name, like `sources` or `keybindings`, plus a version number. The
 topics are an enum in `api-schema`, so `cargo xtask gen-api` gives the frontend
@@ -144,7 +144,7 @@ Two writes deliberately announce nothing:
 - **`collection.rescan`** changes tracks, albums, artists and files. All of
   that shows up only in query results and the record editor, which are manual.
 
-### Announcing at the one place writes happen
+### 3.2 Announcing at the one place writes happen
 
 Every mutation already goes through `AppState::write` / `write_mut`. That's
 what guarantees the `CHECKPOINT` can't be forgotten. The announcement goes in
@@ -163,7 +163,7 @@ empty list (`&[]`), so a new RPC method can't announce nothing by accident.
 - A test runs every RPC method through `dispatch` and checks which topics it
   announced, so this table and the code can't drift apart silently.
 
-### The event stream
+### 3.3 The event stream
 
 `GET /api/events` is a Server-Sent Events stream. It sends three kinds of
 message:
@@ -178,7 +178,7 @@ message:
   in memory and start over at 0 on every start, so a new epoch tells a device
   "forget what you knew, refetch everything." This also covers whatever
   migrations ran at startup.
-- **`origin`** is the id of the client that made the write (§4.3), or `null`
+- **`origin`** is the id of the client that made the write (§4.2, rule 3), or `null`
   for the server's own writes and for outside writers.
 - In-process this is a `tokio::sync::broadcast` channel. A slow subscriber
   that falls behind and loses messages gets its stream closed, and reconnects
@@ -190,7 +190,7 @@ list, one place where merging happens, and nothing new to serialize. The lists
 are small (tens of rows), so a whole-list refetch costs nothing worth
 optimizing.
 
-### Outside writers
+### 3.4 Outside writers
 
 The only thing besides the app that can write to the database while it runs is
 a DuckDB client attached through `--duckdb-server` (Quack). Its writes bypass
@@ -207,7 +207,7 @@ only way the `schema` topic ever changes while the app is running. Without
 
 ## 4. The client side
 
-### Connection lifecycle
+### 4.1 Connection lifecycle
 
 A new framework-free module (`api/events.ts`) owns the stream: connecting,
 parsing, reconnecting with backoff. The stores reach it through `AppEnv`, so
@@ -237,7 +237,7 @@ store.
   `runtimeCaching` route, so a long-lived streaming response never passes
   through it.
 
-### Applying a change
+### 4.2 Applying a change
 
 Every live topic is applied the same way: **refetch the list, then merge it
 in.** The merge follows four rules.
@@ -267,7 +267,7 @@ in.** The merge follows four rules.
 A failed refetch reports itself through the error bar like any other failed
 RPC. The next event or reconnect tries again.
 
-### Where a change shows
+### 4.3 Where a change shows
 
 Most topics just land in state, and the UI follows as it already does for a
 local edit. These need more care:
@@ -301,7 +301,7 @@ data, and the form follows it through the subscriptions `createStores()`
 already has. What's in the fields (the values and rows) is manual (next
 section).
 
-### Live changes never reload manual data
+### 4.4 Live changes never reload manual data
 
 A local edit to the prelude, a computed column or a table's Querydown setting
 re-runs every open page today (`rerunOpenPages`), and a local edit to a
@@ -362,22 +362,24 @@ also still needs its button for the statistics.
 
 ---
 
-## 7. Open questions
+## 7. Decisions
 
-Each has a recommendation. Say if you'd rather go the other way.
+These were open questions in the first draft. Each one is settled as
+recommended, and the sections above already describe the result.
 
-1. **Re-run pages on a remote prelude or definition change?** *Recommended:
-   no*, show the out-of-date dot instead, as above. That follows your split
-   strictly: query results load only when asked. The alternative is simpler to
-   build (a remote change behaves exactly like a local one, re-runs included),
-   but then rows move on a device nobody is touching.
-2. **A deleted source's open tab.** *Recommended:* a query tab becomes unsaved,
-   a playlist tab closes, and both get a toast. The alternative is to close
-   both.
-3. **Should the record editor re-run a field whose query changed remotely?**
-   *Recommended: no*, mark it out of date, the same as pages.
-4. **Should the theme sync between devices?** Out of scope here. It's a
-   one-line move into `settings.settings` if you want it.
-5. **Should the explorer's Refresh go away once this is solid?** *Recommended:
-   keep it* for now. It costs nothing, and it's the escape hatch if the stream
-   isn't connecting.
+1. **Pages don't re-run on a remote prelude or definition change.** They show
+   the out-of-date dot instead (§4.4). This follows the split strictly: query
+   results load only when the user asks. Making a remote change behave exactly
+   like a local one, re-runs included, would have been simpler to build, but
+   then rows would move on a device nobody is touching.
+2. **A deleted source's open tab:** a query tab stays open as an unsaved query,
+   a playlist tab closes, and both show a toast (§4.3). Closing both was the
+   alternative.
+3. **The record editor doesn't re-run a field whose query changed remotely.**
+   The field is marked out of date, the same as a page.
+4. **The theme stays per device.** Syncing it is out of scope here. If it's
+   wanted later, it's a one-line move into `settings.settings`, and from there
+   it rides the *settings* topic.
+5. **The explorer's Refresh button stays.** It costs nothing, and it's the
+   escape hatch if the stream isn't connecting. The Data structure page keeps
+   its button too, for the statistics.
