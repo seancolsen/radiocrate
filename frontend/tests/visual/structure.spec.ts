@@ -699,7 +699,7 @@ test("a field's context menu hides it, and brings it back", async ({
   const fields = row(stage, "Fields");
   const showHidden = fields.getByRole("button", { name: "Show hidden fields" });
   // Nothing hidden, nothing to show.
-  await expect(row(stage, "Fields 17 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   await expect(showHidden).toHaveCount(0);
 
   const title = row(stage, "title Column");
@@ -721,13 +721,13 @@ test("a field's context menu hides it, and brings it back", async ({
     ]);
   // It's gone from the list, and the toggle that shows it is there.
   await expect(title).toHaveCount(0);
-  await expect(row(stage, "Fields 16 fields")).toBeVisible();
+  await expect(row(stage, "Fields 17 fields")).toBeVisible();
   await expect(showHidden).toHaveAttribute("aria-pressed", "false");
 
   // Shown, it's listed faded.
   await showHidden.click();
   await expect(showHidden).toHaveAttribute("aria-pressed", "true");
-  await expect(row(stage, "Fields 17 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   await expect(title.locator(".opacity-60")).toHaveCount(1);
 
   await title.click({ button: "right" });
@@ -792,7 +792,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 }) => {
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the query goes.
-  const fields = row(stage, "Fields 17 fields");
+  const fields = row(stage, "Fields 18 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -811,7 +811,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 
   const added = row(stage, "credits by role Query");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
   // The filter is guessed from the schema's links, and has the caret.
   const filter = stage.getByLabel("Filter of credits by role");
   await expect(filter).toContainText("track.id:@id");
@@ -827,7 +827,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the column
   // goes.
-  const fields = row(stage, "Fields 17 fields");
+  const fields = row(stage, "Fields 18 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -842,7 +842,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
 
   const added = row(stage, "release_decade Computed");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
   expect(await calls(page, "metadata.computed_column.set")).toEqual([
     {
       method: "metadata.computed_column.set",
@@ -892,24 +892,26 @@ test("a computed column of the user's is renamed and removed from its menu, one 
   await page.getByRole("menuitem", { name: "Rename" }).click();
   const name = stage.getByLabel("Name of tag_count");
   await expect(name).toBeFocused();
-  await name.fill("tags");
+  await name.fill("tag_total");
   await name.press("Enter");
   // Its row goes by the new name, still open on its expression.
-  const renamed = row(stage, "tags Computed");
+  const renamed = row(stage, "tag_total Computed");
   await expect(renamed).toBeFocused();
   await expect(renamed).toHaveAttribute("aria-expanded", "true");
-  await expect(stage.getByLabel("Expression of tags")).toHaveText("#track_tag");
+  await expect(stage.getByLabel("Expression of tag_total")).toHaveText(
+    "#track_tag",
+  );
   expect(await calls(page, "metadata.computed_column.rename")).toEqual([
     {
       method: "metadata.computed_column.rename",
-      params: { tableName: "track", name: "tag_count", newName: "tags" },
+      params: { tableName: "track", name: "tag_count", newName: "tag_total" },
     },
   ]);
 
   await renamed.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Remove" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Remove “tags” from every track?");
+  await expect(dialog).toContainText("Remove “tag_total” from every track?");
   await dialog.getByRole("button", { name: "Remove" }).click();
   await expect(renamed).toHaveCount(0);
   await expect
@@ -917,7 +919,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
     .toEqual([
       {
         method: "metadata.computed_column.delete",
-        params: { tableName: "track", name: "tags" },
+        params: { tableName: "track", name: "tag_total" },
       },
     ]);
 });

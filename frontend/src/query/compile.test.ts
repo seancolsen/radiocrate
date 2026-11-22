@@ -16,7 +16,7 @@ import {
   compilePlaylist,
   compileSavedQuery,
 } from "./compile";
-import { builtInComputedColumns } from "./computedColumns";
+import { BUILT_IN_COMPUTED_COLUMNS } from "./computedColumns";
 import { parseSchemaTables } from "./schema";
 import {
   composePrelude,
@@ -611,8 +611,20 @@ describe("checkComputedColumn", () => {
   });
 
   it("passes the app's own expression for each of its columns", () => {
-    for (const column of builtInComputedColumns("track")) {
-      expect(check(column.expression, column.name)).toBeNull();
+    for (const [table, columns] of Object.entries(BUILT_IN_COMPUTED_COLUMNS)) {
+      for (const column of columns) {
+        const problem = checkComputedColumn(
+          FIXTURE_SCHEMA_JSON,
+          table,
+          column.name,
+          column.expression,
+          generatedPrelude(tables, {}, [], [], {
+            table,
+            computedColumn: column.name,
+          }),
+        );
+        expect(problem, `${table}.${column.name}`).toBeNull();
+      }
     }
   });
 

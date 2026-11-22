@@ -22,6 +22,7 @@ import {
   comparisonPath,
   computedColumnPath,
   DEFAULT_EXPANDED,
+  defaultFields,
   PRELUDE_ITEM,
   presetItemId,
   presetSectionPath,
@@ -191,7 +192,7 @@ import { buildResultFromArrow } from "../../query/result";
 import { rowEntry, type EntryWrites } from "../../query/playlistEntries";
 import { SETTINGS } from "../../state/settings";
 import { defaultFieldMetadata, fieldRefKey } from "../../query/fieldMetadata";
-import { buildFormFields, fieldRef } from "../../query/recordForm";
+import { fieldRef } from "../../query/recordForm";
 import {
   selectCanConvertToPlaylist,
   selectCanExport,
@@ -5014,7 +5015,7 @@ describe("field metadata", () => {
   const entry = (table: string, field: FieldRef) =>
     metadata(table)[fieldRefKey(field)];
   const albumFields = () =>
-    buildFormFields(state().schema.tables, "album").map(fieldRef);
+    defaultFields(state().schema.tables, "album", [], []).map(fieldRef);
   /** Lets the queued writes reach the mocks. */
   const settle = () => new Promise((resolve) => setTimeout(resolve));
 
@@ -5285,7 +5286,12 @@ describe("contextual queries", () => {
     const field: FieldRef = { contextualQuery: id };
     const order = selectTableMetadata(state(), "artist")[fieldRefKey(field)]
       ?.order;
-    const others = buildFormFields(state().schema.tables, "artist").length;
+    const others = defaultFields(
+      state().schema.tables,
+      "artist",
+      [],
+      [],
+    ).length;
     expect(order).toBe(others + 1);
 
     await settle();
@@ -5844,7 +5850,7 @@ describe("computed columns", () => {
     expect(rows()).toEqual([
       { tableName: "album", name: "release_decade", expression: "" },
     ]);
-    const others = buildFormFields(state().schema.tables, "album").length;
+    const others = defaultFields(state().schema.tables, "album", [], []).length;
     expect(metadataOf("album", name)?.order).toBe(others + 1);
     // A second of the same name, and one named as a column is, are numbered.
     expect(bundle.actions.addComputedColumn("album", "release decade")).toBe(

@@ -35,10 +35,10 @@ const row = (
   expression: string | null,
 ): ComputedColumnRow => ({ tableName, name, expression });
 
-const TABLES = [table("album", "id", "title"), table("track", "id", "title")];
+const TABLES = [table("role", "id", "title"), table("track", "id", "title")];
 
 describe("the app's own computed columns", () => {
-  it("are the ones the app defines for tracks", () => {
+  it("are the ones the app defines for tracks, artists and albums", () => {
     expect(BUILT_IN_COMPUTED_COLUMNS["track"]?.map((c) => c.name)).toEqual([
       "first_play",
       "last_play",
@@ -47,16 +47,38 @@ describe("the app's own computed columns", () => {
       "added",
       "duration",
       "play_count",
+      "tags",
+    ]);
+    expect(BUILT_IN_COMPUTED_COLUMNS["artist"]?.map((c) => c.name)).toEqual([
+      "added",
+      "first_play",
+      "last_play",
+      "play_count",
+      "album_count",
+      "track_count",
+    ]);
+    expect(BUILT_IN_COMPUTED_COLUMNS["album"]?.map((c) => c.name)).toEqual([
+      "main_artists",
+      "added",
+      "first_play",
+      "last_play",
+      "play_count",
+      "track_count",
     ]);
     expect(builtInExpression("track", "last_play")).toBe("#play.timestamp%max");
     // Two backslashes ahead of each sort key, as Querydown writes them.
     expect(builtInExpression("track", "artists")).toBe(
       "#credit.artist.name%list_all(\\\\order \\\\artist.name)",
     );
+    // A single backslash ahead of a flag.
+    expect(builtInExpression("track", "tags")).toBe("#tag.name%list(\\s)");
+    expect(builtInExpression("album", "main_artists")).toBe(
+      "#credit.artist.name%top(\\\\%count \\d)",
+    );
   });
 
   it("are no other table's, nor the object prototype's", () => {
-    expect(builtInExpression("album", "last_play")).toBeNull();
+    expect(builtInExpression("role", "last_play")).toBeNull();
     expect(builtInExpression("constructor", "name")).toBeNull();
     expect(builtInExpression("track", "nope")).toBeNull();
   });
@@ -67,7 +89,7 @@ describe("tableComputedColumns", () => {
     const columns = tableComputedColumns("track", [
       row("track", "zeta", "title"),
       row("track", "alpha", "id"),
-      row("album", "other", "title"),
+      row("role", "other", "title"),
     ]);
     expect(columns.map((c) => c.name)).toEqual([
       ...BUILT_IN_COMPUTED_COLUMNS["track"].map((c) => c.name),
@@ -108,9 +130,9 @@ describe("tableComputedColumns", () => {
 
   it("leaves a column of the user's with no expression undefined", () => {
     expect(
-      computedColumn("album", [row("album", "decade", "")], "decade"),
+      computedColumn("role", [row("role", "decade", "")], "decade"),
     ).toEqual({
-      table: "album",
+      table: "role",
       name: "decade",
       expression: "",
       builtIn: false,
@@ -119,15 +141,15 @@ describe("tableComputedColumns", () => {
   });
 
   it("has none for a table with nothing defined", () => {
-    expect(tableComputedColumns("album", [])).toEqual([]);
+    expect(tableComputedColumns("role", [])).toEqual([]);
   });
 
   it("says which have an expression, and whose", () => {
     const rows = [
       row("track", "year", "1999"),
       row("track", "added", " "),
-      row("album", "decade", ""),
-      row("album", "era", "x"),
+      row("role", "decade", ""),
+      row("role", "era", "x"),
     ];
     const state = (table: string, name: string) => [
       isComputedDefined(rows, table, name),
@@ -136,16 +158,16 @@ describe("tableComputedColumns", () => {
     expect(state("track", "year")).toEqual([true, true]);
     expect(state("track", "added")).toEqual([true, false]);
     expect(state("track", "last_play")).toEqual([true, false]);
-    expect(state("album", "decade")).toEqual([false, false]);
-    expect(state("album", "era")).toEqual([true, true]);
-    expect(state("album", "nope")).toEqual([false, false]);
+    expect(state("role", "decade")).toEqual([false, false]);
+    expect(state("role", "era")).toEqual([true, true]);
+    expect(state("role", "nope")).toEqual([false, false]);
   });
 });
 
 describe("computedFields", () => {
   it("makes a field of each, keyed apart from every other kind", () => {
-    const fields = computedFields(TABLES, "album", [
-      row("album", "decade", "year"),
+    const fields = computedFields(TABLES, "role", [
+      row("role", "decade", "year"),
     ]);
     expect(fields).toEqual([
       {
@@ -166,7 +188,7 @@ describe("computedFields", () => {
   });
 
   it("has none for a table the schema hasn't got", () => {
-    expect(computedFields([table("album")], "track", [])).toEqual([]);
+    expect(computedFields([table("role")], "track", [])).toEqual([]);
   });
 });
 
@@ -205,10 +227,10 @@ describe("a computed column's name", () => {
   });
 
   it("leaves the column being renamed out of what's taken", () => {
-    const rows = [row("album", "decade", "x")];
-    expect(takenComputedNames(TABLES, rows, "album").has("decade")).toBe(true);
+    const rows = [row("role", "decade", "x")];
+    expect(takenComputedNames(TABLES, rows, "role").has("decade")).toBe(true);
     expect(
-      takenComputedNames(TABLES, rows, "album", "decade").has("decade"),
+      takenComputedNames(TABLES, rows, "role", "decade").has("decade"),
     ).toBe(false);
   });
 });
@@ -216,16 +238,16 @@ describe("a computed column's name", () => {
 describe("computedPrelude", () => {
   it("defines each column with an expression, for the tables the database has", () => {
     const prelude = computedPrelude(
-      [table("album", "id"), table("role", "id")],
+      [table("rating", "id"), table("role", "id")],
       [
-        row("album", "decade", "year / 10"),
-        row("album", "unwritten", ""),
+        row("rating", "decade", "year / 10"),
+        row("rating", "unwritten", ""),
         row("gone", "left_behind", "id"),
         row("role", "upper", "name|upper"),
       ],
     );
     expect(prelude.text).toBe(
-      ["#album.decade = year / 10", "#role.upper = name|upper"].join("\n"),
+      ["#rating.decade = year / 10", "#role.upper = name|upper"].join("\n"),
     );
   });
 
@@ -242,19 +264,20 @@ describe("computedPrelude", () => {
       "#track.added = file.added",
       "#track.duration = file.duration",
       "#track.play_count = #play",
+      "#track.tags = #tag.name%list(\\s)",
       "#track.mine = id",
     ]);
   });
 
   it("traces each expression to its column", () => {
     const prelude = computedPrelude(
-      [table("album", "id")],
-      [row("album", "decade", "year / 10")],
+      [table("role", "id")],
+      [row("role", "decade", "year / 10")],
     );
     expect(locate(prelude, prelude.text.indexOf("/"))).toMatchObject({
       offset: 5,
       segment: {
-        origin: { kind: "computedColumn", table: "album", name: "decade" },
+        origin: { kind: "computedColumn", table: "role", name: "decade" },
         source: "year / 10",
       },
     });
@@ -263,19 +286,19 @@ describe("computedPrelude", () => {
   it("leaves out the column asked to", () => {
     expect(
       computedPrelude(
-        [table("album", "id")],
-        [row("album", "a", "id"), row("album", "b", "id")],
-        { table: "album", name: "a" },
+        [table("role", "id")],
+        [row("role", "a", "id"), row("role", "b", "id")],
+        { table: "role", name: "a" },
       ).text,
-    ).toBe("#album.b = id");
+    ).toBe("#role.b = id");
   });
 });
 
 describe("withComputedExpression", () => {
   it("sets the expression of the row there is", () => {
-    const rows = [row("album", "a", "id"), row("track", "a", "id")];
+    const rows = [row("role", "a", "id"), row("track", "a", "id")];
     expect(withComputedExpression(rows, "track", "a", "title")).toEqual([
-      row("album", "a", "id"),
+      row("role", "a", "id"),
       row("track", "a", "title"),
     ]);
     // A new array: what a selector held isn't written to.

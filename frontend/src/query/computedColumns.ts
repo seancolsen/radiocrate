@@ -56,6 +56,26 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
     { name: "added", expression: "file.added" },
     { name: "duration", expression: "file.duration" },
     { name: "play_count", expression: "#play" },
+    { name: "tags", expression: "#tag.name%list(\\s)" },
+  ],
+  artist: [
+    { name: "added", expression: "#track.file.added%min" },
+    { name: "first_play", expression: "#play.timestamp%min" },
+    { name: "last_play", expression: "#play.timestamp%max" },
+    { name: "play_count", expression: "#play" },
+    { name: "album_count", expression: "#track.album.title%distinct" },
+    { name: "track_count", expression: "#track" },
+  ],
+  album: [
+    {
+      name: "main_artists",
+      expression: "#credit.artist.name%top(\\\\%count \\d)",
+    },
+    { name: "added", expression: "#track.file.added%min" },
+    { name: "first_play", expression: "#play.timestamp%min" },
+    { name: "last_play", expression: "#play.timestamp%max" },
+    { name: "play_count", expression: "#play" },
+    { name: "track_count", expression: "#track" },
   ],
 };
 

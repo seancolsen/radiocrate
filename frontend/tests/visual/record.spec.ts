@@ -1023,7 +1023,7 @@ test.describe("rearranging fields", () => {
             ?.fkColumnName === "track",
       ),
     ).toBe(true);
-    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "play_count" });
+    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "tags" });
 
     await dragLabel(page, stage, "id", "title", 0.1);
     await page.mouse.up();

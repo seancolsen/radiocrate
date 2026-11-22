@@ -2494,23 +2494,38 @@ describe("computed columns", () => {
   const editorOpen = (s: FormState, key: string) =>
     selectIsExpanded(s, fieldItemId(ROOT_ID, key));
   // The user's rows, as the app store holds them: the form reads them whenever
-  // it builds a record's fields. `album` has none of the app's own, so what's
+  // it builds a record's fields. `disc` has none of the app's own, so what's
   // here is all there is.
+  //
+  // `disc` is `album` by another name: the app defines computed columns of its
+  // own for `album`, which would crowd every field list here.
+  const DISC_TABLES: SchemaTable[] = TABLES.map((table) =>
+    table.name === "album"
+      ? { ...table, name: "disc" }
+      : table.name === "track"
+        ? {
+            ...table,
+            columns: table.columns.map((column) =>
+              column.name === "album" ? { ...column, name: "disc" } : column,
+            ),
+          }
+        : table,
+  );
   let rows: ComputedColumnRow[];
   let prelude: string;
   beforeEach(() => {
     rows = [
-      { tableName: "album", name: "decade", expression: "year / 10" },
-      { tableName: "album", name: "era", expression: "decade" },
+      { tableName: "disc", name: "decade", expression: "year / 10" },
+      { tableName: "disc", name: "era", expression: "decade" },
     ];
-    prelude = "#album.decade = year / 10\n#album.era = decade";
+    prelude = "#disc.decade = year / 10\n#disc.era = decade";
   });
 
-  const albumKey = (id: string) => [{ column: "id", value: id }];
-  const albumForm = (keys = [albumKey("a1")]) =>
+  const discKey = (id: string) => [{ column: "id", value: id }];
+  const discForm = (keys = [discKey("a1")]) =>
     createRecordForm({
-      tables: TABLES,
-      table: "album",
+      tables: DISC_TABLES,
+      table: "disc",
       keys,
       schemaJson: "{}",
       computedColumns: { list: () => rows, prelude: () => prelude },
@@ -2518,17 +2533,17 @@ describe("computed columns", () => {
   /** The queries that read computed columns: the only ones with definitions. */
   const computedCalls = () =>
     runner.mock.calls.map(([query]) => query).filter((q) => q.definitions);
-  /** Answers an album's data query from `albums`, and a computed query from
-   * `computed`: each column's value by album id, or an error to fail with for
+  /** Answers an disc's data query from `discs`, and a computed query from
+   * `computed`: each column's value by disc id, or an error to fail with for
    * any query that asks for it. */
-  const serveAlbums = (
-    albums: Record<string, string>,
+  const serveDiscs = (
+    discs: Record<string, string>,
     computed: Record<string, Record<string, string | null> | Error>,
   ) => {
     runner.mockImplementation(async (query) => {
       const ids = [...query.filter.matchAll(/id:="([^"]*)"/g)].map((m) => m[1]);
       if (query.definitions === undefined) {
-        return ids.map((id) => [id, id, albums[id] ?? null, "0"]);
+        return ids.map((id) => [id, id, discs[id] ?? null, "0"]);
       }
       const names = query.display.split(" ").slice(1);
       for (const name of names) {
@@ -2551,18 +2566,18 @@ describe("computed columns", () => {
 
   it("are fields of the record, after its own and before its contextual queries", () => {
     const model = createRecordForm({
-      tables: TABLES,
-      table: "album",
-      keys: [albumKey("a1")],
+      tables: DISC_TABLES,
+      table: "disc",
+      keys: [discKey("a1")],
       schemaJson: "{}",
       computedColumns: { list: () => rows, prelude: () => prelude },
       contextualQueries: {
         list: () => [
           {
             id: "q1",
-            tableName: "album",
+            tableName: "disc",
             name: "others",
-            definition: { ...emptyDefinition(), base: "album" },
+            definition: { ...emptyDefinition(), base: "disc" },
           },
         ],
         presets: () => [],
@@ -2587,11 +2602,11 @@ describe("computed columns", () => {
   });
 
   it("are read in one query of their own, under the prelude, once the record lands", async () => {
-    serveAlbums(
+    serveDiscs(
       { a1: "Lemonade" },
       { decade: { a1: "201" }, era: { a1: "201" } },
     );
-    const model = albumForm();
+    const model = discForm();
     expect(value(model, "decade")).toBeUndefined();
     model.start();
     await flush();
@@ -2599,7 +2614,7 @@ describe("computed columns", () => {
 
     expect(computedCalls()).toEqual([
       {
-        base: "album",
+        base: "disc",
         filter: 'id:="a1"',
         sort: "",
         display: "$id $decade $era",
@@ -2616,11 +2631,11 @@ describe("computed columns", () => {
   });
 
   it("show what several records share, and that they differ", async () => {
-    serveAlbums(
+    serveDiscs(
       { a1: "Lemonade", a2: "4" },
       { decade: { a1: "201", a2: "201" }, era: { a1: "x", a2: null } },
     );
-    const model = albumForm([albumKey("a1"), albumKey("a2")]);
+    const model = discForm([discKey("a1"), discKey("a2")]);
     model.start();
     await flush();
     await flush();
@@ -2632,11 +2647,11 @@ describe("computed columns", () => {
   });
 
   it("are read one by one when the query of all of them fails, the one at fault saying why", async () => {
-    serveAlbums(
+    serveDiscs(
       { a1: "Lemonade" },
       { decade: { a1: "201" }, era: new Error("compile: no such column") },
     );
-    const model = albumForm();
+    const model = discForm();
     model.start();
     await flush();
     await flush();
@@ -2657,9 +2672,9 @@ describe("computed columns", () => {
   });
 
   it("read as empty, unasked, with no expression to compute", async () => {
-    rows = [{ tableName: "album", name: "unwritten", expression: "" }];
-    serveAlbums({ a1: "Lemonade" }, {});
-    const model = albumForm();
+    rows = [{ tableName: "disc", name: "unwritten", expression: "" }];
+    serveDiscs({ a1: "Lemonade" }, {});
+    const model = discForm();
     model.start();
     await flush();
     await flush();
@@ -2671,8 +2686,8 @@ describe("computed columns", () => {
   });
 
   it("aren't the record's to clear, and always open onto their expression", async () => {
-    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
-    const model = albumForm();
+    serveDiscs({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    const model = discForm();
     model.start();
     await flush();
     await flush();
@@ -2685,8 +2700,8 @@ describe("computed columns", () => {
   });
 
   it("open onto the editor of their expression, which asks for the caret only when asked for", async () => {
-    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
-    const model = albumForm();
+    serveDiscs({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    const model = discForm();
     model.start();
     await flush();
     await flush();
@@ -2712,11 +2727,11 @@ describe("computed columns", () => {
     const pause = () => vi.advanceTimersByTimeAsync(400);
 
     const loaded = async () => {
-      serveAlbums(
+      serveDiscs(
         { a1: "Lemonade" },
         { decade: { a1: "201" }, era: { a1: "201" }, epoch: { a1: "2" } },
       );
-      const model = albumForm();
+      const model = discForm();
       model.start();
       await settle();
       await settle();
@@ -2725,7 +2740,7 @@ describe("computed columns", () => {
 
     it("gains a new one's field, and reads the values again once they've stopped changing", async () => {
       const model = await loaded();
-      rows = [...rows, { tableName: "album", name: "epoch", expression: "1" }];
+      rows = [...rows, { tableName: "disc", name: "epoch", expression: "1" }];
       model.syncComputedColumns();
       expect(keysOf(model)).toEqual([
         "id",
@@ -2758,7 +2773,7 @@ describe("computed columns", () => {
     it("loses a removed one's field, and what was open on it", async () => {
       const model = await loaded();
       model.openExpressionEditor(ROOT_ID, "=era");
-      model.requestRemoveComputed("album", "era");
+      model.requestRemoveComputed("disc", "era");
       rows = rows.filter((row) => row.name !== "era");
       model.syncComputedColumns();
       const s = model.store.getState();
@@ -2808,8 +2823,8 @@ describe("computed columns", () => {
   });
 
   it("opens the editor of one just added, by way of a provisional field", async () => {
-    serveAlbums({ a1: "Lemonade" }, {});
-    const model = albumForm();
+    serveDiscs({ a1: "Lemonade" }, {});
+    const model = discForm();
     model.start();
     await flush();
     model.addProvisional();
@@ -2818,7 +2833,7 @@ describe("computed columns", () => {
     // One thing is added at a time.
     expect(model.store.getState().provisional).toBeNull();
 
-    rows = [...rows, { tableName: "album", name: "fresh", expression: "" }];
+    rows = [...rows, { tableName: "disc", name: "fresh", expression: "" }];
     model.syncComputedColumns();
     model.finishAddComputed("fresh");
     const s = model.store.getState();
@@ -2831,12 +2846,12 @@ describe("computed columns", () => {
   });
 
   it("reads them again after a save, which may have changed what they compute from", async () => {
-    serveAlbums({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
+    serveDiscs({ a1: "Lemonade" }, { decade: { a1: "201" }, era: {} });
     const runDml = vi.fn(() => Promise.resolve({}));
     const model = createRecordForm({
-      tables: TABLES,
-      table: "album",
-      keys: [albumKey("a1")],
+      tables: DISC_TABLES,
+      table: "disc",
+      keys: [discKey("a1")],
       schemaJson: "{}",
       runDml,
       computedColumns: { list: () => rows, prelude: () => prelude },

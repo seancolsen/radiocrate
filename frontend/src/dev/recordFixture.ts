@@ -317,10 +317,52 @@ function matches(base: string, row: Row, condition: Condition): boolean {
   return (cell ?? "").toLowerCase().includes(condition.value.toLowerCase());
 }
 
-/** How many rows of `childTable` point at `row` — the `$#table` count. */
+/** The columns of `table` that link to another table, by the naming
+ * convention the compiler's inferred links read: a column named for a table. */
+function linkColumns(table: string): string[] {
+  const columns = new Set((TABLE_ROWS[table] ?? []).flatMap(Object.keys));
+  return [...columns].filter((column) => column in TABLE_ROWS);
+}
+
+/** The rows of `table` related to `row` of `base`, along the shortest of the
+ * paths the app's own computed columns take:
+ *
+ * - `table` links to `base` (`#play` on a track);
+ * - a table joining the two links to both (`#tag` on a track, by `track_tag`;
+ *   `#track` on an artist, by `credit`);
+ * - `table` links to a table that's related to `base` itself (`#play` on an
+ *   album, by its tracks; `#play` on an artist, by its credits' tracks). */
+function relatedRows(table: string, base: string, row: Row, depth = 2): Row[] {
+  const rows = TABLE_ROWS[table] ?? [];
+  const links = linkColumns(table);
+  if (links.includes(base)) return rows.filter((r) => r[base] === row.id);
+  for (const join of Object.keys(TABLE_ROWS)) {
+    const joinLinks = linkColumns(join);
+    if (!joinLinks.includes(base) || !joinLinks.includes(table)) continue;
+    const ids = new Set(
+      TABLE_ROWS[join].filter((r) => r[base] === row.id).map((r) => r[table]),
+    );
+    return rows.filter((r) => ids.has(r.id));
+  }
+  if (depth === 0) return [];
+  for (const link of links) {
+    if (link === table) continue;
+    const ids = new Set(
+      relatedRows(link, base, row, depth - 1).map((r) => r.id),
+    );
+    if (ids.size > 0) return rows.filter((r) => ids.has(r[link]));
+  }
+  return [];
+}
+
+/** How many rows of `childTable` relate to `row` — the `$#table` count. */
 function relatedCount(childTable: string, base: string, row: Row): number {
-  return (TABLE_ROWS[childTable] ?? []).filter((r) => r[base] === row.id)
-    .length;
+  return relatedRows(childTable, base, row).length;
+}
+
+/** The distinct values of `values`, sorted, as DuckDB lists print. */
+function listOf(values: readonly string[]): string {
+  return `[${[...new Set(values)].sort().join(", ")}]`;
 }
 
 /** Reads a column path out of a row: `title`, or `artist.name` — one hop
@@ -358,8 +400,10 @@ function computedDefinitions(
  *
  * - a column path, or another computed column (`album.year`);
  * - a count of related records (`#play`);
- * - the least, greatest or list of a column across them
- *   (`#play.timestamp%max`, `#credit.artist.name%list_all(…)`). */
+ * - the least, greatest, list, distinct count or commonest values of a column
+ *   across them (`#play.timestamp%max`, `#credit.artist.name%list_all(…)`,
+ *   `#tag.name%list(…)`, `#track.album.title%distinct`,
+ *   `#credit.artist.name%top(…)`), whatever the arguments say. */
 function readValue(
   base: string,
   row: Row,
@@ -375,12 +419,21 @@ function readValue(
   const aggregate = /^#(\w+)\.([\w.]+)%(\w+)/.exec(expression);
   if (aggregate) {
     const [, table, column, fn] = aggregate;
-    const values = (TABLE_ROWS[table] ?? [])
-      .filter((related) => related[base] === row.id)
+    const values = relatedRows(table, base, row)
       .map((related) => readPath(table, related, column))
       .filter((value) => value !== null);
+    if (fn === "distinct") return String(new Set(values).size);
     if (values.length === 0) return null;
     if (fn === "list_all") return `[${values.join(", ")}]`;
+    if (fn === "list") return listOf(values);
+    if (fn === "top") {
+      const counts = new Map<string, number>();
+      for (const value of values) {
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+      const most = Math.max(...counts.values());
+      return listOf([...counts].filter(([, n]) => n === most).map(([v]) => v));
+    }
     const sorted = [...values].sort();
     if (fn === "min") return sorted[0];
     if (fn === "max") return sorted[sorted.length - 1];
