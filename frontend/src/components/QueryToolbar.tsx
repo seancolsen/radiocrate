@@ -13,6 +13,7 @@ import {
   selectIsUnsaved,
   selectIsWriting,
   selectPageBase,
+  selectPageChangedElsewhere,
   selectResultCount,
   selectRunning,
   selectTab,
@@ -28,6 +29,7 @@ import PresetSaveModal from "./PresetSaveModal";
 import QueryDiagnosticBar from "./QueryDiagnosticBar";
 import ViewSqlModal from "./ViewSqlModal";
 import { cx } from "./ui/cx";
+import { CHANGED_ELSEWHERE } from "./ui/ChangedDot";
 import { useElementWidth } from "./ui/useElementWidth";
 
 /** Width at/below which the bar drops the section buttons' text labels. */
@@ -63,7 +65,8 @@ function Separator(): JSX.Element {
  * toggles · then, each only while it applies, Undo, Redo and Save (behind a
  * separator of their own while any of them shows; Undo and Redo dim while a
  * write to a playlist's entries is in flight) — and, at the far right, the
- * result count and Refresh. */
+ * result count and Refresh, dotted when what the rows answer was changed on
+ * another device. */
 export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.tabId));
   const canUndo = useApp((s) => selectCanUndo(s, props.tabId));
@@ -78,6 +81,9 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const fullEditorOpen = useApp((s) => selectFullEditorOpen(s, props.tabId));
   const section = useApp((s) => selectBuilderSection(s, props.tabId));
   const running = useApp((s) => selectRunning(s, props.tabId));
+  const changedElsewhere = useApp((s) =>
+    selectPageChangedElsewhere(s, props.tabId),
+  );
   const playlist = useApp(
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
   );
@@ -187,9 +193,13 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
             arrow is drawn centred in the icon's own box, so the default
             transform origin already spins it about the centre of the circle
             rather than about the arrowhead that juts out past it. */}
+        {/* A dot when what the rows answer was changed on another device:
+            the change came in, the rows wait for this. */}
         <IconButton
           icon={Icons.Refresh}
           label="Refresh"
+          description={changedElsewhere ? CHANGED_ELSEWHERE : undefined}
+          badge={changedElsewhere}
           iconClassName={cx({ "animate-spin": running })}
           onClick={() => runQuery(props.tabId)}
         />

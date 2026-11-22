@@ -29,6 +29,8 @@ type Sent = string[][];
  * positions 1…5. */
 async function mockBackend(page: Page): Promise<Sent> {
   const sent: Sent = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

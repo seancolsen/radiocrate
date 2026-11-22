@@ -16,6 +16,7 @@ import type { CommandId } from "../../commands/registry";
 import { Icons, type IconComponent } from "../../icons";
 import { selectBinding } from "../../stores/commands";
 import { useCommands } from "../../stores/react";
+import { ChangedDot } from "./ChangedDot";
 import { CheckboxBox } from "./Checkbox";
 import { Kbd } from "./Kbd";
 import { placeDropdown, placeSubmenu } from "./menuGeometry";
@@ -102,6 +103,7 @@ function MenuRowCells(props: {
   label: string;
   chord?: Chord | null;
   submenu?: boolean;
+  badge?: boolean;
 }): JSX.Element {
   const Icon = props.icon;
   return (
@@ -116,7 +118,14 @@ function MenuRowCells(props: {
           <Icon className="size-4" />
         </span>
       )}
-      <span className="col-start-3 min-w-0 truncate">{props.label}</span>
+      {props.badge ? (
+        <span className="col-start-3 flex min-w-0 items-center">
+          <span className="truncate">{props.label}</span>
+          <ChangedDot />
+        </span>
+      ) : (
+        <span className="col-start-3 min-w-0 truncate">{props.label}</span>
+      )}
       {props.chord && (
         <Kbd
           chord={props.chord}
@@ -255,6 +264,9 @@ export function MenuItem(props: {
   disabled?: boolean;
   danger?: boolean;
   keepOpen?: boolean;
+  /** Marks the row with the accent dot (`ChangedDot`): what it acts on was
+   * changed on another device. */
+  badge?: boolean;
 }): JSX.Element {
   return (
     <WithChord command={props.command}>
@@ -275,7 +287,12 @@ export function MenuItem(props: {
             props.onClick?.();
           }}
         >
-          <MenuRowCells icon={props.icon} label={props.label} chord={chord} />
+          <MenuRowCells
+            icon={props.icon}
+            label={props.label}
+            chord={chord}
+            badge={props.badge}
+          />
         </button>
       )}
     </WithChord>

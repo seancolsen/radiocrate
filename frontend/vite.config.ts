@@ -96,7 +96,15 @@ export default defineConfig({
         // the precache instead, the cookie is never set, and the client is left
         // permanently unable to complete a login it keeps being sent to.
         navigateFallbackDenylist: [/^\/api\//, /^\/cdn-cgi\//],
-        runtimeCaching: [{ urlPattern: /^\/api\//, handler: "NetworkOnly" }],
+        // The change stream (`/api/events`) is left out: a response that lasts
+        // as long as the page is open has no business passing through the
+        // worker.
+        runtimeCaching: [
+          {
+            urlPattern: /^\/api\/(?!events(?:$|[?#]))/,
+            handler: "NetworkOnly",
+          },
+        ],
         // The build id is read off disk by the server, never fetched by the
         // browser, so precaching it would only add a dead cache entry.
         globIgnores: [BUILD_ID_FILE],

@@ -232,6 +232,14 @@ export interface RecordFormOptions {
   computedColumns?: ComputedColumnSource;
 }
 
+/** Whether a change reaching the form came from another device (live
+ * updates). Such a change reshapes the form as any other does, but what the
+ * form would have read again it only marks as changed (`changedElsewhere`),
+ * leaving the reading to the user's Refresh. */
+export interface RemoteChange {
+  remote?: boolean;
+}
+
 /** Where the form reads computed columns from (see
  * `RecordFormOptions.computedColumns`): the user's rows, which the app's own
  * columns are worked out beside, and the prelude a query needs to refer to any
@@ -268,17 +276,17 @@ export interface RecordFormActions {
   /** Re-fetches the embedded records of these fields wherever the form shows them,
    * once they've stopped changing. What's on screen stays until the answer lands,
    * and the form's edits, expansion and selection are left as they are. */
-  refreshEmbeds: (changes: readonly EmbedChange[]) => void;
+  refreshEmbeds: (changes: readonly EmbedChange[], opts?: RemoteChange) => void;
   /** Brings every record's contextual query fields into line with the queries as
    * they stand now: new ones appear, removed ones go, renamed ones relabel. A
    * query whose Querydown has changed runs again where it's expanded, once it has
    * stopped changing, and is left to run afresh next time where it isn't. */
-  syncContextualQueries: () => void;
+  syncContextualQueries: (opts?: RemoteChange) => void;
   /** Brings every record's computed column fields into line with the columns as
    * they stand now: new ones appear, removed ones go, and a renamed one keeps
    * what it had open. Their values are read again once the columns have
    * stopped changing. */
-  syncComputedColumns: () => void;
+  syncComputedColumns: (opts?: RemoteChange) => void;
   /** Expands a computed column's field onto the editor of its expression, with
    * the caret in it. (Collapsing the field, as any other, closes it.) */
   openExpressionEditor: (recordId: string, fieldKey: string) => void;
@@ -1332,6 +1340,39 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         }),
       );
     }
+  };
+
+  /** Notes that something the form shows changed on another device. */
+  const markChangedElsewhere = () => {
+    if (!get().changedElsewhere) set({ changedElsewhere: true });
+  };
+
+  /** Whether any record in the form has contextual query `queryId`'s field. */
+  const showsContextQuery = (queryId: string) =>
+    Object.values(get().records).some((node) =>
+      node.fields.some(
+        (f) => f.kind === "contextQuery" && f.queryId === queryId,
+      ),
+    );
+
+  /** Each table's computed column rows, as the form's computed values were
+   * last read under, so a change from another device can tell whether it
+   * touched a table the form shows. */
+  const computedRowsSeen = new Map<string, string>();
+  /** Notes the computed column rows of every table the form shows, and
+   * returns the tables whose rows have changed since last noted. */
+  const noteComputedRows = (): Set<string> => {
+    const rows = opts.computedColumns?.list() ?? [];
+    const changed = new Set<string>();
+    for (const node of Object.values(get().records)) {
+      const now = JSON.stringify(
+        rows.filter((r) => r.tableName === node.table),
+      );
+      const before = computedRowsSeen.get(node.table);
+      if (before !== undefined && before !== now) changed.add(node.table);
+      computedRowsSeen.set(node.table, now);
+    }
+    return changed;
   };
 
   /** Reads every loaded node's computed columns again: what any of them
@@ -2421,6 +2462,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     start: () => {
       if (started) return;
       started = true;
+      noteComputedRows();
       void loadRecord(ROOT_ID);
     },
     getSummary: () => selectFormSummary(get()),
@@ -2444,7 +2486,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
 
     fieldSpec,
 
-    refreshEmbeds: (changes) => {
+    refreshEmbeds: (changes, change) => {
+      if (change?.remote) {
+        const shown = Object.values(get().records).some((node) =>
+          changes.some(({ table }) => table === node.table),
+        );
+        if (shown) markChangedElsewhere();
+        return;
+      }
       for (const { table, fieldKey } of changes) {
         const key = `${table}\n${fieldKey}`;
         clearTimeout(embedRefreshes.get(key));
@@ -2469,7 +2518,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       }
     },
 
-    syncContextualQueries: () => {
+    syncContextualQueries: (change) => {
       const queries = opts.contextualQueries?.list() ?? [];
       const live = new Set(queries.map((query) => query.id));
       set((s) => {
@@ -2505,6 +2554,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         const before = ranDefinitions.get(query.id);
         ranDefinitions.set(query.id, query.definition);
         if (before === undefined || before === query.definition) continue;
+        if (change?.remote) {
+          if (showsContextQuery(query.id)) markChangedElsewhere();
+          continue;
+        }
         clearTimeout(contextRefreshes.get(query.id));
         contextRefreshes.set(
           query.id,
@@ -2515,7 +2568,8 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
         );
       }
     },
-    syncComputedColumns: () => {
+    syncComputedColumns: (change) => {
+      const changedTables = noteComputedRows();
       set((s) => {
         for (const [recordId, node] of Object.entries(s.records)) {
           if (node.isNew) continue;
@@ -2581,6 +2635,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           s.removingComputed = null;
         }
       });
+      if (change?.remote) {
+        if (changedTables.size > 0) markChangedElsewhere();
+        return;
+      }
       // What they compute is read again once they stop changing, as embedded
       // records are while their Querydown is typed.
       clearTimeout(computedRefresh);
@@ -2842,6 +2900,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       anchor = null;
       set(rootState());
       started = true;
+      noteComputedRows();
       void loadRecord(ROOT_ID);
     },
 

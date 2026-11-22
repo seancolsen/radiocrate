@@ -1,6 +1,6 @@
 # Live updates across devices
 
-**Status:** accepted · **Date:** 2026-11-21
+**Status:** implemented (phases 1–4; phase 5 not started) · **Date:** 2026-11-21
 
 RadioCrate has one user and several devices. When that user changes their
 setup on one device (renames a playlist, rebinds a shortcut, edits the
@@ -343,9 +343,9 @@ changed is marked the same way, on the editor's Refresh.
 
 1. **Server stream.** Topics, versions and epoch. `write` takes its topics.
    Every RPC and DML path announces. `GET /api/events`. The client id header.
-   *This changes `backend/Cargo.toml` (likely only `tokio-stream`'s `sync`
-   feature, for `BroadcastStream`), so per CLAUDE.md you run the cargo
-   commands for this phase.*
+   *As built, this needed no `Cargo.toml` change: each connection forwards
+   its `broadcast` receiver into an `mpsc` channel, read through
+   `tokio-stream`'s `ReceiverStream`, which needs no extra feature.*
 2. **Client stream and the simple topics.** `api/events.ts`, the connection
    lifecycle, catch-up, and boot waiting for `hello`. The merge rules applied
    to keybindings, settings, presets, field metadata, table settings, computed

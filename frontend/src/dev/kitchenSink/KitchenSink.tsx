@@ -380,6 +380,9 @@ function Buttons(): JSX.Element {
           <Specimen caption="icon, disabled">
             <IconButton icon={Icons.Undo} label="Undo" disabled />
           </Specimen>
+          <Specimen caption="icon, changed elsewhere">
+            <IconButton icon={Icons.Refresh} label="Refresh" badge />
+          </Specimen>
           <Specimen caption="split, on">
             <SplitButton
               icon={Icons.Filter}
@@ -550,6 +553,7 @@ function Menus(): JSX.Element {
         <MenuItem icon={Icons.Rename} label="Rename" />
         <MenuItem icon={Icons.Duplicate} label="Duplicate" disabled />
         <MenuItem icon={Icons.Delete} label="Delete" danger />
+        <MenuItem icon={Icons.Refresh} label="Refresh" badge />
         <MenuToggleItem
           kind="checkbox"
           icon={Icons.Filter}

@@ -39,6 +39,8 @@ function silentWav(seconds = 30): Buffer {
  * nothing reaches a backend. Records which track ids were requested. */
 async function mockBackend(page: Page): Promise<string[]> {
   const streamed: string[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

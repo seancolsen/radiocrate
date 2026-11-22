@@ -96,6 +96,8 @@ function sinkEnv(): AppEnv {
       removeItem: (key) => void backing.delete(key),
     },
     setDocumentTheme: () => {},
+    // A page of fixed UI follows no server.
+    openChangeStream: undefined,
   };
 }
 

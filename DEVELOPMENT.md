@@ -235,6 +235,38 @@ track"). **Whenever a migration adds, renames or drops a table, update
 `ENTITY_NAMES` in the same change.** Tables missing from it (user-created ones
 found by introspection) are expected, and every use falls back gracefully.
 
+## Live updates: what a change on one device does on another
+
+Each device in the foreground holds open `GET /api/events`, a Server-Sent
+Events stream that says which kind of data (a *topic*) changed, and refetches
+that topic's list. The design is `specs/2026-11-live-updates/spec.md`; the
+parts to know when you add to the app:
+
+- **Every write names its topics.** `AppState::write` / `write_mut` take
+  the topics the write changes, and announce them once it has checkpointed. A
+  write that changes nothing live passes `&[]`. A new RPC method needs a case
+  in `dispatch_announces_exactly_its_topics` (`backend/src/rpc.rs`), and the
+  frontend's `WRITE_TOPICS` (`frontend/src/stores/liveUpdates.ts`) needs the
+  method too, so a refetch waits for this device's own write to land.
+- **A new app table needs a place in `TABLE_TOPICS`** (`backend/src/dml.rs`),
+  with a topic if the UI treats it as live data, `None` if only query results
+  show it. A test fails until it has one. A table a topic is read from also
+  goes in `TOPIC_TABLES` (`backend/src/changes.rs`), which the
+  `--duckdb-server` fingerprint check reads.
+- **Merging keeps this device's unsaved edits.** A refetch merges into state
+  through the same helpers the boot loads use (`mergePresets`,
+  `mergedComputedColumns`, …, in `stores/app/actions.ts`): an item with a save
+  still waiting in the idle queue keeps its local version, and a list that
+  came back the same keeps its old reference.
+- **A change from elsewhere never re-runs data.** It updates definitions, and
+  a page whose compiled SQL no longer matches its rows gets a dot on Refresh
+  (`changedElsewhere`). The record editor's sync paths take `{ remote: true }`
+  for the same reason. `app.isApplyingRemote()` tells a cross-store rule in
+  `createStores()` which kind of change it's looking at.
+
+To watch it work, open the app in two browser tabs (they have different client
+ids, so each sees the other's changes) and rename a query in one.
+
 ## Logging
 
 Both server binaries (`radiocrate-server` and `radiocrate`) log to **stderr**,

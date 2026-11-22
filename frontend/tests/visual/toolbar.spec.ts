@@ -21,6 +21,8 @@ interface AppWindow {
  * stubbed empty — the introspection call fails gracefully, so no tab ever runs
  * a real query and the seeded state stays put. */
 async function mockRpc(page: Page) {
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;
@@ -190,6 +192,8 @@ test("the Refresh icon spins while the run it starts is in flight", async ({
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;
@@ -277,6 +281,8 @@ test("a saved query's edit is saved once the app goes quiet; a failed save bring
   // Registered after `mockRpc`, so it's consulted first: the first save is
   // turned down, every later one accepted.
   const saves: string[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

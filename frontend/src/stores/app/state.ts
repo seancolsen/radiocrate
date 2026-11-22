@@ -495,6 +495,13 @@ export interface QueryPageState {
    * `state/undoHistory.ts`). Replaced wholesale on every change, like
    * `selection`. */
   undo: UndoHistory<PageDefinition>;
+  /** Whether the rows on screen no longer answer the page's query as it now
+   * compiles, because of a change made on another device: its definition, a
+   * preset, the prelude, the schema. Such a change updates the definition and
+   * leaves the rows for the user to refresh, and this is what the Refresh
+   * button's dot says. The next run that lands clears it. Absent reads as
+   * `false`. */
+  changedElsewhere?: boolean;
   /** Whether a write to the page's playlist entries is in flight or waiting
    * in the playlist's write queue. Undo and redo wait for it, and so does the
    * history: no checkpoint is recorded while it's set (see `writeStep`). */

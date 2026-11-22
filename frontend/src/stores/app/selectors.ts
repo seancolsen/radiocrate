@@ -130,6 +130,13 @@ export const selectIsUnsaved = (s: AppState, tabId: string): boolean => {
 
 /** Whether `tabId` is a saved source — one with a name to rename: a saved
  * query, or any playlist (which is saved from the moment it exists). */
+/** Whether page `tabId`'s rows were overtaken by a change made on another
+ * device (`QueryPageState.changedElsewhere`). */
+export const selectPageChangedElsewhere = (
+  s: AppState,
+  tabId: string,
+): boolean => s.pages[tabId]?.changedElsewhere ?? false;
+
 export const selectIsPersisted = (s: AppState, tabId: string): boolean => {
   const t = selectPageTab(s, tabId);
   return t?.kind === "playlist" || (t?.persisted ?? false);

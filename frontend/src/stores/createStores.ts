@@ -1,4 +1,4 @@
-import { onRequest, onRpcFailure } from "api-client";
+import { CLIENT_ID, onRequest, onRpcFailure } from "api-client";
 import { shallow } from "zustand/vanilla/shallow";
 import { browserEnv, type AppEnv } from "./env";
 import {
@@ -17,6 +17,11 @@ import {
 import { createMenusStore, type MenusStoreBundle } from "./menus";
 import { createExpansionMemory, type ExpansionMemory } from "./recordForm";
 import { createUpdateStore, type UpdateStoreBundle } from "./update";
+import {
+  createLiveUpdates,
+  WriteTracker,
+  type LiveUpdates,
+} from "./liveUpdates";
 import { embedChanges } from "../query/fieldMetadata";
 import { describeError, stackLines } from "../log/log";
 
@@ -93,17 +98,41 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   const commands = createCommandsStore(app, forms, menus);
   const update = createUpdateStore(app, forms);
 
+  // Live updates (`specs/2026-11-live-updates`): another device's change to
+  // a live topic is refetched and merged in, in whichever store holds it. The
+  // stream opens before the boot loads go out, and they wait for its first
+  // word, so no change can land between a list being read and the stream
+  // starting. Without a stream (a test, the harness), they go at once.
+  const writes = new WriteTracker();
+  const live: LiveUpdates | null = env.openChangeStream
+    ? createLiveUpdates({
+        openStream: env.openChangeStream,
+        clientId: CLIENT_ID,
+        writes,
+        refetch: (topic, superseded) =>
+          topic === "keybindings"
+            ? commands.actions.refreshKeymap(superseded)
+            : app.actions.refreshLive(topic, superseded),
+        log: (text) => app.actions.log("network", text),
+      })
+    : null;
+  if (live && document.visibilityState === "visible") live.show();
+
   // Boot loads.
-  void app.actions.loadSources();
-  void app.actions.loadPresets();
-  void app.actions.loadSchema();
-  void app.actions.loadSettings();
-  void app.actions.loadFieldMetadata();
-  void app.actions.loadTableSettings();
-  void app.actions.loadComputedColumns();
-  void app.actions.loadCustomComparisons();
-  void app.actions.loadContextualQueries();
-  void commands.actions.loadKeymap();
+  const boot = () => {
+    void app.actions.loadSources();
+    void app.actions.loadPresets();
+    void app.actions.loadSchema();
+    void app.actions.loadSettings();
+    void app.actions.loadFieldMetadata();
+    void app.actions.loadTableSettings();
+    void app.actions.loadComputedColumns();
+    void app.actions.loadCustomComparisons();
+    void app.actions.loadContextualQueries();
+    void commands.actions.loadKeymap();
+  };
+  if (live) void live.ready.then(boot);
+  else boot();
 
   // Cross-store wiring (state→state rules): it enforces state consistency and
   // has nothing to do with rendering, so no component owns it.
@@ -121,13 +150,18 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
 
   // What a field's embedded records show is customized once, for every form on
   // the table, so each form is told when it changes, whichever one was edited.
+  //
+  // A change from another device reshapes the forms the same way, but leaves
+  // what's in them (the records, the rows) for the user to refresh: each form
+  // only marks what it would have re-read (`isApplyingRemote`).
   const unsubscribeEmbeds = app.store.subscribe(
     (s) => s.fieldMetadata.data,
     (next, previous) => {
       const changes = embedChanges(previous, next);
       if (changes.length === 0) return;
+      const remote = app.isApplyingRemote();
       for (const entry of forms.store.getState().entries) {
-        entry.model.refreshEmbeds(changes);
+        entry.model.refreshEmbeds(changes, { remote });
       }
     },
   );
@@ -137,8 +171,9 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   const unsubscribeContextualQueries = app.store.subscribe(
     (s) => s.contextualQueries.data,
     () => {
+      const remote = app.isApplyingRemote();
       for (const entry of forms.store.getState().entries) {
-        entry.model.syncContextualQueries();
+        entry.model.syncContextualQueries({ remote });
       }
     },
   );
@@ -148,8 +183,9 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   const unsubscribeComputedColumns = app.store.subscribe(
     (s) => s.computedColumns.data,
     () => {
+      const remote = app.isApplyingRemote();
       for (const entry of forms.store.getState().entries) {
-        entry.model.syncComputedColumns();
+        entry.model.syncComputedColumns({ remote });
       }
     },
   );
@@ -178,16 +214,30 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
   // A saved query's edits are written once the app has gone quiet — and every
   // request the app sends, whichever action sent it, is the app not being
   // quiet.
-  const unsubscribeRequests = onRequest(({ settled }) => {
+  // And every write this device sends holds back the live updates of what it
+  // writes to until it has landed (`WriteTracker`).
+  const unsubscribeRequests = onRequest(({ endpoint, settled }) => {
     app.actions.noteRequest(settled);
+    writes.track(endpoint, settled);
   });
 
   // A page being hidden may never be shown again (a closed browser tab, a
   // mobile OS reclaiming a backgrounded PWA), so whatever saves are waiting go
   // out now rather than when the app would have gone quiet.
+  //
+  // The change stream is held only while the page is on screen: a phone
+  // playing music in the background holds no connection, and catches up on
+  // what it missed when it comes back.
   const onVisibilityChange = () => {
-    if (document.visibilityState === "hidden") app.actions.flushSaves();
+    if (document.visibilityState === "hidden") {
+      app.actions.flushSaves();
+      live?.hide();
+    } else {
+      live?.show();
+    }
   };
+  const onOnlineAgain = () => live?.reconnect();
+  window.addEventListener("online", onOnlineAgain);
   document.addEventListener("visibilitychange", onVisibilityChange);
 
   // What the page and the network did, for the log: the background is where
@@ -261,6 +311,8 @@ export function createStores(env: AppEnv = browserEnv()): Stores {
     unsubscribeRpcFailures();
     unsubscribeRequests();
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("online", onOnlineAgain);
+    live?.dispose();
     document.removeEventListener("visibilitychange", onPageVisibility);
     document.removeEventListener("freeze", onFreeze);
     document.removeEventListener("resume", onResume);

@@ -18,6 +18,23 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // Rows overtaken by a change made on another device: a dot on Refresh,
+  // which says why in its tooltip.
+  test(`query-builder/changed-elsewhere - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "query-builder/changed-elsewhere",
+      colorScheme,
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/changed-elsewhere", colorScheme),
+    );
+    await stage.getByRole("button", { name: "Refresh" }).hover();
+    await expect(page.getByRole("tooltip")).toHaveText(
+      "Changed on another device",
+    );
+  });
+
   // Filter section open on a query that can step both ways and whose last save
   // failed: Undo, Redo and Save behind their separator, the active blue split
   // button with its ⋮, and the builder line (custom input + "vetted" tab).

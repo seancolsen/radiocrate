@@ -1,4 +1,9 @@
-import { keybindingDelete, keybindingList, keybindingSet } from "api-client";
+import {
+  keybindingDelete,
+  keybindingList,
+  keybindingSet,
+  type Keybinding,
+} from "api-client";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
@@ -13,6 +18,7 @@ import {
   type Overrides,
 } from "../commands/keymap";
 import { rankCommands } from "../commands/rank";
+import { deepEqual } from "../state/deepEqual";
 import {
   ALL_COMMANDS,
   commandDef,
@@ -244,6 +250,10 @@ export interface CommandsActions {
   /** Loads persisted keymap overrides once. A backend without any (or a
    * mocked RPC returning null) simply leaves every command on its default. */
   loadKeymap: () => Promise<void>;
+  /** Reloads the keymap because another device changed it (live updates).
+   * Resolves `false`, having changed nothing, when `superseded()` says a
+   * binding set here went out while the list was on its way. */
+  refreshKeymap: (superseded: () => boolean) => Promise<boolean>;
   /** Rebind (or, with `null`, explicitly unbind) a command, stealing the
    * chord from every command that holds it in a context that can overlap the
    * command's (`conflictsFor`). Persists every change. */
@@ -718,14 +728,31 @@ export function createCommandsStore(
     run(command);
   };
 
+  /** Puts `keybinding.list` in force — unless it's what's in force already,
+   * when the overrides keep their reference and nothing re-renders. */
+  const applyKeymap = (list: readonly Keybinding[]) => {
+    const next = overridesFromEntries(list);
+    if (deepEqual(store.getState().overrides, next)) return;
+    store.setState({ overrides: next });
+  };
+
   const actions: CommandsActions = {
     loadKeymap: async () => {
       try {
         const list = await keybindingList();
-        store.setState({ overrides: overridesFromEntries(list ?? []) });
+        applyKeymap(list ?? []);
       } catch (err) {
         console.error("keybinding list failed", err);
       }
+    },
+    refreshKeymap: async (superseded) => {
+      // A binding being set here is in flight, and the live-update tracker
+      // waits it out; nothing waits to be sent. An open capture dialog goes
+      // on, and saving it overwrites what the other device bound.
+      const list = await keybindingList();
+      if (superseded()) return false;
+      applyKeymap(list ?? []);
+      return true;
     },
     setBinding,
     resetBinding: (cmd) => applyBinding(cmd, commandDef(cmd).defaultChord),

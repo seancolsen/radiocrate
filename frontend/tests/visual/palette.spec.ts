@@ -13,6 +13,8 @@ interface AppWindow {
 }
 
 async function mockRpc(page: Page) {
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;
@@ -315,6 +317,8 @@ test("the shortcuts editor's handle takes no rename", async ({ page }) => {
 test("the shortcuts editor rebinds a command", async ({ page }) => {
   await mockRpc(page);
   const sets: { commandId: string; chord: string | null }[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

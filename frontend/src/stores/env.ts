@@ -4,6 +4,7 @@ import {
   type EngineEvents,
   type Player,
 } from "../audio/engine";
+import { openChangeStream, type OpenChangeStream } from "../api/events";
 import type { Logger } from "../log/log";
 
 /** The bits of the browser environment stores read or write directly, injected
@@ -40,6 +41,11 @@ export interface AppEnv {
    * browser, whether it's installed, visible and online), one fact a line —
    * written when logging starts, and when a page loads with it on. */
   describeEnvironment: () => string[];
+  /** Opens the server's change stream (`api/events.ts`), which live updates
+   * follow. Absent, there are no live updates: the boot loads go out at once,
+   * and data changes only when it's refreshed. Store tests leave it out, or
+   * hand in a fake to drive. */
+  openChangeStream?: OpenChangeStream;
 }
 
 /** The File System Access API's save dialog, which TypeScript's DOM library
@@ -108,6 +114,7 @@ export function browserEnv(): AppEnv {
     createPlayer: (events, getQuality, logger) =>
       new AudioEngine(events, getQuality, logger),
     describeEnvironment,
+    openChangeStream: (handlers) => openChangeStream(handlers),
   };
 }
 

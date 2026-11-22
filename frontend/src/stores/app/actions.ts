@@ -1,5 +1,5 @@
 import * as arrow from "apache-arrow";
-import { castDraft, produce, type Draft } from "immer";
+import { castDraft, current as snapshot, produce, type Draft } from "immer";
 import { shallow } from "zustand/vanilla/shallow";
 import {
   folderAdd,
@@ -41,6 +41,7 @@ import {
   metadataTableSetVisible,
   type ComputedColumnRow,
   type CustomComparisonRow,
+  type FieldMetadataRow,
   type FieldRef,
   type DmlOperation,
   type DmlResult,
@@ -49,6 +50,8 @@ import {
   type Source,
   type SourceFolder,
   type SourceKind,
+  type TableMetadataRow,
+  type Topic,
 } from "api-client";
 import { IdleQueue } from "../../api/idleQueue";
 import {
@@ -93,7 +96,12 @@ import {
   relatedRecordsTabName,
   textColumns,
 } from "../../query/tabNames";
-import { overridesFromEntries, withSetting } from "../../state/settings";
+import {
+  overridesFromEntries,
+  settingValue,
+  withSetting,
+} from "../../state/settings";
+import { deepEqual, keepIfEqual } from "../../state/deepEqual";
 import type { SettingKey } from "../../state/settings";
 import {
   checkpoint as checkpointHistory,
@@ -234,6 +242,8 @@ import {
   renameComputedField,
   withoutField,
   type EmbedSection,
+  type FieldMetadata,
+  type MetadataByTable,
 } from "../../query/fieldMetadata";
 import {
   anyTableHidden,
@@ -243,6 +253,7 @@ import {
   tableMoveOrders,
   type PreludeSetting,
   type QuerydownSetting,
+  type TableSettingsByTable,
 } from "../../query/tableSettings";
 import {
   analyzeColumnSources,
@@ -614,6 +625,15 @@ export interface AppActions {
   ) => void;
   /** Re-runs `loadSources` and `loadPresets` — the Explorer's manual refresh. */
   refetchSources: () => void;
+  /** Refetches live topic `topic` because another device changed it, and
+   * merges it in (`specs/2026-11-live-updates`): an edit of this device's
+   * still waiting to be written keeps its local version, and a list that came
+   * back the same changes nothing. Definitions follow, the data shown under
+   * them doesn't: a page whose rows no longer answer its query is marked
+   * (`changedElsewhere`) rather than re-run. Resolves `false`, having changed
+   * nothing, when `superseded()` says a write of this device's went out while
+   * the list was on its way; the caller asks again once it has landed. */
+  refreshLive: (topic: Topic, superseded: () => boolean) => Promise<boolean>;
 
   /** Loads the rating vocabulary (the whole `rating` table), unless it's
    * already loaded or in flight. Not a boot load: it compiles a Querydown
@@ -1303,7 +1323,11 @@ const EXPORT_FILE_NAME = "RadioCrate-export.csv";
 export function createAppActions(
   store: AppVanillaStore,
   env: AppEnv,
-): { actions: AppActions; dispose: () => void } {
+): {
+  actions: AppActions;
+  dispose: () => void;
+  isApplyingRemote: () => boolean;
+} {
   const get = store.getState;
   const set = store.setState;
 
@@ -1848,7 +1872,9 @@ export function createAppActions(
           landedTokens.set(tabId, token);
           if (result !== onScreen) setTabResult(tabId, result, true);
           set((s) => {
-            pageDraft(s, tabId).runFailed = false;
+            const page = pageDraft(s, tabId);
+            page.runFailed = false;
+            if (page.changedElsewhere) page.changedElsewhere = false;
           });
           if (isLive(compiled)) showDiagnostic(tabId, null);
           // The analysis of these rows may still have been under way, under
@@ -1885,7 +1911,9 @@ export function createAppActions(
         setTabResult(tabId, result, refresh);
         if (moved) selectEntryRows(tabId, result, moved);
         set((s) => {
-          pageDraft(s, tabId).runFailed = false;
+          const page = pageDraft(s, tabId);
+          page.runFailed = false;
+          if (page.changedElsewhere) page.changedElsewhere = false;
         });
         if (isLive(compiled)) showDiagnostic(tabId, null);
         if (refresh && sameSql && page?.lineage !== undefined) {
@@ -3598,7 +3626,417 @@ export function createAppActions(
     table: string,
     field: FieldRef,
     section: EmbedSection,
-  ) => `field-querydown\n${table}\n${fieldRefKey(field)}\n${section}`;
+  ) => fieldQuerydownKey(table, fieldRefKey(field), section);
+  /** {@link fieldQuerydownSaveKey}, by the field's {@link fieldRefKey}. */
+  const fieldQuerydownKey = (
+    table: string,
+    fieldKey: string,
+    section: EmbedSection,
+  ) => `field-querydown\n${table}\n${fieldKey}\n${section}`;
+
+  // ── Live updates ──────────────────────────────────────────────────────
+  //
+  // Each live list is refetched when another device changes it (see
+  // `stores/liveUpdates.ts` and `specs/2026-11-live-updates/spec.md`), and
+  // merged in by the rules below, which the boot loads follow too:
+  //
+  // 1. An edit of this device's the backend hasn't acknowledged keeps its local
+  //    version. One in flight is the live-update tracker's to wait out; one
+  //    still waiting in the idle queue is kept here, item by item.
+  // 2. A list that came back the same keeps its old reference, so nothing that
+  //    watches it by reference hears of it.
+
+  /** Set while another device's change is being applied, so what follows from
+   * it (the cross-store rules in `createStores()`) can tell it from this
+   * device's own edit: a change from elsewhere updates definitions, and never
+   * re-runs the data shown under them. */
+  let remoteDepth = 0;
+  const asRemote = (apply: () => void) => {
+    remoteDepth++;
+    try {
+      apply();
+    } finally {
+      remoteDepth--;
+    }
+  };
+
+  /** `preset.list` merged into the presets as this device has them: a preset
+   * with changes the backend hasn't acknowledged keeps them, and the
+   * backend's copy becomes what a revert goes back to. */
+  const mergePresets = (s: Draft<AppState>, data: readonly Preset[]) => {
+    const local = new Map(get().presets.map((p) => [p.id, p]));
+    const merged = data.map((p) => {
+      const save = s.presetSaves[p.id];
+      if (!save) return p;
+      if (!deepEqual(save.saved, p)) save.saved = p;
+      return local.get(p.id) ?? p;
+    });
+    if (!deepEqual(get().presets, merged)) s.presets = merged;
+    noteListedNames(s);
+  };
+
+  /** `metadata.field.list`, with each field's Querydown still waiting to be
+   * written kept as it's on screen. */
+  const mergedFieldMetadata = (
+    rows: readonly FieldMetadataRow[],
+  ): MetadataByTable => {
+    const local = get().fieldMetadata.data;
+    const data: Record<string, Record<string, FieldMetadata>> = {
+      ...groupFieldMetadata(rows),
+    };
+    for (const [table, fields] of Object.entries(local)) {
+      for (const [key, entry] of Object.entries(fields)) {
+        for (const section of ["display", "sorting"] as const) {
+          if (!saves.has(fieldQuerydownKey(table, key, section))) continue;
+          const tableFields = (data[table] = { ...data[table] });
+          tableFields[key] = {
+            ...(tableFields[key] ?? defaultFieldMetadata()),
+            [section]: entry[section],
+          };
+        }
+      }
+    }
+    return keepIfEqual(local, data);
+  };
+
+  /** `metadata.table.list`, with each setting still waiting to be written
+   * kept as it's on screen. */
+  const mergedTableSettings = (
+    rows: readonly TableMetadataRow[],
+  ): TableSettingsByTable => {
+    const local = get().tableSettings.data;
+    const data = { ...groupTableSettings(rows) };
+    for (const [table, settings] of Object.entries(local)) {
+      for (const setting of QUERYDOWN_SETTINGS) {
+        if (!saves.has(tableQuerydownSaveKey(table, setting))) continue;
+        data[table] = {
+          ...(data[table] ?? defaultTableSettings()),
+          [setting]: settings[setting],
+        };
+      }
+    }
+    return keepIfEqual(local, data);
+  };
+
+  /** `metadata.computed_column.list`, with each expression still waiting to
+   * be written kept as it's on screen. */
+  const mergedComputedColumns = (
+    rows: readonly ComputedColumnRow[],
+  ): readonly ComputedColumnRow[] => {
+    const local = get().computedColumns.data;
+    let data: readonly ComputedColumnRow[] = rows;
+    for (const row of local) {
+      if (saves.has(computedColumnSaveKey(row.tableName, row.name))) {
+        data = withComputedExpression(
+          data,
+          row.tableName,
+          row.name,
+          row.expression,
+        );
+      }
+    }
+    return keepIfEqual(local, data);
+  };
+
+  /** `metadata.custom_comparison.list`, with each condition still waiting to
+   * be written kept as it's on screen. */
+  const mergedCustomComparisons = (
+    rows: readonly CustomComparisonRow[],
+  ): readonly CustomComparisonRow[] => {
+    const local = get().customComparisons.data;
+    let data: readonly CustomComparisonRow[] = rows;
+    for (const row of local) {
+      if (saves.has(comparisonSaveKey(row.tableName, row.name))) {
+        data = withComparisonExpression(
+          data,
+          row.tableName,
+          row.name,
+          row.expression,
+        );
+      }
+    }
+    return keepIfEqual(local, data);
+  };
+
+  /** The contextual queries, with each edit still waiting to be written kept
+   * as it's on screen. */
+  const mergedContextualQueries = (
+    data: readonly ContextualQuery[],
+  ): readonly ContextualQuery[] => {
+    const local = get().contextualQueries.data;
+    const byId = new Map(local.map((query) => [query.id, query]));
+    return keepIfEqual(
+      local,
+      data.map((query) =>
+        saves.has(contextualQuerySaveKey(query.id))
+          ? (byId.get(query.id) ?? query)
+          : query,
+      ),
+    );
+  };
+
+  /** Whether page tab `t` holds an edit the backend hasn't acknowledged:
+   * waiting to be written, or written and refused. Its definition is then
+   * this device's, whatever another device does with it. */
+  const pageHasUnsavedEdit = (t: PageTab) =>
+    saves.has(t.id) || t.saveFailed || !pageDefsEqual(t.live, t.saved);
+
+  /** Applies another device's version of the saved sources and folders: the
+   * explorer takes it whole, and each open page follows its source (the
+   * spec's "Open query and playlist tabs" table). */
+  const applyRemoteSources = (
+    data: readonly Source[],
+    folders: readonly SourceFolder[],
+  ) => {
+    const s0 = get();
+    const remote = new Map(data.map((x) => [x.id, x]));
+    // A query saved here whose add hasn't gone out yet is still this
+    // device's to show.
+    const adding = s0.sources.data.filter(
+      (x) => !remote.has(x.id) && saves.has(x.id),
+    );
+    const sources = keepIfEqual(s0.sources.data, [...adding, ...data]);
+    const nextFolders = keepIfEqual(s0.folders.data, folders);
+    const deleted: PageTab[] = [];
+    set((s) => {
+      if (sources !== s0.sources.data) s.sources.data = castDraft(sources);
+      if (nextFolders !== s0.folders.data) {
+        s.folders.data = castDraft(nextFolders);
+      }
+      for (const t of s.tabs) {
+        if (t.kind !== "query" && t.kind !== "playlist") continue;
+        if (t.kind === "query" && !t.persisted) continue;
+        const source = remote.get(t.id);
+        if (!source) {
+          if (!saves.has(t.id)) deleted.push(snapshot(t));
+          continue;
+        }
+        // Renamed: the tab follows, unless it's being renamed here.
+        if (source.name !== t.name && s.renaming?.id !== t.id) {
+          t.name = source.name;
+        }
+      }
+    });
+    // Definitions edited elsewhere: a page with nothing unsaved takes the
+    // new one, as one undoable step, so Undo gets back what this device had.
+    // Its rows aren't re-run (see `checkChangedElsewhere`).
+    for (const source of data) {
+      const t = selectPageTab(get(), source.id);
+      if (!t || !selectIsPersisted(get(), t.id)) continue;
+      const parse = () =>
+        t.kind === "playlist"
+          ? playlistDefinitionFromStored(source.definition)
+          : definitionFromStored(source.definition);
+      const def = parse();
+      if (pageDefsEqual(def, t.saved) || pageHasUnsavedEdit(t)) continue;
+      recordLive(t.id);
+      editPageTab(t.id, (x) => {
+        assignDefinition(x, "saved", def);
+        assignDefinition(x, "live", parse());
+      });
+      recordLive(t.id);
+    }
+    // Deleted elsewhere. A query's page stays open as an unsaved query, with
+    // what it had: nothing the user was looking at disappears. A playlist
+    // exists only as its records, so there's nothing to keep its page open on.
+    for (const t of deleted) {
+      if (t.kind === "query") {
+        saves.cancel(t.id);
+        const parent = s0.sources.data.find((x) => x.id === t.id)?.parent;
+        editQueryTab(t.id, (x) => {
+          x.persisted = false;
+          x.saveFailed = false;
+          x.folder = parent ?? null;
+        });
+      } else {
+        closeTab(t.id);
+      }
+    }
+    if (deleted.length === 1) {
+      const t = deleted[0];
+      const name = t.name ? `“${t.name}”` : "A query";
+      showToast(`${name} was deleted on another device`);
+    } else if (deleted.length > 1) {
+      showToast(`${deleted.length} open pages were deleted on another device`);
+    }
+  };
+
+  /** Marks each page whose rows no longer answer its query as it now
+   * compiles: the SQL it would run differs from the SQL its rows came from.
+   * Called after another device's change to anything a page compiles from (a
+   * definition, a preset, the prelude, a computed column, a comparison, the
+   * schema), which updates the definitions but leaves the rows to the user's
+   * next Refresh. Needs no record of what changed: it asks the compiler. */
+  const checkChangedElsewhere = async () => {
+    await querydownReady();
+    const s = get();
+    const schemaJson = s.schema.json;
+    if (schemaJson === undefined) return;
+    const flags = new Map<string, boolean>();
+    for (const t of s.tabs) {
+      if (t.kind !== "query" && t.kind !== "playlist") continue;
+      const ran = lastRunSql.get(t.id);
+      if (ran === undefined || !s.pages[t.id]?.result) continue;
+      let sql: string | undefined;
+      try {
+        sql = compilePage(t, schemaJson).sql;
+      } catch {
+        // It doesn't compile any more, which is a change too.
+      }
+      flags.set(t.id, sql !== ran);
+    }
+    set((draft) => {
+      for (const [id, changed] of flags) {
+        const page = draft.pages[id];
+        if (page && (page.changedElsewhere ?? false) !== changed) {
+          page.changedElsewhere = changed;
+        }
+      }
+    });
+  };
+
+  /** What `refreshLive` does for each topic the app store holds: refetch
+   * the list, then (unless a write of this device's overtook the fetch)
+   * merge it in as another device's change. */
+  const refreshTopic = async (
+    topic: Topic,
+    superseded: () => boolean,
+  ): Promise<boolean> => {
+    switch (topic) {
+      case "sources": {
+        const [data, folders] = await Promise.all([sourceList(), folderList()]);
+        if (superseded()) return false;
+        asRemote(() => applyRemoteSources(data, folders ?? []));
+        break;
+      }
+      case "presets": {
+        const data = await presetList();
+        if (superseded()) return false;
+        asRemote(() => set((s) => mergePresets(s, data)));
+        break;
+      }
+      case "settings": {
+        const list = await settingList();
+        if (superseded()) return false;
+        asRemote(() =>
+          set((s) => {
+            const next = keepIfEqual(
+              get().settingOverrides,
+              overridesFromEntries(list ?? []),
+            );
+            if (next !== get().settingOverrides) {
+              s.settingOverrides = castDraft(next);
+            }
+            // The prelude being edited here stays, unless it's now what's in
+            // force, when there's nothing left unsaved.
+            if (s.preludeDraft !== null) {
+              const prelude = settingValue(next, "querydown_prelude");
+              if (s.preludeDraft === prelude) s.preludeDraft = null;
+            }
+          }),
+        );
+        break;
+      }
+      case "field-metadata": {
+        const rows = (await metadataFieldList()) ?? [];
+        if (superseded()) return false;
+        const data = mergedFieldMetadata(rows);
+        if (data === get().fieldMetadata.data) return true;
+        asRemote(() =>
+          set((s) => {
+            s.fieldMetadata.data = castDraft(data);
+          }),
+        );
+        return true;
+      }
+      case "table-settings": {
+        const rows = (await metadataTableList()) ?? [];
+        if (superseded()) return false;
+        const data = mergedTableSettings(rows);
+        if (data === get().tableSettings.data) return true;
+        asRemote(() =>
+          set((s) => {
+            s.tableSettings.data = castDraft(data);
+          }),
+        );
+        break;
+      }
+      case "computed-columns": {
+        const rows = (await metadataComputedColumnList()) ?? [];
+        if (superseded()) return false;
+        const data = mergedComputedColumns(rows);
+        if (data === get().computedColumns.data) return true;
+        asRemote(() =>
+          set((s) => {
+            s.computedColumns.data = castDraft(data);
+          }),
+        );
+        break;
+      }
+      case "custom-comparisons": {
+        const rows = (await metadataCustomComparisonList()) ?? [];
+        if (superseded()) return false;
+        const data = mergedCustomComparisons(rows);
+        if (data === get().customComparisons.data) return true;
+        asRemote(() =>
+          set((s) => {
+            s.customComparisons.data = castDraft(data);
+          }),
+        );
+        break;
+      }
+      case "contextual-queries": {
+        const fetched = await fetchContextualQueries();
+        if (superseded()) return false;
+        const data = mergedContextualQueries(fetched);
+        if (data === get().contextualQueries.data) return true;
+        asRemote(() =>
+          set((s) => {
+            s.contextualQueries.data = castDraft(data);
+          }),
+        );
+        return true;
+      }
+      case "schema": {
+        const json = addInferredLinks(await runSqlScalar(INTROSPECTION_SQL));
+        if (superseded()) return false;
+        if (json === get().schema.json) return true;
+        asRemote(() =>
+          set((s) => {
+            s.schema = {
+              status: "ready",
+              json,
+              tables: castDraft(parseSchemaTables(json)),
+            };
+          }),
+        );
+        break;
+      }
+      case "ratings": {
+        // Only a vocabulary already loaded follows: otherwise the next menu
+        // offering ratings loads it fresh anyway.
+        const s = get();
+        if (s.ratings.status !== "ready" || s.schema.json === undefined) {
+          return true;
+        }
+        const data = await fetchRatings(s.schema.json);
+        if (superseded()) return false;
+        const next = keepIfEqual(get().ratings.data, data);
+        if (next === get().ratings.data) return true;
+        asRemote(() =>
+          set((draft) => {
+            draft.ratings.data = castDraft(next);
+          }),
+        );
+        return true;
+      }
+      case "keybindings":
+        // The commands store's (see `createStores()`).
+        return true;
+    }
+    await checkChangedElsewhere();
+    return true;
+  };
 
   const actions: AppActions = {
     loadSources: async () => {
@@ -3632,15 +4070,8 @@ export function createAppActions(
       try {
         const data = await presetList();
         set((s) => {
-          const local = new Map(s.presets.map((p) => [p.id, p]));
-          s.presets = data.map((p) => {
-            const save = s.presetSaves[p.id];
-            if (!save) return p;
-            save.saved = p;
-            return local.get(p.id) ?? p;
-          });
+          mergePresets(s, data);
           s.presetsStatus = "ready";
-          noteListedNames(s);
         });
       } catch (err) {
         console.error("preset list failed", err);
@@ -3672,11 +4103,9 @@ export function createAppActions(
     loadFieldMetadata: async () => {
       try {
         const rows = await metadataFieldList();
+        const data = mergedFieldMetadata(rows ?? []);
         set((s) => {
-          s.fieldMetadata = {
-            status: "ready",
-            data: groupFieldMetadata(rows ?? []),
-          };
+          s.fieldMetadata = { status: "ready", data: castDraft(data) };
         });
       } catch (err) {
         // Every field shows, in its default place.
@@ -3753,18 +4182,9 @@ export function createAppActions(
     loadTableSettings: async () => {
       try {
         const rows = await metadataTableList();
+        const data = mergedTableSettings(rows ?? []);
         set((s) => {
-          // A setting still waiting to be written stays on screen.
-          const local = s.tableSettings.data;
-          const data = { ...groupTableSettings(rows ?? []) };
-          for (const [table, settings] of Object.entries(local)) {
-            for (const setting of QUERYDOWN_SETTINGS) {
-              if (!saves.has(tableQuerydownSaveKey(table, setting))) continue;
-              (data[table] ??= defaultTableSettings())[setting] =
-                settings[setting];
-            }
-          }
-          s.tableSettings = { status: "ready", data };
+          s.tableSettings = { status: "ready", data: castDraft(data) };
         });
       } catch (err) {
         // Every table is listed, in name order, with the app's defaults.
@@ -3838,19 +4258,8 @@ export function createAppActions(
     loadComputedColumns: async () => {
       try {
         const rows = (await metadataComputedColumnList()) ?? [];
+        const data = mergedComputedColumns(rows);
         set((s) => {
-          // An expression still waiting to be written stays on screen.
-          let data: readonly ComputedColumnRow[] = rows;
-          for (const local of s.computedColumns.data) {
-            if (saves.has(computedColumnSaveKey(local.tableName, local.name))) {
-              data = withComputedExpression(
-                data,
-                local.tableName,
-                local.name,
-                local.expression,
-              );
-            }
-          }
           s.computedColumns = { status: "ready", data: castDraft(data) };
         });
       } catch (err) {
@@ -3985,19 +4394,8 @@ export function createAppActions(
     loadCustomComparisons: async () => {
       try {
         const rows = (await metadataCustomComparisonList()) ?? [];
+        const data = mergedCustomComparisons(rows);
         set((s) => {
-          // A condition still waiting to be written stays on screen.
-          let data: readonly CustomComparisonRow[] = rows;
-          for (const local of s.customComparisons.data) {
-            if (saves.has(comparisonSaveKey(local.tableName, local.name))) {
-              data = withComparisonExpression(
-                data,
-                local.tableName,
-                local.name,
-                local.expression,
-              );
-            }
-          }
           s.customComparisons = { status: "ready", data: castDraft(data) };
         });
       } catch (err) {
@@ -4124,20 +4522,9 @@ export function createAppActions(
 
     loadContextualQueries: async () => {
       try {
-        const data = await fetchContextualQueries();
+        const data = mergedContextualQueries(await fetchContextualQueries());
         set((s) => {
-          // An edit still waiting to be written stays on screen.
-          const local = new Map(
-            s.contextualQueries.data.map((query) => [query.id, query]),
-          );
-          s.contextualQueries = {
-            status: "ready",
-            data: data.map((query) =>
-              saves.has(contextualQuerySaveKey(query.id))
-                ? (local.get(query.id) ?? query)
-                : query,
-            ),
-          };
+          s.contextualQueries = { status: "ready", data: castDraft(data) };
         });
       } catch (err) {
         // A database without the table yet shows none.
@@ -4253,7 +4640,12 @@ export function createAppActions(
       try {
         const list = await settingList();
         set((s) => {
-          s.settingOverrides = overridesFromEntries(list ?? []);
+          s.settingOverrides = castDraft(
+            keepIfEqual(
+              get().settingOverrides,
+              overridesFromEntries(list ?? []),
+            ),
+          );
         });
       } catch (err) {
         console.error("setting list failed", err);
@@ -4263,6 +4655,7 @@ export function createAppActions(
       void actions.loadSources();
       void actions.loadPresets();
     },
+    refreshLive: refreshTopic,
 
     toggleSidebar: () => actions.setSidebarOpen(!get().sidebarOpen),
     setSidebarOpen: (open) => {
@@ -6081,5 +6474,9 @@ export function createAppActions(
     saves.dispose();
   };
 
-  return { actions, dispose };
+  /** Whether the state write under way is another device's change (see
+   * `asRemote`). */
+  const isApplyingRemote = () => remoteDepth > 0;
+
+  return { actions, dispose, isApplyingRemote };
 }

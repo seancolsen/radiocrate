@@ -19,6 +19,8 @@ interface AppWindow {
 }
 
 async function mockRpc(page: Page) {
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;
@@ -135,6 +137,8 @@ test("the row menu rates a track through its submenu", async ({ page }) => {
   // The DML the click sends, recorded on its way to `mockRpc`'s stand-in
   // answer (a later route handler runs first, and `fallback` hands over).
   const writes: unknown[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;
@@ -1912,6 +1916,8 @@ interface DmlOp {
  * precedence and hands everything else back to it. */
 async function mockDml(page: Page, error?: string): Promise<DmlOp[][]> {
   const calls: DmlOp[][] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

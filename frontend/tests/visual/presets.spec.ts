@@ -24,6 +24,8 @@ async function mockRpc(
   presets: readonly unknown[] = PRESETS_FIXTURE,
 ): Promise<Call[]> {
   const calls: Call[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as Call & { id: number };
     calls.push({ method: body.method, params: body.params });

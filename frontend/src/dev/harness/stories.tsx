@@ -1341,6 +1341,20 @@ export const STORIES: Record<string, Story> = {
     },
     render: () => <QueryToolbar tabId={LEMONADE.id} />,
   },
+  // The rows on screen overtaken by a change made on another device (live
+  // updates): Refresh wears the accent dot.
+  "query-builder/changed-elsewhere": {
+    width: 460,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, FILTER_DEF);
+      stores.app.actions.setResults(id, emptyCountResult(12));
+      stores.app.store.setState((s) => {
+        const page = s.pages[id];
+        if (page) page.changedElsewhere = true;
+      });
+    },
+    render: () => <QueryToolbar tabId={LEMONADE.id} />,
+  },
   // Filter section open on a query with a step to undo, one to redo, and a
   // failed save: the whole conditional group (separator, Undo, Redo, Save)
   // after the section toggles, the active split button with its ⋮, and the

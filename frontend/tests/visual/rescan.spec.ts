@@ -18,6 +18,8 @@ test("the settings menu waits out a re-scan, then closes itself", async ({
   });
   let rescans = 0;
 
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

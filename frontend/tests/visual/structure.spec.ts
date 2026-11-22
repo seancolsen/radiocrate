@@ -1275,6 +1275,8 @@ test("a text search is written once its editor closes, and reset", async ({
 /** Answers the RPC route from the fixtures, recording the methods called. */
 async function mockRpc(page: Page): Promise<string[]> {
   const methods: string[] = [];
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

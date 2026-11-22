@@ -1,6 +1,7 @@
 import { forwardRef, type MouseEvent } from "react";
 import type { CommandId } from "../../commands/registry";
 import type { IconComponent } from "../../icons";
+import { ChangedDot } from "./ChangedDot";
 import { useTooltip } from "./Tooltip";
 import { NESTED_FOCUS_CLASS, cx } from "./cx";
 
@@ -54,6 +55,9 @@ const IconButton = forwardRef<
     nested?: boolean;
     size?: "sm" | "md";
     tabIndex?: number;
+    /** Marks the button with the accent dot (`ChangedDot`): what it acts on
+     * was changed on another device. Say so in `description`. */
+    badge?: boolean;
   }
 >(function IconButton(props, ref) {
   const Icon = props.icon;
@@ -75,6 +79,7 @@ const IconButton = forwardRef<
         className={cx(
           "flex shrink-0 items-center justify-center rounded",
           props.nested && NESTED_FOCUS_CLASS,
+          props.badge && "relative",
           {
             "size-5": props.size === "sm",
             "size-[26px]": props.size !== "sm",
@@ -93,6 +98,7 @@ const IconButton = forwardRef<
         onClick={(e) => props.onClick?.(e)}
       >
         <Icon className={cx("size-4", props.iconClassName)} />
+        {props.badge && <ChangedDot corner />}
       </button>
       {tooltip}
     </>

@@ -13,6 +13,8 @@ test.use({ hasTouch: true });
 const PHONE = { width: 390, height: 844 };
 
 async function mockRpc(page: Page) {
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

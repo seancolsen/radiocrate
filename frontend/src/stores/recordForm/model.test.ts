@@ -2329,6 +2329,28 @@ describe("contextual queries", () => {
     expect(contextCalls()).toHaveLength(2);
   });
 
+  it("marks a query changed on another device rather than running it", async () => {
+    const { model, queries } = queried();
+    serveQueried([["c1", "Vocals"]]);
+    model.start();
+    await settle();
+    model.toggleField(ROOT_ID, queryField(model), true);
+    await settle();
+    expect(contextCalls()).toHaveLength(1);
+
+    queries[0] = {
+      ...queries[0],
+      name: "Credits",
+      definition: definition("track:=@id\nrole:a"),
+    };
+    model.syncContextualQueries({ remote: true });
+    await settle();
+    // Reshaped, but what it lists waits for Refresh.
+    expect(queryField(model).label).toBe("Credits");
+    expect(contextCalls()).toHaveLength(1);
+    expect(model.store.getState().changedElsewhere).toBe(true);
+  });
+
   it("relabels a renamed query, and drops a removed one", async () => {
     const { model, queries } = queried();
     serveQueried([["c1", "Vocals"]]);
@@ -2720,6 +2742,17 @@ describe("computed columns", () => {
       await pause();
       expect(computedCalls()).toHaveLength(2);
       expect(value(model, "epoch")).toBe("2");
+    });
+
+    it("only marks the values when another device changed what they compute", async () => {
+      const model = await loaded();
+      rows = rows.map((row) =>
+        row.name === "era" ? { ...row, expression: "2" } : row,
+      );
+      model.syncComputedColumns({ remote: true });
+      await pause();
+      expect(computedCalls()).toHaveLength(1);
+      expect(model.store.getState().changedElsewhere).toBe(true);
     });
 
     it("loses a removed one's field, and what was open on it", async () => {

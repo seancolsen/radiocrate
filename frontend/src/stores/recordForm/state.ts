@@ -279,6 +279,12 @@ export interface FormState {
   /** Why the last save failed, or null. The form keeps the changes it couldn't
    * write, so the user can fix what the message says and try again. */
   saveError: string | null;
+  /** Whether something the form shows was changed on another device since it
+   * was read: a contextual query's Querydown, a computed column, how a field's
+   * embedded records show. A change from elsewhere reshapes the form but
+   * leaves what's in it to the user's next Refresh, and this is what Refresh's
+   * dot says. Refreshing clears it. */
+  changedElsewhere: boolean;
 }
 
 /** What a rendered row can do to itself, handed to the model when it mounts so
@@ -332,5 +338,6 @@ export function initialFormState(): FormState {
     removingComputed: null,
     saving: false,
     saveError: null,
+    changedElsewhere: false,
   };
 }

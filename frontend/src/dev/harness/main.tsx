@@ -2,6 +2,7 @@ import { StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { installMockApi } from "./mockApi";
 import { createStores } from "../../stores/createStores";
+import { browserEnv } from "../../stores/env";
 import { StoresProvider, useApp, useStores } from "../../stores/react";
 import { STORIES } from "./stories";
 import "../../app.css";
@@ -86,7 +87,9 @@ function UnknownStory() {
   );
 }
 
-const stores = createStores();
+// No change stream: the stub backend has nothing to announce, and a story's
+// state is its own to set.
+const stores = createStores({ ...browserEnv(), openChangeStream: undefined });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -29,6 +29,8 @@ const DEF = {
 /** Answers the app's requests, and counts how many times it runs {@link DEF}. */
 async function mockBackend(page: Page): Promise<{ queries: number }> {
   const counts = { queries: 0 };
+  // No change stream: the app goes on without live updates at once.
+  await page.route("**/api/events", (route) => route.abort());
   await page.route("**/api/rpc", async (route) => {
     const body = route.request().postDataJSON() as {
       method: string;

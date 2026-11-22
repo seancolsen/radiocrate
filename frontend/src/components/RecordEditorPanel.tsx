@@ -25,6 +25,7 @@ import {
 } from "../stores/react";
 import { Icons, type IconComponent } from "../icons";
 import RecordForm from "./record/RecordForm";
+import { CHANGED_ELSEWHERE } from "./ui/ChangedDot";
 import IconButton from "./ui/IconButton";
 import { Menu, MenuItem } from "./ui/Menu";
 import ScrollArea from "./ui/ScrollArea";
@@ -90,7 +91,8 @@ function ToolbarButton(props: {
  * table whose records can have them; and Refresh, which reloads the record from the
  * database. Refresh is off while there are unsaved changes or a save is in
  * flight, since it would throw the changes away — Reset is the deliberate way to
- * do that. */
+ * do that. When something the form shows was changed on another device, both
+ * Refresh and the menu's button wear a dot. */
 function FormActionsMenu(props: {
   model: RecordFormModel;
   table: string;
@@ -102,6 +104,7 @@ function FormActionsMenu(props: {
   const anyExpanded = useFormState(model, selectAnyExpanded);
   const modified = useFormState(model, selectFormModified);
   const saving = useFormState(model, (s) => s.saving);
+  const changedElsewhere = useFormState(model, (s) => s.changedElsewhere);
   const metadata = useApp((s) => s.fieldMetadata.data);
   const showHidden = useApp((s) => s.showHiddenFields);
   const { setShowHiddenFields } = useAppActions();
@@ -117,6 +120,8 @@ function FormActionsMenu(props: {
         <IconButton
           icon={Icons.More}
           label="Record actions"
+          description={changedElsewhere ? CHANGED_ELSEWHERE : undefined}
+          badge={changedElsewhere}
           active={api.open}
           onClick={() => api.toggle()}
         />
@@ -169,6 +174,7 @@ function FormActionsMenu(props: {
       <MenuItem
         icon={Icons.Refresh}
         label="Refresh"
+        badge={changedElsewhere}
         disabled={modified || saving}
         onClick={() => model.reset()}
       />
