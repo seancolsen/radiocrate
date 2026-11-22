@@ -485,7 +485,7 @@ describe("computed columns in the prelude", () => {
 
   it("define the app's own columns, with no prelude of the user's at all", () => {
     const { sql } = displaying(
-      "$firstplay $lastplay $artists $year $added $duration $playcount",
+      "$first_play $last_play $artists $year $added $duration $play_count",
     );
     expect(sql).toContain('max("play"."timestamp")');
     expect(sql).toContain('"file"."duration"');
@@ -549,8 +549,8 @@ describe("custom comparisons in the prelude", () => {
     );
 
   it("define the user's, and their condition for one of the app's", () => {
-    const { sql } = filtering("albumtitle:dark", [
-      { tableName: "track", name: "albumtitle", expression: "album.title:@x" },
+    const { sql } = filtering("album_title:dark", [
+      { tableName: "track", name: "album_title", expression: "album.title:@x" },
     ]);
     expect(sql).toContain('"album"."title"');
     const custom = filtering("artist:prince", [
@@ -607,7 +607,7 @@ describe("checkComputedColumn", () => {
     expect(check("#play.timestamp%max")).toBeNull();
     // One over several lines, and one using another computed column.
     expect(check("? year:>2000 ~ 1\n  ~~ 0")).toBeNull();
-    expect(check("playcount + 1")).toBeNull();
+    expect(check("play_count + 1")).toBeNull();
   });
 
   it("passes the app's own expression for each of its columns", () => {

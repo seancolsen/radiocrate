@@ -1,5 +1,5 @@
 // Computed columns: Querydown expressions named as columns of a table, so that
-// `lastplay` on a track is `#play.timestamp%max` wherever a query says it. Each
+// `last_play` on a track is `#play.timestamp%max` wherever a query says it. Each
 // is a field of its table's record editor form too, showing what it computes
 // for the record. Pure, like the rest of `query/`: the app store holds the
 // user's rows (`metadata.computed_column` in the database) and writes them.
@@ -46,8 +46,8 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
   Record<string, readonly BuiltInComputedColumn[]>
 > = {
   track: [
-    { name: "firstplay", expression: "#play.timestamp%min" },
-    { name: "lastplay", expression: "#play.timestamp%max" },
+    { name: "first_play", expression: "#play.timestamp%min" },
+    { name: "last_play", expression: "#play.timestamp%max" },
     {
       name: "artists",
       expression: "#credit.artist.name%list_all(\\\\order \\\\artist.name)",
@@ -55,7 +55,7 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
     { name: "year", expression: "album.year" },
     { name: "added", expression: "file.added" },
     { name: "duration", expression: "file.duration" },
-    { name: "playcount", expression: "#play" },
+    { name: "play_count", expression: "#play" },
   ],
 };
 
@@ -244,7 +244,7 @@ export function availableComputedName(
 // ── Definitions ─────────────────────────────────────────────────────────────
 
 /** The head of a computed column's definition, up to its expression:
- * `#track.lastplay = `. */
+ * `#track.last_play = `. */
 export function computedDefinitionHead(table: string, name: string): string {
   return `#${table}.${name} = `;
 }

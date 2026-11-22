@@ -85,7 +85,7 @@ test("switching the base keeps the filter and reseeds the rest from the new tabl
   // preset.
   expect(await liveDefinition(page)).toEqual({
     base: "album",
-    filter: { custom: "jazz playcount:<100", presets: [] },
+    filter: { custom: "jazz play_count:<100", presets: [] },
     sort: { preset: ALBUM_SORT_PRESET_ID },
     display: { custom: "" },
   });
@@ -113,7 +113,7 @@ test("Full Querydown flattens the query into one editable field", async ({
   // (The editor is a contenteditable: its lines are read off its rendered
   // text, not a `value`.)
   await expect(page.getByPlaceholder("Querydown")).toHaveText(
-    "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate}",
+    "#track\njazz play_count:<100\nrating.value:>=4 !++#tag{name:duplicate}",
     { useInnerText: true },
   );
 
@@ -127,7 +127,7 @@ test("Full Querydown flattens the query into one editable field", async ({
   await page.getByRole("menuitemradio", { name: "track", exact: true }).click();
   expect(await liveDefinition(page)).toEqual({
     base: "track",
-    filter: { custom: "jazz playcount:<100", presets: [] },
+    filter: { custom: "jazz play_count:<100", presets: [] },
     sort: { custom: "" },
     display: { custom: "" },
   });
@@ -261,7 +261,7 @@ test("Undo and Redo step the query through what it has run, each shown only whil
   await expect(undo).toBeVisible();
 
   await undo.click();
-  expect(await filter()).toBe("jazz playcount:<100");
+  expect(await filter()).toBe("jazz play_count:<100");
   await expect(undo).toHaveCount(0);
   await expect(redo).toBeVisible();
 

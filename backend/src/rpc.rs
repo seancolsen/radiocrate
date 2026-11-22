@@ -1761,14 +1761,14 @@ mod tests {
                     "order": 2.0
                 },
                 { "field": { "contextualQuery": Q1 }, "order": 3.0 },
-                { "field": { "computedColumn": "lastplay" }, "order": 4.0 },
+                { "field": { "computedColumn": "last_play" }, "order": 4.0 },
             ],
         }))
         .unwrap();
         assert_eq!(params.orders[0].field, column("title"));
         assert_eq!(params.orders[1].field, multi_link("credit", "track"));
         assert_eq!(params.orders[2].field, contextual_query(Q1));
-        assert_eq!(params.orders[3].field, computed_column("lastplay"));
+        assert_eq!(params.orders[3].field, computed_column("last_play"));
 
         assert_eq!(
             serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
@@ -1909,13 +1909,13 @@ mod tests {
         set_computed_column(&conn, &computed_row("album", "decade", Some("year / 10"))).unwrap();
         set_computed_column(&conn, &computed_row("track", "decade", Some("year / 10"))).unwrap();
         // One of the app's own, gone back to the app's expression.
-        set_computed_column(&conn, &computed_row("track", "lastplay", None)).unwrap();
+        set_computed_column(&conn, &computed_row("track", "last_play", None)).unwrap();
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
             vec![
                 computed_row("album", "decade", Some("year / 10")),
                 computed_row("track", "decade", Some("year / 10")),
-                computed_row("track", "lastplay", None),
+                computed_row("track", "last_play", None),
             ],
         );
     }
@@ -2151,13 +2151,56 @@ mod tests {
     }
 
     #[test]
+    fn migration_0016_moves_the_app_columns_customizations_to_their_new_names() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 15);
+        for row in [
+            computed_row("track", "lastplay", Some("#play.timestamp%min")),
+            computed_row("track", "playcount", None),
+            // The user already has a column by the new name: the old stays theirs.
+            computed_row("track", "firstplay", Some("1")),
+            computed_row("track", "first_play", Some("2")),
+            // Not a track: not one of the app's.
+            computed_row("album", "lastplay", Some("3")),
+        ] {
+            set_computed_column(&conn, &row).unwrap();
+        }
+        set_field_visible(&conn, "track", &computed_column("lastplay"), false).unwrap();
+        set_field_visible(&conn, "track", &computed_column("firstplay"), false).unwrap();
+        set_field_visible(&conn, "album", &computed_column("lastplay"), false).unwrap();
+        set_field_visible(&conn, "track", &column("lastplay"), false).unwrap();
+
+        crate::db::migrate_through(&mut conn, 16);
+
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![
+                computed_row("album", "lastplay", Some("3")),
+                computed_row("track", "first_play", Some("2")),
+                computed_row("track", "firstplay", Some("1")),
+                computed_row("track", "last_play", Some("#play.timestamp%min")),
+                computed_row("track", "play_count", None),
+            ],
+        );
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                field_row("album", computed_column("lastplay"), false, None),
+                field_row("track", column("lastplay"), false, None),
+                field_row("track", computed_column("firstplay"), false, None),
+                field_row("track", computed_column("last_play"), false, None),
+            ],
+        );
+    }
+
+    #[test]
     fn the_table_refuses_a_second_row_for_a_field() {
         let conn = setup();
         for field in [
             "union_value(column_name := 'title')",
             "union_value(multi_link := {'related_table_name': 'credit', 'fk_column_name': 'track'})",
             "union_value(contextual_query := '00000000-0000-0000-0000-0000000000e1'::uuid)",
-            "union_value(computed_column := 'lastplay')",
+            "union_value(computed_column := 'last_play')",
         ] {
             let insert =
                 format!("INSERT INTO metadata.field (table_name, field) VALUES ('a', {field})");

@@ -338,7 +338,7 @@ function seedTrackFields(stores: Stores): void {
 /** A computed column of the user's own on tracks: how many tags it has. */
 const TAGCOUNT_COLUMN: ComputedColumnRow = {
   tableName: "track",
-  name: "tagcount",
+  name: "tag_count",
   expression: "#track_tag",
 };
 
@@ -1593,7 +1593,7 @@ export const STORIES: Record<string, Story> = {
       const id = openWithDefinition(stores, {
         ...FILTER_DEF,
         filter: {
-          custom: "jazz playcount:<100",
+          custom: "jazz play_count:<100",
           presets: [
             VETTED_PRESET_ID,
             LOVED_PRESET_ID,
@@ -1764,8 +1764,8 @@ export const STORIES: Record<string, Story> = {
     { height: 760 },
     [
       ...TRACK_FIELDS,
-      structureFieldId("track", { computedColumn: "lastplay" }),
-      structureFieldId("track", { computedColumn: "tagcount" }),
+      structureFieldId("track", { computedColumn: "last_play" }),
+      structureFieldId("track", { computedColumn: "tag_count" }),
     ],
     (stores) =>
       seedComputedColumns(stores, [
@@ -1868,13 +1868,13 @@ export const STORIES: Record<string, Story> = {
     { height: 560 },
     [
       ...comparisonPath("track", "artist"),
-      comparisonItemId("track", "albumtitle"),
+      comparisonItemId("track", "album_title"),
     ],
     (stores) =>
       seedCustomComparisons(stores, [
         {
           tableName: "track",
-          name: "albumtitle",
+          name: "album_title",
           expression: "album.title:@x",
         },
       ]),

@@ -108,10 +108,10 @@ export const PRESETS_FIXTURE: Preset[] = [
 ];
 
 /** The working definition behind the filter-builder snapshots: the custom
- * fragment `jazz playcount:<100` AND the "vetted" preset. */
+ * fragment `jazz play_count:<100` AND the "vetted" preset. */
 export const FILTER_DEF: QueryDefinition = {
   base: "track",
-  filter: { custom: "jazz playcount:<100", presets: [VETTED_PRESET_ID] },
+  filter: { custom: "jazz play_count:<100", presets: [VETTED_PRESET_ID] },
   sort: { custom: "" },
   display: { custom: "" },
 };
@@ -120,7 +120,7 @@ export const FILTER_DEF: QueryDefinition = {
  * one hand-written string, which is all a full-mode query carries. */
 export const FULL_DEF: QueryDefinition = {
   ...FILTER_DEF,
-  full: "#track\njazz playcount:<100\nrating.value:>=4 !++#tag{name:duplicate}\n$title $album.title",
+  full: "#track\njazz play_count:<100\nrating.value:>=4 !++#tag{name:duplicate}\n$title $album.title",
 };
 
 /** A sort section holding the built-in Shuffle preset (fixed seed → stable). */

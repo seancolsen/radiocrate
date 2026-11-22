@@ -158,13 +158,13 @@ for (const colorScheme of SCHEMES) {
       "data-structure/computed-columns",
       colorScheme,
     );
-    await scrollToTop(row(stage, "firstplay Computed"));
-    await expect(row(stage, "lastplay Computed")).toContainText("Built-in");
+    await scrollToTop(row(stage, "first_play Computed"));
+    await expect(row(stage, "last_play Computed")).toContainText("Built-in");
     await expect(row(stage, "year Computed")).toContainText("Customized");
-    await expect(stage.getByLabel("Expression of lastplay")).toHaveText(
+    await expect(stage.getByLabel("Expression of last_play")).toHaveText(
       "#play.timestamp%max",
     );
-    await expect(stage.getByLabel("Expression of tagcount")).toHaveText(
+    await expect(stage.getByLabel("Expression of tag_count")).toHaveText(
       "#track_tag",
     );
     // Only the app's own has a default to go back to.
@@ -882,7 +882,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
   await expect(page.getByRole("menuitem")).toHaveText(["Hide field"]);
   await page.keyboard.press("Escape");
 
-  const mine = row(stage, "tagcount Computed");
+  const mine = row(stage, "tag_count Computed");
   await mine.click({ button: "right" });
   await expect(page.getByRole("menuitem")).toHaveText([
     "Rename",
@@ -890,7 +890,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
     "Remove",
   ]);
   await page.getByRole("menuitem", { name: "Rename" }).click();
-  const name = stage.getByLabel("Name of tagcount");
+  const name = stage.getByLabel("Name of tag_count");
   await expect(name).toBeFocused();
   await name.fill("tags");
   await name.press("Enter");
@@ -902,7 +902,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
   expect(await calls(page, "metadata.computed_column.rename")).toEqual([
     {
       method: "metadata.computed_column.rename",
-      params: { tableName: "track", name: "tagcount", newName: "tags" },
+      params: { tableName: "track", name: "tag_count", newName: "tags" },
     },
   ]);
 
@@ -930,21 +930,21 @@ test("one of the app's computed columns takes the user's expression, and is rese
     "data-structure/computed-columns",
     "light",
   );
-  const lastplay = row(stage, "lastplay Computed");
+  const lastPlay = row(stage, "last_play Computed");
   const editor = stage
     .getByTestId("computed-column-editor")
-    .filter({ has: page.getByLabel("Expression of lastplay") });
-  const expression = editor.getByLabel("Expression of lastplay");
+    .filter({ has: page.getByLabel("Expression of last_play") });
+  const expression = editor.getByLabel("Expression of last_play");
   const reset = editor.getByRole("button", { name: "Reset to default" });
-  await expect(lastplay).toContainText("Built-in");
+  await expect(lastPlay).toContainText("Built-in");
   await expect(reset).toBeDisabled();
 
   await expression.fill("#play.timestamp%min");
-  await expect(lastplay).toContainText("Customized");
+  await expect(lastPlay).toContainText("Customized");
   await expect(reset).toBeEnabled();
   // Left blank, the app's expression is the one in force again.
   await expression.fill("");
-  await expect(lastplay).toContainText("Built-in");
+  await expect(lastPlay).toContainText("Built-in");
   await expect(editor.getByText("Blank: the default is used.")).toBeVisible();
 
   // Reset goes straight out, and the app's own expression is back on show.
@@ -957,7 +957,7 @@ test("one of the app's computed columns takes the user's expression, and is rese
     )
     .toEqual({
       method: "metadata.computed_column.set",
-      params: { tableName: "track", name: "lastplay", expression: null },
+      params: { tableName: "track", name: "last_play", expression: null },
     });
 });
 
@@ -1075,9 +1075,9 @@ test('each setting\'s "?" shows its help on hover, naming the table', async ({
     await page.mouse.move(0, 0);
     await expect(tooltip).toHaveCount(0);
   }
-  await helpUnder("albumtitle").hover();
+  await helpUnder("album_title").hover();
   await expect(tooltip).toContainText(
-    "When a Querydown filter for track records compares albumtitle",
+    "When a Querydown filter for track records compares album_title",
   );
 });
 

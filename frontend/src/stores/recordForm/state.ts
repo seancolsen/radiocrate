@@ -66,7 +66,7 @@ export interface RecordNode {
   original: Record<string, ColumnValues>;
   /** Referencing field key (`#credit`) → count of related records, per record. */
   counts: Record<string, readonly number[]>;
-  /** Computed column field key (`=lastplay`) → what the column computes for
+  /** Computed column field key (`=last_play`) → what the column computes for
    * these records. Never the user's to edit, so it's kept apart from `values`,
    * and nothing here is ever saved. */
   computed: Record<string, ComputedValues>;

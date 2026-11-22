@@ -116,8 +116,8 @@ describe("what a field opens into", () => {
   });
 
   it("is its expression for a computed column", () => {
-    expect(isFieldExpandable(named("lastplay"))).toBe(true);
-    expect(queryEditorSections(named("lastplay"))).toEqual([]);
+    expect(isFieldExpandable(named("last_play"))).toBe(true);
+    expect(queryEditorSections(named("last_play"))).toEqual([]);
   });
 
   it("is the whole query for a contextual query", () => {
@@ -203,11 +203,11 @@ describe("columnStatsLabel", () => {
 
 describe("computedColumnPath", () => {
   it("opens the way down to the column's row", () => {
-    expect(computedColumnPath("track", "lastplay")).toEqual([
+    expect(computedColumnPath("track", "last_play")).toEqual([
       "tables",
       "table:track",
       "table:track/fields",
-      `table:track/fields/${fieldRefKey({ computedColumn: "lastplay" })}`,
+      `table:track/fields/${fieldRefKey({ computedColumn: "last_play" })}`,
     ]);
   });
 });

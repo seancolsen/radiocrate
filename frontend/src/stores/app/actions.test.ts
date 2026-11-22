@@ -5832,7 +5832,7 @@ describe("computed columns", () => {
 
   it("defines the app's own in the prelude with nothing loaded at all", () => {
     const prelude = selectPrelude(state()).text;
-    expect(prelude).toContain("#track.lastplay = #play.timestamp%max");
+    expect(prelude).toContain("#track.last_play = #play.timestamp%max");
     expect(prelude).toContain("#track.artist:@x = ++#artist{name:@x}");
     // No prelude of the user's, and none of the app's beyond what it builds.
     expect(SETTINGS.querydown_prelude.default).toBe("");
@@ -6003,7 +6003,7 @@ describe("computed columns", () => {
   it("never removes one of the app's own", async () => {
     bundle.actions.setComputedColumnExpression("track", "year", "1999");
     bundle.actions.removeComputedColumn("track", "year");
-    bundle.actions.removeComputedColumn("track", "lastplay");
+    bundle.actions.removeComputedColumn("track", "last_play");
     expect(selectComputedExpression(state(), "track", "year")).toBe("1999");
     await settle();
     expect(metadataComputedColumnDelete).not.toHaveBeenCalled();

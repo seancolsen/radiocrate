@@ -40,15 +40,15 @@ const TABLES = [table("album", "id", "title"), table("track", "id", "title")];
 describe("the app's own computed columns", () => {
   it("are the ones the app defines for tracks", () => {
     expect(BUILT_IN_COMPUTED_COLUMNS["track"]?.map((c) => c.name)).toEqual([
-      "firstplay",
-      "lastplay",
+      "first_play",
+      "last_play",
       "artists",
       "year",
       "added",
       "duration",
-      "playcount",
+      "play_count",
     ]);
-    expect(builtInExpression("track", "lastplay")).toBe("#play.timestamp%max");
+    expect(builtInExpression("track", "last_play")).toBe("#play.timestamp%max");
     // Two backslashes ahead of each sort key, as Querydown writes them.
     expect(builtInExpression("track", "artists")).toBe(
       "#credit.artist.name%list_all(\\\\order \\\\artist.name)",
@@ -56,7 +56,7 @@ describe("the app's own computed columns", () => {
   });
 
   it("are no other table's, nor the object prototype's", () => {
-    expect(builtInExpression("album", "lastplay")).toBeNull();
+    expect(builtInExpression("album", "last_play")).toBeNull();
     expect(builtInExpression("constructor", "name")).toBeNull();
     expect(builtInExpression("track", "nope")).toBeNull();
   });
@@ -76,7 +76,7 @@ describe("tableComputedColumns", () => {
     ]);
     expect(columns[0]).toEqual({
       table: "track",
-      name: "firstplay",
+      name: "first_play",
       expression: "#play.timestamp%min",
       builtIn: true,
       customized: false,
@@ -135,7 +135,7 @@ describe("tableComputedColumns", () => {
     ];
     expect(state("track", "year")).toEqual([true, true]);
     expect(state("track", "added")).toEqual([true, false]);
-    expect(state("track", "lastplay")).toEqual([true, false]);
+    expect(state("track", "last_play")).toEqual([true, false]);
     expect(state("album", "decade")).toEqual([false, false]);
     expect(state("album", "era")).toEqual([true, true]);
     expect(state("album", "nope")).toEqual([false, false]);
@@ -192,7 +192,7 @@ describe("a computed column's name", () => {
     );
     expect(taken.has("title")).toBe(true);
     expect(taken.has("decade")).toBe(true);
-    expect(taken.has("lastplay")).toBe(true);
+    expect(taken.has("last_play")).toBe(true);
     expect(availableComputedName("title", taken)).toBe("title_2");
     expect(availableComputedName("DECADE", taken)).toBe("DECADE_2");
     expect(availableComputedName("fresh", taken)).toBe("fresh");
@@ -235,13 +235,13 @@ describe("computedPrelude", () => {
       [row("track", "year", "album.year + 1"), row("track", "mine", "id")],
     );
     expect(prelude.text.split("\n")).toEqual([
-      "#track.firstplay = #play.timestamp%min",
-      "#track.lastplay = #play.timestamp%max",
+      "#track.first_play = #play.timestamp%min",
+      "#track.last_play = #play.timestamp%max",
       "#track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)",
       "#track.year = album.year + 1",
       "#track.added = file.added",
       "#track.duration = file.duration",
-      "#track.playcount = #play",
+      "#track.play_count = #play",
       "#track.mine = id",
     ]);
   });

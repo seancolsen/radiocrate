@@ -238,9 +238,9 @@ const FIELDS: readonly { caption: string; field: FormField }[] = [
     caption: "computed",
     field: {
       kind: "computed",
-      key: "=lastplay",
-      label: "lastplay",
-      name: "lastplay",
+      key: "=last_play",
+      label: "last_play",
+      name: "last_play",
       builtIn: true,
     },
   },
@@ -455,7 +455,7 @@ const PROBLEM: QueryDiagnostic = {
 function Inputs(): JSX.Element {
   const [checked, setChecked] = useState(true);
   const [unchecked, setUnchecked] = useState(false);
-  const [query, setQuery] = useState('jazz title:"blue" playcount:<100');
+  const [query, setQuery] = useState('jazz title:"blue" play_count:<100');
   const [broken, setBroken] = useState(PROBLEM.source);
   const [display, setDisplay] = useState(DISPLAY);
   return (

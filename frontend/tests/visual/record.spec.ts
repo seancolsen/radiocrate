@@ -1023,7 +1023,7 @@ test.describe("rearranging fields", () => {
             ?.fkColumnName === "track",
       ),
     ).toBe(true);
-    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "playcount" });
+    expect(sent.orders.at(-1)?.field).toEqual({ computedColumn: "play_count" });
 
     await dragLabel(page, stage, "id", "title", 0.1);
     await page.mouse.up();
@@ -1268,9 +1268,9 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await expect(stage.getByText("2016-05-02 21:47:00")).toBeVisible();
-    await fieldLabelOf(stage, "lastplay").click({ button: "right" });
+    await fieldLabelOf(stage, "last_play").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Edit expression" }).click();
-    const expression = embedEditor(stage, "Expression of lastplay");
+    const expression = embedEditor(stage, "Expression of last_play");
     await expect(expression).toBeFocused();
     await expect(expression).toHaveText("#play.timestamp%max");
     await expect(
@@ -1351,11 +1351,11 @@ test.describe("computed columns", () => {
     const stage = await opened(page, "record-editor/items-collapsed");
     const shown = async (name: string) =>
       (await computedRow(stage, name).innerText()).replace(/\s+/g, " ").trim();
-    expect(await shown("firstplay")).toBe("firstplay 2016-04-24 08:12:00");
-    expect(await shown("lastplay")).toBe("lastplay 2016-05-02 21:47:00");
+    expect(await shown("first_play")).toBe("first_play 2016-04-24 08:12:00");
+    expect(await shown("last_play")).toBe("last_play 2016-05-02 21:47:00");
     expect(await shown("artists")).toBe("artists [Beyoncé]");
     expect(await shown("year")).toBe("year 2016");
-    expect(await shown("playcount")).toBe("playcount 2");
+    expect(await shown("play_count")).toBe("play_count 2");
     // Nothing of theirs is a text box to type into.
     await expect(computedRow(stage, "year").getByRole("textbox")).toHaveCount(
       0,
@@ -1464,7 +1464,7 @@ test.describe("computed columns", () => {
       "Column yeer not found",
     );
     // The other columns go on showing what they did.
-    await expect(computedRow(stage, "playcount")).toContainText("2");
+    await expect(computedRow(stage, "play_count")).toContainText("2");
   });
 
   test("one being added takes a name, then its expression", async ({
@@ -1519,8 +1519,8 @@ test.describe("computed columns", () => {
     page,
   }) => {
     const stage = await opened(page, "record-editor/computed-columns");
-    await expect(computedRow(stage, "tagcount")).toContainText("2");
-    await fieldLabelOf(stage, "tagcount").click({ button: "right" });
+    await expect(computedRow(stage, "tag_count")).toContainText("2");
+    await fieldLabelOf(stage, "tag_count").click({ button: "right" });
     expect(await page.getByRole("menuitem").allInnerTexts()).toEqual([
       "Edit expression",
       "Copy",
@@ -1530,20 +1530,20 @@ test.describe("computed columns", () => {
     ]);
 
     await page.getByRole("menuitem", { name: "Rename" }).click();
-    const name = stage.getByRole("textbox", { name: "Name of tagcount" });
+    const name = stage.getByRole("textbox", { name: "Name of tag_count" });
     await expect(name).toBeFocused();
-    await page.keyboard.type("tag count");
+    await page.keyboard.type("tags applied");
     await page.keyboard.press("Enter");
     // One call renames the column and what's customized about its field.
-    await expect(fieldLabelOf(stage, "tag_count")).toBeFocused();
-    await expect(fieldLabelOf(stage, "tagcount")).toHaveCount(0);
-    await expect(computedRow(stage, "tag_count")).toContainText("2");
+    await expect(fieldLabelOf(stage, "tags_applied")).toBeFocused();
+    await expect(fieldLabelOf(stage, "tag_count")).toHaveCount(0);
+    await expect(computedRow(stage, "tags_applied")).toContainText("2");
     expect(await calls(page, "metadata.computed_column.rename")).toEqual([
-      { tableName: "track", name: "tagcount", newName: "tag_count" },
+      { tableName: "track", name: "tag_count", newName: "tags_applied" },
     ]);
 
     // A name another field has is numbered, never refused.
-    await fieldLabelOf(stage, "tag_count").click({ button: "right" });
+    await fieldLabelOf(stage, "tags_applied").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename" }).click();
     await page.keyboard.type("title");
     await page.keyboard.press("Enter");
