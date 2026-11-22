@@ -105,7 +105,13 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             if !args.no_scan {
                 scanner::scan(collection_path, &conn)?;
             }
-            server::serve(conn, collection_path.to_path_buf(), args.port).await?;
+            server::serve(
+                conn,
+                collection_path.to_path_buf(),
+                args.port,
+                args.duckdb_server.duckdb_server,
+            )
+            .await?;
         }
     }
     Ok(())

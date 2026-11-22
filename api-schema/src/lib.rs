@@ -496,6 +496,83 @@ pub struct TableSummary {
     pub columns: Vec<ColumnSummary>,
 }
 
+/// One kind of live data: a list every device follows as it changes, rather
+/// than loading once and waiting for Refresh. A write that changes one of
+/// these announces it on the change stream (`GET /api/events`), and a device
+/// in the foreground refetches that topic's list. The stream says only *which*
+/// topic changed, never what to.
+///
+/// See `specs/2026-11-live-updates/spec.md` for which writes announce which
+/// topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum Topic {
+    /// Saved queries and playlists, and the explorer's folders.
+    Sources,
+    Presets,
+    /// The `settings.settings` key/value store (the Querydown prelude).
+    Settings,
+    Keybindings,
+    FieldMetadata,
+    TableSettings,
+    ComputedColumns,
+    CustomComparisons,
+    ContextualQueries,
+    /// The `rating` table, which the app treats as a fixed vocabulary.
+    Ratings,
+    /// The database's catalog. Nothing in the app changes it while it runs;
+    /// only an outside writer does.
+    Schema,
+}
+
+impl Topic {
+    /// Every topic, in declaration order.
+    pub const ALL: &[Topic] = &[
+        Topic::Sources,
+        Topic::Presets,
+        Topic::Settings,
+        Topic::Keybindings,
+        Topic::FieldMetadata,
+        Topic::TableSettings,
+        Topic::ComputedColumns,
+        Topic::CustomComparisons,
+        Topic::ContextualQueries,
+        Topic::Ratings,
+        Topic::Schema,
+    ];
+}
+
+/// The request header a client names itself with on every RPC call, so a
+/// [`TopicChanged`] it caused can be told apart from another device's.
+pub const CLIENT_ID_HEADER: &str = "x-radiocrate-client";
+
+/// The first message on every change-stream connection (SSE event `hello`):
+/// which server run this is, and how far each topic's version has got.
+///
+/// `epoch` is chosen at random when the server starts, and versions start over
+/// at 0 with it, so a client that sees a new epoch refetches everything rather
+/// than comparing numbers from another run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EventsHello {
+    pub epoch: String,
+    #[ts(type = "Record<Topic, number>")]
+    pub versions: std::collections::BTreeMap<Topic, u64>,
+}
+
+/// A change-stream message (SSE event `changed`): a write changed `topic`,
+/// whose version is now `version`. `origin` is the [`CLIENT_ID_HEADER`] of the
+/// client that wrote it, or `None` for the server's own writes and for writers
+/// outside the app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicChanged {
+    pub topic: Topic,
+    #[ts(type = "number")]
+    pub version: u64,
+    pub origin: Option<String>,
+}
+
 /// One method in the RPC surface, as consumed by the client generator.
 ///
 /// The registry ([`METHODS`]) is the one hand-maintained list here; it names each
@@ -830,5 +907,8 @@ pub fn type_decls() -> Vec<String> {
         ),
         format!("export {}", ColumnSummary::decl(&cfg)),
         format!("export {}", TableSummary::decl(&cfg)),
+        format!("export {}", Topic::decl(&cfg)),
+        format!("export {}", EventsHello::decl(&cfg)),
+        format!("export {}", TopicChanged::decl(&cfg)),
     ]
 }

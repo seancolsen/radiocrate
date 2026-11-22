@@ -3,6 +3,7 @@
 /// strings and never touches another wire type.
 pub use api_schema::DEV_BUILD_ID;
 
+pub mod changes;
 pub mod db;
 pub mod dml;
 pub mod duckdb_server;

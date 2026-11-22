@@ -137,6 +137,17 @@ interface RpcEnvelope {
 
 let nextId = 1;
 
+/**
+ * This page load's name for itself, sent on every RPC call (the
+ * `x-radiocrate-client` header) so the server can say which client made a
+ * write. The change stream carries it back, and a client skips the echo of its
+ * own writes. Two browser tabs are two page loads, so they have two ids and see
+ * each other's changes. Not `crypto.randomUUID()`, which a plain-HTTP origin on
+ * the LAN doesn't have.
+ */
+export const CLIENT_ID: string =
+  Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 /** A call to `/api/rpc` that failed: which method, and what it threw. */
 export interface RpcFailure {
   method: string;
@@ -274,7 +285,7 @@ export async function rpcCall(
 async function send(method: string, params: unknown): Promise<unknown> {
   const res = await fetch(\"/api/rpc\", {
     method: \"POST\",
-    headers: { \"content-type\": \"application/json\" },
+    headers: { \"content-type\": \"application/json\", \"__CLIENT_HEADER__\": CLIENT_ID },
     body: JSON.stringify({ jsonrpc: \"2.0\", method, params, id: nextId++ }),
     redirect: \"manual\",
   });
@@ -284,6 +295,7 @@ async function send(method: string, params: unknown): Promise<unknown> {
   if (env.error) throw new Error(env.error.message ?? \"rpc error\");
   return env.result ?? null;
 }";
+    let call = call.replace("__CLIENT_HEADER__", api_schema::CLIENT_ID_HEADER);
     format!("{BANNER}\n{body}\n\n{HTTP_ERROR_TS}\n\n{call}\n")
 }
 
@@ -376,6 +388,13 @@ fn index_ts() -> String {
 export * from \"./types\";
 export * from \"./client\";
 export type { ApiRequest, RpcError, RpcFailure } from \"./rpc\";
-export { AuthRedirectError, httpError, onRequest, onRpcFailure } from \"./rpc\";";
+export {
+  AuthRedirectError,
+  CLIENT_ID,
+  handleAuthRedirect,
+  httpError,
+  onRequest,
+  onRpcFailure,
+} from \"./rpc\";";
     format!("{BANNER}\n{body}\n")
 }

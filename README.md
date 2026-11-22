@@ -182,6 +182,13 @@ radiocrate.track`.
 The first time you attach, the CLI downloads DuckDB's `quack` extension, so
 that once needs network access.
 
+Writes you make this way show up in the app too. While the DuckDB server is on
+and a device has the app open, RadioCrate checks every few seconds whether the
+saved queries, playlists, presets, settings, shortcuts, field and table
+settings, or the schema itself have changed, and tells every open device to
+reload what did. Changes to other tables, such as tracks and albums, show up
+when you refresh the page that lists them, as changes made in the app do.
+
 ### Save the token so you can skip the ATTACH
 
 A persistent secret stores the token and the address, so connecting becomes a

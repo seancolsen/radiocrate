@@ -1,8 +1,9 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use api_schema::Topic;
 use arrow_ipc::writer::StreamWriter;
 use axum::Router;
 use axum::body::Body;
@@ -18,8 +19,15 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::CorsLayer;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
+use crate::changes::{Changes, OutsideWrites};
+
 pub struct AppState {
     db: Mutex<Connection>,
+    /// The change topics' versions, and the stream their changes go out on.
+    pub changes: Changes,
+    /// The outside-writer check, once [`crate::changes::watch_outside_writes`]
+    /// has started it: the app's own writes re-take its fingerprint.
+    outside_writes: OnceLock<OutsideWrites>,
     pub collection_path: PathBuf,
     /// Identifies the frontend build this binary serves, reported over
     /// `app.version` so a client can tell whether it's the one that came with
@@ -37,40 +45,77 @@ impl AppState {
         f(&conn)
     }
 
-    /// Run a data-modifying DB operation under the lock, then `CHECKPOINT`.
+    /// Run a data-modifying DB operation under the lock, then `CHECKPOINT`,
+    /// then announce `topics` on the change stream.
     ///
     /// On success the WAL has been flushed to the main database file. Every
     /// mutation must flow through this method so the checkpoint can never be
     /// forgotten; this is why [`AppState::db`] is private.
     ///
+    /// `topics` are the kinds of live data the write changes (see
+    /// [`crate::changes`]). They're required for the same reason the checkpoint
+    /// is built in: a write that changes nothing live says so with `&[]`, so a
+    /// new method can't announce nothing by accident. `origin` is the client
+    /// that asked for the write, which its own announcement carries so it can
+    /// skip its echo.
+    ///
     /// If the mutation succeeds but the `CHECKPOINT` fails, this returns
     /// `Err("checkpoint failed after write: ...")`. The mutation is already
     /// committed and durable in the WAL, so that error is not a signal to retry
-    /// the write.
-    pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-        let conn = self.db.lock().unwrap();
-        let value = f(&conn)?;
-        conn.execute_batch("CHECKPOINT;")
-            .map_err(|e| format!("checkpoint failed after write: {e}"))?;
-        Ok(value)
+    /// the write — and the topics are still announced, since they did change.
+    pub fn write<T>(
+        &self,
+        origin: Option<&str>,
+        topics: &[Topic],
+        f: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.write_mut(origin, topics, |conn| f(conn))
     }
 
     /// Like [`AppState::write`], but hands the closure a `&mut Connection` so it can open a
     /// transaction (`DuckDB`'s `Connection::transaction` requires `&mut`). Used by the DML API, which
     /// runs a whole batch of operations inside one `BEGIN … COMMIT` and then checkpoints once.
     ///
-    /// The same checkpoint invariant applies: on success the WAL is flushed to the main file. The
-    /// error type is generic so callers can carry structured errors (e.g. [`crate::rpc::RpcErr`]); a
-    /// checkpoint failure is surfaced through `E: From<String>`.
+    /// The same checkpoint and announcement invariants apply. The error type is generic so callers
+    /// can carry structured errors (e.g. [`crate::rpc::RpcErr`]); a checkpoint failure is surfaced
+    /// through `E: From<String>`.
     pub fn write_mut<T, E: From<String>>(
         &self,
+        origin: Option<&str>,
+        topics: &[Topic],
         f: impl FnOnce(&mut Connection) -> Result<T, E>,
     ) -> Result<T, E> {
         let mut conn = self.db.lock().unwrap();
         let value = f(&mut conn)?;
-        conn.execute_batch("CHECKPOINT;")
-            .map_err(|e| E::from(format!("checkpoint failed after write: {e}")))?;
+        let checkpoint = conn.execute_batch("CHECKPOINT;");
+        // Still under the lock, so no outside write can slip in between this
+        // write and its being counted as the app's own.
+        if let Some(outside) = self.outside_writes.get() {
+            outside.rebaseline(&conn);
+        }
+        self.changes.announce(topics, origin);
+        checkpoint.map_err(|e| E::from(format!("checkpoint failed after write: {e}")))?;
         Ok(value)
+    }
+
+    /// Takes the outside-writer check's first fingerprint. `false` if it was
+    /// already started.
+    pub(crate) fn start_watching_outside_writes(&self) -> bool {
+        let conn = self.db.lock().unwrap();
+        self.outside_writes.set(OutsideWrites::new(&conn)).is_ok()
+    }
+
+    /// Announces each topic an outside writer has changed since the last look.
+    pub(crate) fn announce_outside_writes(&self) {
+        let Some(outside) = self.outside_writes.get() else {
+            return;
+        };
+        let conn = self.db.lock().unwrap();
+        let changed = outside.changed(&conn);
+        if !changed.is_empty() {
+            info!(?changed, "a DuckDB client changed live data");
+            self.changes.announce(&changed, None);
+        }
     }
 }
 
@@ -83,6 +128,8 @@ pub fn app_state(
     let collection_path = std::fs::canonicalize(&collection_path).unwrap_or(collection_path);
     Arc::new(AppState {
         db: Mutex::new(conn),
+        changes: Changes::new(),
+        outside_writes: OnceLock::new(),
         collection_path,
         build_id,
         server_version,
@@ -93,6 +140,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/query", post(query))
         .route("/rpc", post(crate::rpc::rpc))
+        .route("/events", get(crate::changes::events))
         .route("/tracks/{id}/stream", get(crate::stream::stream_track))
         .route("/reauth", get(reauth))
         .layer(CorsLayer::permissive())
@@ -276,10 +324,14 @@ async fn query(State(state): State<Arc<AppState>>, body: String) -> Response<Bod
     }
 }
 
+/// Serves the API alone. `watch_outside_writes` says whether `DuckDB` clients
+/// can write to the database meanwhile (`--duckdb-server`), so the change
+/// stream has to watch for them (see [`crate::changes::watch_outside_writes`]).
 pub async fn serve(
     conn: Connection,
     collection_path: PathBuf,
     port: u16,
+    watch_outside_writes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Nest under `/api` so this standalone (frontend-less) dev server exposes the
     // same paths the production `radiocrate` binary does (which does the same nest
@@ -290,16 +342,17 @@ pub async fn serve(
     // to is whatever the Vite dev server is serving, which is by definition
     // current. Reporting the sentinel tells the client to skip the staleness
     // check rather than compare against an id that can't ever match.
+    let state = app_state(
+        conn,
+        collection_path,
+        api_schema::DEV_BUILD_ID.to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
+    if watch_outside_writes {
+        crate::changes::watch_outside_writes(&state);
+    }
     let app = Router::new()
-        .nest(
-            "/api",
-            router(app_state(
-                conn,
-                collection_path,
-                api_schema::DEV_BUILD_ID.to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            )),
-        )
+        .nest("/api", router(state))
         .layer(axum::middleware::from_fn(log_requests));
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

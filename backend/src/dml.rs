@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use api_schema::Topic;
 use duckdb::Connection;
 use duckdb::types::Value as DuckValue;
 use introspection::{Column, Schema, Table};
@@ -71,17 +72,70 @@ impl Operation {
         }
     }
 
+    fn table(&self) -> &str {
+        match self {
+            Operation::Insert { table, .. }
+            | Operation::Update { table, .. }
+            | Operation::Delete { table, .. } => table,
+        }
+    }
+
     fn produces_result(&self) -> bool {
         !matches!(self, Operation::Delete { .. })
     }
 }
 
 /// Handles a `dml` RPC request: validate, then run every operation in one transaction.
-pub(crate) fn handle(state: &AppState, params: Value) -> Result<Value, RpcErr> {
+///
+/// The topics it announces are those of the tables its operations touch (see [`TABLE_TOPICS`]).
+pub(crate) fn handle(
+    state: &AppState,
+    origin: Option<&str>,
+    params: Value,
+) -> Result<Value, RpcErr> {
     let params: DmlParams = serde_json::from_value(params)
         .map_err(|e| validation_err(format!("invalid params: {e}")))?;
     validate_operations(&params.operations)?;
-    state.write_mut(|conn| run(conn, &params.operations))
+    let topics = topics_of(&params.operations);
+    state.write_mut(origin, &topics, |conn| run(conn, &params.operations))
+}
+
+/// Every table the app's migrations create in the main schema (the one DML reaches), and the change
+/// topic a write to it announces. A table with no topic holds data that only query results and the
+/// record editor show, and those reload only when the user asks. A table that isn't listed at all is
+/// one the user created, which is data of the same kind. A test holds this list to the migrations.
+const TABLE_TOPICS: &[(&str, Option<Topic>)] = &[
+    ("source", Some(Topic::Sources)),
+    ("query", Some(Topic::Sources)),
+    ("playlist", Some(Topic::Sources)),
+    ("source_folder", Some(Topic::Sources)),
+    ("preset", Some(Topic::Presets)),
+    ("contextual_query", Some(Topic::ContextualQueries)),
+    ("rating", Some(Topic::Ratings)),
+    ("album", None),
+    ("artist", None),
+    ("credit", None),
+    ("file", None),
+    ("play", None),
+    ("playlist_track", None),
+    ("role", None),
+    ("tag", None),
+    ("track", None),
+    ("track_tag", None),
+];
+
+/// The topics a batch of operations changes, each once.
+fn topics_of(operations: &[Operation]) -> Vec<Topic> {
+    let topics: BTreeSet<Topic> = operations
+        .iter()
+        .filter_map(|op| {
+            TABLE_TOPICS
+                .iter()
+                .find(|(table, _)| *table == op.table())
+                .and_then(|(_, topic)| *topic)
+        })
+        .collect();
+    topics.into_iter().collect()
 }
 
 /// Introspects the schema, then runs the operations in order inside a single transaction, returning
@@ -1183,5 +1237,17 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.data, Some(json!({ "operation": { "id": "e0" } })));
+    }
+
+    /// `TABLE_TOPICS` lists every table the migrations leave in the main
+    /// schema, and nothing else, so a migration that adds an app table has to
+    /// decide whether it's live.
+    #[test]
+    fn every_app_table_has_a_place_in_the_topic_map() {
+        let conn = setup();
+        let schema = introspect(&conn).unwrap();
+        let migrated: BTreeSet<&str> = schema.tables.iter().map(|t| t.name.as_str()).collect();
+        let mapped: BTreeSet<&str> = TABLE_TOPICS.iter().map(|(table, _)| *table).collect();
+        assert_eq!(mapped, migrated);
     }
 }

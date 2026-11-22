@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, ColumnSummary, ComputedColumnRow, CustomComparisonRow, FieldMetadataRow,
-    FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams, Keybinding,
+    AppVersion, CLIENT_ID_HEADER, ColumnSummary, ComputedColumnRow, CustomComparisonRow,
+    FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams, Keybinding,
     KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
     MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams,
     MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams,
@@ -19,10 +19,11 @@ use api_schema::{
     PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source,
     SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams, SourceRenameParams,
     SourceUpdateDefinitionParams, TableMetadataRow, TableOrder, TableQuerydownSetting,
-    TableSummary, TreeItemKind,
+    TableSummary, Topic, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use duckdb::{Connection, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -87,13 +88,20 @@ impl From<String> for RpcErr {
 
 pub(crate) async fn rpc(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(req): Json<RpcRequest>,
 ) -> Json<RpcResponse> {
     let id = req.id.clone();
     // Kept for the logging below; `req` itself moves into the blocking task.
     let method = req.method.clone();
-    let outcome =
-        tokio::task::spawn_blocking(move || dispatch(&state, &req.method, req.params)).await;
+    let origin = headers
+        .get(CLIENT_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let outcome = tokio::task::spawn_blocking(move || {
+        dispatch(&state, origin.as_deref(), &req.method, req.params)
+    })
+    .await;
 
     match outcome {
         Ok(Ok(result)) => Json(RpcResponse {
@@ -142,17 +150,32 @@ pub(crate) async fn rpc(
 
 // Routes a method to its handler. The `dml` handler opts into the structured [`RpcErr`] error shape;
 // every other method uses a plain `String` error, which `From<String>` widens.
-fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, RpcErr> {
+//
+// `origin` is the client that sent the request (its `x-radiocrate-client`
+// header), which every write hands on to the change it announces. Each write
+// names the topics it changes right where it writes (see `AppState::write`);
+// `dispatch_announces_exactly_its_topics` below holds the list to the spec's.
+pub(crate) fn dispatch(
+    state: &AppState,
+    origin: Option<&str>,
+    method: &str,
+    params: Value,
+) -> Result<Value, RpcErr> {
     match method {
-        "dml" => crate::dml::handle(state, params),
-        _ => dispatch_legacy(state, method, params).map_err(RpcErr::from),
+        "dml" => crate::dml::handle(state, origin, params),
+        _ => dispatch_legacy(state, origin, method, params).map_err(RpcErr::from),
     }
 }
 
 // A flat match over the CRUD RPC methods; splitting it up would just scatter the
 // per-method param structs and handlers.
 #[allow(clippy::too_many_lines)]
-fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
+fn dispatch_legacy(
+    state: &AppState,
+    origin: Option<&str>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     match method {
         // The one method here that touches no database: it answers from the
         // strings `app_state` was built with.
@@ -167,37 +190,43 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "source.record_play" => {
             let p: SourceRecordPlayParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[], |conn| {
                 record_play(conn, &p.id, p.last_play)?;
                 Ok(Value::Null)
             })
         }
         "source.rename" => {
             let p: SourceRenameParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Sources], |conn| {
                 rename_source(conn, &p.id, &p.name)?;
                 Ok(Value::Null)
             })
         }
         "source.update_definition" => {
             let p: SourceUpdateDefinitionParams = from_params(params)?;
-            state.write_mut(|conn| {
+            state.write_mut(origin, &[Topic::Sources], |conn| {
                 update_definition(conn, &p.id, &p.definition, p.modified_at).map(|()| Value::Null)
             })
         }
         "source.arrange" => {
             let p: SourceArrangeParams = from_params(params)?;
-            state.write_mut(|conn| arrange(conn, &p.placements).map(|()| Value::Null))
+            state.write_mut(origin, &[Topic::Sources], |conn| {
+                arrange(conn, &p.placements).map(|()| Value::Null)
+            })
         }
         // Playlists have no counterpart to these two: they are created and
         // deleted through `dml`, since their writes also span `playlist_track`.
         "query.add" => {
             let source: Source = from_params(params)?;
-            state.write_mut(|conn| add_query(conn, &source).map(|()| Value::Null))
+            state.write_mut(origin, &[Topic::Sources], |conn| {
+                add_query(conn, &source).map(|()| Value::Null)
+            })
         }
         "query.delete" => {
             let p: QueryDeleteParams = from_params(params)?;
-            state.write_mut(|conn| delete_query(conn, &p.id).map(|()| Value::Null))
+            state.write_mut(origin, &[Topic::Sources], |conn| {
+                delete_query(conn, &p.id).map(|()| Value::Null)
+            })
         }
         "folder.list" => state.read(|conn| -> Result<Value, String> {
             let folders = list_folders(conn)?;
@@ -205,21 +234,21 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "folder.add" => {
             let folder: SourceFolder = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Sources], |conn| {
                 add_folder(conn, &folder)?;
                 Ok(Value::Null)
             })
         }
         "folder.rename" => {
             let p: FolderRenameParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Sources], |conn| {
                 rename_folder(conn, &p.id, &p.name)?;
                 Ok(Value::Null)
             })
         }
         "folder.delete" => {
             let p: FolderDeleteParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Sources], |conn| {
                 delete_folder(conn, &p.id)?;
                 Ok(Value::Null)
             })
@@ -230,11 +259,13 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "preset.add" => {
             let preset: Preset = from_params(params)?;
-            state.write_mut(|conn| add_preset(conn, &preset).map(|()| Value::Null))
+            state.write_mut(origin, &[Topic::Presets], |conn| {
+                add_preset(conn, &preset).map(|()| Value::Null)
+            })
         }
         "preset.update" => {
             let p: PresetUpdateParams = from_params(params)?;
-            state.write_mut(|conn| {
+            state.write_mut(origin, &[Topic::Presets], |conn| {
                 update_preset(
                     conn,
                     &p.id,
@@ -248,7 +279,7 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }
         "preset.delete" => {
             let p: PresetDeleteParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Presets], |conn| {
                 delete_preset(conn, &p.id)?;
                 Ok(Value::Null)
             })
@@ -259,27 +290,27 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "metadata.field.set_visible" => {
             let p: MetadataFieldSetVisibleParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::FieldMetadata], |conn| {
                 set_field_visible(conn, &p.table_name, &p.field, p.visible)?;
                 Ok(Value::Null)
             })
         }
         "metadata.field.set_order" => {
             let p: MetadataFieldSetOrderParams = from_params(params)?;
-            state.write_mut(|conn| {
+            state.write_mut(origin, &[Topic::FieldMetadata], |conn| {
                 set_field_order(conn, &p.table_name, &p.orders).map(|()| Value::Null)
             })
         }
         "metadata.field.set_display" => {
             let p: MetadataFieldSetDisplayParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::FieldMetadata], |conn| {
                 upsert_field_metadata(conn, &p.table_name, &p.field, "display", &p.display)?;
                 Ok(Value::Null)
             })
         }
         "metadata.field.set_sorting" => {
             let p: MetadataFieldSetSortingParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::FieldMetadata], |conn| {
                 upsert_field_metadata(conn, &p.table_name, &p.field, "sorting", &p.sorting)?;
                 Ok(Value::Null)
             })
@@ -290,18 +321,20 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "metadata.table.set_visible" => {
             let p: MetadataTableSetVisibleParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::TableSettings], |conn| {
                 upsert_table_metadata(conn, &p.table_name, "visible", &p.visible)?;
                 Ok(Value::Null)
             })
         }
         "metadata.table.set_order" => {
             let p: MetadataTableSetOrderParams = from_params(params)?;
-            state.write_mut(|conn| set_table_order(conn, &p.orders).map(|()| Value::Null))
+            state.write_mut(origin, &[Topic::TableSettings], |conn| {
+                set_table_order(conn, &p.orders).map(|()| Value::Null)
+            })
         }
         "metadata.table.set_querydown" => {
             let p: MetadataTableSetQuerydownParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::TableSettings], |conn| {
                 let column = table_querydown_column(p.setting);
                 upsert_table_metadata(conn, &p.table_name, column, &p.text)?;
                 Ok(Value::Null)
@@ -313,23 +346,29 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "metadata.computed_column.set" => {
             let p: ComputedColumnRow = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::ComputedColumns], |conn| {
                 set_computed_column(conn, &p)?;
                 Ok(Value::Null)
             })
         }
         "metadata.computed_column.rename" => {
             let p: MetadataComputedColumnRenameParams = from_params(params)?;
-            state.write_mut(|conn| {
-                rename_computed_column(conn, &p.table_name, &p.name, &p.new_name)
-                    .map(|()| Value::Null)
-            })
+            state.write_mut(
+                origin,
+                &[Topic::ComputedColumns, Topic::FieldMetadata],
+                |conn| {
+                    rename_computed_column(conn, &p.table_name, &p.name, &p.new_name)
+                        .map(|()| Value::Null)
+                },
+            )
         }
         "metadata.computed_column.delete" => {
             let p: MetadataComputedColumnDeleteParams = from_params(params)?;
-            state.write_mut(|conn| {
-                delete_computed_column(conn, &p.table_name, &p.name).map(|()| Value::Null)
-            })
+            state.write_mut(
+                origin,
+                &[Topic::ComputedColumns, Topic::FieldMetadata],
+                |conn| delete_computed_column(conn, &p.table_name, &p.name).map(|()| Value::Null),
+            )
         }
         "metadata.custom_comparison.list" => state.read(|conn| -> Result<Value, String> {
             let rows = list_custom_comparisons(conn)?;
@@ -337,21 +376,21 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "metadata.custom_comparison.set" => {
             let p: CustomComparisonRow = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::CustomComparisons], |conn| {
                 set_custom_comparison(conn, &p)?;
                 Ok(Value::Null)
             })
         }
         "metadata.custom_comparison.rename" => {
             let p: MetadataCustomComparisonRenameParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::CustomComparisons], |conn| {
                 rename_custom_comparison(conn, &p.table_name, &p.name, &p.new_name)
                     .map(|()| Value::Null)
             })
         }
         "metadata.custom_comparison.delete" => {
             let p: MetadataCustomComparisonDeleteParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::CustomComparisons], |conn| {
                 delete_custom_comparison(conn, &p.table_name, &p.name).map(|()| Value::Null)
             })
         }
@@ -361,14 +400,14 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "keybinding.set" => {
             let binding: Keybinding = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Keybindings], |conn| {
                 set_keybinding(conn, &binding.command_id, binding.chord.as_deref())?;
                 Ok(Value::Null)
             })
         }
         "keybinding.delete" => {
             let p: KeybindingDeleteParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Keybindings], |conn| {
                 delete_keybinding(conn, &p.command_id)?;
                 Ok(Value::Null)
             })
@@ -382,14 +421,14 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         }),
         "setting.set" => {
             let setting: Setting = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Settings], |conn| {
                 set_setting(conn, &setting.key, &setting.value)?;
                 Ok(Value::Null)
             })
         }
         "setting.delete" => {
             let p: SettingDeleteParams = from_params(params)?;
-            state.write(|conn| {
+            state.write(origin, &[Topic::Settings], |conn| {
                 delete_setting(conn, &p.key)?;
                 Ok(Value::Null)
             })
@@ -412,7 +451,7 @@ fn dispatch_legacy(state: &AppState, method: &str, params: Value) -> Result<Valu
         // a large collection blocks the other API methods for as long as it
         // takes. Acceptable while this is a deliberate, one-at-a-time action a
         // person takes from the Settings menu and waits on.
-        "collection.rescan" => state.write(|conn| {
+        "collection.rescan" => state.write(origin, &[], |conn| {
             crate::scanner::scan(&state.collection_path, conn).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }),
@@ -1187,6 +1226,7 @@ fn update_definition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     const S1: &str = "00000000-0000-0000-0000-000000000001";
     const S2: &str = "00000000-0000-0000-0000-000000000002";
@@ -2239,5 +2279,276 @@ mod tests {
         assert_eq!(list_folders(&conn).unwrap()[0].name, "new");
         delete_folder(&conn, F1).unwrap();
         assert!(list_folders(&conn).unwrap().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Change topics (specs/2026-11-live-updates, §3.2)
+    // -----------------------------------------------------------------------
+
+    /// What a run of `dispatch` announced, as `(method, topics)`.
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<api_schema::TopicChanged>) -> Vec<Topic> {
+        let mut topics = Vec::new();
+        while let Ok(changed) = rx.try_recv() {
+            topics.push(changed.topic);
+        }
+        topics
+    }
+
+    /// An `AppState` over a fresh database, whose collection is an empty
+    /// directory of its own so `collection.rescan` has nothing to find.
+    fn test_state() -> Arc<AppState> {
+        let dir = std::env::temp_dir().join(format!("radiocrate-rpc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::server::app_state(setup(), dir, "test".into(), "test".into())
+    }
+
+    /// Every RPC method, run through `dispatch` in an order that has each one's
+    /// prerequisites in place, announces exactly the topics the spec gives it,
+    /// with the caller as their origin. The cases must cover `METHODS`, so a
+    /// new method can't go untested.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn dispatch_announces_exactly_its_topics() {
+        use Topic::{
+            ComputedColumns, CustomComparisons, FieldMetadata, Keybindings, Presets, Settings,
+            Sources, TableSettings,
+        };
+        use serde_json::json;
+        let field = json!({ "columnName": "title" });
+        let cases: Vec<(&str, Value, Vec<Topic>)> = vec![
+            ("app.version", Value::Null, vec![]),
+            ("source.list", Value::Null, vec![]),
+            ("folder.list", Value::Null, vec![]),
+            ("preset.list", Value::Null, vec![]),
+            ("keybinding.list", Value::Null, vec![]),
+            ("setting.list", Value::Null, vec![]),
+            ("metadata.field.list", Value::Null, vec![]),
+            ("metadata.table.list", Value::Null, vec![]),
+            ("metadata.computed_column.list", Value::Null, vec![]),
+            ("metadata.custom_comparison.list", Value::Null, vec![]),
+            ("table.summarize", Value::Null, vec![]),
+            (
+                "query.add",
+                serde_json::to_value(query(S1, Q1, "One", 0)).unwrap(),
+                vec![Sources],
+            ),
+            (
+                "source.rename",
+                json!({ "id": S1, "name": "Uno" }),
+                vec![Sources],
+            ),
+            (
+                "source.update_definition",
+                json!({ "id": S1, "definition": "{\"a\":1}", "modifiedAt": 1_700_000_001 }),
+                vec![Sources],
+            ),
+            (
+                "source.record_play",
+                json!({ "id": S1, "lastPlay": 1_700_000_002 }),
+                vec![],
+            ),
+            (
+                "folder.add",
+                json!({ "id": F1, "name": "Folder", "parent": null, "position": 1 }),
+                vec![Sources],
+            ),
+            (
+                "folder.rename",
+                json!({ "id": F1, "name": "Box" }),
+                vec![Sources],
+            ),
+            (
+                "source.arrange",
+                json!({ "placements": [
+                    { "kind": "source", "id": S1, "parent": F1, "position": 0 }
+                ] }),
+                vec![Sources],
+            ),
+            ("query.delete", json!({ "id": S1 }), vec![Sources]),
+            ("folder.delete", json!({ "id": F1 }), vec![Sources]),
+            (
+                "preset.add",
+                serde_json::to_value(preset(P1, "Sort", "track", "sort", false)).unwrap(),
+                vec![Presets],
+            ),
+            (
+                "preset.update",
+                json!({
+                    "id": P1, "name": "Sorted", "definition": "{}", "isDefault": true,
+                    "modifiedAt": 1_700_000_001
+                }),
+                vec![Presets],
+            ),
+            ("preset.delete", json!({ "id": P1 }), vec![Presets]),
+            (
+                "metadata.field.set_visible",
+                json!({ "tableName": "track", "field": field, "visible": false }),
+                vec![FieldMetadata],
+            ),
+            (
+                "metadata.field.set_order",
+                json!({ "tableName": "track", "orders": [{ "field": field, "order": 1.0 }] }),
+                vec![FieldMetadata],
+            ),
+            (
+                "metadata.field.set_display",
+                json!({ "tableName": "track", "field": field, "display": "x" }),
+                vec![FieldMetadata],
+            ),
+            (
+                "metadata.field.set_sorting",
+                json!({ "tableName": "track", "field": field, "sorting": "x" }),
+                vec![FieldMetadata],
+            ),
+            (
+                "metadata.table.set_visible",
+                json!({ "tableName": "track", "visible": false }),
+                vec![TableSettings],
+            ),
+            (
+                "metadata.table.set_order",
+                json!({ "orders": [{ "tableName": "track", "order": 1.0 }] }),
+                vec![TableSettings],
+            ),
+            (
+                "metadata.table.set_querydown",
+                json!({ "tableName": "track", "setting": "defaultTextSearch", "text": "x" }),
+                vec![TableSettings],
+            ),
+            (
+                "metadata.computed_column.set",
+                json!({ "tableName": "track", "name": "c", "expression": "1" }),
+                vec![ComputedColumns],
+            ),
+            (
+                "metadata.computed_column.rename",
+                json!({ "tableName": "track", "name": "c", "newName": "d" }),
+                vec![ComputedColumns, FieldMetadata],
+            ),
+            (
+                "metadata.computed_column.delete",
+                json!({ "tableName": "track", "name": "d" }),
+                vec![ComputedColumns, FieldMetadata],
+            ),
+            (
+                "metadata.custom_comparison.set",
+                json!({ "tableName": "track", "name": "c", "expression": "1" }),
+                vec![CustomComparisons],
+            ),
+            (
+                "metadata.custom_comparison.rename",
+                json!({ "tableName": "track", "name": "c", "newName": "d" }),
+                vec![CustomComparisons],
+            ),
+            (
+                "metadata.custom_comparison.delete",
+                json!({ "tableName": "track", "name": "d" }),
+                vec![CustomComparisons],
+            ),
+            (
+                "keybinding.set",
+                json!({ "commandId": "tabs.save_active", "chord": "Ctrl+S" }),
+                vec![Keybindings],
+            ),
+            (
+                "keybinding.delete",
+                json!({ "commandId": "tabs.save_active" }),
+                vec![Keybindings],
+            ),
+            (
+                "setting.set",
+                json!({ "key": "prelude", "value": "x" }),
+                vec![Settings],
+            ),
+            (
+                "setting.delete",
+                json!({ "key": "prelude" }),
+                vec![Settings],
+            ),
+            ("collection.rescan", Value::Null, vec![]),
+            (
+                "dml",
+                json!({ "operations": [{
+                    "operation": "insert", "id": "r", "table": "rating",
+                    "values": { "value": 9.0, "symbol": "!", "description": "Wow" }
+                }] }),
+                vec![Topic::Ratings],
+            ),
+        ];
+
+        let covered: BTreeSet<&str> = cases.iter().map(|(method, _, _)| *method).collect();
+        let methods: BTreeSet<&str> = api_schema::METHODS.iter().map(|m| m.wire).collect();
+        assert_eq!(covered, methods, "every method needs a case");
+
+        let state = test_state();
+        let (_, mut rx) = state.changes.subscribe();
+        for (method, params, expected) in cases {
+            let result = dispatch(&state, Some("device-a"), method, params);
+            assert!(result.is_ok(), "{method} failed: {:?}", result.err());
+            let mut announced = Vec::new();
+            while let Ok(changed) = rx.try_recv() {
+                assert_eq!(changed.origin.as_deref(), Some("device-a"), "{method}");
+                announced.push(changed.topic);
+            }
+            let mut expected = expected;
+            announced.sort();
+            expected.sort();
+            assert_eq!(announced, expected, "{method}");
+        }
+    }
+
+    #[test]
+    fn a_failed_write_announces_nothing() {
+        let state = test_state();
+        let (_, mut rx) = state.changes.subscribe();
+        let result = dispatch(
+            &state,
+            None,
+            "query.add",
+            serde_json::json!({ "not": "a source" }),
+        );
+        assert!(result.is_err());
+        let result = dispatch(
+            &state,
+            None,
+            "dml",
+            serde_json::json!({ "operations": [{
+                "operation": "update", "id": "x", "table": "rating",
+                "where": { "id": P1 }, "values": { "symbol": "?" }
+            }] }),
+        );
+        assert!(result.is_err());
+        assert_eq!(drain(&mut rx), vec![]);
+    }
+
+    /// DML announces a topic for each of the app's tables its operations
+    /// touch, and none for a write that only query results show.
+    #[test]
+    fn dml_announces_the_topics_of_the_tables_it_touches() {
+        use serde_json::json;
+        let state = test_state();
+        let (_, mut rx) = state.changes.subscribe();
+        let playlist = json!({ "operations": [
+            { "operation": "insert", "id": "p", "table": "playlist", "values": { "definition": "{}" } },
+            { "operation": "insert", "id": "s", "table": "source", "values": {
+                "name": "Mix", "created_at": "2024-01-01 00:00:00",
+                "modified_at": "2024-01-01 00:00:00", "last_play": "2024-01-01 00:00:00",
+                "playlist": { "id": "p" }
+            } },
+            { "operation": "insert", "id": "c", "table": "contextual_query", "values": {
+                "table_name": "track", "name": "Same album"
+            } },
+        ] });
+        dispatch(&state, None, "dml", playlist).unwrap();
+        assert_eq!(
+            drain(&mut rx),
+            vec![Topic::Sources, Topic::ContextualQueries]
+        );
+
+        let tag = json!({ "operations": [
+            { "operation": "insert", "id": "t", "table": "tag", "values": { "name": "loud" } },
+        ] });
+        dispatch(&state, None, "dml", tag).unwrap();
+        assert_eq!(drain(&mut rx), vec![]);
     }
 }

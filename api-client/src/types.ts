@@ -169,3 +169,9 @@ approxUnique: number,
 nullPercentage: number | null, };
 
 export type TableSummary = { name: string, rowCount: number, columns: Array<ColumnSummary>, };
+
+export type Topic = "sources" | "presets" | "settings" | "keybindings" | "field-metadata" | "table-settings" | "computed-columns" | "custom-comparisons" | "contextual-queries" | "ratings" | "schema";
+
+export type EventsHello = { epoch: string, versions: Record<Topic, number>, };
+
+export type TopicChanged = { topic: Topic, version: number, origin: string | null, };

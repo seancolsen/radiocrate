@@ -3,7 +3,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use backend::duckdb_server::DuckdbServerArgs;
 use backend::log::LogArgs;
-use backend::{db, scanner, server};
+use backend::{changes, db, scanner, server};
 use clap::{Args, Parser, Subcommand};
 use rust_embed::Embed;
 use std::path::{Path, PathBuf};
@@ -216,6 +216,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         embedded_build_id(),
         VERSION.to_string(),
     );
+    if args.duckdb_server.duckdb_server {
+        changes::watch_outside_writes(&state);
+    }
 
     let app = Router::new()
         .nest("/api", server::router(state))
