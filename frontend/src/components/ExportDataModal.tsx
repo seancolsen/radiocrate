@@ -9,7 +9,6 @@ import {
 import { useApp, useAppActions } from "../stores/react";
 import { Icons } from "../icons";
 import { Checkbox } from "./ui/Checkbox";
-import IconButton from "./ui/IconButton";
 import { Modal } from "./ui/Modal";
 
 /** One visible result column as the export dialog lists it. */
@@ -73,15 +72,7 @@ export function ExportDataDialog(props: {
   const included = props.columns.filter((c) => c.included).length;
 
   return (
-    <Modal onClose={() => props.onClose()} width="480px">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-ink text-base font-semibold">Export data</h2>
-        <IconButton
-          icon={Icons.Close}
-          label="Close"
-          onClick={() => props.onClose()}
-        />
-      </div>
+    <Modal title="Export data" onClose={() => props.onClose()} width="480px">
       <form
         onSubmit={(e) => e.preventDefault()}
         className="flex flex-col gap-4"

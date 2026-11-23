@@ -17,6 +17,7 @@ import { fieldRef, type FormField } from "../../query/recordForm";
 import { isCurrentSchemaTable } from "../../query/schema";
 import {
   columnStatsLabel,
+  compactType,
   FIELD_KIND_LABELS,
   fieldsItemId,
   isFieldExpandable,
@@ -135,10 +136,10 @@ function ComputedNote(props: { table: string; name: string }): JSX.Element {
 }
 
 /** One field: its label as the record editor draws it, what kind of field it
- * is, and for a column its type and what `SUMMARIZE` found in it. A contextual
- * query's and a related-records field's open into their query's editor, and a
- * computed column's into its expression's; a column has nothing to open
- * into. */
+ * is, and for a column its type (a long one compacted, whole in its tooltip)
+ * and what `SUMMARIZE` found in it. A contextual query's and a related-records
+ * field's open into their query's editor, and a computed column's into its
+ * expression's; a column has nothing to open into. */
 function FieldNode(props: {
   table: string;
   field: FormField;
@@ -171,8 +172,11 @@ function FieldNode(props: {
             {FIELD_KIND_LABELS[kind]}
           </span>
           {kind === "column" && props.type !== undefined && (
-            <span className="text-ink min-w-0 shrink truncate font-mono text-xs">
-              {props.type}
+            <span
+              className="text-ink min-w-0 shrink truncate font-mono text-xs"
+              title={props.type}
+            >
+              {compactType(props.type)}
             </span>
           )}
           {props.stats && (

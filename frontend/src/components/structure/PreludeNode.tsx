@@ -17,8 +17,8 @@ import IconButton from "../ui/IconButton";
 import { TreeName, TreeNode, useFocusOnReveal } from "./Tree";
 
 // The Querydown prelude, on the Data structure page: an item of the tree that
-// opens into the prelude's editor, under a toolbar of Save · a "?" whose
-// tooltip says what the prelude is for.
+// opens into the prelude's editor, under a toolbar of Save · Discard changes
+// (while there are any) · a "?" whose tooltip says what the prelude is for.
 //
 // The prelude is the user's own, and empty until they write one: what the app
 // defines for every query — each table's computed columns and settings — has
@@ -40,7 +40,7 @@ const TOOLBAR_BUTTON =
 function PreludeEditor(): JSX.Element {
   const value = useApp(selectUserPrelude);
   const draft = useApp((s) => s.preludeDraft);
-  const { editPrelude, savePrelude } = useAppActions();
+  const { editPrelude, savePrelude, discardPrelude } = useAppActions();
   const text = draft ?? value;
   const unsaved = text !== value;
 
@@ -75,6 +75,16 @@ function PreludeEditor(): JSX.Element {
             />
           )}
         </button>
+        {unsaved && (
+          <button
+            type="button"
+            className={TOOLBAR_BUTTON}
+            onClick={() => discardPrelude()}
+          >
+            <Icons.Revert className="text-ink-weak size-4" />
+            Discard changes
+          </button>
+        )}
         <IconButton
           icon={Icons.Help}
           label="Help"

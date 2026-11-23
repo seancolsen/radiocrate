@@ -79,10 +79,11 @@ export function AboutDialog(props: {
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <Modal onClose={() => props.onClose()} width="420px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        About RadioCrate
-      </h2>
+    <Modal
+      title="About RadioCrate"
+      onClose={() => props.onClose()}
+      width="420px"
+    >
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
         <Row
           label="Server version"
@@ -138,13 +139,6 @@ export function AboutDialog(props: {
             onClick={() => props.onCheck()}
           >
             Check for updates
-          </button>
-          <button
-            type="button"
-            className="control bg-accent text-panel rounded-md"
-            onClick={() => props.onClose()}
-          >
-            Close
           </button>
         </div>
       )}

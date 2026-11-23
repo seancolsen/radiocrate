@@ -1,6 +1,17 @@
-import { useLayoutEffect, useRef, useState, type JSX } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type JSX,
+  type MouseEvent,
+} from "react";
 import { Icons } from "../icons";
-import { selectIsUnsaved, selectPageTab, type TabKind } from "../stores/app";
+import {
+  selectAnyFolderExpanded,
+  selectIsUnsaved,
+  selectPageTab,
+  type TabKind,
+} from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import SectionHeading from "./SectionHeading";
 import OpenedRow from "./OpenedRow";
@@ -86,13 +97,54 @@ function SourceFilterInput(): JSX.Element {
   );
 }
 
+/** The Sources section's actions: its ⋮ menu, and the context menu of the
+ * explorer's empty space and of the section's heading. "Collapse all" shows
+ * only while some folder is expanded. */
+function SourceListActions(): JSX.Element {
+  const anyExpanded = useApp(selectAnyFolderExpanded);
+  const actions = useAppActions();
+  return (
+    <>
+      <MenuItem
+        icon={Icons.Query}
+        label="Add query"
+        onClick={() => actions.addQuery(null)}
+      />
+      <MenuItem
+        icon={Icons.Playlist}
+        label="Add playlist"
+        onClick={() => actions.addPlaylist(null)}
+      />
+      <MenuItem
+        icon={Icons.NewFolder}
+        label="Add folder"
+        onClick={() => actions.newFolder(null)}
+      />
+      {anyExpanded && (
+        <MenuItem
+          icon={Icons.ExpandClosed}
+          label="Collapse all"
+          onClick={() => actions.collapseAllFolders()}
+        />
+      )}
+      <MenuItem
+        icon={Icons.Refresh}
+        label="Refresh"
+        onClick={actions.refetchSources}
+      />
+    </>
+  );
+}
+
 /** The explorer: an "Opened" section (every open tab, whatever page it holds —
  * left out altogether while none is open, and wherever the tab bar stays in
  * view beside a persistent sidebar, saying the same thing),
  * a "Sources" section (the saved queries and playlists, in the folders the user
  * arranges them in, with an actions menu to add a query, playlist or folder,
- * search or refresh), and
- * the footer pinned to the bottom.
+ * search, collapse its folders or refresh), and
+ * the footer pinned to the bottom. A right-click anywhere in the two sections
+ * that no row or field has a use for — the empty space below them, a heading —
+ * raises the Sources actions menu there.
  *
  * This is only the contents. The panel it fills — its surface, width, and
  * persistent-column / modal-drawer behavior — belongs to `ui/SidebarLeft`. */
@@ -108,71 +160,72 @@ export default function Explorer(): JSX.Element {
     x: number;
     y: number;
   } | null>(null);
+  const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  const onEmptyContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    // A row raised its own menu. A click in a menu portaled out of here
+    // bubbles in through React, but isn't the explorer's.
+    if (e.defaultPrevented) return;
+    const target = e.target as Element;
+    if (!e.currentTarget.contains(target)) return;
+    // A text field keeps the browser's own menu.
+    if (target.closest("input, textarea")) return;
+    e.preventDefault();
+    setListMenu({ x: e.clientX, y: e.clientY });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea ref={scrollRef}>
-        {showOpened && (
-          <>
-            <SectionHeading title="Opened" spaced={false} />
-            {tabs.map((tab) => (
-              <OpenedTabRow
-                key={tab.id}
-                tabId={tab.id}
-                name={tab.name}
-                kind={tab.kind}
-                active={tab.id === activeTabId}
-                onContextMenu={(x, y) => setOpenedMenu({ id: tab.id, x, y })}
-              />
-            ))}
-          </>
-        )}
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        onContextMenu={onEmptyContextMenu}
+      >
+        <ScrollArea ref={scrollRef}>
+          {showOpened && (
+            <>
+              <SectionHeading title="Opened" spaced={false} />
+              {tabs.map((tab) => (
+                <OpenedTabRow
+                  key={tab.id}
+                  tabId={tab.id}
+                  name={tab.name}
+                  kind={tab.kind}
+                  active={tab.id === activeTabId}
+                  onContextMenu={(x, y) => setOpenedMenu({ id: tab.id, x, y })}
+                />
+              ))}
+            </>
+          )}
 
-        {/* Sources */}
-        <SectionHeading title="Sources" spaced={showOpened}>
-          <IconButton
-            icon={Icons.Search}
-            label="Search sources"
-            active={filterOpen}
-            onClick={actions.toggleSourceFilter}
-          />
-          <Menu
-            align="end"
-            width="170px"
-            trigger={(api) => (
-              <IconButton
-                icon={Icons.More}
-                label="Source list actions"
-                active={api.open}
-                onClick={() => api.toggle()}
-              />
-            )}
-          >
-            <MenuItem
-              icon={Icons.Query}
-              label="Add query"
-              onClick={() => actions.addQuery(null)}
+          {/* Sources */}
+          <SectionHeading title="Sources" spaced={showOpened}>
+            <IconButton
+              icon={Icons.Search}
+              label="Search sources"
+              active={filterOpen}
+              onClick={actions.toggleSourceFilter}
             />
-            <MenuItem
-              icon={Icons.Playlist}
-              label="Add playlist"
-              onClick={() => actions.addPlaylist(null)}
-            />
-            <MenuItem
-              icon={Icons.NewFolder}
-              label="Add folder"
-              onClick={() => actions.newFolder(null)}
-            />
-            <MenuItem
-              icon={Icons.Refresh}
-              label="Refresh"
-              onClick={actions.refetchSources}
-            />
-          </Menu>
-        </SectionHeading>
-        {filterOpen && <SourceFilterInput />}
-        <SourceTree scrollRef={scrollRef} />
-      </ScrollArea>
+            <Menu
+              align="end"
+              width="170px"
+              trigger={(api) => (
+                <IconButton
+                  icon={Icons.More}
+                  label="Source list actions"
+                  active={api.open}
+                  onClick={() => api.toggle()}
+                />
+              )}
+            >
+              <SourceListActions />
+            </Menu>
+          </SectionHeading>
+          {filterOpen && <SourceFilterInput />}
+          <SourceTree scrollRef={scrollRef} />
+        </ScrollArea>
+      </div>
 
       <ExplorerFooter />
 
@@ -186,6 +239,15 @@ export default function Explorer(): JSX.Element {
             id={openedMenu.id}
             onRename={() => actions.beginRename(openedMenu.id, "opened")}
           />
+        </ContextMenu>
+      )}
+      {listMenu && (
+        <ContextMenu
+          x={listMenu.x}
+          y={listMenu.y}
+          onClose={() => setListMenu(null)}
+        >
+          <SourceListActions />
         </ContextMenu>
       )}
     </div>

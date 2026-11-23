@@ -3,9 +3,8 @@ import { useAppActions } from "../stores/react";
 
 /** What a new query shows where its rows would be, until the user touches it
  * (`QueryTab.pristine`): a "Show all results" button, for when every row of
- * the base is what's wanted after all. The base itself is picked where it
- * always is, in the wrench menu's "Base ▸" — which doesn't count as touching
- * the query either. */
+ * the base is what's wanted after all. Picking another base, in the wrench
+ * menu's "Base ▸", touches it too. */
 export default function NewQueryPrompt(props: { tabId: string }): JSX.Element {
   const { runQuery } = useAppActions();
 

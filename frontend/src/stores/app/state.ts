@@ -175,10 +175,8 @@ export interface QueryTab {
   /** Whether this is a new query the user hasn't touched yet. Its query isn't
    * run until they do — a new query is of every track, which they almost never
    * want to load — so the page offers a "Show all results" button where the
-   * rows would be. Picking the base (the wrench menu's "Base ▸") leaves it
-   * untouched;
-   * any other edit of the definition, or any run (Refresh, "Show all
-   * results"), ends it for good. Absent reads as `false`. Restored after a
+   * rows would be. Any edit of the definition (picking another base among
+   * them), or any run (Refresh, "Show all results"), ends it for good. Absent reads as `false`. Restored after a
    * reload, so a reload doesn't load the rows either. */
   pristine?: boolean;
 }

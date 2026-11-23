@@ -198,6 +198,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
         <IconButton
           icon={Icons.Refresh}
           label="Refresh"
+          command="query.refresh"
           description={changedElsewhere ? CHANGED_ELSEWHERE : undefined}
           badge={changedElsewhere}
           iconClassName={cx({ "animate-spin": running })}

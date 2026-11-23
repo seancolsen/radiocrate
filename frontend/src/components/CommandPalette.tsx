@@ -30,6 +30,7 @@ import {
 } from "../stores/react";
 import { Kbd } from "./ui/Kbd";
 import { cx } from "./ui/cx";
+import { useFocusTrap } from "./ui/useFocusTrap";
 
 // The command palette — a VS Code-style overlay for finding and running
 // commands by name, showing each command's keyboard shortcut and listing
@@ -87,6 +88,9 @@ function PaletteDialog(): JSX.Element {
   const actions = useCommandActions();
   const inputRef = useRef<HTMLInputElement>(null);
   const rowsRef = useRef<(HTMLDivElement | null)[]>([]);
+  // Tab stays in the palette, rather than reaching the page behind it.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef);
 
   // The `When` predicates' inputs, assembled from narrow subscriptions on the
   // app and forms stores — same shape as `selectCommandContext(app, forms)`,
@@ -218,11 +222,13 @@ function PaletteDialog(): JSX.Element {
         onClick={() => actions.closePalette()}
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
+        tabIndex={-1}
         data-testid="command-palette"
-        className="bg-panel border-edge relative z-10 flex w-[520px] max-w-full flex-col rounded-lg border p-2 shadow-2xl"
+        className="bg-panel border-edge relative z-10 flex w-[520px] max-w-full flex-col rounded-lg border p-2 shadow-2xl outline-none"
       >
         <input
           ref={inputRef}

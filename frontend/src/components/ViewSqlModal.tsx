@@ -11,20 +11,10 @@ export default function ViewSqlModal(): JSX.Element | null {
   if (sql == null) return null;
 
   return (
-    <Modal onClose={() => closeViewSql()} width="640px">
-      <h2 className="text-ink mb-3 text-base font-semibold">SQL</h2>
+    <Modal title="SQL" onClose={() => closeViewSql()} width="640px">
       <pre className="bg-sheet text-ink max-h-[60vh] overflow-auto rounded-md p-3 font-mono text-xs leading-5 whitespace-pre-wrap">
         {sql}
       </pre>
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          className="control text-ink hover:bg-hover rounded-md"
-          onClick={() => closeViewSql()}
-        >
-          Close
-        </button>
-      </div>
     </Modal>
   );
 }

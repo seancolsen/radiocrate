@@ -3,7 +3,7 @@ import { useApp, useAppActions } from "../stores/react";
 import { Modal } from "./ui/Modal";
 
 /** The delete-source confirmation dialog, for a query or a playlist.
- * Confirming deletes it (backend + tab); cancelling (button, scrim, or Esc)
+ * Confirming deletes it (backend + tab); cancelling (button, ×, scrim, or Esc)
  * dismisses. A note flags a query with unsaved edits so they aren't discarded
  * unknowingly. */
 export default function DeleteConfirmModal(): JSX.Element | null {
@@ -13,10 +13,11 @@ export default function DeleteConfirmModal(): JSX.Element | null {
   if (!pending) return null;
 
   return (
-    <Modal onClose={() => cancelDelete()} width="300px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        {pending.kind === "playlist" ? "Delete playlist" : "Delete query"}
-      </h2>
+    <Modal
+      title={pending.kind === "playlist" ? "Delete playlist" : "Delete query"}
+      onClose={() => cancelDelete()}
+      width="300px"
+    >
       <p className="text-ink text-sm">
         {pending.name === "" ? (
           // An unsaved query has no name to quote.

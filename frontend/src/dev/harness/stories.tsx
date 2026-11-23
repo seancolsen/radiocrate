@@ -1516,12 +1516,12 @@ export const STORIES: Record<string, Story> = {
     ),
   },
   // The Base submenu of a database with schemas beside the app's own: the
-  // app's tables first, then each other schema's under a heading of its name,
-  // `lastfm`'s `artist` named alone there. The query is on `lastfm`'s
-  // `scrobble`, checked.
+  // app's tables first, then a submenu for each other schema, named for it —
+  // `lastfm`'s, opened by the test, has its `artist` named alone there. The
+  // query is on `lastfm`'s `scrobble`, checked.
   "query-builder/base-schemas": {
-    width: 480,
-    height: 640,
+    width: 720,
+    height: 480,
     setup: (stores) => {
       stores.app.actions.setSchemaJson(FIXTURE_SCHEMAS_JSON);
       openWithDefinition(stores, { ...FILTER_DEF, base: "/lastfm/scrobble" });
@@ -1802,8 +1802,8 @@ export const STORIES: Record<string, Story> = {
     seedTrackFields,
   ),
   // A table's computed columns, among its fields: one of the app's own opened
-  // into its expression, as the app has it — "Reset to default" with nothing
-  // to reset — another the user has written their own expression for, and a
+  // into its expression, as the app has it — its ⋮ holding "Reset to default"
+  // — another the user has written their own expression for, and a
   // column of the user's own, open too.
   "data-structure/computed-columns": dataStructure(
     { height: 760 },
@@ -2413,8 +2413,8 @@ export const STORIES: Record<string, Story> = {
     [],
   ),
   // A computed column's expression being edited (the test opens the editor
-  // from the field's menu): one of the app's own, so "Reset to default" is
-  // offered, with nothing yet to reset.
+  // from the field's menu): one of the app's own, so its ⋮ offers "Reset to
+  // default", with nothing yet to reset.
   "record-editor/computed-expression": recordEditor([1]),
   // Computed columns of the user's own, beside the app's: one with a value, one
   // whose expression doesn't fit the schema — which says so in place of a

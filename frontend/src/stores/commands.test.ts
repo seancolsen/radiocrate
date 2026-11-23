@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseChord } from "../commands/chord";
 import { commandDef } from "../commands/registry";
 import { buildResultFromStringRows } from "../query/result";
-import { createAppStore, IDLE_PLAYBACK, type AppStoreBundle } from "./app";
+import {
+  createAppStore,
+  IDLE_PLAYBACK,
+  selectRowSelection,
+  type AppStoreBundle,
+} from "./app";
 import { fakeEnv } from "./app/testEnv";
 import {
   createCommandsStore,
@@ -175,6 +180,47 @@ describe("commands store", () => {
         parseChord("Enter"),
       );
       expect(commandDef("results.open_selected").when).toBe("resultsFocused");
+    });
+  });
+
+  describe("results.select_first / results.select_last", () => {
+    it("select just the first or the last row", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      app.actions.setResults(
+        "t",
+        buildResultFromStringRows([["a"], ["b"], ["c"]]),
+      );
+      app.actions.clickRow("t", 1, { shift: false, ctrl: false });
+
+      commands.actions.run("results.select_last");
+      expect([...selectRowSelection(app.store.getState(), "t")]).toEqual([2]);
+      commands.actions.run("results.select_first");
+      expect([...selectRowSelection(app.store.getState(), "t")]).toEqual([0]);
+    });
+
+    it("are Ctrl+Home and Ctrl+End, leaving text fields their own", () => {
+      expect(commandDef("results.select_first").defaultChord).toEqual(
+        parseChord("mod+Home"),
+      );
+      expect(commandDef("results.select_last").defaultChord).toEqual(
+        parseChord("mod+End"),
+      );
+      expect(commandDef("results.select_first").yieldsToTextFields).toBe(true);
+      expect(commandDef("results.select_last").yieldsToTextFields).toBe(true);
+    });
+  });
+
+  describe("query.refresh", () => {
+    it("runs the active page's query, on F5", () => {
+      app.actions.openTab({ id: "t", name: "t", definition: "{}" });
+      app.actions.selectTab("t");
+      const run = vi.spyOn(app.actions, "runQuery");
+      commands.actions.run("query.refresh");
+      expect(run).toHaveBeenCalledWith("t");
+      expect(commandDef("query.refresh").defaultChord).toEqual(
+        parseChord("F5"),
+      );
     });
   });
 

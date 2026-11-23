@@ -13,7 +13,7 @@ import {
   createRecordForm,
   selectAnyExpanded,
   selectFormModified,
-  selectHiddenFieldCount,
+  selectHasHiddenFields,
   selectRootIds,
   type RecordFormModel,
 } from "../stores/recordForm";
@@ -109,8 +109,8 @@ function FormActionsMenu(props: {
   const showHidden = useApp((s) => s.showHiddenFields);
   const { setShowHiddenFields } = useAppActions();
   const rootIds = useFormState(model, selectRootIds);
-  const hiddenCount = useFormState(model, (s) =>
-    selectHiddenFieldCount(s, metadata),
+  const anyHidden = useFormState(model, (s) =>
+    selectHasHiddenFields(s, metadata),
   );
   return (
     <Menu
@@ -134,7 +134,7 @@ function FormActionsMenu(props: {
           onClick={() => model.collapseAll()}
         />
       )}
-      {hiddenCount > 0 &&
+      {anyHidden &&
         (showHidden ? (
           <MenuItem
             icon={Icons.Hide}
@@ -144,7 +144,7 @@ function FormActionsMenu(props: {
         ) : (
           <MenuItem
             icon={Icons.Show}
-            label={`Show ${hiddenCount} hidden ${hiddenCount === 1 ? "field" : "fields"}`}
+            label="Show hidden fields"
             onClick={() => setShowHiddenFields(true)}
           />
         ))}

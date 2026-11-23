@@ -442,3 +442,27 @@ test.describe("dragging a tab", () => {
     expect(await tabOrder(page)).toEqual(["Lemonade", "Road Trip", "new"]);
   });
 });
+
+test.describe("a modal dialog", () => {
+  test("names itself, wears a ×, and keeps Tab inside it", async ({ page }) => {
+    await openStory(page, "about/modal", "light");
+    const dialog = page.getByRole("dialog", { name: "About RadioCrate" });
+    // Focus starts on the dialog itself.
+    await expect(dialog).toBeFocused();
+    const close = dialog.getByRole("button", { name: "Close" });
+    const reload = dialog.getByRole("button", { name: "Reload fresh copy" });
+    const check = dialog.getByRole("button", { name: "Check for updates" });
+
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(reload).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(check).toBeFocused();
+    // Off the end, back round to the start — never out to the page.
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(check).toBeFocused();
+  });
+});

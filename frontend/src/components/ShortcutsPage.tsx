@@ -99,10 +99,11 @@ export function CaptureDialog(props: {
   );
 
   return (
-    <Modal onClose={() => props.onCancel()} width="380px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        Set keyboard shortcut
-      </h2>
+    <Modal
+      title="Set keyboard shortcut"
+      onClose={() => props.onCancel()}
+      width="380px"
+    >
       <p className="text-ink mb-3 text-sm">{commandDef(props.cmd).title}</p>
       <RecordBox
         chord={props.pending}

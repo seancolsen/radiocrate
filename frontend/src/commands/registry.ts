@@ -40,12 +40,15 @@ export type CommandId =
   | "query.focus_filter"
   | "query.focus_sort"
   | "query.focus_display"
+  | "query.refresh"
   | "query.convert_to_playlist"
   | "playlist.remove_selected_tracks"
   | "results.select_next"
   | "results.select_previous"
   | "results.extend_selection_down"
   | "results.extend_selection_up"
+  | "results.select_first"
+  | "results.select_last"
   | "results.open_selected"
   | "results.edit_selected"
   | "results.go_to_playing_track"
@@ -259,6 +262,13 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     defaultChord: chordOf("mod+shift+D"),
   },
   {
+    // The toolbar's Refresh: runs the active page's query again.
+    id: "query.refresh",
+    title: "Query: Refresh query",
+    when: "queryTab",
+    defaultChord: chordOf("F5"),
+  },
+  {
     // Ships unbound, as the spec asks: it's a rare, heavyweight action (it
     // saves a new playlist), reachable from the palette and the wrench menu.
     id: "query.convert_to_playlist",
@@ -298,6 +308,22 @@ export const ALL_COMMANDS: readonly CommandDef[] = [
     title: "Selection: Extend selection up",
     when: "results",
     defaultChord: chordOf("shift+Up"),
+  },
+  {
+    // Stand down in a text field (where they move the caret to its start or
+    // end) and in the record form.
+    id: "results.select_first",
+    title: "Selection: Select first record",
+    when: "resultsFocused",
+    defaultChord: chordOf("mod+Home"),
+    yieldsToTextFields: true,
+  },
+  {
+    id: "results.select_last",
+    title: "Selection: Select last record",
+    when: "resultsFocused",
+    defaultChord: chordOf("mod+End"),
+    yieldsToTextFields: true,
   },
   {
     // The keyboard's double click, through the same action: opens the row the

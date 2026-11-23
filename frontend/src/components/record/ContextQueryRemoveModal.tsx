@@ -24,8 +24,7 @@ export function RemoveQueryModal(props: {
   const noun = nounFor(query.tableName, 1) ?? query.tableName;
 
   return (
-    <Modal onClose={onClose} width="300px">
-      <h2 className="text-ink mb-3 text-base font-semibold">Remove query</h2>
+    <Modal title="Remove query" onClose={onClose} width="300px">
       <p className="text-ink text-sm">
         Remove <span className="font-medium">&ldquo;{query.name}&rdquo;</span>{" "}
         from every {noun}?

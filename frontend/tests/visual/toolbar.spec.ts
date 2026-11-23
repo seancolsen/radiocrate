@@ -346,7 +346,7 @@ test("a new query has no name and a Save button until it's saved", async ({
   await expect(tabBar.last()).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 });
 
-test("a new query waits, filter focused, until it's touched or asked to show all", async ({
+test("a new query waits, filter focused, until it's touched, rebased or asked to show all", async ({
   page,
 }) => {
   // Query runs, not the schema introspection or the contextual query list,
@@ -375,13 +375,6 @@ test("a new query waits, filter focused, until it's touched or asked to show all
   // The prompt offers no base of its own: that's the wrench menu's job.
   await expect(prompt.getByRole("combobox")).toHaveCount(0);
 
-  // Picking the base, in the wrench menu, isn't touching the query: still no
-  // run. (Back to `track` after, since the filter doesn't compile on `album`.)
-  for (const table of ["album", "track"]) {
-    await page.getByRole("button", { name: "Query actions" }).click();
-    await page.getByRole("menuitem", { name: "Base" }).click();
-    await page.getByRole("menuitemradio", { name: table, exact: true }).click();
-  }
   await expect(prompt).toBeVisible();
   await page.waitForTimeout(500);
   expect(runs).toHaveLength(1);
@@ -389,6 +382,19 @@ test("a new query waits, filter focused, until it's touched or asked to show all
   await prompt.getByRole("button", { name: "Show all results" }).click();
   await expect(prompt).toHaveCount(0);
   await expect.poll(() => runs.length).toBe(2);
+
+  // Picking another base, in the wrench menu, touches a new query too: its
+  // rows load.
+  await page.getByRole("button", { name: "New query", exact: true }).click();
+  await expect(prompt).toBeVisible();
+  await page.getByRole("button", { name: "Query actions" }).click();
+  await page.getByRole("menuitem", { name: "Base" }).click();
+  // (`artist`: the fixture's `album` sorts by a preset that doesn't compile.)
+  await page
+    .getByRole("menuitemradio", { name: "artist", exact: true })
+    .click();
+  await expect(prompt).toHaveCount(0);
+  await expect.poll(() => runs.length).toBe(3);
 });
 
 test("Export results data copies the selected rows, tab-separated", async ({

@@ -21,8 +21,11 @@ function PresetDeleteModalBody(props: { preset: Preset }): JSX.Element {
   const more = users.length - named.length;
 
   return (
-    <Modal onClose={() => cancelPresetDelete()} width="340px">
-      <h2 className="text-ink mb-3 text-base font-semibold">Delete preset</h2>
+    <Modal
+      title="Delete preset"
+      onClose={() => cancelPresetDelete()}
+      width="340px"
+    >
       <p className="text-ink text-sm">
         Delete the {sectionNoun(asSection(preset.section)).toLowerCase()} preset{" "}
         <span className="font-medium">&ldquo;{preset.name}&rdquo;</span> for{" "}
@@ -69,7 +72,7 @@ function PresetDeleteModalBody(props: { preset: Preset }): JSX.Element {
 
 /** The delete-preset confirmation dialog. It names each query and playlist
  * that uses the preset, since deleting it leaves them referring to nothing.
- * Confirming deletes it; cancelling (button, scrim, or Esc) dismisses. */
+ * Confirming deletes it; cancelling (button, ×, scrim, or Esc) dismisses. */
 export default function PresetDeleteModal(): JSX.Element | null {
   const preset = useApp((s) =>
     s.pendingPresetDelete === null

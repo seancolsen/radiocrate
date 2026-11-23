@@ -22,10 +22,11 @@ function PresetSaveModalBody(props: {
   }, []);
 
   return (
-    <Modal onClose={() => cancelPresetSave()} width="300px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        Save {sectionNoun(props.save.section).toLowerCase()} preset
-      </h2>
+    <Modal
+      title={`Save ${sectionNoun(props.save.section).toLowerCase()} preset`}
+      onClose={() => cancelPresetSave()}
+      width="300px"
+    >
       <input
         ref={fieldRef}
         type="text"

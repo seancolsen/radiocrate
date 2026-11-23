@@ -252,7 +252,8 @@ for (const colorScheme of SCHEMES) {
       colorScheme,
     );
     await page.getByRole("menuitem", { name: "Base" }).click();
-    await expect(page.getByText("lastfm", { exact: true })).toBeVisible();
+    // Another schema's tables are in a submenu of its own.
+    await page.getByRole("menuitem", { name: "lastfm" }).click();
     await expect(
       page.getByRole("menuitemradio", { name: "scrobble" }),
     ).toBeChecked();

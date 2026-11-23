@@ -167,9 +167,11 @@ for (const colorScheme of SCHEMES) {
     await expect(stage.getByLabel("Expression of tag_count")).toHaveText(
       "#track_tag",
     );
-    // Only the app's own has a default to go back to.
+    // Only the app's own has a default to go back to, in its ⋮.
     await expect(
-      stage.getByRole("button", { name: "Reset to default" }),
+      stage
+        .getByTestId("computed-column-editor")
+        .getByRole("button", { name: "Input options" }),
     ).toHaveCount(1);
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/computed-columns", colorScheme),
@@ -996,22 +998,28 @@ test("one of the app's computed columns takes the user's expression, and is rese
     .getByTestId("computed-column-editor")
     .filter({ has: page.getByLabel("Expression of last_play") });
   const expression = editor.getByLabel("Expression of last_play");
-  const reset = editor.getByRole("button", { name: "Reset to default" });
+  // "Reset to default" is in the editor's ⋮.
+  const reset = async () => {
+    await editor.getByRole("button", { name: "Input options" }).click();
+    return page.getByRole("menuitem", { name: "Reset to default" });
+  };
   await expect(lastPlay).toContainText("Built-in");
-  await expect(reset).toBeDisabled();
+  await expect(await reset()).toBeDisabled();
+  await page.keyboard.press("Escape");
 
   await expression.fill("#play.timestamp%min");
   await expect(lastPlay).toContainText("Customized");
-  await expect(reset).toBeEnabled();
+  await expect(await reset()).toBeEnabled();
+  await page.keyboard.press("Escape");
   // Left blank, the app's expression is the one in force again.
   await expression.fill("");
   await expect(lastPlay).toContainText("Built-in");
   await expect(editor.getByText("Blank: the default is used.")).toBeVisible();
 
   // Reset goes straight out, and the app's own expression is back on show.
-  await reset.click();
+  await (await reset()).click();
   await expect(expression).toHaveText("#play.timestamp%max");
-  await expect(reset).toBeDisabled();
+  await expect(await reset()).toBeDisabled();
   await expect
     .poll(async () =>
       (await calls(page, "metadata.computed_column.set")).at(-1),

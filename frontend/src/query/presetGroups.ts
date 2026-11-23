@@ -19,7 +19,9 @@ export interface PresetTableGroup {
   sections: PresetSectionGroup[];
 }
 
-const byName = (a: string, b: string) =>
+/** How preset names sort wherever presets are listed: alphabetically,
+ * ignoring case and accents. */
+export const byName = (a: string, b: string): number =>
   a.localeCompare(b, undefined, { sensitivity: "base" });
 
 /** The tables the Data structure page lists, in name order: every one of

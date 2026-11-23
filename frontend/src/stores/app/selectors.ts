@@ -36,6 +36,7 @@ import {
   type QuerydownSetting,
   type TableSettings,
 } from "../../query/tableSettings";
+import { byName } from "../../query/presetGroups";
 import { findComputedRow } from "../../query/computedColumns";
 import { findComparisonRow } from "../../query/customComparisons";
 import { rowEntry } from "../../query/playlistEntries";
@@ -553,9 +554,14 @@ export const selectPresetExpanded = (
 export const selectPresetName = (s: AppState, id: string): string =>
   selectPreset(s, id)?.name ?? "(missing preset)";
 
+/** Whether any of the explorer's folders is expanded — what "Collapse all"
+ * has to do. An id kept for a folder that's gone doesn't count. */
+export const selectAnyFolderExpanded = (s: AppState): boolean =>
+  s.folders.data.some((f) => s.expandedFolders.has(f.id));
+
 /** The presets page `tabId` can pick for `section`: the saved ones for its
- * table, and any unsaved one it uses, which is its own to uncheck. Builds a
- * fresh array on every call. */
+ * table, in name order, and after them any unsaved one it uses, which is its
+ * own to uncheck. Builds a fresh array on every call. */
 export const selectPresetsFor = (
   s: AppState,
   tabId: string,
@@ -564,9 +570,9 @@ export const selectPresetsFor = (
   const baseTable = selectPageBase(s, tabId);
   const live = selectPageTab(s, tabId)?.live;
   return [
-    ...s.presets.filter(
-      (p) => p.section === section && p.baseTable === baseTable,
-    ),
+    ...s.presets
+      .filter((p) => p.section === section && p.baseTable === baseTable)
+      .sort((a, b) => byName(a.name, b.name)),
     ...s.unsavedPresets.filter(
       (p) => p.section === section && live && usesPreset(live, p.id),
     ),

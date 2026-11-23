@@ -691,6 +691,8 @@ export interface AppActions {
   toggleSourceFilter: () => void;
   /** Show or hide explorer folder `id`'s contents. */
   toggleFolderExpanded: (id: string) => void;
+  /** Hide the contents of every explorer folder. */
+  collapseAllFolders: () => void;
   /** Create a folder at the top of folder `parent` (null: the top level of
    * the Sources tree), expanded being empty, and start renaming it. */
   newFolder: (parent: string | null) => void;
@@ -794,6 +796,9 @@ export interface AppActions {
    * otherwise select just the new row. Clamps at the ends and scrolls the row
    * into view. Backs the `results.select_*` / `results.extend_*` commands. */
   moveRowSelection: (tabId: string, forward: boolean, extend: boolean) => void;
+  /** Select just the first result row of `tabId`, or the `last`, and scroll it
+   * into view. Backs `results.select_first` / `results.select_last`. */
+  selectEdgeRow: (tabId: string, last: boolean) => void;
   /** Select every result row of `tabId`. Backs `results.select_all`. */
   selectAllRows: (tabId: string) => void;
   /** Select none of `tabId`'s result rows, keeping the place the arrow keys
@@ -1133,8 +1138,8 @@ export interface AppActions {
   revealDiagnostic: (tabId: string) => void;
 
   /** Move a tab's query onto another base table, keeping the hand-written filter
-   * and reseeding everything else from the new table's default presets. On a
-   * pristine query this doesn't count as touching it: the query isn't run. */
+   * and reseeding everything else from the new table's default presets. Like
+   * any edit, it touches a pristine query, so its rows load. */
   setBase: (tabId: string, table: string) => void;
   /** Flatten a tab's sectioned query into one hand-written Querydown query and
    * open the editor on it. */
@@ -1281,6 +1286,8 @@ export interface AppActions {
   editPrelude: (text: string) => void;
   /** Save the prelude editor's text, if it has an edit, as the prelude. */
   savePrelude: () => void;
+  /** Throw away the prelude editor's edit, going back to the saved prelude. */
+  discardPrelude: () => void;
   /** Re-scan the collection on the server ("Re-scan collection" in the Settings
    * menu). Resolves when the scan has finished — the menu waits on it to close
    * itself — whether it succeeded or failed; a failure is the error bar's to
@@ -1954,9 +1961,7 @@ export function createAppActions(
   /** Changes a tab's working definition, then re-runs its query: `"now"`, or
    * `"debounced"` for the builder's free-text editors, whose state update still
    * lands immediately (so the controlled input stays in sync) while the run
-   * waits for a pause in the typing. Either touches a pristine query. `"held"`
-   * changes the definition without running it or touching the query (picking
-   * a pristine query's base).
+   * waits for a pause in the typing. Either touches a pristine query.
    *
    * The one way a page's definition changes — every edit, rebase, revert,
    * undo and redo comes through here — so a saved query's or a playlist's save
@@ -1964,12 +1969,11 @@ export function createAppActions(
   const changeLive = (
     tabId: string,
     change: (t: PageTab) => void,
-    run: "now" | "debounced" | "held",
+    run: "now" | "debounced",
   ) => {
     if (!selectPageTab(get(), tabId)) return;
     editPageTab(tabId, change);
     deferSave(tabId);
-    if (run === "held") return;
     touch(tabId);
     if (run === "now") {
       runEdited(tabId);
@@ -4777,6 +4781,14 @@ export function createAppActions(
       });
       persistExpandedFolders(env, next);
     },
+    collapseAllFolders: () => {
+      if (get().expandedFolders.size === 0) return;
+      const next = new Set<string>();
+      set((s) => {
+        s.expandedFolders = next;
+      });
+      persistExpandedFolders(env, next);
+    },
     newFolder: (parent) => {
       const s0 = get();
       const folder = {
@@ -5041,6 +5053,15 @@ export function createAppActions(
       set((s) => {
         pageDraft(s, tabId).selection = castDraft(next);
         s.rowReveal = { tabId, row: next.lead, seq: ++revealSeq };
+      });
+    },
+    selectEdgeRow: (tabId, last) => {
+      const rowCount = get().pages[tabId]?.result?.rowCount ?? 0;
+      if (rowCount === 0) return;
+      const row = last ? rowCount - 1 : 0;
+      set((s) => {
+        pageDraft(s, tabId).selection = castDraft(singleRow(row));
+        s.rowReveal = { tabId, row, seq: ++revealSeq };
       });
     },
 
@@ -5666,11 +5687,7 @@ export function createAppActions(
       set((s) => {
         pageDraft(s, tabId).fullEditorOpen = false;
       });
-      changeLive(
-        tabId,
-        (x) => assignDefinition(x, "live", rebased),
-        t.pristine ? "held" : "now",
-      );
+      changeLive(tabId, (x) => assignDefinition(x, "live", rebased), "now");
     },
     convertToFull: (tabId) => {
       const t = selectQueryTab(get(), tabId);
@@ -6413,6 +6430,12 @@ export function createAppActions(
         s.preludeDraft = null;
       });
       actions.saveSetting("querydown_prelude", draft);
+    },
+    discardPrelude: () => {
+      if (get().preludeDraft === null) return;
+      set((s) => {
+        s.preludeDraft = null;
+      });
     },
     rescanCollection: async () => {
       if (get().rescanning) return;

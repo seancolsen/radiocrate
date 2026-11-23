@@ -281,19 +281,13 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
     setSection((open) => (open === which ? null : which));
 
   return (
-    <Modal onClose={props.onCancel} width="560px">
-      <div className="flex items-center gap-2">
-        <h2 className="text-ink min-w-0 flex-1 truncate text-base font-semibold">
-          Pick {props.table}
-        </h2>
-        <IconButton
-          icon={Icons.Close}
-          label="Close record picker"
-          onClick={props.onCancel}
-        />
-      </div>
-
-      <div className="mt-3 flex items-center gap-1">
+    <Modal
+      title={`Pick ${props.table}`}
+      closeLabel="Close record picker"
+      onClose={props.onCancel}
+      width="560px"
+    >
+      <div className="flex items-center gap-1">
         <div className="min-w-0 flex-1">
           <CustomInput
             singleLine

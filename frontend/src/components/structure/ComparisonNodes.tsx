@@ -284,10 +284,7 @@ function RemoveComparisonModal(props: {
   const { removeCustomComparison } = useAppActions();
   if (comparison === null) return null;
   return (
-    <Modal onClose={onClose} width="320px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        Remove custom comparison
-      </h2>
+    <Modal title="Remove custom comparison" onClose={onClose} width="320px">
       <p className="text-ink text-sm">
         Remove{" "}
         <span className="font-medium">&ldquo;{comparison.name}&rdquo;</span>{" "}

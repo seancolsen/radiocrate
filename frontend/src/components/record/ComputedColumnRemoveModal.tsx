@@ -21,10 +21,7 @@ export function RemoveComputedColumnModal(props: {
   const noun = nounFor(column.table, 1) ?? column.table;
 
   return (
-    <Modal onClose={onClose} width="320px">
-      <h2 className="text-ink mb-3 text-base font-semibold">
-        Remove computed column
-      </h2>
+    <Modal title="Remove computed column" onClose={onClose} width="320px">
       <p className="text-ink text-sm">
         Remove <span className="font-medium">&ldquo;{column.name}&rdquo;</span>{" "}
         from every {noun}? A query that uses it will stop working.

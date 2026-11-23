@@ -201,6 +201,7 @@ import {
   selectCanWriteFromRows,
   selectFilterApplied,
   selectIsPristine,
+  selectAnyFolderExpanded,
   selectIsUnsaved,
   selectPageTab,
   selectQueryTab,
@@ -2268,6 +2269,18 @@ describe("prelude editor", () => {
     expect(s.settingOverrides["querydown_prelude"]).toBe("custom prelude");
     expect(s.preludeDraft).toBeNull();
   });
+
+  it("discards its edit, saving nothing", () => {
+    vi.mocked(settingSet).mockClear();
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.editPrelude("custom prelude");
+    bundle.actions.discardPrelude();
+
+    expect(settingSet).not.toHaveBeenCalled();
+    const s = bundle.store.getState();
+    expect(s.settingOverrides["querydown_prelude"]).toBeUndefined();
+    expect(s.preludeDraft).toBeNull();
+  });
 });
 
 describe("rescanCollection", () => {
@@ -2500,14 +2513,18 @@ describe("a new query", () => {
     expect(running()).toBe(false);
   });
 
-  it("isn't run, or touched, by picking its base", () => {
+  it("is touched, and run, by picking another base", () => {
     bundle.actions.setBase(id, "album");
     expect(selectQueryTab(bundle.store.getState(), id)?.live.base).toBe(
       "album",
     );
-    expect(running()).toBe(false);
+    expect(pristine()).toBe(false);
+    expect(running()).toBe(true);
+  });
+
+  it("isn't touched by re-picking the base it already has", () => {
+    bundle.actions.setBase(id, "track");
     expect(pristine()).toBe(true);
-    bundle.actions.ensureRun(id);
     expect(running()).toBe(false);
   });
 
@@ -3029,6 +3046,25 @@ describe("the query tree", () => {
     expect(createAppStore(env).store.getState().expandedFolders).toEqual(
       new Set(["f"]),
     );
+  });
+
+  it("collapses every folder at once, and remembers that", () => {
+    const env = fakeEnv();
+    const bundle = createAppStore(env);
+    // A new folder opens expanded.
+    bundle.actions.newFolder(null);
+    bundle.actions.newFolder(null);
+    expect(selectAnyFolderExpanded(bundle.store.getState())).toBe(true);
+    bundle.actions.collapseAllFolders();
+    expect(bundle.store.getState().expandedFolders.size).toBe(0);
+    expect(selectAnyFolderExpanded(bundle.store.getState())).toBe(false);
+    expect(createAppStore(env).store.getState().expandedFolders.size).toBe(0);
+  });
+
+  it("counts no folder as expanded that isn't there any more", () => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.toggleFolderExpanded("gone");
+    expect(selectAnyFolderExpanded(bundle.store.getState())).toBe(false);
   });
 });
 

@@ -1,11 +1,10 @@
-import { Fragment, useMemo, type JSX } from "react";
+import { useMemo, type JSX } from "react";
 import { Icons } from "../icons";
 import { tableLabel, type SchemaTable } from "../query/schema";
 import { groupBySchema, listedTables } from "../query/tableSettings";
 import { selectIsFullQuery, selectQueryTab } from "../stores/app";
 import { useApp, useAppActions } from "../stores/react";
 import {
-  MenuHeading,
   MenuNote,
   MenuSeparator,
   MenuSubmenu,
@@ -57,8 +56,8 @@ export default function BaseSubmenu(props: { tabId: string }): JSX.Element {
 
 /** A menu's rows for choosing a query's base table: one radio per table in
  * `tables`, `base` checked — or none, for null — and a note while the schema is
- * still loading. The current schema's tables come first, then each other
- * schema's under a heading of its name, each table named there alone. The
+ * still loading. The current schema's tables come first, then a submenu for
+ * each other schema, named for it, its tables named there alone. The
  * wrench menu's "Base ▸" lists them, and so does a contextual query's "Base
  * table" button (`FieldQueryEditor`). */
 export function BaseTableItems(props: {
@@ -83,11 +82,13 @@ export function BaseTableItems(props: {
         i === 0 ? (
           group.items.map(item)
         ) : (
-          <Fragment key={group.schema}>
-            <MenuSeparator />
-            <MenuHeading text={group.schema} />
+          <MenuSubmenu
+            key={group.schema}
+            icon={Icons.Tables}
+            label={group.schema}
+          >
             {group.items.map(item)}
-          </Fragment>
+          </MenuSubmenu>
         ),
       )}
     </>

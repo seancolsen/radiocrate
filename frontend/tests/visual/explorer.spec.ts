@@ -182,6 +182,67 @@ test.describe("the query tree", () => {
     await expect(page.getByRole("heading", { name: "Opened" })).toBeHidden();
   });
 
+  test("the actions menu collapses every folder, offered only while one is open", async ({
+    page,
+  }) => {
+    await treeRow(page, "Road trip").click();
+    expect(await treeRows(page)).toContain("2:Workout Mix");
+    await page.getByRole("button", { name: "Source list actions" }).click();
+    await page.getByRole("menuitem", { name: "Collapse all" }).click();
+    expect(await treeRows(page)).toEqual([
+      "0:Favorites",
+      "0:Deep Cuts",
+      "0:Archive",
+    ]);
+    // Opened again, Favorites alone: Road trip stays shut.
+    await treeRow(page, "Favorites").click();
+    expect(await treeRows(page)).not.toContain("2:Workout Mix");
+    await treeRow(page, "Favorites").click();
+
+    await page.getByRole("button", { name: "Source list actions" }).click();
+    await expect(
+      page.getByRole("menuitem", { name: "Add folder" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: "Collapse all" }),
+    ).toHaveCount(0);
+  });
+
+  test("a right-click on empty space or the heading raises the actions menu", async ({
+    page,
+  }) => {
+    const tree = (await page
+      .getByRole("tree", { name: "Sources" })
+      .boundingBox())!;
+    await page.mouse.click(tree.x + 40, tree.y + tree.height + 40, {
+      button: "right",
+    });
+    await expect(
+      page.getByRole("menuitem", { name: "Add folder" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    await page
+      .getByRole("heading", { name: "Sources" })
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Collapse all" }).click();
+    expect(await treeRows(page)).toEqual([
+      "0:Favorites",
+      "0:Deep Cuts",
+      "0:Archive",
+    ]);
+
+    // A row's own menu is still the row's.
+    await treeRow(page, "Archive").click({ button: "right" });
+    await expect(
+      page.getByRole("menuitem", { name: "Delete folder" }),
+    ).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Refresh" })).toHaveCount(
+      0,
+    );
+  });
+
   test("a folder's context menu opens a new, unsaved query", async ({
     page,
   }) => {

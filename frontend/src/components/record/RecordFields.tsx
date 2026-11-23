@@ -963,8 +963,8 @@ function ContextQueryRow(props: {
 }
 
 /** A computed column's field: its label and what the column comes to for the
- * record — there to read, never to edit, since it's worked out from the rest —
- * then, below, the editor of the column's expression while that's open, and
+ * record — there to read, never to edit, since it's worked out from the rest,
+ * and so drawn in gray — then, below, the editor of the column's expression while that's open, and
  * the whole of a value too long for its row once it's expanded.
  *
  * On several records it shows the value they share, or how many they don't. A
@@ -1127,7 +1127,7 @@ function ComputedRow(props: {
           !whole && (
             <OneLineValue
               text={text}
-              className="control text-ink block min-w-0 flex-1 cursor-default truncate"
+              className="control text-ink-weak block min-w-0 flex-1 cursor-default truncate"
               onContextMenu={openMenu}
               onOverflow={setOverflowing}
             />
@@ -1140,7 +1140,7 @@ function ComputedRow(props: {
         <Subtree>
           <div className="pr-1 pb-1">
             <span
-              className="control text-ink block w-full cursor-default break-words whitespace-pre-wrap"
+              className="control text-ink-weak block w-full cursor-default break-words whitespace-pre-wrap"
               onContextMenu={openMenu}
             >
               {text}

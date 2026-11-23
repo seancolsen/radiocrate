@@ -901,7 +901,7 @@ test.describe("hiding fields", () => {
       ]);
 
     await openActions(page);
-    await page.getByRole("menuitem", { name: "Show 1 hidden field" }).click();
+    await page.getByRole("menuitem", { name: "Show hidden fields" }).click();
     expect(await fieldNames(stage)).toContain("title");
     await expect(fieldLabel(stage, "title")).toHaveCSS("opacity", "0.6");
 
@@ -917,7 +917,7 @@ test.describe("hiding fields", () => {
     await fieldLabel(stage, "title").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Hide field" }).click();
     await openActions(page);
-    await page.getByRole("menuitem", { name: "Show 1 hidden field" }).click();
+    await page.getByRole("menuitem", { name: "Show hidden fields" }).click();
 
     await fieldLabel(stage, "title").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Un-hide field" }).click();
@@ -949,18 +949,6 @@ test.describe("hiding fields", () => {
     expect(await fieldNames(stage)).not.toContain("title");
   });
 
-  test("the count covers several fields", async ({ page }) => {
-    const stage = await loaded(page);
-    for (const name of ["title", "disc_number"]) {
-      await fieldLabel(stage, name).click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Hide field" }).click();
-    }
-    await openActions(page);
-    await expect(
-      page.getByRole("menuitem", { name: "Show 2 hidden fields" }),
-    ).toBeVisible();
-  });
-
   test("a hidden field on show can be edited and rearranged", async ({
     page,
   }) => {
@@ -968,7 +956,7 @@ test.describe("hiding fields", () => {
     await fieldLabel(stage, "title").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Hide field" }).click();
     await openActions(page);
-    await page.getByRole("menuitem", { name: "Show 1 hidden field" }).click();
+    await page.getByRole("menuitem", { name: "Show hidden fields" }).click();
 
     await fieldLabel(stage, "title").dblclick();
     const editor = valueEditor(stage);
@@ -1269,7 +1257,7 @@ for (const colorScheme of SCHEMES) {
 
 for (const colorScheme of SCHEMES) {
   // A computed column's expression being edited, under its field: one of the
-  // app's own, so "Reset to default" is there, with nothing yet to reset.
+  // app's own, so its ⋮ (holding "Reset to default") is there.
   test(`record-editor/computed-expression - ${colorScheme}`, async ({
     page,
   }) => {
@@ -1284,9 +1272,12 @@ for (const colorScheme of SCHEMES) {
     const expression = embedEditor(stage, "Expression of last_play");
     await expect(expression).toBeFocused();
     await expect(expression).toHaveText("#play.timestamp%max");
+    // The app's own column: its ⋮ holds "Reset to default".
     await expect(
-      stage.getByRole("button", { name: "Reset to default" }),
-    ).toBeDisabled();
+      stage
+        .getByTestId("computed-column-editor")
+        .getByRole("button", { name: "Input options" }),
+    ).toBeVisible();
     await expect(stage).toHaveScreenshot(
       snapshot("record-editor/computed-expression", colorScheme),
     );
@@ -1417,15 +1408,21 @@ test.describe("computed columns", () => {
     await page.getByRole("menuitem", { name: "Edit expression" }).click();
     const expression = embedEditor(stage, "Expression of year");
     await expect(expression).toBeFocused();
-    const reset = stage.getByRole("button", { name: "Reset to default" });
+    // "Reset to default" is in the editor's ⋮.
+    const options = stage
+      .getByTestId("computed-column-editor")
+      .getByRole("button", { name: "Input options" });
+    const reset = page.getByRole("menuitem", { name: "Reset to default" });
+    await options.click();
     await expect(reset).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expression.click();
 
     // The user's expression is the column's at once, and its value follows.
     await rewrite(page, "track_number");
     await expect(computedRow(stage, "year").first()).toHaveText(
       /^year\s*1(?!\d)/,
     );
-    await expect(reset).toBeEnabled();
     // Escape, in the text, gives the field back the keyboard, leaving the
     // editor open — once the first has closed the completions typing raised.
     await expression.press("Escape");
@@ -1452,6 +1449,7 @@ test.describe("computed columns", () => {
     // the app's expression, and is written straight away.
     await fieldLabelOf(stage, "year").dblclick();
     await expect(embedEditor(stage, "Expression of year")).toBeFocused();
+    await options.click();
     await reset.click();
     await expect(embedEditor(stage, "Expression of year")).toHaveText(
       "album.year",

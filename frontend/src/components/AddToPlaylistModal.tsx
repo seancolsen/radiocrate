@@ -27,7 +27,7 @@ function tracksLabel(n: number): string {
  * multi-select toolbar's): the sources tree, showing only playlists — and only
  * the folders with a playlist somewhere below them. Clicking a playlist adds
  * the tracks to its end and closes the dialog; Escape, a click outside, or
- * Cancel closes it adding nothing.
+ * the × closes it adding nothing.
  *
  * On a playlist's page, the playlist the tracks were chosen from is left out:
  * the spec has no flow for adding a playlist's tracks to itself. */
@@ -36,11 +36,13 @@ export default function AddToPlaylistModal(): JSX.Element | null {
   const { cancelAddToPlaylist } = useAppActions();
   if (!pending) return null;
   return (
-    <Modal onClose={cancelAddToPlaylist} width="320px">
-      <AddToPlaylistBody
-        fromTabId={pending.fromTabId}
-        count={pending.trackIds.length}
-      />
+    <Modal
+      title="Add to playlist"
+      subtitle={tracksLabel(pending.trackIds.length)}
+      onClose={cancelAddToPlaylist}
+      width="320px"
+    >
+      <AddToPlaylistBody fromTabId={pending.fromTabId} />
     </Modal>
   );
 }
@@ -48,14 +50,11 @@ export default function AddToPlaylistModal(): JSX.Element | null {
 /** The dialog's contents, its own component because its folders' expansion
  * is seeded once, as it opens, from the explorer's — and kept to itself from
  * then on, so expanding a folder here doesn't expand it in the explorer. */
-function AddToPlaylistBody(props: {
-  fromTabId: string;
-  count: number;
-}): JSX.Element {
+function AddToPlaylistBody(props: { fromTabId: string }): JSX.Element {
   const stores = useStores();
   const sources = useApp((s) => s.sources.data);
   const folders = useApp((s) => s.folders.data);
-  const { cancelAddToPlaylist, confirmAddToPlaylist } = useAppActions();
+  const { confirmAddToPlaylist } = useAppActions();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => stores.app.store.getState().expandedFolders,
   );
@@ -80,54 +79,41 @@ function AddToPlaylistBody(props: {
     });
 
   return (
-    <>
-      <h2 className="text-ink text-base font-semibold">Add to playlist</h2>
-      <p className="text-ink-weak mb-3 text-sm">{tracksLabel(props.count)}</p>
-      <div
-        role="tree"
-        aria-label="Playlists"
-        className="border-edge max-h-[60vh] overflow-y-auto rounded-md border py-1"
-      >
-        {rows.map((row) => {
-          const { node } = row;
-          return node.kind === "source" ? (
-            <SourceRow
-              key={`source:${node.id}`}
-              id={node.id}
-              kind={node.source.kind}
-              open={false}
-              active={false}
-              name={node.name}
-              depth={row.depth}
-              {...STILL_ROW}
-              onOpen={() => confirmAddToPlaylist(node.id)}
-            />
-          ) : (
-            <FolderRow
-              key={`folder:${node.id}`}
-              name={node.name}
-              depth={row.depth}
-              expanded={row.expanded}
-              {...STILL_ROW}
-              onToggle={() => toggle(node.id)}
-            />
-          );
-        })}
-        {rows.length === 0 && (
-          <div className="text-ink-weak flex h-[26px] items-center px-3 text-sm">
-            No playlists
-          </div>
-        )}
-      </div>
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          className="control text-ink hover:bg-hover rounded-md"
-          onClick={() => cancelAddToPlaylist()}
-        >
-          Cancel
-        </button>
-      </div>
-    </>
+    <div
+      role="tree"
+      aria-label="Playlists"
+      className="border-edge max-h-[60vh] overflow-y-auto rounded-md border py-1"
+    >
+      {rows.map((row) => {
+        const { node } = row;
+        return node.kind === "source" ? (
+          <SourceRow
+            key={`source:${node.id}`}
+            id={node.id}
+            kind={node.source.kind}
+            open={false}
+            active={false}
+            name={node.name}
+            depth={row.depth}
+            {...STILL_ROW}
+            onOpen={() => confirmAddToPlaylist(node.id)}
+          />
+        ) : (
+          <FolderRow
+            key={`folder:${node.id}`}
+            name={node.name}
+            depth={row.depth}
+            expanded={row.expanded}
+            {...STILL_ROW}
+            onToggle={() => toggle(node.id)}
+          />
+        );
+      })}
+      {rows.length === 0 && (
+        <div className="text-ink-weak flex h-[26px] items-center px-3 text-sm">
+          No playlists
+        </div>
+      )}
+    </div>
   );
 }

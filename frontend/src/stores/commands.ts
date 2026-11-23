@@ -492,6 +492,9 @@ export function createCommandsStore(
       case "query.focus_display":
         if (queryId) app.actions.focusBuilderSection(queryId, "display");
         break;
+      case "query.refresh":
+        if (queryId) app.actions.runQuery(queryId);
+        break;
       case "query.convert_to_playlist":
         // The action checks that the rows are the query's tracks.
         if (tabId) app.actions.convertToPlaylist(tabId);
@@ -521,6 +524,12 @@ export function createCommandsStore(
         break;
       case "results.extend_selection_up":
         if (tabId) app.actions.moveRowSelection(tabId, false, true);
+        break;
+      case "results.select_first":
+        if (tabId) app.actions.selectEdgeRow(tabId, false);
+        break;
+      case "results.select_last":
+        if (tabId) app.actions.selectEdgeRow(tabId, true);
         break;
       case "results.open_selected":
         if (tabId) app.actions.openSelectedRow(tabId);

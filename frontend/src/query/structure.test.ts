@@ -7,6 +7,7 @@ import { queryEditorSections } from "./fieldQuery";
 import type { SchemaTable } from "./schema";
 import {
   columnStatsLabel,
+  compactType,
   computedColumnPath,
   countLabel,
   isFieldExpandable,
@@ -246,5 +247,39 @@ describe("a table of another schema", () => {
     const summaries = [summary("lastfm", 2), summary("main", 5)];
     expect(tableSummary(summaries, "artist")?.rowCount).toBe(5);
     expect(tableSummary(summaries, "/lastfm/artist")?.rowCount).toBe(2);
+  });
+});
+
+describe("compactType", () => {
+  it("leaves a short type as it is, parameters and all", () => {
+    expect(compactType("VARCHAR")).toBe("VARCHAR");
+    expect(compactType("DECIMAL(18,3)")).toBe("DECIMAL(18,3)");
+    expect(compactType("TIMESTAMP WITH TIME ZONE")).toBe(
+      "TIMESTAMP WITH TIME ZONE",
+    );
+  });
+
+  it("folds away the parameters of a long one", () => {
+    expect(
+      compactType("STRUCT(a VARCHAR, b STRUCT(c INTEGER, d DOUBLE))[]"),
+    ).toBe("STRUCT(…)[]");
+    expect(compactType("MAP(VARCHAR, STRUCT(x INTEGER, y INTEGER))")).toBe(
+      "MAP(…)",
+    );
+  });
+
+  it("isn't thrown by parentheses in quoted names and values", () => {
+    expect(compactType(`ENUM('a (live)', 'b)', 'c', 'd', 'e', 'f')`)).toBe(
+      "ENUM(…)",
+    );
+    expect(compactType(`STRUCT("x)" VARCHAR, "y(" INTEGER, z DOUBLE)`)).toBe(
+      "STRUCT(…)",
+    );
+  });
+
+  it("closes what it can't find the end of", () => {
+    expect(compactType("STRUCT(a VARCHAR, b INTEGER, c DOUBLE")).toBe(
+      "STRUCT(…)",
+    );
   });
 });

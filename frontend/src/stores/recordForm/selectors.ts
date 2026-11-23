@@ -579,25 +579,21 @@ export function selectRootIds(s: FormState): string | undefined {
   return ids && ids.length > 0 ? ids.join("\n") : undefined;
 }
 
-/** How many fields the user has hidden among those this form has opened so far:
- * the root's table, and the table of every record opened within it. A field
- * counts once however many of its records are open, and not at all where it's
- * already left out as a nested record's contextual filter. */
-export function selectHiddenFieldCount(
+/** Whether the user has hidden any field among those this form has opened so
+ * far: the root's table, and the table of every record opened within it. A
+ * field already left out as a nested record's contextual filter doesn't count,
+ * as it isn't there to hide. */
+export function selectHasHiddenFields(
   s: FormState,
   metadata: MetadataByTable,
-): number {
-  const hidden = new Set<string>();
+): boolean {
   for (const node of Object.values(s.records)) {
     const table = metadata[node.table];
     if (!table) continue;
-    for (const field of node.fields) {
-      if (isFieldHidden(table, fieldRef(field))) {
-        hidden.add(`${node.table}\0${field.key}`);
-      }
-    }
+    if (node.fields.some((field) => isFieldHidden(table, fieldRef(field))))
+      return true;
   }
-  return hidden.size;
+  return false;
 }
 
 /** Whether any field or record in the form is expanded. */

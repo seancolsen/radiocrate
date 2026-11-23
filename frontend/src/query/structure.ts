@@ -227,6 +227,44 @@ export function columnStatsLabel(
   return parts.join(", ");
 }
 
+/** A type longer than this is shown with its parameters folded away. */
+const COMPACT_TYPE_LENGTH = 24;
+
+/** A column's DuckDB type as the Data structure page lists it beside the
+ * column: as it is when it's short, and otherwise with what's inside each of
+ * its outermost parentheses folded to "…" — `STRUCT(…)[]`, `ENUM(…)` — so a
+ * nested type doesn't take over the row. Quoted names and values, which may
+ * hold parentheses of their own, are skipped over whole. The page puts the
+ * type in full in a tooltip. */
+export function compactType(type: string): string {
+  if (type.length <= COMPACT_TYPE_LENGTH) return type;
+  let out = "";
+  let depth = 0;
+  let quote: string | null = null;
+  for (const ch of type) {
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      if (depth === 0) out += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      if (depth === 0) out += ch;
+    } else if (ch === "(") {
+      if (depth === 0) out += "(…";
+      depth++;
+    } else if (ch === ")" && depth > 0) {
+      depth--;
+      if (depth === 0) out += ")";
+    } else if (depth === 0) {
+      out += ch;
+    }
+  }
+  // Unbalanced: what was cut off isn't closed.
+  if (depth > 0) out += ")";
+  return out;
+}
+
 /** The summary of one table, by name (`qualifiedTableName`'s). */
 export function tableSummary(
   summaries: readonly TableSummary[],

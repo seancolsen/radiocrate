@@ -88,7 +88,7 @@ import {
   selectFormSummary,
   selectIsAutocompleting,
   selectFormModified,
-  selectHiddenFieldCount,
+  selectHasHiddenFields,
   selectIsBulkBlocked,
   selectListsDistinct,
   selectSharedValue,
@@ -287,7 +287,7 @@ beforeEach(() => {
   runner.mockReset();
 });
 
-describe("selectHiddenFieldCount", () => {
+describe("selectHasHiddenFields", () => {
   const hide = (...fields: (string | FieldRef)[]) =>
     Object.fromEntries(
       fields.map((field) => [
@@ -299,35 +299,34 @@ describe("selectHiddenFieldCount", () => {
     multiLink: { relatedTableName: "credit", fkColumnName: "track" },
   };
 
-  it("is zero without any metadata", () => {
-    expect(selectHiddenFieldCount(form().store.getState(), {})).toBe(0);
+  it("is false without any metadata", () => {
+    expect(selectHasHiddenFields(form().store.getState(), {})).toBe(false);
   });
 
-  it("counts the fields of the form's table, whichever kind they are", () => {
+  it("sees the fields of the form's table, whichever kind they are", () => {
     const s = form().store.getState();
+    expect(selectHasHiddenFields(s, { track: hide("title") })).toBe(true);
+    expect(selectHasHiddenFields(s, { track: hide(CREDITS_LINK) })).toBe(true);
     expect(
-      selectHiddenFieldCount(s, {
-        track: {
-          ...hide("title", CREDITS_LINK),
-          [fieldRefKey({ columnName: "genre" })]: fieldMeta(true, 1),
-        },
+      selectHasHiddenFields(s, {
+        track: { [fieldRefKey({ columnName: "genre" })]: fieldMeta(true, 1) },
       }),
-    ).toBe(2);
+    ).toBe(false);
   });
 
   it("ignores other tables, and fields the table no longer has", () => {
     const s = form().store.getState();
     expect(
-      selectHiddenFieldCount(s, {
+      selectHasHiddenFields(s, {
         track: hide("gone", {
           multiLink: { relatedTableName: "credit", fkColumnName: "gone" },
         }),
         credit: hide("role"),
       }),
-    ).toBe(0);
+    ).toBe(false);
   });
 
-  it("counts a nested record's table, and each field once", async () => {
+  it("sees a nested record's table, but not its contextual filter", async () => {
     serve({
       track: [trackRow("t1", "Formation", "Pop", 2)],
       credit: [creditRow("c1", "Lead"), creditRow("c2", "Featured")],
@@ -338,14 +337,10 @@ describe("selectHiddenFieldCount", () => {
     model.toggleField(ROOT_ID, credits(model));
     await flush();
     const s = model.store.getState();
-    expect(
-      selectHiddenFieldCount(s, {
-        track: hide("title"),
-        // `track` is the credits' contextual filter here, so they have no such
-        // field to hide. `role` is there on both of them.
-        credit: hide("role", "track"),
-      }),
-    ).toBe(2);
+    expect(selectHasHiddenFields(s, { credit: hide("role") })).toBe(true);
+    // `track` is the credits' contextual filter here, so they have no such
+    // field to hide.
+    expect(selectHasHiddenFields(s, { credit: hide("track") })).toBe(false);
   });
 });
 
