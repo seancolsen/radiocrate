@@ -291,14 +291,14 @@ fn dispatch_legacy(
         "metadata.field.set_visible" => {
             let p: MetadataFieldSetVisibleParams = from_params(params)?;
             state.write(origin, &[Topic::FieldMetadata], |conn| {
-                set_field_visible(conn, &p.table_schema, &p.table_name, &p.field, p.visible)?;
+                set_field_visible(conn, &p.schema_name, &p.table_name, &p.field, p.visible)?;
                 Ok(Value::Null)
             })
         }
         "metadata.field.set_order" => {
             let p: MetadataFieldSetOrderParams = from_params(params)?;
             state.write_mut(origin, &[Topic::FieldMetadata], |conn| {
-                set_field_order(conn, &p.table_schema, &p.table_name, &p.orders)
+                set_field_order(conn, &p.schema_name, &p.table_name, &p.orders)
                     .map(|()| Value::Null)
             })
         }
@@ -307,7 +307,7 @@ fn dispatch_legacy(
             state.write(origin, &[Topic::FieldMetadata], |conn| {
                 upsert_field_metadata(
                     conn,
-                    &p.table_schema,
+                    &p.schema_name,
                     &p.table_name,
                     &p.field,
                     "display",
@@ -321,7 +321,7 @@ fn dispatch_legacy(
             state.write(origin, &[Topic::FieldMetadata], |conn| {
                 upsert_field_metadata(
                     conn,
-                    &p.table_schema,
+                    &p.schema_name,
                     &p.table_name,
                     &p.field,
                     "sorting",
@@ -337,7 +337,7 @@ fn dispatch_legacy(
         "metadata.table.set_visible" => {
             let p: MetadataTableSetVisibleParams = from_params(params)?;
             state.write(origin, &[Topic::TableSettings], |conn| {
-                upsert_table_metadata(conn, &p.table_schema, &p.table_name, "visible", &p.visible)?;
+                upsert_table_metadata(conn, &p.schema_name, &p.table_name, "visible", &p.visible)?;
                 Ok(Value::Null)
             })
         }
@@ -351,7 +351,7 @@ fn dispatch_legacy(
             let p: MetadataTableSetQuerydownParams = from_params(params)?;
             state.write(origin, &[Topic::TableSettings], |conn| {
                 let column = table_querydown_column(p.setting);
-                upsert_table_metadata(conn, &p.table_schema, &p.table_name, column, &p.text)?;
+                upsert_table_metadata(conn, &p.schema_name, &p.table_name, column, &p.text)?;
                 Ok(Value::Null)
             })
         }
@@ -374,7 +374,7 @@ fn dispatch_legacy(
                 |conn| {
                     rename_computed_column(
                         conn,
-                        &p.table_schema,
+                        &p.schema_name,
                         &p.table_name,
                         &p.name,
                         &p.new_name,
@@ -389,7 +389,7 @@ fn dispatch_legacy(
                 origin,
                 &[Topic::ComputedColumns, Topic::FieldMetadata],
                 |conn| {
-                    delete_computed_column(conn, &p.table_schema, &p.table_name, &p.name)
+                    delete_computed_column(conn, &p.schema_name, &p.table_name, &p.name)
                         .map(|()| Value::Null)
                 },
             )
@@ -408,14 +408,14 @@ fn dispatch_legacy(
         "metadata.custom_comparison.rename" => {
             let p: MetadataCustomComparisonRenameParams = from_params(params)?;
             state.write(origin, &[Topic::CustomComparisons], |conn| {
-                rename_custom_comparison(conn, &p.table_schema, &p.table_name, &p.name, &p.new_name)
+                rename_custom_comparison(conn, &p.schema_name, &p.table_name, &p.name, &p.new_name)
                     .map(|()| Value::Null)
             })
         }
         "metadata.custom_comparison.delete" => {
             let p: MetadataCustomComparisonDeleteParams = from_params(params)?;
             state.write(origin, &[Topic::CustomComparisons], |conn| {
-                delete_custom_comparison(conn, &p.table_schema, &p.table_name, &p.name)
+                delete_custom_comparison(conn, &p.schema_name, &p.table_name, &p.name)
                     .map(|()| Value::Null)
             })
         }
@@ -798,13 +798,13 @@ fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
 fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_schema, table_name, union_extract(field, 'column_name'), \
+            "SELECT schema_name, table_name, union_extract(field, 'column_name'), \
              union_extract(field, 'multi_link').related_table_name, \
              union_extract(field, 'multi_link').fk_column_name, visible, \"order\", display, \
              sorting, union_extract(field, 'contextual_query')::text, \
              union_extract(field, 'computed_column') \
              FROM metadata.field \
-             ORDER BY table_schema, table_name, union_tag(field)::text, field::text",
+             ORDER BY schema_name, table_name, union_tag(field)::text, field::text",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -822,7 +822,7 @@ fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, Strin
                 }),
             };
             Ok(FieldMetadataRow {
-                table_schema: row.get(0)?,
+                schema_name: row.get(0)?,
                 table_name: row.get(1)?,
                 field,
                 visible: row.get(5)?,
@@ -857,7 +857,7 @@ fn field_ref_sql(field: &FieldRef) -> (&'static str, Vec<&str>) {
 /// no target.
 fn upsert_field_metadata(
     conn: &Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     field: &FieldRef,
     column: &'static str,
@@ -865,11 +865,11 @@ fn upsert_field_metadata(
 ) -> Result<(), String> {
     let (field_sql, field_params) = field_ref_sql(field);
     let sql = format!(
-        "INSERT INTO metadata.field (table_schema, table_name, field, {column}) \
+        "INSERT INTO metadata.field (schema_name, table_name, field, {column}) \
          VALUES (?, ?, {field_sql}, ?) \
          ON CONFLICT DO UPDATE SET {column} = excluded.{column}"
     );
-    let mut params: Vec<&dyn duckdb::ToSql> = vec![&table_schema, &table_name];
+    let mut params: Vec<&dyn duckdb::ToSql> = vec![&schema_name, &table_name];
     params.extend(field_params.iter().map(|p| p as &dyn duckdb::ToSql));
     params.push(value);
     conn.execute(&sql, duckdb::params_from_iter(params))
@@ -881,19 +881,19 @@ fn upsert_field_metadata(
 /// customized about it. Leaves its `order` as it is.
 fn set_field_visible(
     conn: &Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     field: &FieldRef,
     visible: bool,
 ) -> Result<(), String> {
-    upsert_field_metadata(conn, table_schema, table_name, field, "visible", &visible)
+    upsert_field_metadata(conn, schema_name, table_name, field, "visible", &visible)
 }
 
 /// Sets the sort keys of a table's fields in one transaction, creating the rows of
 /// any field not customized yet. Leaves their `visible` as it is.
 fn set_field_order(
     conn: &mut Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     orders: &[FieldOrder],
 ) -> Result<(), String> {
@@ -901,7 +901,7 @@ fn set_field_order(
     for entry in orders {
         upsert_field_metadata(
             &tx,
-            table_schema,
+            schema_name,
             table_name,
             &entry.field,
             "\"order\"",
@@ -914,15 +914,15 @@ fn set_field_order(
 fn list_table_metadata(conn: &Connection) -> Result<Vec<TableMetadataRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_schema, table_name, visible, \"order\", default_text_search, \
+            "SELECT schema_name, table_name, visible, \"order\", default_text_search, \
              linked_record_comparison, record_picker_sorting, record_picker_display \
-             FROM metadata.\"table\" ORDER BY table_schema, table_name",
+             FROM metadata.\"table\" ORDER BY schema_name, table_name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(TableMetadataRow {
-                table_schema: row.get(0)?,
+                schema_name: row.get(0)?,
                 table_name: row.get(1)?,
                 visible: row.get(2)?,
                 order: row.get(3)?,
@@ -951,16 +951,16 @@ fn table_querydown_column(setting: TableQuerydownSetting) -> &'static str {
 /// leaving the rest of that row as it is.
 fn upsert_table_metadata(
     conn: &Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     column: &'static str,
     value: &dyn duckdb::ToSql,
 ) -> Result<(), String> {
     let sql = format!(
-        "INSERT INTO metadata.\"table\" (table_schema, table_name, {column}) VALUES (?, ?, ?) \
-         ON CONFLICT (table_schema, table_name) DO UPDATE SET {column} = excluded.{column}"
+        "INSERT INTO metadata.\"table\" (schema_name, table_name, {column}) VALUES (?, ?, ?) \
+         ON CONFLICT (schema_name, table_name) DO UPDATE SET {column} = excluded.{column}"
     );
-    conn.execute(&sql, duckdb::params![table_schema, table_name, value])
+    conn.execute(&sql, duckdb::params![schema_name, table_name, value])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -972,7 +972,7 @@ fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), S
     for entry in orders {
         upsert_table_metadata(
             &tx,
-            &entry.table_schema,
+            &entry.schema_name,
             &entry.table_name,
             "\"order\"",
             &entry.order,
@@ -984,14 +984,14 @@ fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), S
 fn list_computed_columns(conn: &Connection) -> Result<Vec<ComputedColumnRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_schema, table_name, name, expression FROM metadata.computed_column \
-             ORDER BY table_schema, table_name, name",
+            "SELECT schema_name, table_name, name, expression FROM metadata.computed_column \
+             ORDER BY schema_name, table_name, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(ComputedColumnRow {
-                table_schema: row.get(0)?,
+                schema_name: row.get(0)?,
                 table_name: row.get(1)?,
                 name: row.get(2)?,
                 expression: row.get(3)?,
@@ -1005,11 +1005,11 @@ fn list_computed_columns(conn: &Connection) -> Result<Vec<ComputedColumnRow>, St
 /// Creates a computed column, or sets the expression of the one of that name.
 fn set_computed_column(conn: &Connection, column: &ComputedColumnRow) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO metadata.computed_column (table_schema, table_name, name, expression) \
+        "INSERT INTO metadata.computed_column (schema_name, table_name, name, expression) \
          VALUES (?, ?, ?, ?) \
-         ON CONFLICT (table_schema, table_name, name) DO UPDATE SET expression = excluded.expression",
+         ON CONFLICT (schema_name, table_name, name) DO UPDATE SET expression = excluded.expression",
         duckdb::params![
-            column.table_schema,
+            column.schema_name,
             column.table_name,
             column.name,
             column.expression
@@ -1021,7 +1021,7 @@ fn set_computed_column(conn: &Connection, column: &ComputedColumnRow) -> Result<
 
 /// The condition picking out a computed column's row of `metadata.field`, binding
 /// the table's schema, then its name, and then the column's.
-const COMPUTED_COLUMN_FIELD: &str = "table_schema = ? AND table_name = ? \
+const COMPUTED_COLUMN_FIELD: &str = "schema_name = ? AND table_name = ? \
      AND union_tag(field) = 'computed_column' \
      AND union_extract(field, 'computed_column') = ?";
 
@@ -1030,7 +1030,7 @@ const COMPUTED_COLUMN_FIELD: &str = "table_schema = ? AND table_name = ? \
 /// name another of the table's computed columns has fails, and changes nothing.
 fn rename_computed_column(
     conn: &mut Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     name: &str,
     new_name: &str,
@@ -1038,8 +1038,8 @@ fn rename_computed_column(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE metadata.computed_column SET name = ? \
-         WHERE table_schema = ? AND table_name = ? AND name = ?",
-        duckdb::params![new_name, table_schema, table_name, name],
+         WHERE schema_name = ? AND table_name = ? AND name = ?",
+        duckdb::params![new_name, schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
@@ -1047,7 +1047,7 @@ fn rename_computed_column(
             "UPDATE metadata.field SET field = union_value(computed_column := ?) \
              WHERE {COMPUTED_COLUMN_FIELD}"
         ),
-        duckdb::params![new_name, table_schema, table_name, name],
+        duckdb::params![new_name, schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
@@ -1057,20 +1057,20 @@ fn rename_computed_column(
 /// name: a later column given the same name starts afresh.
 fn delete_computed_column(
     conn: &mut Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     name: &str,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "DELETE FROM metadata.computed_column \
-         WHERE table_schema = ? AND table_name = ? AND name = ?",
-        duckdb::params![table_schema, table_name, name],
+         WHERE schema_name = ? AND table_name = ? AND name = ?",
+        duckdb::params![schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
         &format!("DELETE FROM metadata.field WHERE {COMPUTED_COLUMN_FIELD}"),
-        duckdb::params![table_schema, table_name, name],
+        duckdb::params![schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
@@ -1079,15 +1079,15 @@ fn delete_computed_column(
 fn list_custom_comparisons(conn: &Connection) -> Result<Vec<CustomComparisonRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_schema, table_name, name, expression \
+            "SELECT schema_name, table_name, name, expression \
              FROM metadata.custom_comparison \
-             ORDER BY table_schema, table_name, name",
+             ORDER BY schema_name, table_name, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(CustomComparisonRow {
-                table_schema: row.get(0)?,
+                schema_name: row.get(0)?,
                 table_name: row.get(1)?,
                 name: row.get(2)?,
                 expression: row.get(3)?,
@@ -1101,10 +1101,10 @@ fn list_custom_comparisons(conn: &Connection) -> Result<Vec<CustomComparisonRow>
 /// Creates a custom comparison, or sets the condition of the one of that name.
 fn set_custom_comparison(conn: &Connection, row: &CustomComparisonRow) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO metadata.custom_comparison (table_schema, table_name, name, expression) \
+        "INSERT INTO metadata.custom_comparison (schema_name, table_name, name, expression) \
          VALUES (?, ?, ?, ?) \
-         ON CONFLICT (table_schema, table_name, name) DO UPDATE SET expression = excluded.expression",
-        duckdb::params![row.table_schema, row.table_name, row.name, row.expression],
+         ON CONFLICT (schema_name, table_name, name) DO UPDATE SET expression = excluded.expression",
+        duckdb::params![row.schema_name, row.table_name, row.name, row.expression],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1114,15 +1114,15 @@ fn set_custom_comparison(conn: &Connection, row: &CustomComparisonRow) -> Result
 /// fails, and changes nothing.
 fn rename_custom_comparison(
     conn: &Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     name: &str,
     new_name: &str,
 ) -> Result<(), String> {
     conn.execute(
         "UPDATE metadata.custom_comparison SET name = ? \
-         WHERE table_schema = ? AND table_name = ? AND name = ?",
-        duckdb::params![new_name, table_schema, table_name, name],
+         WHERE schema_name = ? AND table_name = ? AND name = ?",
+        duckdb::params![new_name, schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1130,14 +1130,14 @@ fn rename_custom_comparison(
 
 fn delete_custom_comparison(
     conn: &Connection,
-    table_schema: &str,
+    schema_name: &str,
     table_name: &str,
     name: &str,
 ) -> Result<(), String> {
     conn.execute(
         "DELETE FROM metadata.custom_comparison \
-         WHERE table_schema = ? AND table_name = ? AND name = ?",
-        duckdb::params![table_schema, table_name, name],
+         WHERE schema_name = ? AND table_name = ? AND name = ?",
+        duckdb::params![schema_name, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1713,7 +1713,7 @@ mod tests {
 
     fn computed_row(table_name: &str, name: &str, expression: Option<&str>) -> ComputedColumnRow {
         ComputedColumnRow {
-            table_schema: "main".to_string(),
+            schema_name: "main".to_string(),
             table_name: table_name.to_string(),
             name: name.to_string(),
             expression: expression.map(str::to_string),
@@ -1727,7 +1727,7 @@ mod tests {
         order: Option<f64>,
     ) -> FieldMetadataRow {
         FieldMetadataRow {
-            table_schema: "main".to_string(),
+            schema_name: "main".to_string(),
             table_name: table_name.to_string(),
             field,
             visible,
@@ -1914,7 +1914,7 @@ mod tests {
     #[test]
     fn a_field_goes_over_the_wire_as_a_union_of_its_kinds() {
         let params: MetadataFieldSetOrderParams = from_params(serde_json::json!({
-            "tableSchema": "main",
+            "schemaName": "main",
             "tableName": "track",
             "orders": [
                 { "field": { "columnName": "title" }, "order": 1.0 },
@@ -1937,7 +1937,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
             serde_json::json!({
-                "tableSchema": "main",
+                "schemaName": "main",
                 "tableName": "a",
                 "field": { "multiLink": { "relatedTableName": "b", "fkColumnName": "c" } },
                 "visible": true,
@@ -1950,7 +1950,7 @@ mod tests {
 
     fn table_row(table_name: &str, visible: bool, order: Option<f64>) -> TableMetadataRow {
         TableMetadataRow {
-            table_schema: "main".to_string(),
+            schema_name: "main".to_string(),
             table_name: table_name.to_string(),
             visible,
             order,
@@ -1975,12 +1975,12 @@ mod tests {
             &mut conn,
             &[
                 TableOrder {
-                    table_schema: "main".to_string(),
+                    schema_name: "main".to_string(),
                     table_name: "track".to_string(),
                     order: 1.0,
                 },
                 TableOrder {
-                    table_schema: "main".to_string(),
+                    schema_name: "main".to_string(),
                     table_name: "role".to_string(),
                     order: 2.0,
                 },
@@ -2174,7 +2174,7 @@ mod tests {
         expression: Option<&str>,
     ) -> CustomComparisonRow {
         CustomComparisonRow {
-            table_schema: "main".into(),
+            schema_name: "main".into(),
             table_name: table_name.into(),
             name: name.into(),
             expression: expression.map(Into::into),
@@ -2401,8 +2401,8 @@ mod tests {
         );
         legacy_upsert_field(&conn, "track", &column("lastplay"), "visible", &false);
 
-        // Read through the RPCs, which name tables as migration 0017 does.
-        crate::db::migrate_through(&mut conn, 17);
+        // Read through the RPCs, which name the schema as migration 0019 does.
+        crate::db::migrate_through(&mut conn, 19);
 
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
@@ -2446,7 +2446,8 @@ mod tests {
         )
         .unwrap();
 
-        crate::db::migrate_through(&mut conn, 17);
+        // Read through the RPCs, which name the schema as migration 0019 does.
+        crate::db::migrate_through(&mut conn, 19);
 
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
@@ -2492,14 +2493,14 @@ mod tests {
         set_table_order(
             &mut conn,
             &[TableOrder {
-                table_schema: "main".to_string(),
+                schema_name: "main".to_string(),
                 table_name: "artist".to_string(),
                 order: 1.0,
             }],
         )
         .unwrap();
         let lastfm = |row: ComputedColumnRow| ComputedColumnRow {
-            table_schema: "lastfm".to_string(),
+            schema_name: "lastfm".to_string(),
             ..row
         };
         set_computed_column(&conn, &computed_row("artist", "tracks", Some("#track"))).unwrap();
@@ -2508,7 +2509,7 @@ mod tests {
         set_custom_comparison(
             &conn,
             &CustomComparisonRow {
-                table_schema: "lastfm".to_string(),
+                schema_name: "lastfm".to_string(),
                 ..comparison_row("artist", "named", Some("mbid:@x"))
             },
         )
@@ -2522,11 +2523,11 @@ mod tests {
             list_field_metadata(&conn).unwrap(),
             vec![
                 FieldMetadataRow {
-                    table_schema: "lastfm".to_string(),
+                    schema_name: "lastfm".to_string(),
                     ..field_row("artist", column("name"), true, None)
                 },
                 FieldMetadataRow {
-                    table_schema: "lastfm".to_string(),
+                    schema_name: "lastfm".to_string(),
                     ..field_row("artist", computed_column("plays"), false, None)
                 },
                 field_row("artist", column("name"), false, None),
@@ -2536,7 +2537,7 @@ mod tests {
             list_table_metadata(&conn).unwrap(),
             vec![
                 TableMetadataRow {
-                    table_schema: "lastfm".to_string(),
+                    schema_name: "lastfm".to_string(),
                     ..table_row("artist", false, None)
                 },
                 table_row("artist", true, Some(1.0)),
@@ -2562,7 +2563,7 @@ mod tests {
             "union_value(computed_column := 'last_play')",
         ] {
             let insert = format!(
-                "INSERT INTO metadata.field (table_schema, table_name, field) VALUES ('main', 'a', {field})"
+                "INSERT INTO metadata.field (schema_name, table_name, field) VALUES ('main', 'a', {field})"
             );
             conn.execute_batch(&insert).unwrap();
             assert!(conn.execute_batch(&insert).is_err());
@@ -2586,6 +2587,113 @@ mod tests {
         assert!(schema.table("track").unwrap().is_current());
         // A session's temp tables stay out altogether.
         assert!(schema.tables.iter().all(|t| t.name != "staging_track"));
+    }
+
+    #[test]
+    fn introspection_links_only_the_declared_relationships() {
+        let conn = setup();
+        conn.execute_batch(
+            "CREATE SCHEMA lastfm;
+             CREATE TABLE lastfm.scrobble (id UUID PRIMARY KEY, track UUID, album UUID, credit UUID);
+             INSERT INTO metadata.relationship VALUES
+               ('lastfm', 'scrobble', 'track', 'main', 'track'),
+               ('lastfm', 'scrobble', 'gone', 'main', 'track'),
+               ('lastfm', 'scrobble', 'credit', 'main', 'credit'),
+               ('lastfm', 'nowhere', 'track', 'main', 'track');",
+        )
+        .unwrap();
+        let json: String = conn
+            .query_row(introspection::introspection_sql(), [], |row| row.get(0))
+            .unwrap();
+        let schema = introspection::Schema::parse(&json).unwrap();
+        let app = ["app".to_string()];
+        let lastfm = ["lastfm".to_string()];
+
+        // The app's own, from migration 0019, each to its target's primary key.
+        let album = schema.link("track", "album").unwrap();
+        assert_eq!(
+            (album.to_table.as_str(), album.to_column.as_str()),
+            ("album", "id")
+        );
+        let entry = schema.link_in(&app, "playlist_track", "track").unwrap();
+        assert!(entry.to_schema.is_empty());
+        let parent = schema.link_in(&app, "source_folder", "parent").unwrap();
+        assert_eq!(
+            (parent.to_schema.as_slice(), parent.to_table.as_str()),
+            (&app[..], "source_folder")
+        );
+
+        // A declared relationship links whatever its column is named; a column named after a table
+        // links nothing unless it's declared.
+        assert!(schema.link_in(&lastfm, "scrobble", "track").is_some());
+        assert!(schema.link_in(&lastfm, "scrobble", "album").is_none());
+        // A relationship whose column or table isn't there, or whose target has no single-column
+        // primary key, is left out.
+        assert!(schema.link_in(&lastfm, "scrobble", "credit").is_none());
+        assert_eq!(
+            schema
+                .links
+                .iter()
+                .filter(|l| l.from_schema == lastfm)
+                .count(),
+            1
+        );
+        assert_eq!(schema.links.len(), 16);
+    }
+
+    #[test]
+    fn migration_0019_moves_contextual_queries_and_renames_the_schema_columns() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 18);
+        conn.execute_batch(&format!(
+            "INSERT INTO app.contextual_query (id, table_name, name, query)
+             VALUES ('{Q1}', 'track', 'Same album', NULL);
+             INSERT INTO metadata.field (table_schema, table_name, field, visible)
+             VALUES ('main', 'track', union_value(contextual_query := '{Q1}'::uuid), false);
+             INSERT INTO metadata.\"table\" (table_schema, table_name, visible)
+             VALUES ('main', 'tag', false);
+             INSERT INTO metadata.computed_column VALUES ('main', 'track', 'decade', 'year / 10');
+             INSERT INTO metadata.custom_comparison VALUES ('main', 'track', 'tag', '#tag{{name:@x}}');"
+        ))
+        .unwrap();
+
+        crate::db::migrate_through(&mut conn, 19);
+
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM metadata.contextual_query WHERE name = 'Same album'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'app' \
+                 AND table_name = 'contextual_query'"
+            ),
+            0
+        );
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![field_row("track", contextual_query(Q1), false, None)],
+        );
+        assert_eq!(
+            list_table_metadata(&conn).unwrap(),
+            vec![table_row("tag", false, None)]
+        );
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![computed_row("track", "decade", Some("year / 10"))],
+        );
+        assert_eq!(list_custom_comparisons(&conn).unwrap().len(), 1);
+        // The index, made anew around the renamed column, still keeps one row per field.
+        assert!(set_field_visible(&conn, "main", "track", &contextual_query(Q1), true).is_ok());
+        assert_eq!(count(&conn, "SELECT count(*) FROM metadata.field"), 1);
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM metadata.relationship"),
+            15
+        );
     }
 
     #[test]
@@ -2819,67 +2927,67 @@ mod tests {
             ("preset.delete", json!({ "id": P1 }), vec![Presets]),
             (
                 "metadata.field.set_visible",
-                json!({ "tableSchema": "main", "tableName": "track", "field": field, "visible": false }),
+                json!({ "schemaName": "main", "tableName": "track", "field": field, "visible": false }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_order",
-                json!({ "tableSchema": "main", "tableName": "track", "orders": [{ "field": field, "order": 1.0 }] }),
+                json!({ "schemaName": "main", "tableName": "track", "orders": [{ "field": field, "order": 1.0 }] }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_display",
-                json!({ "tableSchema": "main", "tableName": "track", "field": field, "display": "x" }),
+                json!({ "schemaName": "main", "tableName": "track", "field": field, "display": "x" }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_sorting",
-                json!({ "tableSchema": "main", "tableName": "track", "field": field, "sorting": "x" }),
+                json!({ "schemaName": "main", "tableName": "track", "field": field, "sorting": "x" }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.table.set_visible",
-                json!({ "tableSchema": "main", "tableName": "track", "visible": false }),
+                json!({ "schemaName": "main", "tableName": "track", "visible": false }),
                 vec![TableSettings],
             ),
             (
                 "metadata.table.set_order",
-                json!({ "orders": [{ "tableSchema": "main", "tableName": "track", "order": 1.0 }] }),
+                json!({ "orders": [{ "schemaName": "main", "tableName": "track", "order": 1.0 }] }),
                 vec![TableSettings],
             ),
             (
                 "metadata.table.set_querydown",
-                json!({ "tableSchema": "main", "tableName": "track", "setting": "defaultTextSearch", "text": "x" }),
+                json!({ "schemaName": "main", "tableName": "track", "setting": "defaultTextSearch", "text": "x" }),
                 vec![TableSettings],
             ),
             (
                 "metadata.computed_column.set",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "expression": "1" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "c", "expression": "1" }),
                 vec![ComputedColumns],
             ),
             (
                 "metadata.computed_column.rename",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "newName": "d" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "c", "newName": "d" }),
                 vec![ComputedColumns, FieldMetadata],
             ),
             (
                 "metadata.computed_column.delete",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "d" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "d" }),
                 vec![ComputedColumns, FieldMetadata],
             ),
             (
                 "metadata.custom_comparison.set",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "expression": "1" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "c", "expression": "1" }),
                 vec![CustomComparisons],
             ),
             (
                 "metadata.custom_comparison.rename",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "newName": "d" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "c", "newName": "d" }),
                 vec![CustomComparisons],
             ),
             (
                 "metadata.custom_comparison.delete",
-                json!({ "tableSchema": "main", "tableName": "track", "name": "d" }),
+                json!({ "schemaName": "main", "tableName": "track", "name": "d" }),
                 vec![CustomComparisons],
             ),
             (
@@ -2972,7 +3080,7 @@ mod tests {
                 "modified_at": "2024-01-01 00:00:00", "last_play": "2024-01-01 00:00:00",
                 "playlist": { "id": "p" }
             } },
-            { "operation": "insert", "id": "c", "schema": "app", "table": "contextual_query", "values": {
+            { "operation": "insert", "id": "c", "schema": "metadata", "table": "contextual_query", "values": {
                 "table_name": "track", "name": "Same album"
             } },
         ] });

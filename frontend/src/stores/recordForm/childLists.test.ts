@@ -37,6 +37,12 @@ const col = (name: string, type: string, nullable = false) => ({
   type,
   nullable,
 });
+/** A column that links to the table it's named for, as a row of
+ * `metadata.relationship` declares. */
+const link = (name: string, nullable = false) => ({
+  ...col(name, "UUID", nullable),
+  link: name,
+});
 const TABLES: SchemaTable[] = [
   {
     name: "artist",
@@ -46,8 +52,8 @@ const TABLES: SchemaTable[] = [
   {
     name: "credit",
     columns: [
-      col("track", "UUID"),
-      col("artist", "UUID"),
+      link("track"),
+      link("artist"),
       col("order", "FLOAT", true),
       col("role", "VARCHAR", true),
     ],
@@ -65,7 +71,7 @@ const TABLES: SchemaTable[] = [
   },
   {
     name: "track_tag",
-    columns: [col("track", "UUID"), col("tag", "UUID")],
+    columns: [link("track"), link("tag")],
     uniqueConstraints: [["track", "tag"]],
   },
 ];

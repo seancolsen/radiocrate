@@ -24,7 +24,7 @@ import {
 } from "./recordForm";
 import {
   identifyingColumns,
-  inferLinks,
+  schemaLinks,
   primaryKey,
   type SchemaTable,
 } from "./schema";
@@ -149,7 +149,7 @@ export function linkPath(
   from: string,
   to: string,
 ): LinkStep[] | undefined {
-  const links = inferLinks(tables);
+  const links = schemaLinks(tables);
   const reached = new Map<string, LinkStep[]>([[from, []]]);
   const queue = [from];
   for (let at = queue.shift(); at !== undefined; at = queue.shift()) {

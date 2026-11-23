@@ -23,7 +23,7 @@ const row = (
   name: string,
   expression: string | null,
 ): CustomComparisonRow => ({
-  tableSchema: "main",
+  schemaName: "main",
   tableName,
   name,
   expression,

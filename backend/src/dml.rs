@@ -3,7 +3,7 @@
 //! A single request carries an ordered list of `insert` / `update` / `delete` operations, all run in
 //! one transaction (see [`crate::server::AppState::write_mut`]). The handler introspects the live
 //! schema at the start of every request and uses that — column nullability, unique constraints, and
-//! the convention-inferred foreign-key graph — to validate and build each operation. Nothing about
+//! the declared foreign-key graph — to validate and build each operation. Nothing about
 //! the schema is hard-coded here; the same code works for user-added tables and columns.
 //!
 //! Deliberately "dumb" about referential integrity: it never cascades or nulls out references. A
@@ -140,19 +140,36 @@ pub(crate) fn handle(
     state.write_mut(origin, &topics, |conn| run(conn, &params.operations))
 }
 
-/// Every table the app's migrations create in the `main` and `app` schemas, by schema and name, and
-/// the change topic a write to it announces. A table with no topic holds data that only query results
-/// and the record editor show, and those reload only when the user asks. A table that isn't listed at
-/// all is one the user created, which is data of the same kind. A test holds this list to the
-/// migrations.
+/// Every table the app's migrations create in the `main`, `app` and `metadata` schemas, by schema and
+/// name, and the change topic a write to it announces. A table with no topic holds data that only
+/// query results and the record editor show, and those reload only when the user asks. A table that
+/// isn't listed at all is one the user created, which is data of the same kind. A test holds this
+/// list to the migrations.
+///
+/// A relationship is part of the catalog the introspection query reads, so writing one announces
+/// [`Topic::Schema`]: the app's own writes re-take the outside-writer fingerprint, so nothing else
+/// would.
 const TABLE_TOPICS: &[(&str, &str, Option<Topic>)] = &[
     ("app", "source", Some(Topic::Sources)),
     ("app", "query", Some(Topic::Sources)),
     ("app", "playlist", Some(Topic::Sources)),
     ("app", "source_folder", Some(Topic::Sources)),
     ("app", "preset", Some(Topic::Presets)),
-    ("app", "contextual_query", Some(Topic::ContextualQueries)),
     ("app", "playlist_track", None),
+    (
+        "metadata",
+        "contextual_query",
+        Some(Topic::ContextualQueries),
+    ),
+    ("metadata", "field", Some(Topic::FieldMetadata)),
+    ("metadata", "table", Some(Topic::TableSettings)),
+    ("metadata", "computed_column", Some(Topic::ComputedColumns)),
+    (
+        "metadata",
+        "custom_comparison",
+        Some(Topic::CustomComparisons),
+    ),
+    ("metadata", "relationship", Some(Topic::Schema)),
     ("main", "rating", Some(Topic::Ratings)),
     ("main", "album", None),
     ("main", "artist", None),
@@ -1023,7 +1040,8 @@ mod tests {
         insert_album(&conn, ALBUM1);
         conn.execute_batch(&format!(
             "CREATE SCHEMA lastfm; CREATE TABLE lastfm.scrobble (album UUID); \
-             INSERT INTO lastfm.scrobble VALUES ('{ALBUM1}');"
+             INSERT INTO lastfm.scrobble VALUES ('{ALBUM1}'); \
+             INSERT INTO metadata.relationship VALUES ('lastfm', 'scrobble', 'album', 'main', 'album');"
         ))
         .unwrap();
         let err = dml(
@@ -1330,15 +1348,18 @@ mod tests {
         assert_eq!(err.data, Some(json!({ "operation": { "id": "e0" } })));
     }
 
-    /// A schema of the user's beside the app's: `lastfm.scrobble` links to the app's `track` (no
-    /// `track` of its own), and to `lastfm.artist`, which shares its name with the app's.
+    /// A schema of the user's beside the app's: `lastfm.scrobble` links to the app's `track`, and to
+    /// `lastfm.artist`, which shares its name with the app's.
     fn with_lastfm(conn: &Connection) {
         conn.execute_batch(
             "CREATE SCHEMA lastfm;
              CREATE TABLE lastfm.artist (id UUID PRIMARY KEY, name TEXT NOT NULL);
              CREATE TABLE lastfm.scrobble (
                id UUID PRIMARY KEY, track UUID, artist UUID, note TEXT
-             );",
+             );
+             INSERT INTO metadata.relationship VALUES
+               ('lastfm', 'scrobble', 'track', 'main', 'track'),
+               ('lastfm', 'scrobble', 'artist', 'lastfm', 'artist');",
         )
         .unwrap();
     }
@@ -1460,9 +1481,9 @@ mod tests {
         assert!(err.message.contains("not a foreign key"), "{}", err.message);
     }
 
-    /// `TABLE_TOPICS` lists every table the migrations leave in the `main` and
-    /// `app` schemas, and nothing else, so a migration that adds an app table
-    /// has to decide whether it's live.
+    /// `TABLE_TOPICS` lists every table the migrations leave in the `main`,
+    /// `app` and `metadata` schemas, and nothing else, so a migration that adds
+    /// an app table has to decide whether it's live.
     #[test]
     fn every_app_table_has_a_place_in_the_topic_map() {
         let conn = setup();
@@ -1473,6 +1494,7 @@ mod tests {
             .filter_map(|t| match t.schema.as_slice() {
                 [] => Some((CURRENT_SCHEMA, t.name.as_str())),
                 [name] if name == "app" => Some(("app", t.name.as_str())),
+                [name] if name == "metadata" => Some(("metadata", t.name.as_str())),
                 _ => None,
             })
             .collect();

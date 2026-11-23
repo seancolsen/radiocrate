@@ -33,7 +33,7 @@ const TABLES: SchemaTable[] = [
     columns: [
       column("id", "UUID", false),
       column("title"),
-      column("album", "UUID"),
+      { ...column("album", "UUID"), link: "album" },
     ],
     uniqueConstraints: [["id"]],
   },
@@ -42,7 +42,7 @@ const TABLES: SchemaTable[] = [
     name: "credit",
     columns: [
       column("id", "UUID", false),
-      column("track", "UUID", false),
+      { ...column("track", "UUID", false), link: "track" },
       column("order", "FLOAT"),
     ],
     uniqueConstraints: [["id"]],
@@ -50,7 +50,10 @@ const TABLES: SchemaTable[] = [
   {
     // No way to tell its records apart.
     name: "play",
-    columns: [column("track", "UUID", false), column("timestamp", "TIMESTAMP")],
+    columns: [
+      { ...column("track", "UUID", false), link: "track" },
+      column("timestamp", "TIMESTAMP"),
+    ],
     uniqueConstraints: [],
   },
 ];
@@ -63,7 +66,7 @@ const QUERY: ContextualQuery = {
 };
 
 const DECADE = {
-  tableSchema: "main",
+  schemaName: "main",
   tableName: "track",
   name: "decade",
   expression: "year / 10",

@@ -20,6 +20,12 @@ const col = (name: string, type: string, nullable = false) => ({
   type,
   nullable,
 });
+/** A column that links to the table it's named for, as a row of
+ * `metadata.relationship` declares. */
+const link = (name: string, nullable = false) => ({
+  ...col(name, "UUID", nullable),
+  link: name,
+});
 const TABLES: SchemaTable[] = [
   {
     name: "album",
@@ -34,8 +40,8 @@ const TABLES: SchemaTable[] = [
   {
     name: "credit",
     columns: [
-      col("track", "UUID"),
-      col("artist", "UUID"),
+      link("track"),
+      link("artist"),
       col("ord", "FLOAT", true),
       col("role", "VARCHAR", true),
     ],
@@ -43,7 +49,7 @@ const TABLES: SchemaTable[] = [
   },
   {
     name: "play",
-    columns: [col("track", "UUID"), col("timestamp", "TIMESTAMP_S")],
+    columns: [link("track"), col("timestamp", "TIMESTAMP_S")],
     uniqueConstraints: [["track", "timestamp"]],
   },
   {
@@ -51,7 +57,7 @@ const TABLES: SchemaTable[] = [
     columns: [
       col("id", "UUID"),
       col("title", "VARCHAR"),
-      col("album", "UUID", true),
+      link("album", true),
       col("track_number", "UTINYINT", true),
     ],
     uniqueConstraints: [["id"]],
@@ -121,11 +127,7 @@ describe("buildFormFields", () => {
       ...TABLES.filter((t) => t.name !== "credit"),
       {
         name: "credit",
-        columns: [
-          col("track", "UUID"),
-          col("artist", "UUID"),
-          col("order", "FLOAT", true),
-        ],
+        columns: [link("track"), link("artist"), col("order", "FLOAT", true)],
         uniqueConstraints: [["track", "artist"]],
       },
     ];
@@ -152,7 +154,7 @@ describe("buildFormFields", () => {
       tag,
       {
         name: "track_tag",
-        columns: [col("track", "UUID"), col("tag", "UUID"), ...extra],
+        columns: [link("track"), link("tag"), ...extra],
         uniqueConstraints: [["track", "tag"]],
       },
     ];
@@ -185,7 +187,7 @@ describe("buildFormFields", () => {
       tag,
       {
         name: "track_tag",
-        columns: [col("track", "UUID"), col("tag", "UUID", true)],
+        columns: [link("track"), link("tag", true)],
         uniqueConstraints: [["track", "tag"]],
       },
     ];

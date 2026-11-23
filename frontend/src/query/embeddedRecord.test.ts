@@ -16,6 +16,12 @@ const col = (name: string, type: string, nullable = false) => ({
   type,
   nullable,
 });
+/** A column that links to the table it's named for, as a row of
+ * `metadata.relationship` declares. */
+const link = (name: string, nullable = false) => ({
+  ...col(name, "UUID", nullable),
+  link: name,
+});
 
 /** The spec's running example: previewing the credits of one track, where the
  * informative column lives a hop away (`artist.name`) rather than in the table
@@ -29,8 +35,8 @@ const TABLES: SchemaTable[] = [
   {
     name: "credit",
     columns: [
-      col("track", "UUID"),
-      col("artist", "UUID"),
+      link("track"),
+      link("artist"),
       col("order", "FLOAT", true),
       col("role", "VARCHAR", true),
     ],
@@ -38,7 +44,7 @@ const TABLES: SchemaTable[] = [
   },
   {
     name: "play",
-    columns: [col("track", "UUID"), col("timestamp", "TIMESTAMP_S")],
+    columns: [link("track"), col("timestamp", "TIMESTAMP_S")],
     uniqueConstraints: [["track", "timestamp"]],
   },
   {
@@ -133,7 +139,7 @@ describe("embedSpec", () => {
       {
         name: "credit",
         columns: [
-          col("track", "UUID"),
+          link("track"),
           col("order", "FLOAT"),
           col("role", "VARCHAR", true),
         ],

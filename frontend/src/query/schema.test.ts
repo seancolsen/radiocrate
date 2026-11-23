@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  addInferredLinks,
   dmlTable,
   identifyingColumns,
   INTROSPECTION_SQL,
@@ -12,13 +11,14 @@ import {
   querydownTableName,
   readSchemaTables,
   rowTable,
+  schemaLinks,
   splitTableName,
   tableLabel,
   tableRef,
   type SchemaTable,
 } from "./schema";
 
-// Mirrors the Rust tests for `add_inferred_links` (`introspection/src/lib.rs`),
+// Mirrors the Rust tests of `Schema::parse` (`introspection/src/lib.rs`),
 // guarding this TS port against drift from the shared crate that also backs
 // the backend's DML validator. `SAMPLE` is the same fixture.
 const SAMPLE = `{
@@ -37,14 +37,13 @@ const SAMPLE = `{
       { "name": "ord", "type": "FLOAT", "nullable": true }
     ] }
   ],
-  "links": []
+  "links": [
+    { "from": { "table": "track", "column": "album" },
+      "to": { "table": "album", "column": "id" }, "unique": false },
+    { "from": { "table": "credit", "column": "track" },
+      "to": { "table": "track", "column": "id" }, "unique": false }
+  ]
 }`;
-
-interface Link {
-  from: { table: string; schema?: string[]; column: string };
-  to: { table: string; schema?: string[]; column: string };
-  unique: boolean;
-}
 
 describe("INTROSPECTION_SQL", () => {
   it("is the shared crate's query, without its comments", () => {
@@ -84,41 +83,27 @@ const SCHEMAS = `{
       { "name": "album", "type": "UUID", "nullable": true }
     ] }
   ],
-  "links": []
+  "links": [
+    { "from": { "table": "track", "column": "album" },
+      "to": { "table": "album", "column": "id" }, "unique": false },
+    { "from": { "table": "scrobble", "schema": ["lastfm"], "column": "track" },
+      "to": { "table": "track", "column": "id" }, "unique": false },
+    { "from": { "table": "scrobble", "schema": ["lastfm"], "column": "album" },
+      "to": { "table": "album", "schema": ["lastfm"], "column": "id" }, "unique": false }
+  ]
 }`;
 
 describe("schemas", () => {
-  it("links a column to its own schema's table, then the current schema's", () => {
-    expect(linksOf(addInferredLinks(SCHEMAS))).toEqual([
-      {
-        from: { table: "track", column: "album" },
-        to: { table: "album", column: "id" },
-        unique: false,
-      },
-      {
-        from: { table: "scrobble", schema: ["lastfm"], column: "track" },
-        to: { table: "track", column: "id" },
-        unique: false,
-      },
-      {
-        from: { table: "scrobble", schema: ["lastfm"], column: "album" },
-        to: { table: "album", schema: ["lastfm"], column: "id" },
-        unique: false,
-      },
-    ]);
-  });
-
-  it("keeps every schema's tables in the compiler's JSON", () => {
-    const out = JSON.parse(addInferredLinks(SCHEMAS)) as {
-      tables: { name: string; schema?: string[] }[];
-    };
-    expect(out.tables.map((t) => [t.schema ?? [], t.name])).toEqual([
-      [[], "track"],
-      [[], "album"],
-      [["metadata"], "track"],
-      [["lastfm"], "album"],
-      [["lastfm"], "scrobble"],
-    ]);
+  it("puts each link on its column, naming the target as the app does", () => {
+    const { tables, otherTables } = readSchemaTables(SCHEMAS);
+    const column = (table: string, name: string) =>
+      [...tables, ...otherTables]
+        .find((t) => t.name === table)!
+        .columns.find((c) => c.name === name)!;
+    expect(column("track", "album").link).toBe("album");
+    expect(column("track", "id").link).toBeUndefined();
+    expect(column("/lastfm/scrobble", "track").link).toBe("track");
+    expect(column("/lastfm/scrobble", "album").link).toBe("/lastfm/album");
   });
 
   it("parses only the current schema's tables for the app", () => {
@@ -127,63 +112,33 @@ describe("schemas", () => {
     expect(tables[0]!.columns.map((c) => c.name)).toEqual(["id", "album"]);
   });
 });
-const linksOf = (json: string): Link[] =>
-  (JSON.parse(json) as { links: Link[] }).links;
 
-describe("addInferredLinks", () => {
-  it("infers a link from a UUID column matching a table name", () => {
-    const links = linksOf(addInferredLinks(SAMPLE));
-    // track.album -> album.id, credit.track -> track.id
-    // (credit.artist has no `artist` table here).
-    expect(links).toHaveLength(2);
-    expect(links).toContainEqual({
-      from: { table: "track", column: "album" },
-      to: { table: "album", column: "id" },
-      unique: false,
+describe("schemaLinks", () => {
+  it("lists the declared links among the tables, whatever columns are named", () => {
+    // `credit.artist` names no table here, and `credit.track` is declared.
+    expect(schemaLinks(parseSchemaTables(SAMPLE))).toEqual([
+      { fromTable: "track", fromColumn: "album", toTable: "album" },
+      { fromTable: "credit", fromColumn: "track", toTable: "track" },
+    ]);
+  });
+
+  it("finds no link a column's name alone would suggest", () => {
+    const json = JSON.stringify({
+      tables: [
+        { name: "album", columns: [{ name: "id", type: "UUID" }] },
+        { name: "track", columns: [{ name: "album", type: "UUID" }] },
+      ],
+      links: [],
     });
-    expect(
-      links.some(
-        (l) =>
-          l.from.table === "credit" &&
-          l.from.column === "track" &&
-          l.to.table === "track",
-      ),
-    ).toBe(true);
+    expect(schemaLinks(parseSchemaTables(json))).toEqual([]);
   });
 
-  it("ignores non-UUID and non-matching columns", () => {
-    const input = `{ "tables": [
-      { "name": "track", "columns": [
-        { "name": "id", "type": "UUID" },
-        { "name": "title", "type": "VARCHAR" },
-        { "name": "track", "type": "VARCHAR" }
-      ] }
-    ], "links": [] }`;
-    expect(linksOf(addInferredLinks(input))).toHaveLength(0);
-  });
-
-  it("matches UUID case-insensitively", () => {
-    const input = `{ "tables": [
-      { "name": "album", "columns": [{ "name": "id", "type": "uuid" }] },
-      { "name": "track", "columns": [{ "name": "album", "type": "uuid" }] }
-    ], "links": [] }`;
-    const links = linksOf(addInferredLinks(input));
-    expect(links).toHaveLength(1);
-    expect(links[0].from).toEqual({ table: "track", column: "album" });
-  });
-
-  it("preserves other fields and overwrites links", () => {
-    const input = `{ "tables": [], "links": [{ "stale": true }], "extra": 1 }`;
-    const out = JSON.parse(addInferredLinks(input)) as {
-      links: unknown[];
-      extra: number;
-    };
-    expect(out.links).toHaveLength(0);
-    expect(out.extra).toBe(1);
-  });
-
-  it("throws on JSON without tables", () => {
-    expect(() => addInferredLinks(`{ "nope": 1 }`)).toThrow();
+  it("leaves out a link to a table that isn't among them", () => {
+    // The app's tables alone: `scrobble`'s links start outside them, and
+    // `/lastfm/album` is no table of the app's.
+    expect(schemaLinks(parseSchemaTables(SCHEMAS))).toEqual([
+      { fromTable: "track", fromColumn: "album", toTable: "album" },
+    ]);
   });
 });
 
@@ -276,11 +231,11 @@ describe("naming a table across schemas", () => {
 
   it("goes over the wire as a schema and a name, and back", () => {
     expect(tableRef("/lastfm/artist")).toEqual({
-      tableSchema: "lastfm",
+      schemaName: "lastfm",
       tableName: "artist",
     });
     expect(tableRef("artist")).toEqual({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "artist",
     });
     expect(rowTable(tableRef("/lastfm/artist"))).toBe("/lastfm/artist");

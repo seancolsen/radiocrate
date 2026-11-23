@@ -760,7 +760,7 @@ test("a field's context menu hides it, and brings it back", async ({
       {
         method: "metadata.field.set_visible",
         params: {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
@@ -895,7 +895,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
     {
       method: "metadata.computed_column.set",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "release_decade",
         expression: "",
@@ -915,7 +915,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
     .toEqual({
       method: "metadata.computed_column.set",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "release_decade",
         expression: "album.year",
@@ -959,7 +959,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
     {
       method: "metadata.computed_column.rename",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "tag_count",
         newName: "tag_total",
@@ -978,7 +978,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
     .toEqual([
       {
         method: "metadata.computed_column.delete",
-        params: { tableSchema: "main", tableName: "track", name: "tag_total" },
+        params: { schemaName: "main", tableName: "track", name: "tag_total" },
       },
     ]);
 });
@@ -1019,7 +1019,7 @@ test("one of the app's computed columns takes the user's expression, and is rese
     .toEqual({
       method: "metadata.computed_column.set",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "last_play",
         expression: null,
@@ -1064,7 +1064,7 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
     .toEqual({
       method: "metadata.custom_comparison.set",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "by_label",
         expression: "album.title:@x",
@@ -1083,7 +1083,7 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
     {
       method: "metadata.custom_comparison.rename",
       params: {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "by_label",
         newName: "label",
@@ -1102,7 +1102,7 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
     .toEqual([
       {
         method: "metadata.custom_comparison.delete",
-        params: { tableSchema: "main", tableName: "track", name: "label" },
+        params: { schemaName: "main", tableName: "track", name: "label" },
       },
     ]);
 
@@ -1181,7 +1181,7 @@ test("a related-records field's Querydown is written, and restored", async ({
       {
         method: "metadata.field.set_sorting",
         params: {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           field: {
             multiLink: { relatedTableName: "play", fkColumnName: "track" },
@@ -1215,7 +1215,7 @@ test("a table's context menu hides it, and brings it back", async ({
     .toEqual([
       {
         method: "metadata.table.set_visible",
-        params: { tableSchema: "main", tableName: "role", visible: false },
+        params: { schemaName: "main", tableName: "role", visible: false },
       },
     ]);
   await expect(role).toHaveCount(0);
@@ -1255,7 +1255,7 @@ test("a table dropped in a new place moves there, and is written", async ({
   // The first move gives every table a key, in the new order.
   expect(writes[0].params).toEqual({
     orders: after.map((tableName, i) => ({
-      tableSchema: "main",
+      schemaName: "main",
       tableName,
       order: i + 1,
     })),
@@ -1283,8 +1283,8 @@ test("a table of another schema moves among its schema's tables alone", async ({
   // Only the schema's own tables are given keys, each named by its schema.
   expect(writes[0].params).toEqual({
     orders: [
-      { tableSchema: "lastfm", tableName: "scrobble", order: 1 },
-      { tableSchema: "lastfm", tableName: "artist", order: 2 },
+      { schemaName: "lastfm", tableName: "scrobble", order: 1 },
+      { schemaName: "lastfm", tableName: "artist", order: 2 },
     ],
   });
 });
@@ -1354,7 +1354,7 @@ test("a text search is written once its editor closes, and reset", async ({
       {
         method: "metadata.table.set_querydown",
         params: {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           setting: "defaultTextSearch",
           text: "title:@x",

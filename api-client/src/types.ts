@@ -93,7 +93,7 @@ export type FieldMetadataRow = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, field: FieldRef, visible: boolean, order: number | null, 
+schemaName: string, tableName: string, field: FieldRef, visible: boolean, order: number | null, 
 /**
  * Querydown for the display section of the query behind the field's embedded
  * records. `None` goes by what the form generates.
@@ -108,7 +108,7 @@ export type MetadataFieldSetVisibleParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, field: FieldRef, visible: boolean, };
+schemaName: string, tableName: string, field: FieldRef, visible: boolean, };
 
 export type FieldOrder = { field: FieldRef, order: number, };
 
@@ -116,25 +116,25 @@ export type MetadataFieldSetOrderParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, orders: Array<FieldOrder>, };
+schemaName: string, tableName: string, orders: Array<FieldOrder>, };
 
 export type MetadataFieldSetDisplayParams = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, field: FieldRef, display: string | null, };
+schemaName: string, tableName: string, field: FieldRef, display: string | null, };
 
 export type MetadataFieldSetSortingParams = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, field: FieldRef, sorting: string | null, };
+schemaName: string, tableName: string, field: FieldRef, sorting: string | null, };
 
 export type TableMetadataRow = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, visible: boolean, order: number | null, 
+schemaName: string, tableName: string, visible: boolean, order: number | null, 
 /**
  * The condition a bare string searches the table's records with.
  */
@@ -156,13 +156,13 @@ export type MetadataTableSetVisibleParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, visible: boolean, };
+schemaName: string, tableName: string, visible: boolean, };
 
 export type TableOrder = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, order: number, };
+schemaName: string, tableName: string, order: number, };
 
 export type MetadataTableSetOrderParams = { orders: Array<TableOrder>, };
 
@@ -172,13 +172,13 @@ export type MetadataTableSetQuerydownParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, setting: TableQuerydownSetting, text: string | null, };
+schemaName: string, tableName: string, setting: TableQuerydownSetting, text: string | null, };
 
 export type ComputedColumnRow = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, 
+schemaName: string, tableName: string, name: string, 
 /**
  * Querydown: what the column computes. `None` goes by the app's expression,
  * for one of its own columns.
@@ -189,19 +189,19 @@ export type MetadataComputedColumnRenameParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, newName: string, };
+schemaName: string, tableName: string, name: string, newName: string, };
 
 export type MetadataComputedColumnDeleteParams = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, };
+schemaName: string, tableName: string, name: string, };
 
 export type CustomComparisonRow = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, 
+schemaName: string, tableName: string, name: string, 
 /**
  * Querydown: the condition, `@x` standing for the value compared. `None`
  * goes by the app's condition, for one of its own comparisons.
@@ -212,13 +212,13 @@ export type MetadataCustomComparisonRenameParams = {
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, newName: string, };
+schemaName: string, tableName: string, name: string, newName: string, };
 
 export type MetadataCustomComparisonDeleteParams = { 
 /**
  * The schema of the table, by name: `main` for the app's own tables.
  */
-tableSchema: string, tableName: string, name: string, };
+schemaName: string, tableName: string, name: string, };
 
 export type ColumnSummary = { name: string, 
 /**

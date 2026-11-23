@@ -22,6 +22,12 @@ const col = (name: string, type: string, nullable = false) => ({
   type,
   nullable,
 });
+/** A column that links to the table it's named for, as a row of
+ * `metadata.relationship` declares. */
+const link = (name: string, nullable = false) => ({
+  ...col(name, "UUID", nullable),
+  link: name,
+});
 const TABLES: SchemaTable[] = [
   {
     name: "artist",
@@ -32,8 +38,8 @@ const TABLES: SchemaTable[] = [
     name: "credit",
     columns: [
       col("id", "UUID"),
-      col("track", "UUID"),
-      col("artist", "UUID"),
+      link("track"),
+      link("artist"),
       col("role", "VARCHAR", true),
     ],
     uniqueConstraints: [["id"]],
@@ -46,7 +52,7 @@ const TABLES: SchemaTable[] = [
   // Keyed by a pair: its records can't be told apart by one value for `@id`.
   {
     name: "track_tag",
-    columns: [col("track", "UUID"), col("tag", "VARCHAR")],
+    columns: [link("track"), col("tag", "VARCHAR")],
     uniqueConstraints: [["track", "tag"]],
   },
   // No key at all.
@@ -165,10 +171,10 @@ describe("sections", () => {
   });
 });
 
-// The links of RadioCrate's own schema, give or take: a UUID column named after
-// a table links to it. (`credit` is keyed by `id` here, so that it can have
+// The links of RadioCrate's own schema, give or take, each column named for the
+// table it links to. (`credit` is keyed by `id` here, so that it can have
 // contextual queries.)
-const uuid = (name: string) => col(name, "UUID", name !== "id");
+const uuid = (name: string) => link(name, true);
 const keyed = (name: string, ...columns: SchemaTable["columns"]) => ({
   name,
   columns: [col("id", "UUID"), ...columns],

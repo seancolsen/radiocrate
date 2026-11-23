@@ -1,10 +1,12 @@
-// Schema introspection + convention-based link inference, ported from the shared
-// `introspection` crate (`introspection/src/lib.rs`, `resources/duckdb.sql`).
+// Schema introspection, ported from the shared `introspection` crate
+// (`introspection/src/lib.rs`, `resources/duckdb.sql`).
 //
 // RadioCrate declares no foreign keys (DuckDB can't update FK-referenced rows),
-// so the introspection SQL always emits an empty `links` array; `addInferredLinks`
-// recovers links by convention — a `UUID` column named after a table links to
-// that table's `id`. The enriched JSON is what the Querydown compiler consumes.
+// so its links are declared in `metadata.relationship` instead, each from one
+// column to the primary key of the table it names. The introspection SQL reads
+// them into the document's `links`, in the shape the Querydown compiler takes,
+// so the document goes to the compiler as it is; parsing it puts each link on
+// the column it starts from (`SchemaColumn.link`), for the record editor.
 //
 // Schemas: the JSON lists the tables of every schema, so Querydown can query
 // `#/metadata/field` as well as `#track`. A table outside the current schema
@@ -20,17 +22,15 @@
 // `identifyingColumns`), which decides what counts as "the primary key" of a
 // table — the question the record editor and the results context menu both
 // hang off.
-//
-// NOTE (drift): this mirrors Rust logic that also backs the backend's DML
-// validator. The FK-by-convention rule is stable and tiny; a unit test
-// (schema.test.ts) guards this port against the Rust `SAMPLE` fixture.
 
 /** The introspection SQL, copied verbatim from
  * `introspection/resources/duckdb.sql` without its comments (schema.test.ts
  * holds the two together). Returns a single row with a single JSON text cell
  * describing every table/column of every schema in the database, but for the
- * system schemas and the `temp` database. A table outside the current schema
- * (`main`) carries its schema as a path, as in `"schema": ["metadata"]`. */
+ * system schemas and the `temp` database, and every link declared in
+ * `metadata.relationship`. A table outside the current schema (`main`) carries
+ * its schema as a path, as in `"schema": ["metadata"]`, and so does each end of
+ * a link to or from one. */
 export const INTROSPECTION_SQL = `WITH
   -- Where each schema is, as Querydown writes it: the names before the table's.
   schemas AS (
@@ -74,6 +74,41 @@ export const INTROSPECTION_SQL = `WITH
     FROM duckdb_constraints()
     WHERE constraint_type IN ('UNIQUE', 'PRIMARY KEY')
     GROUP BY ALL
+  ),
+  -- The column each table with a single-column primary key is keyed by: what a link points at.
+  primary_keys AS (
+    SELECT
+      database_name AS table_catalog,
+      schema_name AS table_schema,
+      table_name,
+      constraint_column_names[1] AS column_name
+    FROM duckdb_constraints()
+    WHERE constraint_type = 'PRIMARY KEY' AND len(constraint_column_names) = 1
+  ),
+  -- Each declared relationship whose column and target are there, with both ends' schema paths.
+  links AS (
+    SELECT
+      r.table_name AS from_table,
+      r.column_name AS from_column,
+      fs.path AS from_path,
+      r.target_table_name AS to_table,
+      pk.column_name AS to_column,
+      ts.path AS to_path,
+      c.ordinal_position
+    FROM metadata.relationship r
+    JOIN information_schema.columns c
+      ON c.table_catalog = current_database()
+      AND c.table_schema = r.schema_name
+      AND c.table_name = r.table_name
+      AND c.column_name = r.column_name
+    JOIN schemas fs
+      ON fs.table_catalog = current_database() AND fs.table_schema = r.schema_name
+    JOIN primary_keys pk
+      ON pk.table_catalog = current_database()
+      AND pk.table_schema = r.target_schema_name
+      AND pk.table_name = r.target_table_name
+    JOIN schemas ts
+      ON ts.table_catalog = current_database() AND ts.table_schema = r.target_schema_name
   )
 SELECT (json_object(
   'tables', COALESCE((
@@ -96,11 +131,27 @@ SELECT (json_object(
     FROM tables t
     LEFT JOIN uniques u USING (table_catalog, table_schema, table_name)
   ), '[]'),
-  'links', '[]'::JSON
+  'links', COALESCE((
+    SELECT to_json(list(
+      json_object(
+        'from', CASE
+          WHEN len(l.from_path) = 0 THEN json_object('table', l.from_table, 'column', l.from_column)
+          ELSE json_object('table', l.from_table, 'schema', l.from_path, 'column', l.from_column)
+        END,
+        'to', CASE
+          WHEN len(l.to_path) = 0 THEN json_object('table', l.to_table, 'column', l.to_column)
+          ELSE json_object('table', l.to_table, 'schema', l.to_path, 'column', l.to_column)
+        END,
+        'unique', false
+      )
+      ORDER BY len(l.from_path) > 0, l.from_path, l.from_table, l.ordinal_position, l.to_path,
+        l.to_table
+    ))
+    FROM links l
+  ), '[]')
 ))::VARCHAR AS schema;`;
 
-/** The subset of the introspection document `addInferredLinks` reads. Extra
- * fields (nullability, unique_constraints, …) are preserved verbatim. */
+/** The subset of the introspection document the app reads. */
 interface RawColumn {
   name: string;
   type?: string;
@@ -113,12 +164,26 @@ interface RawTable {
   columns: RawColumn[];
   unique_constraints?: string[][];
 }
+interface RawLinkEnd {
+  table: string;
+  /** The schema's path, outermost first. Absent for the current schema. */
+  schema?: string[];
+  column: string;
+}
+interface RawLink {
+  from: RawLinkEnd;
+  to: RawLinkEnd;
+}
 
 /** One introspected column. */
 export interface SchemaColumn {
   name: string;
   type: string | undefined;
   nullable: boolean;
+  /** The table this column links to (a row of `metadata.relationship`), named
+   * as the app names tables: the column holds the primary key of a record
+   * there. Absent for a column that links nowhere. */
+  link?: string;
 }
 
 /** One introspected table: its columns and its UNIQUE / PRIMARY KEY constraints
@@ -176,11 +241,11 @@ export function querydownTableName(name: string): string | string[] {
 /** A table's name split for the wire: the shape every `metadata.*` row and
  * call names a table with. */
 export function tableRef(name: string): {
-  tableSchema: string;
+  schemaName: string;
   tableName: string;
 } {
   const { schema, table } = splitTableName(name);
-  return { tableSchema: schema, tableName: table };
+  return { schemaName: schema, tableName: table };
 }
 
 /** A table's name split for a DML operation: the table alone in the current
@@ -192,36 +257,72 @@ export function dmlTable(name: string): { schema?: string; table: string } {
 
 /** The name of the table a `metadata.*` row is about. */
 export const rowTable = (row: {
-  tableSchema: string;
+  schemaName: string;
   tableName: string;
-}): string => qualifiedTableName(row.tableSchema, row.tableName);
+}): string => qualifiedTableName(row.schemaName, row.tableName);
 
 // ── Parsing ─────────────────────────────────────────────────────────────────
 
-/** The raw tables of an introspection document, or `[]` for one without a
- * `tables` array (the enriched JSON always has one; this just keeps a malformed
- * payload from throwing on the results path). */
-function rawTables(json: string): RawTable[] {
+/** The raw tables and links of an introspection document, or none for one
+ * without them (the introspection SQL always gives both; this just keeps a
+ * malformed payload from throwing on the results path). */
+function rawDocument(json: string): { tables: RawTable[]; links: RawLink[] } {
   let root: Record<string, unknown>;
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return [];
+    return { tables: [], links: [] };
   }
   const tables = root["tables"];
-  return Array.isArray(tables) ? (tables as RawTable[]) : [];
+  const links = root["links"];
+  return {
+    tables: Array.isArray(tables) ? (tables as RawTable[]) : [],
+    links: Array.isArray(links) ? (links as RawLink[]) : [],
+  };
 }
 
-function toSchemaTable(t: RawTable, name: string): SchemaTable {
-  return {
-    name,
-    columns: (t.columns ?? []).map((c) => ({
-      name: c.name,
-      type: c.type,
-      nullable: c.nullable ?? true,
-    })),
-    uniqueConstraints: t.unique_constraints ?? [],
-  };
+/** How the app names a table at a path: alone in the current schema, by its
+ * schema in another of the database. `undefined` in another database's. */
+function appTableName(
+  schema: readonly string[] | undefined,
+  table: string,
+): string | undefined {
+  if (schema === undefined || schema.length === 0) return table;
+  return schema.length === 1 ? qualifiedTableName(schema[0], table) : undefined;
+}
+
+/** The tables of an introspection document the app names, each with its name,
+ * and its columns with the tables they link to. */
+function namedTables(json: string): { raw: RawTable; table: SchemaTable }[] {
+  const { tables, links } = rawDocument(json);
+  const key = (table: string | undefined, column: string) =>
+    JSON.stringify([table, column]);
+  const targets = new Map<string, string>();
+  for (const { from, to } of links) {
+    const target = appTableName(to.schema, to.table);
+    const fromKey = key(appTableName(from.schema, from.table), from.column);
+    if (target !== undefined && !targets.has(fromKey)) {
+      targets.set(fromKey, target);
+    }
+  }
+  return tables.flatMap((raw) => {
+    const name = appTableName(raw.schema, raw.name);
+    if (name === undefined) return [];
+    const table: SchemaTable = {
+      name,
+      columns: (raw.columns ?? []).map((c) => {
+        const link = targets.get(key(name, c.name));
+        return {
+          name: c.name,
+          type: c.type,
+          nullable: c.nullable ?? true,
+          ...(link === undefined ? {} : { link }),
+        };
+      }),
+      uniqueConstraints: raw.unique_constraints ?? [],
+    };
+    return [{ raw, table }];
+  });
 }
 
 /** Parses an introspection JSON document into the tables of its current schema:
@@ -229,9 +330,9 @@ function toSchemaTable(t: RawTable, name: string): SchemaTable {
  * schemas' tables are left out, so a table of the same name in one of them is
  * never mistaken for an app table. */
 export function parseSchemaTables(json: string): SchemaTable[] {
-  return rawTables(json)
-    .filter((t) => (t.schema ?? []).length === 0)
-    .map((t) => toSchemaTable(t, t.name));
+  return namedTables(json)
+    .filter(({ raw }) => (raw.schema ?? []).length === 0)
+    .map(({ table }) => table);
 }
 
 /** The tables of the database's other schemas (`metadata`, `settings`, the
@@ -240,11 +341,9 @@ export function parseSchemaTables(json: string): SchemaTable[] {
  * lists, beside the current schema's. A table of another attached database is
  * left to the compiler. */
 export function parseOtherSchemaTables(json: string): SchemaTable[] {
-  return rawTables(json).flatMap((t) =>
-    t.schema?.length === 1
-      ? [toSchemaTable(t, qualifiedTableName(t.schema[0], t.name))]
-      : [],
-  );
+  return namedTables(json)
+    .filter(({ raw }) => raw.schema?.length === 1)
+    .map(({ table }) => table);
 }
 
 /** Every table of an introspection document the app lists, as the app store
@@ -286,111 +385,44 @@ export function identifyingColumns(table: SchemaTable): string[] {
   return table.uniqueConstraints[0] ?? [];
 }
 
-/** RadioCrate's foreign-key convention, in one place: a `UUID` column
- * (case-insensitive) named after a table links to that table's `id`. Both link
- * derivations below — the JSON rewrite the compiler consumes, and the structured
- * one the record editor builds its form from — decide with this. */
-function isLinkColumn(
-  columnName: string,
-  columnType: string | undefined,
-  tableNames: ReadonlySet<string>,
-): boolean {
-  return (
-    (columnType ?? "").toUpperCase() === "UUID" && tableNames.has(columnName)
-  );
-}
-
-/** A convention-inferred foreign key: `fromTable.fromColumn` → `toTable.id`.
- * The structured form of the links {@link addInferredLinks} writes into the
- * compiler's schema JSON — what the record editor reads to decide which of a
- * table's columns are scalar linked record fields, and which *other* tables
- * reference it (its multi-record fields). */
+/** A declared link: `fromTable.fromColumn` holds the primary key of a record
+ * of `toTable`. What the record editor reads to decide which of a table's
+ * columns are scalar linked record fields, and which *other* tables reference
+ * it (its multi-record fields). */
 export interface SchemaLink {
   fromTable: string;
   fromColumn: string;
   toTable: string;
 }
 
-/** Every convention-inferred link among `tables` (the current schema's, as
- * `parseSchemaTables` gives them), in table then column order. */
-export function inferLinks(tables: readonly SchemaTable[]): SchemaLink[] {
+/** Every link among `tables` (the current schema's, as `parseSchemaTables`
+ * gives them), in table then column order. A link to a table that isn't among
+ * them is left out. */
+export function schemaLinks(tables: readonly SchemaTable[]): SchemaLink[] {
   const tableNames = new Set(tables.map((t) => t.name));
   const links: SchemaLink[] = [];
   for (const table of tables) {
     for (const column of table.columns) {
-      if (!isLinkColumn(column.name, column.type, tableNames)) continue;
+      if (column.link === undefined || !tableNames.has(column.link)) continue;
       links.push({
         fromTable: table.name,
         fromColumn: column.name,
-        toTable: column.name,
+        toTable: column.link,
       });
     }
   }
   return links;
 }
 
-/** The columns of `table` that link to another table — each holding the `id` of
- * a record there. */
+/** The columns of `table` that link to another of `tables` — each holding the
+ * primary key of a record there. */
 export function linkColumns(
   tables: readonly SchemaTable[],
   table: string,
 ): Set<string> {
   return new Set(
-    inferLinks(tables)
+    schemaLinks(tables)
       .filter((link) => link.fromTable === table)
       .map((link) => link.fromColumn),
   );
-}
-
-/** Rewrites the `links` array of a raw introspection JSON document with
- * convention-inferred links, preserving every other field. Ports
- * `add_inferred_links` + `infer_links` (`introspection/src/lib.rs`): for every
- * `UUID` column (case-insensitive) whose name is also a table name, emit a link
- * from that column to `<name>.id`. The table is looked for in the column's own
- * schema first, then in the current one, so a table in another schema can link
- * to the app's, and an end outside the current schema carries its `schema`.
- * Each link carries `"unique": false`, matching Querydown's `PrimitiveLink`.
- * Throws if the JSON has no `tables`. */
-export function addInferredLinks(rawJson: string): string {
-  const root = JSON.parse(rawJson) as Record<string, unknown>;
-  const tables = root["tables"];
-  if (!Array.isArray(tables)) {
-    throw new Error(
-      "Introspected schema JSON did not match the expected shape: missing `tables`.",
-    );
-  }
-  const rawTables = tables as RawTable[];
-  // Each schema's table names, keyed by the schema's path.
-  const schemaKey = (schema: readonly string[]) => JSON.stringify(schema);
-  const tableNames = new Map<string, Set<string>>();
-  for (const table of rawTables) {
-    const key = schemaKey(table.schema ?? []);
-    const names = tableNames.get(key) ?? new Set<string>();
-    names.add(table.name);
-    tableNames.set(key, names);
-  }
-  const namesIn = (schema: readonly string[]) =>
-    tableNames.get(schemaKey(schema)) ?? new Set<string>();
-  const end = (schema: readonly string[], table: string, column: string) =>
-    schema.length === 0 ? { table, column } : { table, schema, column };
-
-  const links: unknown[] = [];
-  for (const table of rawTables) {
-    const schema = table.schema ?? [];
-    for (const col of table.columns) {
-      const toSchema = isLinkColumn(col.name, col.type, namesIn(schema))
-        ? schema
-        : isLinkColumn(col.name, col.type, namesIn([]))
-          ? []
-          : undefined;
-      if (toSchema === undefined) continue;
-      links.push({
-        from: end(schema, table.name, col.name),
-        to: end(toSchema, col.name, "id"),
-        unique: false,
-      });
-    }
-  }
-  root["links"] = links;
-  return JSON.stringify(root);
 }

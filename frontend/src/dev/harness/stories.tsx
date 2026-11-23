@@ -342,7 +342,7 @@ function seedTrackFields(stores: Stores): void {
 
 /** A computed column of the user's own on tracks: how many tags it has. */
 const TAGCOUNT_COLUMN: ComputedColumnRow = {
-  tableSchema: "main",
+  schemaName: "main",
   tableName: "track",
   name: "tag_count",
   expression: "#track_tag",
@@ -1815,7 +1815,7 @@ export const STORIES: Record<string, Story> = {
     (stores) =>
       seedComputedColumns(stores, [
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           name: "year",
           expression: "album.year + 1",
@@ -1835,7 +1835,7 @@ export const STORIES: Record<string, Story> = {
     (stores) =>
       seedComputedColumns(stores, [
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "album",
           name: "decade",
           expression: "yeer / 10 * 10",
@@ -1928,7 +1928,7 @@ export const STORIES: Record<string, Story> = {
     (stores) =>
       seedCustomComparisons(stores, [
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           name: "album_title",
           expression: "album.title:@x",
@@ -1943,7 +1943,7 @@ export const STORIES: Record<string, Story> = {
     (stores) =>
       seedCustomComparisons(stores, [
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "album",
           name: "label",
           expression: "labl:@x",
@@ -2422,13 +2422,13 @@ export const STORIES: Record<string, Story> = {
   "record-editor/computed-columns": withComputedColumns(recordEditor([1]), [
     TAGCOUNT_COLUMN,
     {
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       name: "label",
       expression: "album.label",
     },
     {
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       name: "unwritten",
       expression: "",

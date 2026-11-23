@@ -13,13 +13,15 @@ function definition(over: Partial<QueryDefinition> = {}): QueryDefinition {
 }
 
 const uuid = (name: string) => ({ name, type: "UUID", nullable: false });
+/** A column that links to the table it's named for. */
+const link = (name: string) => ({ ...uuid(name), link: name });
 const TABLES: SchemaTable[] = [
   { name: "track", columns: [uuid("id")], uniqueConstraints: [["id"]] },
   { name: "album", columns: [uuid("id")], uniqueConstraints: [["id"]] },
   { name: "artist", columns: [uuid("id")], uniqueConstraints: [["id"]] },
   {
     name: "credit",
-    columns: [uuid("track"), uuid("artist")],
+    columns: [link("track"), link("artist")],
     uniqueConstraints: [["track", "artist"]],
   },
 ];

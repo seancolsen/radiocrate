@@ -109,10 +109,16 @@ const col = (name: string, type: string, nullable = false) => ({
   type,
   nullable,
 });
+/** A column that links to the table it's named for, as a row of
+ * `metadata.relationship` declares. */
+const link = (name: string, nullable = false) => ({
+  ...col(name, "UUID", nullable),
+  link: name,
+});
 const TABLES: SchemaTable[] = [
-  // A table `track` points *at*, by the UUID-column-named-after-a-table
-  // convention `inferLinks` reads — which is what makes `track.album` a scalar
-  // linked record field rather than an id to type.
+  // A table `track` points *at*, through the link declared on `track.album` —
+  // which is what makes it a scalar linked record field rather than an id to
+  // type.
   {
     name: "album",
     columns: [col("id", "UUID"), col("title", "VARCHAR")],
@@ -124,17 +130,13 @@ const TABLES: SchemaTable[] = [
       col("id", "UUID"),
       col("title", "VARCHAR"),
       col("genre", "VARCHAR", true),
-      col("album", "UUID", true),
+      link("album", true),
     ],
     uniqueConstraints: [["id"]],
   },
   {
     name: "credit",
-    columns: [
-      col("id", "UUID"),
-      col("track", "UUID"),
-      col("role", "VARCHAR", true),
-    ],
+    columns: [col("id", "UUID"), link("track"), col("role", "VARCHAR", true)],
     uniqueConstraints: [["id"]],
   },
   // Has a required timestamp, which a record drafted into it starts at "now".
@@ -142,7 +144,7 @@ const TABLES: SchemaTable[] = [
     name: "play",
     columns: [
       col("id", "UUID"),
-      col("track", "UUID"),
+      link("track"),
       col("played_at", "TIMESTAMP"),
       col("skipped_at", "TIMESTAMP", true),
     ],
@@ -156,7 +158,7 @@ const TABLES: SchemaTable[] = [
   {
     name: "track_tag",
     columns: [
-      col("track", "UUID"),
+      link("track"),
       col("tag", "VARCHAR"),
       col("note", "VARCHAR", true),
     ],
@@ -2564,7 +2566,9 @@ describe("computed columns", () => {
         ? {
             ...table,
             columns: table.columns.map((column) =>
-              column.name === "album" ? { ...column, name: "disc" } : column,
+              column.name === "album"
+                ? { ...column, name: "disc", link: "disc" }
+                : column,
             ),
           }
         : table,
@@ -2574,13 +2578,13 @@ describe("computed columns", () => {
   beforeEach(() => {
     rows = [
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "disc",
         name: "decade",
         expression: "year / 10",
       },
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "disc",
         name: "era",
         expression: "decade",
@@ -2743,7 +2747,7 @@ describe("computed columns", () => {
   it("read as empty, unasked, with no expression to compute", async () => {
     rows = [
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "disc",
         name: "unwritten",
         expression: "",
@@ -2819,7 +2823,7 @@ describe("computed columns", () => {
       rows = [
         ...rows,
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "disc",
           name: "epoch",
           expression: "1",
@@ -2919,7 +2923,7 @@ describe("computed columns", () => {
 
     rows = [
       ...rows,
-      { tableSchema: "main", tableName: "disc", name: "fresh", expression: "" },
+      { schemaName: "main", tableName: "disc", name: "fresh", expression: "" },
     ];
     model.syncComputedColumns();
     model.finishAddComputed("fresh");

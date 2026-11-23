@@ -1738,7 +1738,7 @@ describe("showChildRecords", () => {
           name: "track",
           columns: [
             col("id", "UUID"),
-            col("album", "UUID"),
+            { ...col("album", "UUID"), link: "album" },
             col("title", "VARCHAR"),
           ],
           uniqueConstraints: [["id"]],
@@ -1799,7 +1799,7 @@ describe("openRow", () => {
           name: "track",
           columns: [
             col("id", "UUID"),
-            col("album", "UUID"),
+            { ...col("album", "UUID"), link: "album" },
             col("title", "VARCHAR"),
           ],
           uniqueConstraints: [["id"]],
@@ -5023,7 +5023,7 @@ describe("field metadata", () => {
   it("loads rows by table and field", async () => {
     vi.mocked(metadataFieldList).mockResolvedValueOnce([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         field: TITLE,
         visible: false,
@@ -5056,7 +5056,7 @@ describe("field metadata", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
       expect(metadataFieldSetDisplay).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         field: TITLE,
         display: "$a $b",
@@ -5075,7 +5075,7 @@ describe("field metadata", () => {
       await vi.advanceTimersByTimeAsync(IDLE);
       expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
       expect(metadataFieldSetSorting).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         field: TITLE,
         sorting: "\\\\a",
@@ -5098,7 +5098,7 @@ describe("field metadata", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(metadataFieldSetDisplay).toHaveBeenCalledTimes(1);
       expect(metadataFieldSetDisplay).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         field: TITLE,
         display: null,
@@ -5133,7 +5133,7 @@ describe("field metadata", () => {
     expect(entry("track", TITLE)).toEqual(fieldMeta(false, null));
     await settle();
     expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       field: TITLE,
       visible: false,
@@ -5143,7 +5143,7 @@ describe("field metadata", () => {
     expect(entry("track", TITLE)).toEqual(fieldMeta(true, null));
     await settle();
     expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       field: TITLE,
       visible: true,
@@ -5159,7 +5159,7 @@ describe("field metadata", () => {
     expect(entry("album", link!)?.visible).toBe(false);
     await settle();
     expect(metadataFieldSetVisible).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       field: link,
       visible: false,
@@ -5191,7 +5191,7 @@ describe("field metadata", () => {
     );
     await settle();
     expect(metadataFieldSetOrder).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       orders: expected.map((field, i) => ({ field, order: i + 1 })),
     });
@@ -5211,7 +5211,7 @@ describe("field metadata", () => {
     expect(entry("album", second).order).toBe(2.5);
     await settle();
     expect(metadataFieldSetOrder).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       orders: [{ field: second, order: 2.5 }],
     });
@@ -5308,7 +5308,7 @@ describe("contextual queries", () => {
     expect(operations(0)).toEqual([
       expect.objectContaining({
         operation: "insert",
-        schema: "app",
+        schema: "metadata",
         table: "contextual_query",
         values: expect.objectContaining({
           id,
@@ -5339,7 +5339,7 @@ describe("contextual queries", () => {
       {
         operation: "update",
         id: "op1",
-        schema: "app",
+        schema: "metadata",
         table: "contextual_query",
         where: { id },
         values: { name: "b" },
@@ -5410,7 +5410,7 @@ describe("contextual queries", () => {
         {
           operation: "delete",
           id: "op1",
-          schema: "app",
+          schema: "metadata",
           table: "contextual_query",
           where: { id },
         },
@@ -5683,7 +5683,7 @@ describe("table settings", () => {
   it("loads rows by table", async () => {
     vi.mocked(metadataTableList).mockResolvedValueOnce([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "role",
         visible: false,
         order: 3,
@@ -5709,7 +5709,7 @@ describe("table settings", () => {
     expect(selectTableSettings(state(), "role").visible).toBe(false);
     await settle();
     expect(metadataTableSetVisible).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "role",
       visible: false,
     });
@@ -5748,7 +5748,7 @@ describe("table settings", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(metadataTableSetQuerydown).toHaveBeenCalledTimes(1);
       expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         setting: "defaultTextSearch",
         text: "title:@x",
@@ -5778,7 +5778,7 @@ describe("table settings", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(metadataTableSetQuerydown).toHaveBeenCalledTimes(1);
       expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         setting: "recordPickerDisplay",
         text: null,
@@ -5790,7 +5790,7 @@ describe("table settings", () => {
       bundle.actions.flushTableQuerydown("track", "recordPickerSorting");
       await vi.advanceTimersByTimeAsync(0);
       expect(metadataTableSetQuerydown).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         setting: "recordPickerSorting",
         text: "",
@@ -5844,7 +5844,7 @@ describe("computed columns", () => {
   it("loads the user's rows", async () => {
     vi.mocked(metadataComputedColumnList).mockResolvedValueOnce([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "decade",
         expression: "year / 10",
@@ -5872,7 +5872,7 @@ describe("computed columns", () => {
     expect(name).toBe("release_decade");
     expect(rows()).toEqual([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "release_decade",
         expression: "",
@@ -5890,7 +5890,7 @@ describe("computed columns", () => {
 
     await settle();
     expect(metadataComputedColumnSet).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "release_decade",
       expression: "",
@@ -5928,7 +5928,7 @@ describe("computed columns", () => {
       ).toBe("era");
       expect(rows()).toEqual([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "album",
           name: "era",
           expression: "",
@@ -5947,7 +5947,7 @@ describe("computed columns", () => {
       // One call renames both in the database: no metadata is written apart.
       expect(metadataComputedColumnRename).toHaveBeenCalledTimes(1);
       expect(metadataComputedColumnRename).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "decade",
         newName: "era",
@@ -5979,7 +5979,7 @@ describe("computed columns", () => {
         bundle.actions.renameComputedColumn("album", "decade", "era");
         await vi.advanceTimersByTimeAsync(0);
         expect(metadataComputedColumnSet).toHaveBeenCalledWith({
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "album",
           name: "decade",
           expression: "year",
@@ -5991,7 +5991,7 @@ describe("computed columns", () => {
         expect(set).toBeLessThan(renamed!);
         expect(rows()).toEqual([
           {
-            tableSchema: "main",
+            schemaName: "main",
             tableName: "album",
             name: "era",
             expression: "year",
@@ -6042,7 +6042,7 @@ describe("computed columns", () => {
     ).toBeUndefined();
     await settle();
     expect(metadataComputedColumnDelete).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "decade",
     });
@@ -6077,7 +6077,7 @@ describe("computed columns", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(metadataComputedColumnSet).toHaveBeenCalledTimes(1);
       expect(metadataComputedColumnSet).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "decade",
         expression: "year / 10",
@@ -6089,7 +6089,7 @@ describe("computed columns", () => {
       setComputedColumnExpression("track", "year", "album.year + 1");
       expect(rows()).toEqual([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           name: "year",
           expression: "album.year + 1",
@@ -6106,7 +6106,7 @@ describe("computed columns", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(metadataComputedColumnSet).toHaveBeenCalledTimes(1);
       expect(metadataComputedColumnSet).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "year",
         expression: null,
@@ -6125,7 +6125,7 @@ describe("computed columns", () => {
       bundle.actions.flushComputedColumn("track", "year");
       await vi.advanceTimersByTimeAsync(0);
       expect(metadataComputedColumnSet).toHaveBeenCalledWith({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "year",
         expression: "1999",
@@ -6139,7 +6139,7 @@ describe("computed columns", () => {
       bundle.actions.setComputedColumnExpression("album", "decade", "year");
       vi.mocked(metadataComputedColumnList).mockResolvedValueOnce([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "album",
           name: "decade",
           expression: "",
@@ -6185,7 +6185,7 @@ describe("custom comparisons", () => {
   it("loads the user's rows", async () => {
     vi.mocked(metadataCustomComparisonList).mockResolvedValueOnce([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "label",
         expression: "title:@x",
@@ -6214,7 +6214,7 @@ describe("custom comparisons", () => {
     );
     await settle();
     expect(metadataCustomComparisonSet).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "by_label",
       expression: "",
@@ -6222,7 +6222,7 @@ describe("custom comparisons", () => {
     bundle.actions.flushCustomComparison("album", name);
     await settle();
     expect(metadataCustomComparisonSet).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "by_label",
       expression: "title:@x",
@@ -6244,7 +6244,7 @@ describe("custom comparisons", () => {
     );
     await settle();
     expect(metadataCustomComparisonSet).toHaveBeenLastCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       name: "artist",
       expression: null,
@@ -6259,7 +6259,7 @@ describe("custom comparisons", () => {
     ).toBe("imprint");
     expect(rows()).toEqual([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         name: "imprint",
         expression: "",
@@ -6274,7 +6274,7 @@ describe("custom comparisons", () => {
     await settle();
     expect(metadataCustomComparisonRename).toHaveBeenCalledTimes(1);
     expect(metadataCustomComparisonRename).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "label",
       newName: "imprint",
@@ -6289,7 +6289,7 @@ describe("custom comparisons", () => {
     await settle();
     expect(metadataCustomComparisonDelete).toHaveBeenCalledTimes(1);
     expect(metadataCustomComparisonDelete).toHaveBeenCalledWith({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "album",
       name: "label",
     });

@@ -84,7 +84,6 @@ import {
   type LogSource,
 } from "../../log/log";
 import {
-  addInferredLinks,
   INTROSPECTION_SQL,
   parseSchemaTables,
   readSchemaTables,
@@ -3999,7 +3998,7 @@ export function createAppActions(
         return true;
       }
       case "schema": {
-        const json = addInferredLinks(await runSqlScalar(INTROSPECTION_SQL));
+        const json = await runSqlScalar(INTROSPECTION_SQL);
         if (superseded()) return false;
         if (json === get().schema.json) return true;
         asRemote(() =>
@@ -4082,14 +4081,13 @@ export function createAppActions(
       }
     },
     loadSchema: async () => {
-      // The enriched introspection schema JSON — run the introspection SQL,
-      // read the single JSON cell, apply RadioCrate's link inference.
+      // The introspection schema JSON — run the introspection SQL and read the
+      // single JSON cell, links and all.
       set((s) => {
         s.schema.status = "loading";
       });
       try {
-        const raw = await runSqlScalar(INTROSPECTION_SQL);
-        const json = addInferredLinks(raw);
+        const json = await runSqlScalar(INTROSPECTION_SQL);
         set((s) => {
           s.schema = castDraft({
             status: "ready",

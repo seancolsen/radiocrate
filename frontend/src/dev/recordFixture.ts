@@ -17,7 +17,6 @@
 // for — rather than being a SQL engine. If the generators learn a
 // new shape, this learns it too.
 
-import { addInferredLinks } from "../query/schema";
 import { compile_sections } from "querydown-js";
 import { querydownReady } from "../query/querydown";
 import { columnMetadataFromAnnotation } from "../query/columns";
@@ -38,176 +37,216 @@ const T = (
   unique_constraints: uniques,
 });
 
-/** The enriched introspection JSON — RadioCrate's schema, with the links the
- * compiler and the form both read inferred into it. */
-export const FIXTURE_SCHEMA_JSON = addInferredLinks(
-  JSON.stringify({
-    tables: [
-      T(
-        "album",
-        [
-          ["id", "UUID"],
-          ["title", "VARCHAR", true],
-          ["year", "USMALLINT", true],
-        ],
-        [["id"]],
-      ),
-      T(
-        "artist",
-        [
-          ["id", "UUID"],
-          ["name", "VARCHAR"],
-        ],
-        [["id"], ["name"]],
-      ),
-      T(
-        "credit",
-        [
-          ["track", "UUID"],
-          ["artist", "UUID"],
-          ["order", "FLOAT", true],
-          // Dropped and re-added as a link by migration 0003, which is why it
-          // trails the columns it used to sit among.
-          ["role", "UUID", true],
-        ],
-        [["track", "artist"]],
-      ),
-      T(
-        "file",
-        [
-          ["id", "UUID"],
-          ["path", "VARCHAR"],
-          ["size", "UINTEGER"],
-          ["format", "format"],
-          ["duration", "INTERVAL"],
-          ["added", "TIMESTAMP"],
-        ],
-        [["id"], ["path"]],
-      ),
-      T(
-        "play",
-        [
-          ["track", "UUID"],
-          ["timestamp", "TIMESTAMP_S"],
-        ],
-        [["track", "timestamp"]],
-      ),
-      T(
-        "rating",
-        [
-          ["id", "UUID"],
-          ["value", "FLOAT"],
-          ["symbol", "VARCHAR", true],
-          ["description", "VARCHAR", true],
-        ],
-        [["id"], ["value"]],
-      ),
-      T(
-        "role",
-        [
-          ["id", "UUID"],
-          ["name", "VARCHAR"],
-        ],
-        [["id"], ["name"]],
-      ),
-      T(
-        "tag",
-        [
-          ["id", "UUID"],
-          ["name", "VARCHAR"],
-        ],
-        [["id"], ["name"]],
-      ),
-      T(
-        "track",
-        [
-          ["id", "UUID"],
-          ["file", "UUID"],
-          ["title", "VARCHAR"],
-          ["album", "UUID", true],
-          ["disc_number", "UTINYINT", true],
-          ["track_number", "UTINYINT", true],
-          ["rating", "UUID", true],
-        ],
-        [["id"]],
-      ),
-      T(
-        "track_tag",
-        [
-          ["track", "UUID"],
-          ["tag", "UUID"],
-        ],
-        [["track", "tag"]],
-      ),
-    ],
-    links: [],
-  }),
-);
+/** The links among the fixture's tables, `[table, column, target]`, as
+ * migration 0019 declares them in `metadata.relationship`: each column holds
+ * the `id` of a record of its target. Each is named for its target, which the
+ * fake query runner below relies on. */
+const MAIN_LINKS: readonly (readonly [string, string, string])[] = [
+  ["credit", "track", "track"],
+  ["credit", "artist", "artist"],
+  ["credit", "role", "role"],
+  ["play", "track", "track"],
+  ["track", "file", "file"],
+  ["track", "album", "album"],
+  ["track", "rating", "rating"],
+  ["track_tag", "track", "track"],
+  ["track_tag", "tag", "tag"],
+];
+
+/** One link as the introspection SQL lists it: each end with its schema's
+ * path, unless that's `main`. */
+const L = (
+  [fromSchema, fromTable, column]: [string | undefined, string, string],
+  [toSchema, toTable]: [string | undefined, string],
+) => ({
+  from: {
+    table: fromTable,
+    ...(fromSchema === undefined ? {} : { schema: [fromSchema] }),
+    column,
+  },
+  to: {
+    table: toTable,
+    ...(toSchema === undefined ? {} : { schema: [toSchema] }),
+    column: "id",
+  },
+  unique: false,
+});
+
+/** The introspection JSON — RadioCrate's schema, with the links the compiler
+ * and the form both read. */
+export const FIXTURE_SCHEMA_JSON = JSON.stringify({
+  tables: [
+    T(
+      "album",
+      [
+        ["id", "UUID"],
+        ["title", "VARCHAR", true],
+        ["year", "USMALLINT", true],
+      ],
+      [["id"]],
+    ),
+    T(
+      "artist",
+      [
+        ["id", "UUID"],
+        ["name", "VARCHAR"],
+      ],
+      [["id"], ["name"]],
+    ),
+    T(
+      "credit",
+      [
+        ["track", "UUID"],
+        ["artist", "UUID"],
+        ["order", "FLOAT", true],
+        // Dropped and re-added as a link by migration 0003, which is why it
+        // trails the columns it used to sit among.
+        ["role", "UUID", true],
+      ],
+      [["track", "artist"]],
+    ),
+    T(
+      "file",
+      [
+        ["id", "UUID"],
+        ["path", "VARCHAR"],
+        ["size", "UINTEGER"],
+        ["format", "format"],
+        ["duration", "INTERVAL"],
+        ["added", "TIMESTAMP"],
+      ],
+      [["id"], ["path"]],
+    ),
+    T(
+      "play",
+      [
+        ["track", "UUID"],
+        ["timestamp", "TIMESTAMP_S"],
+      ],
+      [["track", "timestamp"]],
+    ),
+    T(
+      "rating",
+      [
+        ["id", "UUID"],
+        ["value", "FLOAT"],
+        ["symbol", "VARCHAR", true],
+        ["description", "VARCHAR", true],
+      ],
+      [["id"], ["value"]],
+    ),
+    T(
+      "role",
+      [
+        ["id", "UUID"],
+        ["name", "VARCHAR"],
+      ],
+      [["id"], ["name"]],
+    ),
+    T(
+      "tag",
+      [
+        ["id", "UUID"],
+        ["name", "VARCHAR"],
+      ],
+      [["id"], ["name"]],
+    ),
+    T(
+      "track",
+      [
+        ["id", "UUID"],
+        ["file", "UUID"],
+        ["title", "VARCHAR"],
+        ["album", "UUID", true],
+        ["disc_number", "UTINYINT", true],
+        ["track_number", "UTINYINT", true],
+        ["rating", "UUID", true],
+      ],
+      [["id"]],
+    ),
+    T(
+      "track_tag",
+      [
+        ["track", "UUID"],
+        ["tag", "UUID"],
+      ],
+      [["track", "tag"]],
+    ),
+  ],
+  links: MAIN_LINKS.map(([table, column, target]) =>
+    L([undefined, table, column], [undefined, target]),
+  ),
+});
 
 /** The fixture's schema with two more beside `main`, as a database has them
  * once the user has added a schema of their own: the app's `metadata`, and the
  * user's `lastfm`, whose `scrobble` links to the app's `track` and whose
  * `artist` shares its name with the app's. For the stories about other
  * schemas; the rest keep to the app's own tables. */
-export const FIXTURE_SCHEMAS_JSON = addInferredLinks(
-  JSON.stringify({
-    tables: [
-      ...(JSON.parse(FIXTURE_SCHEMA_JSON) as { tables: unknown[] }).tables,
-      {
-        ...T(
-          "artist",
-          [
-            ["mbid", "VARCHAR"],
-            ["name", "VARCHAR"],
-          ],
-          [["mbid"]],
-        ),
-        schema: ["lastfm"],
-      },
-      {
-        ...T(
-          "scrobble",
-          [
-            ["id", "UUID"],
-            ["track", "UUID", true],
-            ["artist", "VARCHAR"],
-            ["title", "VARCHAR"],
-            ["played_at", "TIMESTAMP"],
-          ],
-          [["id"]],
-        ),
-        schema: ["lastfm"],
-      },
-      {
-        ...T(
-          "computed_column",
-          [
-            ["table_schema", "VARCHAR"],
-            ["table_name", "VARCHAR"],
-            ["name", "VARCHAR"],
-            ["expression", "VARCHAR", true],
-          ],
-          [["table_schema", "table_name", "name"]],
-        ),
-        schema: ["metadata"],
-      },
-      {
-        ...T(
-          "table",
-          [
-            ["table_schema", "VARCHAR"],
-            ["table_name", "VARCHAR"],
-            ["visible", "BOOLEAN"],
-            ["order", "DOUBLE", true],
-          ],
-          [["table_schema", "table_name"]],
-        ),
-        schema: ["metadata"],
-      },
-    ],
-    links: [],
-  }),
-);
+const FIXTURE_SCHEMA = JSON.parse(FIXTURE_SCHEMA_JSON) as {
+  tables: unknown[];
+  links: unknown[];
+};
+export const FIXTURE_SCHEMAS_JSON = JSON.stringify({
+  tables: [
+    ...FIXTURE_SCHEMA.tables,
+    {
+      ...T(
+        "artist",
+        [
+          ["mbid", "VARCHAR"],
+          ["name", "VARCHAR"],
+        ],
+        [["mbid"]],
+      ),
+      schema: ["lastfm"],
+    },
+    {
+      ...T(
+        "scrobble",
+        [
+          ["id", "UUID"],
+          ["track", "UUID", true],
+          ["artist", "VARCHAR"],
+          ["title", "VARCHAR"],
+          ["played_at", "TIMESTAMP"],
+        ],
+        [["id"]],
+      ),
+      schema: ["lastfm"],
+    },
+    {
+      ...T(
+        "computed_column",
+        [
+          ["schema_name", "VARCHAR"],
+          ["table_name", "VARCHAR"],
+          ["name", "VARCHAR"],
+          ["expression", "VARCHAR", true],
+        ],
+        [["schema_name", "table_name", "name"]],
+      ),
+      schema: ["metadata"],
+    },
+    {
+      ...T(
+        "table",
+        [
+          ["schema_name", "VARCHAR"],
+          ["table_name", "VARCHAR"],
+          ["visible", "BOOLEAN"],
+          ["order", "DOUBLE", true],
+        ],
+        [["schema_name", "table_name"]],
+      ),
+      schema: ["metadata"],
+    },
+  ],
+  links: [
+    ...FIXTURE_SCHEMA.links,
+    L(["lastfm", "scrobble", "track"], [undefined, "track"]),
+  ],
+});
 
 /** One fixture row: column → value, `null` for NULL. */
 type Row = Record<string, string | null>;
@@ -382,11 +421,12 @@ function matches(base: string, row: Row, condition: Condition): boolean {
   return (cell ?? "").toLowerCase().includes(condition.value.toLowerCase());
 }
 
-/** The columns of `table` that link to another table, by the naming
- * convention the compiler's inferred links read: a column named for a table. */
+/** The columns of `table` that link to another table: each named for the
+ * table it links to (`MAIN_LINKS`). */
 function linkColumns(table: string): string[] {
-  const columns = new Set((TABLE_ROWS[table] ?? []).flatMap(Object.keys));
-  return [...columns].filter((column) => column in TABLE_ROWS);
+  return MAIN_LINKS.filter(([from]) => from === table).map(
+    ([, column]) => column,
+  );
 }
 
 /** The rows of `table` related to `row` of `base`, along the shortest of the
@@ -431,9 +471,8 @@ function listOf(values: readonly string[]): string {
 }
 
 /** Reads a column path out of a row: `title`, or `artist.name` — a hop
- * through the foreign key named by each part but the last, which the fixture
- * resolves the way the compiler's inferred links do (`<column>` →
- * `<column>.id`), so `track.album.id` takes two. */
+ * through the link named by each part but the last, which goes to the `id` of
+ * the table it's named for (`MAIN_LINKS`), so `track.album.id` takes two. */
 function readPath(base: string, row: Row, path: string): string | null {
   const [first, ...rest] = path.split(".");
   if (rest.length === 0) return row[first] ?? null;

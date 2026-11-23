@@ -554,7 +554,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_display",
           params: {
-            tableSchema: "main",
+            schemaName: "main",
             tableName: "track",
             field: { columnName: "file" },
             display: "$id",
@@ -608,7 +608,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_display",
           params: {
-            tableSchema: "main",
+            schemaName: "main",
             tableName: "track",
             field: { columnName: "file" },
             display: null,
@@ -651,7 +651,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_sorting",
           params: {
-            tableSchema: "main",
+            schemaName: "main",
             tableName: "track",
             field: {
               multiLink: {
@@ -893,7 +893,7 @@ test.describe("hiding fields", () => {
       .poll(() => rpcCalls(page, "metadata.field.set_visible"))
       .toEqual([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
@@ -926,13 +926,13 @@ test.describe("hiding fields", () => {
       .poll(() => rpcCalls(page, "metadata.field.set_visible"))
       .toEqual([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
         },
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: true,
@@ -1040,7 +1040,7 @@ test.describe("rearranging fields", () => {
     expect((await fieldNames(stage)).slice(0, 2)).toEqual(["id", "title"]);
     await expect.poll(async () => (await writes()).length).toBe(2);
     expect((await writes())[1]).toEqual({
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "track",
       orders: [{ field: { columnName: "id" }, order: 0 }],
     });
@@ -1441,7 +1441,7 @@ test.describe("computed columns", () => {
       .poll(() => calls(page, "metadata.computed_column.set"))
       .toEqual([
         {
-          tableSchema: "main",
+          schemaName: "main",
           tableName: "track",
           name: "year",
           expression: "track_number",
@@ -1464,7 +1464,7 @@ test.describe("computed columns", () => {
         (await calls(page, "metadata.computed_column.set")).at(-1),
       )
       .toEqual({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "year",
         expression: null,
@@ -1507,7 +1507,7 @@ test.describe("computed columns", () => {
     ).toHaveCount(0);
     expect(await calls(page, "metadata.computed_column.set")).toEqual([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "album_year",
         expression: "",
@@ -1524,7 +1524,7 @@ test.describe("computed columns", () => {
         (await calls(page, "metadata.computed_column.set")).at(-1),
       )
       .toEqual({
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "album_year",
         expression: "file.added",
@@ -1567,7 +1567,7 @@ test.describe("computed columns", () => {
     await expect(computedRow(stage, "tags_applied")).toContainText("2");
     expect(await calls(page, "metadata.computed_column.rename")).toEqual([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "tag_count",
         newName: "tags_applied",
@@ -1589,7 +1589,7 @@ test.describe("computed columns", () => {
     await expect(fieldLabelOf(stage, "title_2")).toHaveCount(0);
     await expect
       .poll(() => calls(page, "metadata.computed_column.delete"))
-      .toEqual([{ tableSchema: "main", tableName: "track", name: "title_2" }]);
+      .toEqual([{ schemaName: "main", tableName: "track", name: "title_2" }]);
   });
 
   test("a long value, open, shows whole below its label", async ({ page }) => {
@@ -1678,7 +1678,7 @@ test.describe("contextual queries", () => {
             {
               operation: "update",
               id: "op1",
-              schema: "app",
+              schema: "metadata",
               table: "contextual_query",
               where: { id: "query-featured" },
               values: { name: "guests" },
@@ -1720,7 +1720,7 @@ test.describe("contextual queries", () => {
       operations: [
         {
           operation: "insert",
-          schema: "app",
+          schema: "metadata",
           table: "contextual_query",
           values: { table_name: "track", name: "credited" },
         },
@@ -1780,7 +1780,7 @@ test.describe("contextual queries", () => {
         operations: [
           {
             operation: "update",
-            schema: "app",
+            schema: "metadata",
             table: "contextual_query",
             where: { id: "query-featured" },
           },

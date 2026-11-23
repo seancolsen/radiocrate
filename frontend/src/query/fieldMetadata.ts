@@ -66,8 +66,8 @@ export function groupFieldMetadata(
   rows: readonly FieldMetadataRow[],
 ): MetadataByTable {
   const tables: Record<string, Record<string, FieldMetadata>> = {};
-  for (const { tableSchema, tableName, field, ...metadata } of rows) {
-    const table = qualifiedTableName(tableSchema, tableName);
+  for (const { schemaName, tableName, field, ...metadata } of rows) {
+    const table = qualifiedTableName(schemaName, tableName);
     (tables[table] ??= {})[fieldRefKey(field)] = metadata;
   }
   return tables;

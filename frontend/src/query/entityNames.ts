@@ -5,7 +5,8 @@
 
 /** Table name → `[singular, plural]` noun, by the table's name as the app
  * gives it (`qualifiedTableName`): alone in `main`, by its schema elsewhere,
- * as the app's own records in `app` are (migration 0018). Multi-word tables
+ * as the app's own records in `app` are (migration 0018), and those in
+ * `metadata` (migration 0019). Multi-word tables
  * drop their underscores (`playlist_track` → "playlist track").
  *
  * KEEP THIS IN STEP WITH THE SCHEMA: every migration that adds, renames or
@@ -18,7 +19,7 @@ export const ENTITY_NAMES: Readonly<Record<string, readonly [string, string]>> =
   {
     album: ["album", "albums"],
     artist: ["artist", "artists"],
-    "/app/contextual_query": ["contextual query", "contextual queries"],
+    "/metadata/contextual_query": ["contextual query", "contextual queries"],
     credit: ["credit", "credits"],
     deletion: ["deletion", "deletions"],
     file: ["file", "files"],
@@ -29,6 +30,7 @@ export const ENTITY_NAMES: Readonly<Record<string, readonly [string, string]>> =
     "/app/query": ["query", "queries"],
     query_folder: ["query folder", "query folders"],
     rating: ["rating", "ratings"],
+    "/metadata/relationship": ["relationship", "relationships"],
     role: ["role", "roles"],
     settings: ["setting", "settings"],
     "/app/source": ["source", "sources"],

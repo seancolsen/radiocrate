@@ -27,9 +27,13 @@
 --   * `nullable` records whether each column permits NULL (`is_nullable = 'YES'`).
 --   * `unique_constraints` lists every UNIQUE / PRIMARY KEY constraint on the table as an array of
 --     the column-name arrays it covers (so multi-column constraints are represented faithfully).
---   * `links` is always emitted empty here. RadioCrate declares no foreign keys (DuckDB can't update
---     rows referenced by an FK constraint), so links are inferred by convention after this query
---     runs — see the `introspection` crate.
+--   * `links` lists the relationships declared in `metadata.relationship` (migration 0019), each from
+--     a column to the primary key of the table it names. RadioCrate declares no foreign keys (DuckDB
+--     can't update rows referenced by an FK constraint), so this table stands in for them. A row is
+--     left out unless its column is there and its target table has a single-column primary key, the
+--     column it links to. Each end names its table as the tables do, with a `schema` outside the
+--     current one, and every link carries `"unique": false`, matching Querydown's `PrimitiveLink`.
+--     Links are ordered as their tables are, then by the column's position.
 --
 -- `COALESCE(..., '[]')` guards the empty-database case so each key is an empty array rather than
 -- null. The whole document is cast to VARCHAR so callers reading a single text cell get JSON text.
@@ -77,6 +81,41 @@ WITH
     FROM duckdb_constraints()
     WHERE constraint_type IN ('UNIQUE', 'PRIMARY KEY')
     GROUP BY ALL
+  ),
+  -- The column each table with a single-column primary key is keyed by: what a link points at.
+  primary_keys AS (
+    SELECT
+      database_name AS table_catalog,
+      schema_name AS table_schema,
+      table_name,
+      constraint_column_names[1] AS column_name
+    FROM duckdb_constraints()
+    WHERE constraint_type = 'PRIMARY KEY' AND len(constraint_column_names) = 1
+  ),
+  -- Each declared relationship whose column and target are there, with both ends' schema paths.
+  links AS (
+    SELECT
+      r.table_name AS from_table,
+      r.column_name AS from_column,
+      fs.path AS from_path,
+      r.target_table_name AS to_table,
+      pk.column_name AS to_column,
+      ts.path AS to_path,
+      c.ordinal_position
+    FROM metadata.relationship r
+    JOIN information_schema.columns c
+      ON c.table_catalog = current_database()
+      AND c.table_schema = r.schema_name
+      AND c.table_name = r.table_name
+      AND c.column_name = r.column_name
+    JOIN schemas fs
+      ON fs.table_catalog = current_database() AND fs.table_schema = r.schema_name
+    JOIN primary_keys pk
+      ON pk.table_catalog = current_database()
+      AND pk.table_schema = r.target_schema_name
+      AND pk.table_name = r.target_table_name
+    JOIN schemas ts
+      ON ts.table_catalog = current_database() AND ts.table_schema = r.target_schema_name
   )
 SELECT (json_object(
   'tables', COALESCE((
@@ -99,5 +138,22 @@ SELECT (json_object(
     FROM tables t
     LEFT JOIN uniques u USING (table_catalog, table_schema, table_name)
   ), '[]'),
-  'links', '[]'::JSON
+  'links', COALESCE((
+    SELECT to_json(list(
+      json_object(
+        'from', CASE
+          WHEN len(l.from_path) = 0 THEN json_object('table', l.from_table, 'column', l.from_column)
+          ELSE json_object('table', l.from_table, 'schema', l.from_path, 'column', l.from_column)
+        END,
+        'to', CASE
+          WHEN len(l.to_path) = 0 THEN json_object('table', l.to_table, 'column', l.to_column)
+          ELSE json_object('table', l.to_table, 'schema', l.to_path, 'column', l.to_column)
+        END,
+        'unique', false
+      )
+      ORDER BY len(l.from_path) > 0, l.from_path, l.from_table, l.ordinal_position, l.to_path,
+        l.to_table
+    ))
+    FROM links l
+  ), '[]')
 ))::VARCHAR AS schema;

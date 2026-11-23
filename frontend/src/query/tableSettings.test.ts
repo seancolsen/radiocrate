@@ -39,7 +39,7 @@ describe("groupTableSettings", () => {
   it("keys each row by its table", () => {
     const grouped = groupTableSettings([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         visible: false,
         order: 2,
@@ -145,7 +145,7 @@ describe("tablePrelude", () => {
 describe("generatedPrelude", () => {
   const computed = [
     {
-      tableSchema: "main",
+      schemaName: "main",
       tableName: "role",
       name: "upper",
       expression: "name",
@@ -192,7 +192,7 @@ describe("generatedPrelude", () => {
   it("defines the tables' custom comparisons last", () => {
     const comparisons = [
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "role",
         name: "named",
         expression: "name:@x",
@@ -334,9 +334,9 @@ describe("tableMoveOrders", () => {
 
   it("numbers every table the first time they're arranged", () => {
     expect(tableMoveOrders(names, {}, "track", undefined, "album")).toEqual([
-      { tableSchema: "main", tableName: "track", order: 1 },
-      { tableSchema: "main", tableName: "album", order: 2 },
-      { tableSchema: "main", tableName: "artist", order: 3 },
+      { schemaName: "main", tableName: "track", order: 1 },
+      { schemaName: "main", tableName: "album", order: 2 },
+      { schemaName: "main", tableName: "artist", order: 3 },
     ]);
   });
 
@@ -347,7 +347,7 @@ describe("tableMoveOrders", () => {
       track: { order: 3 },
     });
     expect(tableMoveOrders(names, s, "track", "album", "artist")).toEqual([
-      { tableSchema: "main", tableName: "track", order: 1.5 },
+      { schemaName: "main", tableName: "track", order: 1.5 },
     ]);
   });
 
@@ -360,8 +360,8 @@ describe("tableMoveOrders", () => {
 
 describe("tables of other schemas", () => {
   it("are keyed by schema as well as name", () => {
-    const row = (tableSchema: string, visible: boolean) => ({
-      tableSchema,
+    const row = (schemaName: string, visible: boolean) => ({
+      schemaName,
       tableName: "artist",
       visible,
       order: null,
@@ -402,8 +402,8 @@ describe("tables of other schemas", () => {
         "/lastfm/artist",
       ),
     ).toEqual([
-      { tableSchema: "lastfm", tableName: "scrobble", order: 1 },
-      { tableSchema: "lastfm", tableName: "artist", order: 2 },
+      { schemaName: "lastfm", tableName: "scrobble", order: 1 },
+      { schemaName: "lastfm", tableName: "artist", order: 2 },
     ]);
   });
 });

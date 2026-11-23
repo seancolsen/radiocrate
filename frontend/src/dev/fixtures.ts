@@ -221,13 +221,13 @@ export const TABLE_SUMMARIES_FIXTURE: TableSummary[] = [
     ["played_at", 30544, 0],
   ]),
   summary("/metadata/computed_column", 2, [
-    ["table_schema", 1, 0],
+    ["schema_name", 1, 0],
     ["table_name", 1, 0],
     ["name", 2, 0],
     ["expression", 2, 0],
   ]),
   summary("/metadata/table", 3, [
-    ["table_schema", 1, 0],
+    ["schema_name", 1, 0],
     ["table_name", 3, 0],
     ["visible", 2, 0],
     ["order", 2, 33.33],

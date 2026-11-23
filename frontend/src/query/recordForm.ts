@@ -11,7 +11,7 @@ import type { FieldRef } from "api-client";
 import { pluralOrRaw } from "./entityNames";
 import {
   identifyingColumns,
-  inferLinks,
+  schemaLinks,
   linkColumns,
   primaryKey,
   type SchemaTable,
@@ -210,7 +210,7 @@ export function buildFormFields(
 ): DataField[] {
   const table = tables.find((t) => t.name === tableName);
   if (!table) return [];
-  const links = inferLinks(tables);
+  const links = schemaLinks(tables);
   const byName = new Map(tables.map((t) => [t.name, t]));
   const pk = primaryKey(table);
 
@@ -282,7 +282,7 @@ export function joinLink(
   const required = table.columns.filter((c) => !c.nullable);
   if (required.length !== 2) return undefined;
   if (!required.some((c) => c.name === column)) return undefined;
-  const links = inferLinks(tables).filter((l) => l.fromTable === table.name);
+  const links = schemaLinks(tables).filter((l) => l.fromTable === table.name);
   const linked = (name: string) => links.find((l) => l.fromColumn === name);
   if (!linked(column)) return undefined;
   const other = required.find((c) => c.name !== column);

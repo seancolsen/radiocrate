@@ -1746,7 +1746,7 @@ test("the picker's sorting and display are the table's, for the next picker on i
     .poll(() => writes)
     .toEqual([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "album",
         setting: "recordPickerDisplay",
         text: "$title",

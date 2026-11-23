@@ -21,37 +21,30 @@
 //! [`Schema::table`] and the link lookups find only those, so a table of the same name elsewhere is
 //! never mistaken for one of them.
 //!
-//! # Inferred links
+//! # Links
 //!
 //! `RadioCrate` declares no foreign keys — `DuckDB` can't update rows referenced by an `FK` constraint —
-//! so the introspection SQL finds no links and always emits an empty `links` array. We recover links
-//! by convention: any `UUID` column whose name matches another table's name is treated as a link to
-//! that table's `id` column. The name is looked up as Querydown looks up `#name`, but from the
-//! column's own schema first: a table of that name in the same schema, otherwise one in the current
-//! schema. So a table in another schema can link to the app's tables (a `track` column links to the
-//! app's `track`), while the app's tables only ever link among themselves. This inference is applied
-//! two ways from one shared implementation:
-//!
-//! - [`add_inferred_links`] rewrites the `links` array of the raw JSON document, for the front end to
-//!   hand to the Querydown compiler.
-//! - [`Schema::parse`] parses the whole document into a structured [`Schema`] (with the inferred
-//!   links) for the back end.
+//! so its links are declared in a table of their own, `metadata.relationship`, each from one column
+//! to the primary key of the table it names, in any schema of the database. The introspection SQL
+//! reads them into the document's `links` array, in the shape Querydown's compiler takes, so the
+//! front end hands the document to the compiler as it is, and [`Schema::parse`] reads it into a
+//! structured [`Schema`] for the back end.
 
 use serde::Deserialize;
-use serde_json::{Value, json};
 
 /// The SQL that introspects a `DuckDB` database into `RadioCrate`'s schema JSON.
 ///
 /// The query returns a single row with a single JSON-text cell. Run it through the query API, read
-/// the lone value, then either enrich it with [`add_inferred_links`] (front end) or parse it with
+/// the lone value, then hand it to the Querydown compiler (front end) or parse it with
 /// [`Schema::parse`] (back end).
 #[must_use]
 pub fn introspection_sql() -> &'static str {
     include_str!("../resources/duckdb.sql")
 }
 
-/// A convention-inferred foreign-key link: `from_table.from_column` references `to_table.to_column`.
-/// Each end's table is in the schema at its path, which is empty for the current schema.
+/// A declared link (a row of `metadata.relationship`): `from_table.from_column` references
+/// `to_table.to_column`, the target's primary key. Each end's table is in the schema at its path,
+/// which is empty for the current schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub from_schema: Vec<String>,
@@ -100,7 +93,7 @@ impl Table {
     }
 }
 
-/// The introspected structure of the database: its tables and its inferred links, in every schema.
+/// The introspected structure of the database: its tables and its declared links, in every schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schema {
     pub tables: Vec<Table>,
@@ -108,15 +101,25 @@ pub struct Schema {
 }
 
 impl Schema {
-    /// Parses an introspection JSON document (as produced by [`introspection_sql`]) into a [`Schema`],
-    /// inferring links by convention. The document's own `links` array is ignored and recomputed.
+    /// Parses an introspection JSON document (as produced by [`introspection_sql`]) into a [`Schema`].
     ///
     /// # Errors
     ///
     /// Returns an error string if the JSON does not match the expected introspection shape.
     pub fn parse(introspection_json: &str) -> Result<Self, String> {
         let raw: RawSchema = serde_json::from_str(introspection_json).map_err(|e| e.to_string())?;
-        let links = infer_links(&raw.tables);
+        let links = raw
+            .links
+            .into_iter()
+            .map(|l| Link {
+                from_schema: l.from.schema,
+                from_table: l.from.table,
+                from_column: l.from.column,
+                to_schema: l.to.schema,
+                to_table: l.to.table,
+                to_column: l.to.column,
+            })
+            .collect();
         let tables = raw
             .tables
             .into_iter()
@@ -176,15 +179,15 @@ impl Schema {
             .filter(move |l| l.to_schema == schema && l.to_table == table)
     }
 
-    /// The link whose source is the current schema's `table.column`, if that column is an inferred
-    /// foreign key.
+    /// The link whose source is the current schema's `table.column`, if that column is a declared
+    /// link.
     #[must_use]
     pub fn link(&self, table: &str, column: &str) -> Option<&Link> {
         self.link_in(&[], table, column)
     }
 
-    /// The link whose source is `table.column` of the schema at path `schema`, if that column is an
-    /// inferred foreign key.
+    /// The link whose source is `table.column` of the schema at path `schema`, if that column is a
+    /// declared link.
     #[must_use]
     pub fn link_in(&self, schema: &[String], table: &str, column: &str) -> Option<&Link> {
         self.links
@@ -193,85 +196,25 @@ impl Schema {
     }
 }
 
-/// Adds convention-inferred table links to a raw introspection JSON document.
-///
-/// Takes the JSON produced by running [`introspection_sql`] and returns it with its `links` array
-/// replaced by the column-name/type convention described in the module docs. Every other part of the
-/// document is preserved verbatim, so it stays compatible with whatever shape the Querydown compiler
-/// expects. Each emitted link carries `"unique": false`, matching Querydown's `PrimitiveLink`, and
-/// each of its ends carries the `schema` of its table, unless that's the current schema.
-///
-/// # Errors
-///
-/// Returns an error string if the JSON has no `tables` array or cannot be re-serialized.
-pub fn add_inferred_links(introspection_json: &str) -> Result<String, String> {
-    let mut root: Value = serde_json::from_str(introspection_json).map_err(|e| e.to_string())?;
-    let raw: RawSchema = serde_json::from_value(root.clone())
-        .map_err(|e| format!("Introspected schema JSON did not match the expected shape: {e}"))?;
-    let links = infer_links(&raw.tables);
-    let links_json: Vec<Value> = links
-        .iter()
-        .map(|l| {
-            json!({
-                "from": link_end(&l.from_schema, &l.from_table, &l.from_column),
-                "to": link_end(&l.to_schema, &l.to_table, &l.to_column),
-                "unique": false,
-            })
-        })
-        .collect();
-    root["links"] = Value::Array(links_json);
-    serde_json::to_string(&root).map_err(|e| e.to_string())
-}
-
-/// One end of a link in Querydown's schema JSON, which leaves out the `schema` of a table in the
-/// current schema.
-fn link_end(schema: &[String], table: &str, column: &str) -> Value {
-    if schema.is_empty() {
-        json!({ "table": table, "column": column })
-    } else {
-        json!({ "table": table, "schema": schema, "column": column })
-    }
-}
-
-/// The single source of truth for `RadioCrate`'s foreign-key convention: a `UUID` column whose name
-/// matches a table's name links to that table's `id` column. The table is looked for in the column's
-/// own schema first, then in the current schema.
-fn infer_links(tables: &[RawTable]) -> Vec<Link> {
-    let has_table =
-        |schema: &[String], name: &str| tables.iter().any(|t| t.schema == schema && t.name == name);
-    let mut links = Vec::new();
-    for table in tables {
-        for column in &table.columns {
-            let is_uuid = column
-                .type_name
-                .as_deref()
-                .is_some_and(|t| t.eq_ignore_ascii_case("UUID"));
-            if !is_uuid {
-                continue;
-            }
-            let to_schema = if has_table(&table.schema, &column.name) {
-                &table.schema[..]
-            } else if has_table(&[], &column.name) {
-                &[]
-            } else {
-                continue;
-            };
-            links.push(Link {
-                from_schema: table.schema.clone(),
-                from_table: table.name.clone(),
-                from_column: column.name.clone(),
-                to_schema: to_schema.to_vec(),
-                to_table: column.name.clone(),
-                to_column: "id".to_string(),
-            });
-        }
-    }
-    links
-}
-
 #[derive(Deserialize)]
 struct RawSchema {
     tables: Vec<RawTable>,
+    #[serde(default)]
+    links: Vec<RawLink>,
+}
+
+#[derive(Deserialize)]
+struct RawLink {
+    from: RawLinkEnd,
+    to: RawLinkEnd,
+}
+
+#[derive(Deserialize)]
+struct RawLinkEnd {
+    table: String,
+    #[serde(default)]
+    schema: Vec<String>,
+    column: String,
 }
 
 #[derive(Deserialize)]
@@ -313,50 +256,23 @@ mod tests {
                 { "name": "order", "type": "FLOAT", "nullable": true }
             ] }
         ],
-        "links": []
+        "links": [
+            { "from": { "table": "track", "column": "album" },
+              "to": { "table": "album", "column": "id" }, "unique": false },
+            { "from": { "table": "credit", "column": "track" },
+              "to": { "table": "track", "column": "id" }, "unique": false }
+        ]
     }"#;
 
     #[test]
-    fn infers_link_from_uuid_column_matching_table_name() {
-        let out: Value = serde_json::from_str(&add_inferred_links(SAMPLE).unwrap()).unwrap();
-        let links = out["links"].as_array().unwrap();
-        // track.album -> album.id, credit.track -> track.id (credit.artist has no `artist` table here)
-        assert_eq!(links.len(), 2);
-        assert!(links.iter().any(|l| l["from"]["table"] == "track"
-            && l["from"]["column"] == "album"
-            && l["to"]["table"] == "album"
-            && l["to"]["column"] == "id"
-            && l["unique"] == false));
-        assert!(links.iter().any(|l| l["from"]["table"] == "credit"
-            && l["from"]["column"] == "track"
-            && l["to"]["table"] == "track"));
-    }
-
-    #[test]
-    fn ignores_non_uuid_and_non_matching_columns() {
-        let input = r#"{ "tables": [
-            { "name": "track", "columns": [
-                { "name": "id", "type": "UUID" },
-                { "name": "title", "type": "VARCHAR" },
-                { "name": "track", "type": "VARCHAR" }
-            ] }
-        ], "links": [] }"#;
-        let out: Value = serde_json::from_str(&add_inferred_links(input).unwrap()).unwrap();
-        assert!(out["links"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn add_inferred_links_preserves_other_fields_and_overwrites_links() {
-        let input = r#"{ "tables": [], "links": [{ "stale": true }], "extra": 1 }"#;
-        let out: Value = serde_json::from_str(&add_inferred_links(input).unwrap()).unwrap();
-        assert!(out["links"].as_array().unwrap().is_empty());
-        assert_eq!(out["extra"], 1);
-    }
-
-    #[test]
     fn rejects_json_without_tables() {
-        assert!(add_inferred_links(r#"{ "nope": 1 }"#).is_err());
         assert!(Schema::parse(r#"{ "nope": 1 }"#).is_err());
+    }
+
+    #[test]
+    fn a_document_without_links_has_none() {
+        let schema = Schema::parse(r#"{ "tables": [] }"#).unwrap();
+        assert!(schema.links.is_empty());
     }
 
     #[test]
@@ -378,6 +294,13 @@ mod tests {
         let incoming: Vec<_> = schema.incoming_links("album").collect();
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].from_table, "track");
+        assert_eq!(incoming[0].to_column, "id");
+
+        // Only the declared links are links, whatever a column is named: `credit.artist` names no
+        // table here, and `credit.track` is declared.
+        assert!(schema.link("credit", "artist").is_none());
+        assert!(schema.link("credit", "track").is_some());
+        assert_eq!(schema.links.len(), 2);
     }
 
     /// The app's `track` and `album`, a `metadata` table of the same name as one of them, and a
@@ -402,7 +325,14 @@ mod tests {
                 { "name": "album", "type": "UUID", "nullable": true }
             ] }
         ],
-        "links": []
+        "links": [
+            { "from": { "table": "track", "column": "album" },
+              "to": { "table": "album", "column": "id" }, "unique": false },
+            { "from": { "table": "scrobble", "schema": ["lastfm"], "column": "track" },
+              "to": { "table": "track", "column": "id" }, "unique": false },
+            { "from": { "table": "scrobble", "schema": ["lastfm"], "column": "album" },
+              "to": { "table": "album", "schema": ["lastfm"], "column": "id" }, "unique": false }
+        ]
     }"#;
 
     #[test]
@@ -438,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn a_link_column_finds_its_table_in_its_own_schema_then_the_current_one() {
+    fn each_end_of_a_link_keeps_its_schema() {
         let schema = Schema::parse(SCHEMAS).unwrap();
         let from = |schema_path: &[&str], table: &str, column: &str| {
             schema
@@ -449,12 +379,9 @@ mod tests {
                 })
                 .unwrap()
         };
-        // The app's own link stays among the app's tables.
         assert!(from(&[], "track", "album").to_schema.is_empty());
-        // `lastfm` has an `album` of its own, but no `track`.
         assert_eq!(from(&["lastfm"], "scrobble", "album").to_schema, ["lastfm"]);
         assert!(from(&["lastfm"], "scrobble", "track").to_schema.is_empty());
-        assert_eq!(schema.links.len(), 3);
 
         // Deleting one of the app's tracks has to look at `lastfm.scrobble` too, but the lookups by
         // a source column only see the app's own.
@@ -463,30 +390,5 @@ mod tests {
         assert_eq!(incoming[0].from_schema, ["lastfm"]);
         assert_eq!(schema.incoming_links("album").count(), 1);
         assert!(schema.link("scrobble", "track").is_none());
-    }
-
-    #[test]
-    fn links_name_the_schema_of_a_table_outside_the_current_one() {
-        let out: Value = serde_json::from_str(&add_inferred_links(SCHEMAS).unwrap()).unwrap();
-        let links = out["links"].as_array().unwrap();
-        assert_eq!(
-            links[0],
-            json!({
-                "from": { "table": "track", "column": "album" },
-                "to": { "table": "album", "column": "id" },
-                "unique": false,
-            })
-        );
-        assert_eq!(
-            links[1],
-            json!({
-                "from": { "table": "scrobble", "schema": ["lastfm"], "column": "track" },
-                "to": { "table": "track", "column": "id" },
-                "unique": false,
-            })
-        );
-        assert_eq!(links[2]["to"]["schema"], json!(["lastfm"]));
-        // The tables keep their schemas, too.
-        assert_eq!(out["tables"][4]["schema"], json!(["lastfm"]));
     }
 }

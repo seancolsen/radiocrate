@@ -46,7 +46,7 @@ import type { Section } from "./definition";
 import type { SchemaTable } from "./schema";
 import {
   CURRENT_SCHEMA,
-  inferLinks,
+  schemaLinks,
   qualifiedTableName,
   splitTableName,
   tableRef,
@@ -92,8 +92,8 @@ export function groupTableSettings(
   rows: readonly TableMetadataRow[],
 ): TableSettingsByTable {
   const tables: Record<string, TableSettings> = {};
-  for (const { tableSchema, tableName, ...settings } of rows) {
-    tables[qualifiedTableName(tableSchema, tableName)] = settings;
+  for (const { schemaName, tableName, ...settings } of rows) {
+    tables[qualifiedTableName(schemaName, tableName)] = settings;
   }
   return tables;
 }
@@ -332,7 +332,7 @@ export function settingCheck(
   if (setting === "defaultTextSearch") {
     return { definitions, base: table, filter: '"test"', section: "filter" };
   }
-  const link = inferLinks(tables).find((l) => l.toTable === table);
+  const link = schemaLinks(tables).find((l) => l.toTable === table);
   return link
     ? {
         definitions,

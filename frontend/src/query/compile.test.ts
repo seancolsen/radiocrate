@@ -477,7 +477,7 @@ describe("computed columns in the prelude", () => {
   const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
   const prelude = (
     computed: {
-      tableSchema: string;
+      schemaName: string;
       tableName: string;
       name: string;
       expression: string | null;
@@ -513,13 +513,13 @@ describe("computed columns in the prelude", () => {
   it("define the user's columns, which can use the app's and each other", () => {
     const under = prelude([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "era",
         expression: "decade * 10",
       },
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "decade",
         expression: "year / 10",
@@ -531,7 +531,7 @@ describe("computed columns in the prelude", () => {
   it("go by the user's expression for one of the app's", () => {
     const under = prelude([
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "year",
         expression: "disc_number",
@@ -550,7 +550,7 @@ describe("computed columns in the prelude", () => {
   it("trace a problem to the column's expression", () => {
     const expression = "album.nope";
     const under = prelude([
-      { tableSchema: "main", tableName: "track", name: "bad", expression },
+      { schemaName: "main", tableName: "track", name: "bad", expression },
     ]);
     expect(failure(() => displaying("$bad", under))).toMatchObject({
       kind: "compile",
@@ -566,7 +566,7 @@ describe("custom comparisons in the prelude", () => {
   const filtering = (
     filter: string,
     comparisons: {
-      tableSchema: string;
+      schemaName: string;
       tableName: string;
       name: string;
       expression: string;
@@ -582,7 +582,7 @@ describe("custom comparisons in the prelude", () => {
   it("define the user's, and their condition for one of the app's", () => {
     const { sql } = filtering("album_title:dark", [
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "album_title",
         expression: "album.title:@x",
@@ -591,7 +591,7 @@ describe("custom comparisons in the prelude", () => {
     expect(sql).toContain('"album"."title"');
     const custom = filtering("artist:prince", [
       {
-        tableSchema: "main",
+        schemaName: "main",
         tableName: "track",
         name: "artist",
         expression: "title:@x",
@@ -704,8 +704,8 @@ describe("a table of another schema", () => {
   });
 
   it("has the definitions generated for it, apart from the app's table of its name", () => {
-    const row = (tableSchema: string, expression: string) => ({
-      tableSchema,
+    const row = (schemaName: string, expression: string) => ({
+      schemaName,
       tableName: "artist",
       name: "key",
       expression,

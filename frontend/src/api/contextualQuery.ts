@@ -9,8 +9,8 @@ import { APP_TABLES } from "../query/appTables";
 import { dmlTable } from "../query/schema";
 import { runSql } from "./query";
 
-/** The table, as SQL names it, and as DML does: in the `app` schema. */
-const TABLE_SQL = "app.contextual_query";
+/** The table, as SQL names it, and as DML does: in the `metadata` schema. */
+const TABLE_SQL = "metadata.contextual_query";
 const TABLE = dmlTable(APP_TABLES.contextualQuery);
 
 /** Every contextual query, of every table. */

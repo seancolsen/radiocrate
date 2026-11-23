@@ -18,7 +18,7 @@
 // Pure: schema in, Querydown out. The reactive side (when a preview is fetched,
 // where its cells land) lives in `components/record/formModel.ts`.
 
-import { identifyingColumns, inferLinks, type SchemaTable } from "./schema";
+import { identifyingColumns, schemaLinks, type SchemaTable } from "./schema";
 import {
   keyConditions,
   linkConditions,
@@ -120,7 +120,7 @@ function assembleCandidates(
   table: SchemaTable,
   contextColumn: string | undefined,
 ): Candidate[] {
-  const links = inferLinks(tables);
+  const links = schemaLinks(tables);
   const byName = new Map(tables.map((t) => [t.name, t]));
   const candidates: Candidate[] = [];
 

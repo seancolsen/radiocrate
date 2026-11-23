@@ -181,7 +181,7 @@ const TOPIC_TABLES: &[(Topic, &[&str])] = &[
     (Topic::TableSettings, &["metadata.\"table\""]),
     (Topic::ComputedColumns, &["metadata.computed_column"]),
     (Topic::CustomComparisons, &["metadata.custom_comparison"]),
-    (Topic::ContextualQueries, &["app.contextual_query"]),
+    (Topic::ContextualQueries, &["metadata.contextual_query"]),
     (Topic::Ratings, &["rating"]),
 ];
 

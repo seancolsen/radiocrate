@@ -236,11 +236,29 @@ track"). **Whenever a migration adds, renames or drops a table, update
 found by introspection) are expected, and every use falls back gracefully.
 
 A table outside `main` is keyed as the app names it, by its schema: the app's
-own records (saved queries, playlists and their entries, folders, presets,
-contextual queries) live in the `app` schema since migration 0018, so they're
+own records (saved queries, playlists and their entries, folders, presets)
+live in the `app` schema since migration 0018, so they're
 `/app/playlist_track` and so on. Backend SQL names them `app.playlist_track`,
 and a DML operation sends `schema: "app"` with them (`dmlTable` in
 `frontend/src/query/schema.ts`, `APP_TABLES` in `query/appTables.ts`).
+Contextual queries live in `metadata` with the rest of what customizes the
+user's tables, since migration 0019 (`/metadata/contextual_query`).
+
+## Links between tables
+
+The database declares no foreign keys, because DuckDB can't update a row one
+refers to. Links are declared as rows of `metadata.relationship` instead (since
+migration 0019): a column of a table (`schema_name`, `table_name`,
+`column_name`) holds the primary key of a record of another
+(`target_schema_name`, `target_table_name`). A link is one column, and the
+target needs a single-column primary key. A column's name means nothing on its
+own, so **a migration that adds a link column inserts its relationship row in
+the same change**, or Querydown, the record editor and the DML delete check
+won't see the link.
+
+The introspection query (`introspection/resources/duckdb.sql`, copied into
+`frontend/src/query/schema.ts`) reads the rows into its `links` array, leaving
+out any whose column or target table isn't there.
 
 ## Live updates: what a change on one device does on another
 
