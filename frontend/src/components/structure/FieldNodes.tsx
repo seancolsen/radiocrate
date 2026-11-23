@@ -14,6 +14,7 @@ import {
   type QueryEditorField,
 } from "../../query/fieldQuery";
 import { fieldRef, type FormField } from "../../query/recordForm";
+import { isCurrentSchemaTable } from "../../query/schema";
 import {
   columnStatsLabel,
   FIELD_KIND_LABELS,
@@ -203,7 +204,12 @@ function FieldNode(props: {
  * the user's own. */
 export function FieldsNode(props: { table: string }): JSX.Element {
   const { table } = props;
-  const tables = useApp((s) => s.schema.tables);
+  // The record editor's tables are the current schema's: a table of another
+  // schema is listed with them, but nothing refers to it from among them.
+  const current = isCurrentSchemaTable(table);
+  const tables = useApp((s) =>
+    current ? s.schema.tables : s.schema.allTables,
+  );
   const queries = useApp((s) => s.contextualQueries.data);
   const computed = useApp((s) => s.computedColumns.data);
   const metadata = useApp((s) => selectTableMetadata(s, table));
@@ -241,8 +247,9 @@ export function FieldsNode(props: { table: string }): JSX.Element {
     [fields, metadata, showHidden],
   );
   const columns = tables.find((t) => t.name === table)?.columns;
-  /** A table with no one column for `@id` to hold can't have a query. */
-  const canQuery = contextKeyColumn(tables, table) !== undefined;
+  /** A table with no one column for `@id` to hold can't have a query, nor can
+   * one of another schema, whose records the record editor doesn't show. */
+  const canQuery = current && contextKeyColumn(tables, table) !== undefined;
 
   // A contextual query being added: named, and waiting for its table.
   const [provisional, setProvisional] = useState<{

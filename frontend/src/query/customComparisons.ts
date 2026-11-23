@@ -22,7 +22,7 @@
 
 import type { CustomComparisonRow } from "api-client";
 import { availableIdentifier } from "./identifiers";
-import type { SchemaTable } from "./schema";
+import { type SchemaTable, rowTable, tableRef } from "./schema";
 import { fromSource, joinMapped, type Mapped } from "./sourceMap";
 
 /** The variable a comparison's condition gets the value compared in. */
@@ -86,7 +86,7 @@ export function findComparisonRow(
   table: string,
   name: string,
 ): CustomComparisonRow | undefined {
-  return rows.find((row) => row.tableName === table && row.name === name);
+  return rows.find((row) => rowTable(row) === table && row.name === name);
 }
 
 /** The custom comparisons on `table`: the app's, as they're listed here, then
@@ -95,7 +95,7 @@ export function tableComparisons(
   table: string,
   rows: readonly CustomComparisonRow[],
 ): CustomComparison[] {
-  const own = rows.filter((row) => row.tableName === table);
+  const own = rows.filter((row) => rowTable(row) === table);
   const builtIn = builtInComparisons(table);
   const comparisons: CustomComparison[] = builtIn.map((c) => {
     const stored = own.find((row) => row.name === c.name)?.expression;
@@ -215,9 +215,11 @@ export function withComparisonExpression(
   expression: string | null,
 ): CustomComparisonRow[] {
   const at = rows.findIndex(
-    (row) => row.tableName === table && row.name === name,
+    (row) => rowTable(row) === table && row.name === name,
   );
-  if (at === -1) return [...rows, { tableName: table, name, expression }];
+  if (at === -1) {
+    return [...rows, { ...tableRef(table), name, expression }];
+  }
   const next = [...rows];
   next[at] = { ...next[at], expression };
   return next;

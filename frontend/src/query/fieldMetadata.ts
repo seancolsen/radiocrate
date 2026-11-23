@@ -9,6 +9,7 @@
 
 import type { FieldMetadataRow, FieldOrder, FieldRef } from "api-client";
 import { fieldRef, type FormField } from "./recordForm";
+import { qualifiedTableName } from "./schema";
 import { byOrder, moveOrders } from "./sortKeys";
 
 /** What's customized about one field. */
@@ -65,8 +66,9 @@ export function groupFieldMetadata(
   rows: readonly FieldMetadataRow[],
 ): MetadataByTable {
   const tables: Record<string, Record<string, FieldMetadata>> = {};
-  for (const { tableName, field, ...metadata } of rows) {
-    (tables[tableName] ??= {})[fieldRefKey(field)] = metadata;
+  for (const { tableSchema, tableName, field, ...metadata } of rows) {
+    const table = qualifiedTableName(tableSchema, tableName);
+    (tables[table] ??= {})[fieldRefKey(field)] = metadata;
   }
   return tables;
 }

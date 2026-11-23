@@ -6,7 +6,10 @@ import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import init from "querydown-js";
 import type { Preset } from "api-client";
-import { FIXTURE_SCHEMA_JSON } from "../dev/recordFixture";
+import {
+  FIXTURE_SCHEMA_JSON,
+  FIXTURE_SCHEMAS_JSON,
+} from "../dev/recordFixture";
 import {
   checkComparison,
   checkComputedColumn,
@@ -17,11 +20,12 @@ import {
   compileSavedQuery,
 } from "./compile";
 import { BUILT_IN_COMPUTED_COLUMNS } from "./computedColumns";
-import { parseSchemaTables } from "./schema";
+import { parseSchemaTables, readSchemaTables } from "./schema";
 import {
   composePrelude,
   defaultTableSettings,
   generatedPrelude,
+  type Prelude,
   tablePrelude,
 } from "./tableSettings";
 import { emptyDefinition, type QueryDefinition } from "./definition";
@@ -472,7 +476,12 @@ describe("checkSetting", () => {
 describe("computed columns in the prelude", () => {
   const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
   const prelude = (
-    computed: { tableName: string; name: string; expression: string | null }[],
+    computed: {
+      tableSchema: string;
+      tableName: string;
+      name: string;
+      expression: string | null;
+    }[],
     user = "",
   ) => composePrelude(generatedPrelude(tables, {}, computed, []), user);
   const displaying = (display: string, under = prelude([])) =>
@@ -503,15 +512,30 @@ describe("computed columns in the prelude", () => {
 
   it("define the user's columns, which can use the app's and each other", () => {
     const under = prelude([
-      { tableName: "track", name: "era", expression: "decade * 10" },
-      { tableName: "track", name: "decade", expression: "year / 10" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "era",
+        expression: "decade * 10",
+      },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "decade",
+        expression: "year / 10",
+      },
     ]);
     expect(displaying("$era", under).sql).toContain('"album"."year"');
   });
 
   it("go by the user's expression for one of the app's", () => {
     const under = prelude([
-      { tableName: "track", name: "year", expression: "disc_number" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "year",
+        expression: "disc_number",
+      },
     ]);
     const { sql } = displaying("$year", under);
     expect(sql).toContain('"track"."disc_number"');
@@ -525,7 +549,9 @@ describe("computed columns in the prelude", () => {
 
   it("trace a problem to the column's expression", () => {
     const expression = "album.nope";
-    const under = prelude([{ tableName: "track", name: "bad", expression }]);
+    const under = prelude([
+      { tableSchema: "main", tableName: "track", name: "bad", expression },
+    ]);
     expect(failure(() => displaying("$bad", under))).toMatchObject({
       kind: "compile",
       origin: { kind: "computedColumn", table: "track", name: "bad" },
@@ -539,7 +565,12 @@ describe("custom comparisons in the prelude", () => {
   const tables = parseSchemaTables(FIXTURE_SCHEMA_JSON);
   const filtering = (
     filter: string,
-    comparisons: { tableName: string; name: string; expression: string }[],
+    comparisons: {
+      tableSchema: string;
+      tableName: string;
+      name: string;
+      expression: string;
+    }[],
   ) =>
     compileSavedQuery(
       query({ filter: { custom: filter, presets: [] } }),
@@ -550,11 +581,21 @@ describe("custom comparisons in the prelude", () => {
 
   it("define the user's, and their condition for one of the app's", () => {
     const { sql } = filtering("album_title:dark", [
-      { tableName: "track", name: "album_title", expression: "album.title:@x" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "album_title",
+        expression: "album.title:@x",
+      },
     ]);
     expect(sql).toContain('"album"."title"');
     const custom = filtering("artist:prince", [
-      { tableName: "track", name: "artist", expression: "title:@x" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "artist",
+        expression: "title:@x",
+      },
     ]).sql;
     expect(custom).not.toContain('"artist"."name"');
   });
@@ -642,5 +683,61 @@ describe("checkComputedColumn", () => {
       origin,
       range: { start: 6, end: 10 },
     });
+  });
+});
+
+describe("a table of another schema", () => {
+  const { allTables } = readSchemaTables(FIXTURE_SCHEMAS_JSON);
+  const compileOn = (def: QueryDefinition, prelude: Prelude = "") =>
+    compileSavedQuery(def, PRESETS, FIXTURE_SCHEMAS_JSON, prelude);
+
+  it("is a query's base, by its schema", () => {
+    const { sql } = compileOn(query({ base: "/lastfm/artist" }));
+    expect(sql).toContain('FROM "lastfm"."artist"');
+    // The app's own `artist` is another table.
+    expect(compileOn(query({ base: "artist" })).sql).toContain('FROM "artist"');
+  });
+
+  it("is a full query's base", () => {
+    const { sql } = compileOn(query({ full: "#/lastfm/scrobble $title" }));
+    expect(sql).toContain('FROM "lastfm"."scrobble"');
+  });
+
+  it("has the definitions generated for it, apart from the app's table of its name", () => {
+    const row = (tableSchema: string, expression: string) => ({
+      tableSchema,
+      tableName: "artist",
+      name: "key",
+      expression,
+    });
+    const prelude = generatedPrelude(
+      allTables,
+      {
+        "/lastfm/artist": {
+          ...defaultTableSettings(),
+          defaultTextSearch: "name:@x",
+        },
+      },
+      // The app's `artist` has no `mbid`: were its column given `lastfm`'s
+      // expression, the query on it would fail.
+      [row("lastfm", "mbid"), row("main", "id")],
+      [],
+    );
+    const theirs = compileOn(
+      query({
+        base: "/lastfm/artist",
+        filter: { custom: '"abc"', presets: [] },
+        display: { custom: "$key" },
+      }),
+      prelude,
+    ).sql;
+    expect(theirs).toContain('"artist"."mbid"');
+    expect(theirs).toContain('strip_accents("artist"."name")');
+    const ours = compileOn(
+      query({ base: "artist", display: { custom: "$key" } }),
+      prelude,
+    ).sql;
+    expect(ours).toContain('"artist"."id"');
+    expect(ours).not.toContain("mbid");
   });
 });

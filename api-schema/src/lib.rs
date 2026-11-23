@@ -287,6 +287,8 @@ pub struct MultiLink {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldMetadataRow {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub field: FieldRef,
     pub visible: bool,
@@ -302,6 +304,8 @@ pub struct FieldMetadataRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataFieldSetVisibleParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub field: FieldRef,
     pub visible: bool,
@@ -320,6 +324,8 @@ pub struct FieldOrder {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataFieldSetOrderParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub orders: Vec<FieldOrder>,
 }
@@ -329,6 +335,8 @@ pub struct MetadataFieldSetOrderParams {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataFieldSetDisplayParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub field: FieldRef,
     pub display: Option<String>,
@@ -339,6 +347,8 @@ pub struct MetadataFieldSetDisplayParams {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataFieldSetSortingParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub field: FieldRef,
     pub sorting: Option<String>,
@@ -349,6 +359,8 @@ pub struct MetadataFieldSetSortingParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputedColumnRow {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
     /// Querydown: what the column computes. `None` goes by the app's expression,
@@ -361,6 +373,8 @@ pub struct ComputedColumnRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataComputedColumnRenameParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
     pub new_name: String,
@@ -371,6 +385,8 @@ pub struct MetadataComputedColumnRenameParams {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataComputedColumnDeleteParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
 }
@@ -381,6 +397,8 @@ pub struct MetadataComputedColumnDeleteParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomComparisonRow {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
     /// Querydown: the condition, `@x` standing for the value compared. `None`
@@ -392,6 +410,8 @@ pub struct CustomComparisonRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataCustomComparisonRenameParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
     pub new_name: String,
@@ -401,6 +421,8 @@ pub struct MetadataCustomComparisonRenameParams {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataCustomComparisonDeleteParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub name: String,
 }
@@ -411,6 +433,8 @@ pub struct MetadataCustomComparisonDeleteParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TableMetadataRow {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub visible: bool,
     pub order: Option<f64>,
@@ -428,6 +452,8 @@ pub struct TableMetadataRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataTableSetVisibleParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub visible: bool,
 }
@@ -436,6 +462,8 @@ pub struct MetadataTableSetVisibleParams {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TableOrder {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub order: f64,
 }
@@ -464,6 +492,8 @@ pub enum TableQuerydownSetting {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataTableSetQuerydownParams {
+    /// The schema of the table, by name: `main` for the app's own tables.
+    pub table_schema: String,
     pub table_name: String,
     pub setting: TableQuerydownSetting,
     pub text: Option<String>,
@@ -490,6 +520,8 @@ pub struct ColumnSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TableSummary {
+    /// The schema the table is in, by name: `main` for the app's own tables.
+    pub schema: String,
     pub name: String,
     #[ts(type = "number")]
     pub row_count: i64,

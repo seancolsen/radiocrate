@@ -393,7 +393,14 @@ export interface ResourceState<T> {
 export interface SchemaState {
   status: ResourceStatus;
   json: string | undefined;
+  /** The current schema's tables: the app's own, whose records it edits. */
   tables: readonly SchemaTable[];
+  /** The other schemas' tables, each named by its schema (`/lastfm/scrobble`;
+   * see `qualifiedTableName`). */
+  otherTables: readonly SchemaTable[];
+  /** Both, the current schema's first: every table a query can be based on,
+   * and the app's definitions are generated for. */
+  allTables: readonly SchemaTable[];
 }
 
 /** A failed RPC call, as the error bar shows it: which method failed, with what
@@ -859,7 +866,13 @@ export function initialState(env: AppEnv): AppState {
     sources: { status: "loading", data: [] },
     folders: { status: "loading", data: [] },
     ratings: { status: "loading", data: [] },
-    schema: { status: "loading", json: undefined, tables: [] },
+    schema: {
+      status: "loading",
+      json: undefined,
+      tables: [],
+      otherTables: [],
+      allTables: [],
+    },
     settingOverrides: {},
     fieldMetadata: { status: "loading", data: {} },
     tableSettings: { status: "loading", data: {} },

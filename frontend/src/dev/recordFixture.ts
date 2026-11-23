@@ -144,6 +144,71 @@ export const FIXTURE_SCHEMA_JSON = addInferredLinks(
   }),
 );
 
+/** The fixture's schema with two more beside `main`, as a database has them
+ * once the user has added a schema of their own: the app's `metadata`, and the
+ * user's `lastfm`, whose `scrobble` links to the app's `track` and whose
+ * `artist` shares its name with the app's. For the stories about other
+ * schemas; the rest keep to the app's own tables. */
+export const FIXTURE_SCHEMAS_JSON = addInferredLinks(
+  JSON.stringify({
+    tables: [
+      ...(JSON.parse(FIXTURE_SCHEMA_JSON) as { tables: unknown[] }).tables,
+      {
+        ...T(
+          "artist",
+          [
+            ["mbid", "VARCHAR"],
+            ["name", "VARCHAR"],
+          ],
+          [["mbid"]],
+        ),
+        schema: ["lastfm"],
+      },
+      {
+        ...T(
+          "scrobble",
+          [
+            ["id", "UUID"],
+            ["track", "UUID", true],
+            ["artist", "VARCHAR"],
+            ["title", "VARCHAR"],
+            ["played_at", "TIMESTAMP"],
+          ],
+          [["id"]],
+        ),
+        schema: ["lastfm"],
+      },
+      {
+        ...T(
+          "computed_column",
+          [
+            ["table_schema", "VARCHAR"],
+            ["table_name", "VARCHAR"],
+            ["name", "VARCHAR"],
+            ["expression", "VARCHAR", true],
+          ],
+          [["table_schema", "table_name", "name"]],
+        ),
+        schema: ["metadata"],
+      },
+      {
+        ...T(
+          "table",
+          [
+            ["table_schema", "VARCHAR"],
+            ["table_name", "VARCHAR"],
+            ["visible", "BOOLEAN"],
+            ["order", "DOUBLE", true],
+          ],
+          [["table_schema", "table_name"]],
+        ),
+        schema: ["metadata"],
+      },
+    ],
+    links: [],
+  }),
+);
+
 /** One fixture row: column → value, `null` for NULL. */
 type Row = Record<string, string | null>;
 

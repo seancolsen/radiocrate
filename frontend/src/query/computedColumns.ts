@@ -30,7 +30,7 @@
 import type { ComputedColumnRow } from "api-client";
 import { availableIdentifier, legalIdentifier } from "./identifiers";
 import type { ComputedField } from "./recordForm";
-import type { SchemaTable } from "./schema";
+import { type SchemaTable, rowTable, tableRef } from "./schema";
 import { fromSource, joinMapped, type Mapped } from "./sourceMap";
 
 /** One of the app's own computed columns. */
@@ -124,7 +124,7 @@ export function findComputedRow(
   table: string,
   name: string,
 ): ComputedColumnRow | undefined {
-  return rows.find((row) => row.tableName === table && row.name === name);
+  return rows.find((row) => rowTable(row) === table && row.name === name);
 }
 
 /** The computed columns of `table`, in their default order: the app's, as
@@ -133,7 +133,7 @@ export function tableComputedColumns(
   table: string,
   rows: readonly ComputedColumnRow[],
 ): ComputedColumn[] {
-  const own = rows.filter((row) => row.tableName === table);
+  const own = rows.filter((row) => rowTable(row) === table);
   const builtIn = builtInComputedColumns(table);
   const columns: ComputedColumn[] = builtIn.map((column) => {
     const stored = own.find((row) => row.name === column.name)?.expression;
@@ -314,9 +314,11 @@ export function withComputedExpression(
   expression: string | null,
 ): ComputedColumnRow[] {
   const at = rows.findIndex(
-    (row) => row.tableName === table && row.name === name,
+    (row) => rowTable(row) === table && row.name === name,
   );
-  if (at === -1) return [...rows, { tableName: table, name, expression }];
+  if (at === -1) {
+    return [...rows, { ...tableRef(table), name, expression }];
+  }
   const next = [...rows];
   next[at] = { ...next[at], expression };
   return next;

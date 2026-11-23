@@ -365,6 +365,14 @@ async function tableNames(stage: Locator): Promise<string[]> {
   return (await rows.allInnerTexts()).map((text) => text.split(/\s/)[0]);
 }
 
+/** The tables listed in a schema's folder, in order, each by its own name. */
+async function schemaTableNames(folder: Locator): Promise<string[]> {
+  const rows = folder.locator(
+    '[data-item-id^="table:/"]:not([data-item-id*="/fields"]):not([data-item-id*="/query"]) > [role="treeitem"]',
+  );
+  return (await rows.allInnerTexts()).map((text) => text.split(/\s/)[0]);
+}
+
 /** Presses on table `from`'s row and moves the mouse to a fraction `at` of the
  * way down table `to`'s row, leaving the button down. */
 async function dragTable(
@@ -400,6 +408,45 @@ for (const colorScheme of SCHEMES) {
     ).toHaveAttribute("aria-pressed", "true");
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/tables-arranged", colorScheme),
+    );
+  });
+
+  // Schemas beside the app's own: a folder each, after the app's tables, one
+  // open on its tables, each named alone.
+  test(`data-structure/schemas - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "data-structure/schemas", colorScheme);
+    const lastfm = stage.locator('[data-item-id="schema:lastfm"]');
+    await expect(row(lastfm, "lastfm")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(
+      stage.locator('[data-item-id="schema:metadata"] > [role="treeitem"]'),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(await schemaTableNames(lastfm)).toEqual(["artist", "scrobble"]);
+    // The app's tables stay at the top, `artist` among them, apart from
+    // `lastfm`'s.
+    expect(await tableNames(stage)).toContain("artist");
+    await expect(row(lastfm, "scrobble ")).toContainText("30,544 rows");
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/schemas", colorScheme),
+    );
+  });
+
+  // A table of another schema, open: its columns and its query settings, with
+  // no record picker.
+  test(`data-structure/schema-table - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "data-structure/schema-table",
+      colorScheme,
+    );
+    const scrobble = stage.locator('[data-item-id="table:/lastfm/scrobble"]');
+    await expect(row(scrobble, "played_at")).toBeVisible();
+    await expect(row(scrobble, "Text search")).toBeVisible();
+    await expect(row(scrobble, "Record picker")).toHaveCount(0);
+    await expect(stage).toHaveScreenshot(
+      snapshot("data-structure/schema-table", colorScheme),
     );
   });
 
@@ -713,6 +760,7 @@ test("a field's context menu hides it, and brings it back", async ({
       {
         method: "metadata.field.set_visible",
         params: {
+          tableSchema: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
@@ -846,7 +894,12 @@ test("Add field adds a computed column, and opens it on its expression", async (
   expect(await calls(page, "metadata.computed_column.set")).toEqual([
     {
       method: "metadata.computed_column.set",
-      params: { tableName: "track", name: "release_decade", expression: "" },
+      params: {
+        tableSchema: "main",
+        tableName: "track",
+        name: "release_decade",
+        expression: "",
+      },
     },
   ]);
   // The expression has the caret, and is written as its row closes.
@@ -862,6 +915,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
     .toEqual({
       method: "metadata.computed_column.set",
       params: {
+        tableSchema: "main",
         tableName: "track",
         name: "release_decade",
         expression: "album.year",
@@ -904,7 +958,12 @@ test("a computed column of the user's is renamed and removed from its menu, one 
   expect(await calls(page, "metadata.computed_column.rename")).toEqual([
     {
       method: "metadata.computed_column.rename",
-      params: { tableName: "track", name: "tag_count", newName: "tag_total" },
+      params: {
+        tableSchema: "main",
+        tableName: "track",
+        name: "tag_count",
+        newName: "tag_total",
+      },
     },
   ]);
 
@@ -919,7 +978,7 @@ test("a computed column of the user's is renamed and removed from its menu, one 
     .toEqual([
       {
         method: "metadata.computed_column.delete",
-        params: { tableName: "track", name: "tag_total" },
+        params: { tableSchema: "main", tableName: "track", name: "tag_total" },
       },
     ]);
 });
@@ -959,7 +1018,12 @@ test("one of the app's computed columns takes the user's expression, and is rese
     )
     .toEqual({
       method: "metadata.computed_column.set",
-      params: { tableName: "track", name: "last_play", expression: null },
+      params: {
+        tableSchema: "main",
+        tableName: "track",
+        name: "last_play",
+        expression: null,
+      },
     });
 });
 
@@ -1000,6 +1064,7 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
     .toEqual({
       method: "metadata.custom_comparison.set",
       params: {
+        tableSchema: "main",
         tableName: "track",
         name: "by_label",
         expression: "album.title:@x",
@@ -1017,7 +1082,12 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
   expect(await calls(page, "metadata.custom_comparison.rename")).toEqual([
     {
       method: "metadata.custom_comparison.rename",
-      params: { tableName: "track", name: "by_label", newName: "label" },
+      params: {
+        tableSchema: "main",
+        tableName: "track",
+        name: "by_label",
+        newName: "label",
+      },
     },
   ]);
 
@@ -1032,7 +1102,7 @@ test("a custom comparison is added, renamed and removed, one of the app's only r
     .toEqual([
       {
         method: "metadata.custom_comparison.delete",
-        params: { tableName: "track", name: "label" },
+        params: { tableSchema: "main", tableName: "track", name: "label" },
       },
     ]);
 
@@ -1111,6 +1181,7 @@ test("a related-records field's Querydown is written, and restored", async ({
       {
         method: "metadata.field.set_sorting",
         params: {
+          tableSchema: "main",
           tableName: "track",
           field: {
             multiLink: { relatedTableName: "play", fkColumnName: "track" },
@@ -1144,7 +1215,7 @@ test("a table's context menu hides it, and brings it back", async ({
     .toEqual([
       {
         method: "metadata.table.set_visible",
-        params: { tableName: "role", visible: false },
+        params: { tableSchema: "main", tableName: "role", visible: false },
       },
     ]);
   await expect(role).toHaveCount(0);
@@ -1183,10 +1254,39 @@ test("a table dropped in a new place moves there, and is written", async ({
   expect(writes).toHaveLength(1);
   // The first move gives every table a key, in the new order.
   expect(writes[0].params).toEqual({
-    orders: after.map((tableName, i) => ({ tableName, order: i + 1 })),
+    orders: after.map((tableName, i) => ({
+      tableSchema: "main",
+      tableName,
+      order: i + 1,
+    })),
   });
   // The release's click didn't open the table.
   await expect(row(stage, "role ")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a table of another schema moves among its schema's tables alone", async ({
+  page,
+}) => {
+  const stage = await openStory(page, "data-structure/schemas", "light");
+  const lastfm = stage.locator('[data-item-id="schema:lastfm"]');
+  const mainBefore = await tableNames(stage);
+
+  await dragTable(page, lastfm, "scrobble", "artist", 0.1);
+  await page.mouse.up();
+
+  await expect
+    .poll(() => schemaTableNames(lastfm))
+    .toEqual(["scrobble", "artist"]);
+  expect(await tableNames(stage)).toEqual(mainBefore);
+  const writes = await calls(page, "metadata.table.set_order");
+  expect(writes).toHaveLength(1);
+  // Only the schema's own tables are given keys, each named by its schema.
+  expect(writes[0].params).toEqual({
+    orders: [
+      { tableSchema: "lastfm", tableName: "scrobble", order: 1 },
+      { tableSchema: "lastfm", tableName: "artist", order: 2 },
+    ],
+  });
 });
 
 test("a table is picked up by a long press, and held without a move raises its menu", async ({
@@ -1254,6 +1354,7 @@ test("a text search is written once its editor closes, and reset", async ({
       {
         method: "metadata.table.set_querydown",
         params: {
+          tableSchema: "main",
           tableName: "track",
           setting: "defaultTextSearch",
           text: "title:@x",

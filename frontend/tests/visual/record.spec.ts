@@ -554,6 +554,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_display",
           params: {
+            tableSchema: "main",
             tableName: "track",
             field: { columnName: "file" },
             display: "$id",
@@ -607,6 +608,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_display",
           params: {
+            tableSchema: "main",
             tableName: "track",
             field: { columnName: "file" },
             display: null,
@@ -649,6 +651,7 @@ test.describe("customizing embedded records", () => {
         {
           method: "metadata.field.set_sorting",
           params: {
+            tableSchema: "main",
             tableName: "track",
             field: {
               multiLink: {
@@ -890,6 +893,7 @@ test.describe("hiding fields", () => {
       .poll(() => rpcCalls(page, "metadata.field.set_visible"))
       .toEqual([
         {
+          tableSchema: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
@@ -922,11 +926,17 @@ test.describe("hiding fields", () => {
       .poll(() => rpcCalls(page, "metadata.field.set_visible"))
       .toEqual([
         {
+          tableSchema: "main",
           tableName: "track",
           field: { columnName: "title" },
           visible: false,
         },
-        { tableName: "track", field: { columnName: "title" }, visible: true },
+        {
+          tableSchema: "main",
+          tableName: "track",
+          field: { columnName: "title" },
+          visible: true,
+        },
       ]);
 
     await openActions(page);
@@ -1030,6 +1040,7 @@ test.describe("rearranging fields", () => {
     expect((await fieldNames(stage)).slice(0, 2)).toEqual(["id", "title"]);
     await expect.poll(async () => (await writes()).length).toBe(2);
     expect((await writes())[1]).toEqual({
+      tableSchema: "main",
       tableName: "track",
       orders: [{ field: { columnName: "id" }, order: 0 }],
     });
@@ -1429,7 +1440,12 @@ test.describe("computed columns", () => {
     await expect
       .poll(() => calls(page, "metadata.computed_column.set"))
       .toEqual([
-        { tableName: "track", name: "year", expression: "track_number" },
+        {
+          tableSchema: "main",
+          tableName: "track",
+          name: "year",
+          expression: "track_number",
+        },
       ]);
 
     // Double-clicking the label opens the editor too; resetting goes back to
@@ -1447,7 +1463,12 @@ test.describe("computed columns", () => {
       .poll(async () =>
         (await calls(page, "metadata.computed_column.set")).at(-1),
       )
-      .toEqual({ tableName: "track", name: "year", expression: null });
+      .toEqual({
+        tableSchema: "main",
+        tableName: "track",
+        name: "year",
+        expression: null,
+      });
   });
 
   test("a problem with an expression shows under it, and in place of the value", async ({
@@ -1485,7 +1506,12 @@ test.describe("computed columns", () => {
       stage.getByRole("button", { name: "Reset to default" }),
     ).toHaveCount(0);
     expect(await calls(page, "metadata.computed_column.set")).toEqual([
-      { tableName: "track", name: "album_year", expression: "" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "album_year",
+        expression: "",
+      },
     ]);
 
     await page.keyboard.type("file.added");
@@ -1498,6 +1524,7 @@ test.describe("computed columns", () => {
         (await calls(page, "metadata.computed_column.set")).at(-1),
       )
       .toEqual({
+        tableSchema: "main",
         tableName: "track",
         name: "album_year",
         expression: "file.added",
@@ -1539,7 +1566,12 @@ test.describe("computed columns", () => {
     await expect(fieldLabelOf(stage, "tag_count")).toHaveCount(0);
     await expect(computedRow(stage, "tags_applied")).toContainText("2");
     expect(await calls(page, "metadata.computed_column.rename")).toEqual([
-      { tableName: "track", name: "tag_count", newName: "tags_applied" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "tag_count",
+        newName: "tags_applied",
+      },
     ]);
 
     // A name another field has is numbered, never refused.
@@ -1557,7 +1589,7 @@ test.describe("computed columns", () => {
     await expect(fieldLabelOf(stage, "title_2")).toHaveCount(0);
     await expect
       .poll(() => calls(page, "metadata.computed_column.delete"))
-      .toEqual([{ tableName: "track", name: "title_2" }]);
+      .toEqual([{ tableSchema: "main", tableName: "track", name: "title_2" }]);
   });
 
   test("a long value, open, shows whole below its label", async ({ page }) => {

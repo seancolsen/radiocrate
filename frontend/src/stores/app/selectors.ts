@@ -687,7 +687,7 @@ export const selectUserPrelude = (s: AppState): string =>
 let preludeMemo:
   | {
       user: string;
-      tables: AppState["schema"]["tables"];
+      tables: AppState["schema"]["allTables"];
       settings: AppState["tableSettings"]["data"];
       computed: readonly ComputedColumnRow[];
       comparisons: readonly CustomComparisonRow[];
@@ -703,7 +703,7 @@ let preludeMemo:
  * safe to subscribe to. */
 export function selectPrelude(s: AppState): Mapped {
   const user = selectUserPrelude(s);
-  const tables = s.schema.tables;
+  const tables = s.schema.allTables;
   const settings = s.tableSettings.data;
   const computed = s.computedColumns.data;
   const comparisons = s.customComparisons.data;

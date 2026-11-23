@@ -41,7 +41,7 @@ const ComputedColumnEditor = forwardRef<
   const stored = useApp((s) => selectComputedExpression(s, table, name));
   const builtIn = builtInExpression(table, name);
   const text = stored ?? builtIn ?? "";
-  const tables = useApp((s) => s.schema.tables);
+  const tables = useApp((s) => s.schema.allTables);
   const settings = useApp((s) => s.tableSettings.data);
   const computed = useApp((s) => s.computedColumns.data);
   const comparisons = useApp((s) => s.customComparisons.data);

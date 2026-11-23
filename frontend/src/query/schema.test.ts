@@ -4,8 +4,16 @@ import {
   addInferredLinks,
   identifyingColumns,
   INTROSPECTION_SQL,
+  parseOtherSchemaTables,
   parseSchemaTables,
   primaryKey,
+  qualifiedTableName,
+  querydownTableName,
+  readSchemaTables,
+  rowTable,
+  splitTableName,
+  tableLabel,
+  tableRef,
   type SchemaTable,
 } from "./schema";
 
@@ -241,5 +249,80 @@ describe("primaryKey / identifyingColumns", () => {
       uniqueConstraints: [],
     };
     expect(identifyingColumns(t)).toEqual([]);
+  });
+});
+
+describe("naming a table across schemas", () => {
+  it("names the current schema's tables alone, and the others' by schema", () => {
+    expect(qualifiedTableName("main", "track")).toBe("track");
+    expect(qualifiedTableName("lastfm", "scrobble")).toBe("/lastfm/scrobble");
+    expect(splitTableName("track")).toEqual({ schema: "main", table: "track" });
+    expect(splitTableName("/lastfm/scrobble")).toEqual({
+      schema: "lastfm",
+      table: "scrobble",
+    });
+    expect(tableLabel("/lastfm/scrobble")).toBe("scrobble");
+    expect(tableLabel("track")).toBe("track");
+  });
+
+  it("hands the compiler a path for another schema's table", () => {
+    expect(querydownTableName("track")).toBe("track");
+    expect(querydownTableName("/metadata/field")).toEqual([
+      "metadata",
+      "field",
+    ]);
+  });
+
+  it("goes over the wire as a schema and a name, and back", () => {
+    expect(tableRef("/lastfm/artist")).toEqual({
+      tableSchema: "lastfm",
+      tableName: "artist",
+    });
+    expect(tableRef("artist")).toEqual({
+      tableSchema: "main",
+      tableName: "artist",
+    });
+    expect(rowTable(tableRef("/lastfm/artist"))).toBe("/lastfm/artist");
+    expect(rowTable(tableRef("artist"))).toBe("artist");
+  });
+});
+
+describe("parseOtherSchemaTables", () => {
+  const json = JSON.stringify({
+    tables: [
+      { name: "artist", columns: [{ name: "id", type: "UUID" }] },
+      {
+        name: "artist",
+        schema: ["lastfm"],
+        columns: [{ name: "mbid", type: "VARCHAR", nullable: false }],
+        unique_constraints: [["mbid"]],
+      },
+      { name: "field", schema: ["metadata"], columns: [] },
+      // Another attached database's is left to the compiler.
+      { name: "t", schema: ["other_db", "main"], columns: [] },
+    ],
+    links: [],
+  });
+
+  it("lists the other schemas' tables, named by schema, and none of the app's", () => {
+    expect(parseOtherSchemaTables(json)).toEqual([
+      {
+        name: "/lastfm/artist",
+        columns: [{ name: "mbid", type: "VARCHAR", nullable: false }],
+        uniqueConstraints: [["mbid"]],
+      },
+      { name: "/metadata/field", columns: [], uniqueConstraints: [] },
+    ]);
+    expect(parseSchemaTables(json).map((t) => t.name)).toEqual(["artist"]);
+  });
+
+  it("lists every table together, the app's first", () => {
+    const { tables, otherTables, allTables } = readSchemaTables(json);
+    expect(allTables).toEqual([...tables, ...otherTables]);
+    expect(allTables.map((t) => t.name)).toEqual([
+      "artist",
+      "/lastfm/artist",
+      "/metadata/field",
+    ]);
   });
 });

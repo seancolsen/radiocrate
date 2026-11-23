@@ -15,11 +15,17 @@ import { groupPresets, type PresetTableGroup } from "../query/presetGroups";
 import {
   TABLES_ITEM,
   countLabel,
+  schemaItemId,
   tableItemId,
   tableSummary,
 } from "../query/structure";
 import { pluralOrRaw } from "../query/entityNames";
-import { isTableHidden, orderTables } from "../query/tableSettings";
+import { tableLabel } from "../query/schema";
+import {
+  groupBySchema,
+  isTableHidden,
+  orderTables,
+} from "../query/tableSettings";
 import { useApp, useAppActions } from "../stores/react";
 import PresetDeleteModal from "./PresetDeleteModal";
 import { FieldsNode } from "./structure/FieldNodes";
@@ -39,6 +45,8 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 //   Tables                 in the order the user has dragged them into, less
 //                          those they've hidden
 //     <table>              how many rows and columns it has
+//     <schema>             another schema's tables (`metadata`, the user's
+//       <table>            own), after the app's, each schema in a folder
 //       Fields             every field of its record editor form
 //         <field>          a column (with its type and statistics), the records
 //                          of another table that refer to it, a computed
@@ -69,7 +77,7 @@ import { COUNT_BUBBLE_CLASS } from "./ui/cx";
 // as it does in any tree (see `structure/Tree.tsx`).
 //
 // The numbers come from `table.summarize`, read as the page opens and again on
-// Refresh: DuckDB's `SUMMARIZE` of every table, in one call.
+// Refresh: DuckDB's `SUMMARIZE` of every table of every schema, in one call.
 
 /** One table: its name and size — "12,509 rows × 7 columns", each count in a
  * bubble, as the counts of what's under other rows are — a button opening all
@@ -86,7 +94,7 @@ function TableNode(props: {
 }): JSX.Element {
   const { table, sections } = props.group;
   const columns = useApp(
-    (s) => s.schema.tables.find((t) => t.name === table)?.columns.length,
+    (s) => s.schema.allTables.find((t) => t.name === table)?.columns.length,
   );
   const rowCount = useApp(
     (s) => tableSummary(s.tableSummaries.data, table)?.rowCount,
@@ -141,18 +149,123 @@ function TableNode(props: {
   );
 }
 
+/** One schema's tables, as the "Tables" list shows them (`shown`), each
+ * draggable to rearrange it among the others of its schema — `all` of them,
+ * hidden ones included. A table's context menu is `onMenu`'s to raise. */
+function TableList(props: {
+  shown: readonly PresetTableGroup[];
+  all: readonly string[];
+  onMenu: (menu: TableMenu) => void;
+}): JSX.Element {
+  const { shown, all, onMenu } = props;
+  const settings = useApp((s) => s.tableSettings.data);
+  const { moveTable } = useAppActions();
+  const listRef = useRef<HTMLDivElement>(null);
+  const dnd = useFieldDrag({
+    listRef,
+    keys: shown.map((g) => g.table),
+    rowAttribute: "data-drag-row",
+    onDrop: (table, target) =>
+      moveTable(all, table, target.above, target.below),
+    onHold: (table, x, y) => onMenu({ table, x, y }),
+  });
+  const drag = dnd.drag;
+
+  return (
+    <div ref={listRef} className="relative">
+      {shown.map((g) => (
+        <TableNode
+          key={g.table}
+          group={g}
+          hidden={isTableHidden(settings, g.table)}
+          dragging={drag?.item === g.table}
+          onPointerDown={(e) => dnd.onPointerDown(e, g.table)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            // A touch resting on the row raises the menu as it lets go,
+            // unless it picks the table up instead.
+            if (dnd.pressing()) return;
+            // The menu key raises it with no pointer to place it by.
+            const at = e.currentTarget.getBoundingClientRect();
+            const keyed = e.clientX === 0 && e.clientY === 0;
+            onMenu({
+              table: g.table,
+              x: keyed ? at.left + 24 : e.clientX,
+              y: keyed ? at.bottom : e.clientY,
+            });
+          }}
+        />
+      ))}
+      {drag?.target && (
+        // Over the rows, which stick, and so are layered.
+        <div
+          aria-hidden="true"
+          className="bg-accent pointer-events-none absolute right-1 left-5 z-[7] h-0.5 -translate-y-1/2 rounded-full"
+          style={{ top: drag.lineTop }}
+        />
+      )}
+      {drag &&
+        createPortal(
+          <DragChip
+            icon={Icons.Table}
+            label={tableLabel(drag.item)}
+            style={{ transform: dragChipTransform(drag.x, drag.y) }}
+          />,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+/** A schema other than the app's own, as a folder among the tables, after
+ * them: how many of its tables are listed, and the tables. */
+function SchemaNode(props: {
+  schema: string;
+  shown: readonly PresetTableGroup[];
+  all: readonly string[];
+  onMenu: (menu: TableMenu) => void;
+}): JSX.Element {
+  const id = schemaItemId(props.schema);
+  const open = useApp((s) => s.structure.expanded[id] === true);
+  const FolderIcon = open ? Icons.FolderOpen : Icons.Folder;
+  return (
+    <TreeNode
+      id={id}
+      expandable
+      label={
+        <>
+          <FolderIcon className="text-ink-weak size-4 shrink-0" />
+          <TreeName>{props.schema}</TreeName>
+          <TreeCount n={props.shown.length} one="table" many="tables" />
+        </>
+      }
+    >
+      <TableList shown={props.shown} all={props.all} onMenu={props.onMenu} />
+    </TreeNode>
+  );
+}
+
+/** Where a table's context menu is up, and for which table. */
+interface TableMenu {
+  table: string;
+  x: number;
+  y: number;
+}
+
 /** "Tables": how many are listed, Refresh — which reads them and their
  * statistics again, and spins while it does — the toggle that lists the hidden
  * ones too (while there are any, and the list is open), and the tables, in the
- * order the user has dragged them into. A table's context menu hides it from every list of
- * tables, or brings it back; on a touch screen, holding it raises the menu. */
+ * order the user has dragged them into: the app's own (`main`'s), then each
+ * other schema's in a folder of its own. A table moves among those of its
+ * schema. A table's context menu hides it from every list of tables, or brings
+ * it back; on a touch screen, holding it raises the menu. */
 function TablesNode(): JSX.Element {
   const presets = useApp((s) => s.presets);
   const unsaved = useApp((s) => s.unsavedPresets);
   const drafts = useApp((s) => s.structure.drafts);
   const listedNames = useApp((s) => s.structure.listedNames);
   const openTabs = useApp((s) => s.tabs);
-  const tables = useApp((s) => s.schema.tables);
+  const tables = useApp((s) => s.schema.allTables);
   const schemaStatus = useApp((s) => s.schema.status);
   const settings = useApp((s) => s.tableSettings.data);
   const showHidden = useApp((s) => s.showHiddenTables);
@@ -162,7 +275,7 @@ function TablesNode(): JSX.Element {
     (s) =>
       s.tableSummaries.status === "loading" || s.schema.status === "loading",
   );
-  const { refreshStructure, setTableHidden, setShowHiddenTables, moveTable } =
+  const { refreshStructure, setTableHidden, setShowHiddenTables } =
     useAppActions();
 
   const groups = useMemo(() => {
@@ -198,29 +311,24 @@ function TablesNode(): JSX.Element {
         : groups.filter((g) => !isTableHidden(settings, g.table)),
     [groups, settings, showHidden],
   );
+  // What's listed of each schema, the app's own first, and every table of each,
+  // hidden ones included: what a table moved within it is placed among.
+  const schemas = useMemo(() => {
+    const every = new Map(
+      groupBySchema(groups, (g) => g.table).map((s) => [
+        s.schema,
+        s.items.map((g) => g.table),
+      ]),
+    );
+    return groupBySchema(shown, (g) => g.table).map((s) => ({
+      schema: s.schema,
+      shown: s.items,
+      all: every.get(s.schema) ?? [],
+    }));
+  }, [groups, shown]);
 
   // The table whose context menu is up.
-  const [menu, setMenu] = useState<{
-    table: string;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  const listRef = useRef<HTMLDivElement>(null);
-  const dnd = useFieldDrag({
-    listRef,
-    keys: shown.map((g) => g.table),
-    rowAttribute: "data-drag-row",
-    onDrop: (table, target) =>
-      moveTable(
-        groups.map((g) => g.table),
-        table,
-        target.above,
-        target.below,
-      ),
-    onHold: (table, x, y) => setMenu({ table, x, y }),
-  });
-  const drag = dnd.drag;
+  const [menu, setMenu] = useState<TableMenu | null>(null);
 
   let empty: string | null = null;
   if (groups.length === 0) {
@@ -267,48 +375,24 @@ function TablesNode(): JSX.Element {
         {empty !== null ? (
           <TreeEmpty>{empty}</TreeEmpty>
         ) : (
-          <div ref={listRef} className="relative">
-            {shown.map((g) => (
-              <TableNode
-                key={g.table}
-                group={g}
-                hidden={isTableHidden(settings, g.table)}
-                dragging={drag?.item === g.table}
-                onPointerDown={(e) => dnd.onPointerDown(e, g.table)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  // A touch resting on the row raises the menu as it lets go,
-                  // unless it picks the table up instead.
-                  if (dnd.pressing()) return;
-                  // The menu key raises it with no pointer to place it by.
-                  const at = e.currentTarget.getBoundingClientRect();
-                  const keyed = e.clientX === 0 && e.clientY === 0;
-                  setMenu({
-                    table: g.table,
-                    x: keyed ? at.left + 24 : e.clientX,
-                    y: keyed ? at.bottom : e.clientY,
-                  });
-                }}
+          schemas.map((s, i) =>
+            i === 0 ? (
+              <TableList
+                key={s.schema}
+                shown={s.shown}
+                all={s.all}
+                onMenu={setMenu}
               />
-            ))}
-            {drag?.target && (
-              // Over the rows, which stick, and so are layered.
-              <div
-                aria-hidden="true"
-                className="bg-accent pointer-events-none absolute right-1 left-5 z-[7] h-0.5 -translate-y-1/2 rounded-full"
-                style={{ top: drag.lineTop }}
+            ) : (
+              <SchemaNode
+                key={s.schema}
+                schema={s.schema}
+                shown={s.shown}
+                all={s.all}
+                onMenu={setMenu}
               />
-            )}
-            {drag &&
-              createPortal(
-                <DragChip
-                  icon={Icons.Table}
-                  label={drag.item}
-                  style={{ transform: dragChipTransform(drag.x, drag.y) }}
-                />,
-                document.body,
-              )}
-          </div>
+            ),
+          )
         )}
       </TreeNode>
       {menu && (

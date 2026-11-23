@@ -22,7 +22,12 @@ const row = (
   tableName: string,
   name: string,
   expression: string | null,
-): CustomComparisonRow => ({ tableName, name, expression });
+): CustomComparisonRow => ({
+  tableSchema: "main",
+  tableName,
+  name,
+  expression,
+});
 
 describe("the app's own custom comparisons", () => {
   it("compare tracks by artist", () => {

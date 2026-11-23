@@ -6,6 +6,8 @@
 //
 //   Tables                      tables
 //     <table>                   table:<name>
+//     <schema>                  schema:<schema> (another schema's tables,
+//       <table>                 table:/<schema>/<name> after the app's own)
 //       Fields                  table:<name>/fields
 //         <field>               table:<name>/fields/<fieldRefKey>
 //                               (a computed column's is keyed by its name, so
@@ -39,7 +41,12 @@ import type { Section } from "./definition";
 import { fieldRefKey, orderFields, type TableMetadata } from "./fieldMetadata";
 import { hasQueryEditor } from "./fieldQuery";
 import { buildFormFields, type FormField } from "./recordForm";
-import type { SchemaTable } from "./schema";
+import {
+  CURRENT_SCHEMA,
+  qualifiedTableName,
+  splitTableName,
+  type SchemaTable,
+} from "./schema";
 import type { PreludeSetting } from "./tableSettings";
 
 /** The "Tables" item, at the top of the tree. */
@@ -49,6 +56,18 @@ export const TABLES_ITEM = "tables";
 export const PRELUDE_ITEM = "prelude";
 
 export const tableItemId = (table: string): string => `table:${table}`;
+
+/** A schema other than the current one, among the tables. */
+export const schemaItemId = (schema: string): string => `schema:${schema}`;
+
+/** The items to open for `table`'s row to be on show: the list of tables, and
+ * for a table of another schema, that schema's. Then the table's own. */
+export function tablePath(table: string): string[] {
+  const { schema } = splitTableName(table);
+  return schema === CURRENT_SCHEMA
+    ? [TABLES_ITEM, tableItemId(table)]
+    : [TABLES_ITEM, schemaItemId(schema), tableItemId(table)];
+}
 
 export const fieldsItemId = (table: string): string =>
   `${tableItemId(table)}/fields`;
@@ -79,8 +98,7 @@ export function tableSettingPath(
   item: TableSettingItem,
 ): string[] {
   return [
-    TABLES_ITEM,
-    tableItemId(table),
+    ...tablePath(table),
     querySettingsItemId(table),
     tableSettingItemId(table, item),
   ];
@@ -90,8 +108,7 @@ export function tableSettingPath(
  * on show. */
 export function computedColumnPath(table: string, name: string): string[] {
   return [
-    TABLES_ITEM,
-    tableItemId(table),
+    ...tablePath(table),
     fieldsItemId(table),
     structureFieldId(table, { computedColumn: name }),
   ];
@@ -107,8 +124,7 @@ export const comparisonItemId = (table: string, name: string): string =>
  * be on show. */
 export function comparisonPath(table: string, name: string): string[] {
   return [
-    TABLES_ITEM,
-    tableItemId(table),
+    ...tablePath(table),
     querySettingsItemId(table),
     comparisonsItemId(table),
     comparisonItemId(table, name),
@@ -118,7 +134,7 @@ export function comparisonPath(table: string, name: string): string[] {
 /** The items to open for `table`'s presets to be on show: all of them down to
  * `section`'s list, or down to "Query settings" without one. */
 export function presetSectionPath(table: string, section?: Section): string[] {
-  const path = [TABLES_ITEM, tableItemId(table), querySettingsItemId(table)];
+  const path = [...tablePath(table), querySettingsItemId(table)];
   if (section !== undefined) path.push(presetSectionItemId(table, section));
   return path;
 }
@@ -211,10 +227,10 @@ export function columnStatsLabel(
   return parts.join(", ");
 }
 
-/** The summary of one table, by name. */
+/** The summary of one table, by name (`qualifiedTableName`'s). */
 export function tableSummary(
   summaries: readonly TableSummary[],
   table: string,
 ): TableSummary | undefined {
-  return summaries.find((t) => t.name === table);
+  return summaries.find((t) => qualifiedTableName(t.schema, t.name) === table);
 }

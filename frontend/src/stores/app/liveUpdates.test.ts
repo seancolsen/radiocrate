@@ -252,14 +252,24 @@ describe("another device's changes", () => {
 
   it("keeps a computed column's expression waiting to be written", async () => {
     vi.mocked(metadataComputedColumnList).mockResolvedValue([
-      { tableName: "track", name: "c", expression: "1" },
-      { tableName: "track", name: "d", expression: "1" },
+      { tableSchema: "main", tableName: "track", name: "c", expression: "1" },
+      { tableSchema: "main", tableName: "track", name: "d", expression: "1" },
     ]);
     await bundle.actions.loadComputedColumns();
     bundle.actions.setComputedColumnExpression("track", "c", "mine");
     vi.mocked(metadataComputedColumnList).mockResolvedValue([
-      { tableName: "track", name: "c", expression: "theirs" },
-      { tableName: "track", name: "d", expression: "theirs" },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "c",
+        expression: "theirs",
+      },
+      {
+        tableSchema: "main",
+        tableName: "track",
+        name: "d",
+        expression: "theirs",
+      },
     ]);
     await bundle.actions.refreshLive("computed-columns", never);
     expect(get().computedColumns.data.map((r) => r.expression)).toEqual([
@@ -273,6 +283,7 @@ describe("another device's changes", () => {
     bundle.actions.setFieldQuerydown("track", field, "display", "mine");
     vi.mocked(metadataFieldList).mockResolvedValue([
       {
+        tableSchema: "main",
         tableName: "track",
         field,
         visible: false,
@@ -311,7 +322,7 @@ describe("another device's changes", () => {
       () => seen.push(bundle.isApplyingRemote()),
     );
     vi.mocked(metadataComputedColumnList).mockResolvedValue([
-      { tableName: "track", name: "c", expression: "1" },
+      { tableSchema: "main", tableName: "track", name: "c", expression: "1" },
     ]);
     await bundle.actions.refreshLive("computed-columns", never);
     bundle.actions.setComputedColumnExpression("track", "c", "2");

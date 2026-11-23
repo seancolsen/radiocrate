@@ -177,6 +177,7 @@ describe("groupFieldMetadata", () => {
     expect(
       groupFieldMetadata([
         {
+          tableSchema: "main",
           tableName: "track",
           field: column("title"),
           visible: false,
@@ -185,6 +186,7 @@ describe("groupFieldMetadata", () => {
           sorting: null,
         },
         {
+          tableSchema: "main",
           tableName: "track",
           field: link("credit", "track"),
           visible: true,
@@ -193,6 +195,7 @@ describe("groupFieldMetadata", () => {
           sorting: "\\\\a",
         },
         {
+          tableSchema: "main",
           tableName: "album",
           field: column("title"),
           visible: true,

@@ -44,7 +44,13 @@ import { computedPrelude } from "./computedColumns";
 import { comparisonPrelude } from "./customComparisons";
 import type { Section } from "./definition";
 import type { SchemaTable } from "./schema";
-import { inferLinks } from "./schema";
+import {
+  CURRENT_SCHEMA,
+  inferLinks,
+  qualifiedTableName,
+  splitTableName,
+  tableRef,
+} from "./schema";
 import { byOrder, moveOrders } from "./sortKeys";
 import { fromSource, joinMapped, unmapped, type Mapped } from "./sourceMap";
 
@@ -86,7 +92,9 @@ export function groupTableSettings(
   rows: readonly TableMetadataRow[],
 ): TableSettingsByTable {
   const tables: Record<string, TableSettings> = {};
-  for (const { tableName, ...settings } of rows) tables[tableName] = settings;
+  for (const { tableSchema, tableName, ...settings } of rows) {
+    tables[qualifiedTableName(tableSchema, tableName)] = settings;
+  }
   return tables;
 }
 
@@ -383,6 +391,39 @@ export function listedTables(
   return orderTables(shown, (t) => t.name, settings);
 }
 
+/** One schema's share of a list of tables. */
+export interface SchemaGroup<T> {
+  /** The schema's name: `main` for the app's own tables. */
+  schema: string;
+  items: T[];
+}
+
+/** `items`, tables or things standing for them, split by schema, each schema's
+ * in the order they came in: the current schema's first — always there, if
+ * empty, as the list's top level — then each other schema's, by name. What a
+ * list of tables shows the other schemas' under, after the app's own. */
+export function groupBySchema<T>(
+  items: readonly T[],
+  nameOf: (item: T) => string,
+): SchemaGroup<T>[] {
+  const bySchema = new Map<string, T[]>([[CURRENT_SCHEMA, []]]);
+  for (const item of items) {
+    const { schema } = splitTableName(nameOf(item));
+    const list = bySchema.get(schema);
+    if (list) list.push(item);
+    else bySchema.set(schema, [item]);
+  }
+  return [...bySchema]
+    .map(([schema, items]) => ({ schema, items }))
+    .sort((a, b) =>
+      a.schema === CURRENT_SCHEMA
+        ? -1
+        : b.schema === CURRENT_SCHEMA
+          ? 1
+          : byName(a.schema, b.schema),
+    );
+}
+
 /** The sort keys that put table `moved` between the tables shown just above and
  * just below where it was dropped (see `moveOrders`). `names` is every table
  * the list could show, hidden ones included. */
@@ -401,5 +442,5 @@ export function tableMoveOrders(
     moved,
     above,
     below,
-  ).map(({ item, order }) => ({ tableName: item, order }));
+  ).map(({ item, order }) => ({ ...tableRef(item), order }));
 }

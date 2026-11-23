@@ -33,6 +33,7 @@ import { useApp } from "../../stores/react";
 import { emptyCountResult, lemonadeGridResult } from "../gridFixture";
 import {
   FIXTURE_SCHEMA_JSON,
+  FIXTURE_SCHEMAS_JSON,
   fixtureQuery,
   installRecordFixture,
 } from "../recordFixture";
@@ -49,8 +50,11 @@ import {
   PRELUDE_ITEM,
   presetSectionItemId,
   presetSectionPath,
+  querySettingsItemId,
+  schemaItemId,
   structureFieldId,
   tableItemId,
+  tablePath,
   tableSettingPath,
 } from "../../query/structure";
 import {
@@ -287,13 +291,14 @@ function dataStructure(
   size: { width?: number; height: number },
   open: readonly string[],
   setup?: (stores: Stores) => void,
+  schemaJson: string = FIXTURE_SCHEMA_JSON,
 ): Story {
   return {
     width: size.width ?? 720,
     height: size.height,
     frame: "flex flex-col",
     setup: (stores) => {
-      stores.app.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+      stores.app.actions.setSchemaJson(schemaJson);
       stores.app.actions.setStructureExpanded(open, true);
       setup?.(stores);
     },
@@ -337,6 +342,7 @@ function seedTrackFields(stores: Stores): void {
 
 /** A computed column of the user's own on tracks: how many tags it has. */
 const TAGCOUNT_COLUMN: ComputedColumnRow = {
+  tableSchema: "main",
   tableName: "track",
   name: "tag_count",
   expression: "#track_tag",
@@ -1509,6 +1515,23 @@ export const STORIES: Record<string, Story> = {
       </Menu>
     ),
   },
+  // The Base submenu of a database with schemas beside the app's own: the
+  // app's tables first, then each other schema's under a heading of its name,
+  // `lastfm`'s `artist` named alone there. The query is on `lastfm`'s
+  // `scrobble`, checked.
+  "query-builder/base-schemas": {
+    width: 480,
+    height: 640,
+    setup: (stores) => {
+      stores.app.actions.setSchemaJson(FIXTURE_SCHEMAS_JSON);
+      openWithDefinition(stores, { ...FILTER_DEF, base: "/lastfm/scrobble" });
+    },
+    render: () => (
+      <Menu defaultOpen width="210px" trigger={() => null}>
+        <PageActionsMenu tabId={LEMONADE.id} />
+      </Menu>
+    ),
+  },
   // "Export results data" as it opens: all rows chosen, with some selected so
   // "Selected rows" is on offer too, and the columns folded away — three of
   // four checked.
@@ -1726,6 +1749,28 @@ export const STORIES: Record<string, Story> = {
       stores.app.actions.setShowHiddenTables(true);
     },
   ),
+  // A database with schemas beside the app's own: each a folder after the
+  // app's tables, `lastfm` open on its two, counted as the app's are — its
+  // `artist` apart from the app's — and `metadata` closed.
+  "data-structure/schemas": dataStructure(
+    { height: 560 },
+    [schemaItemId("lastfm")],
+    undefined,
+    FIXTURE_SCHEMAS_JSON,
+  ),
+  // A table of another schema, open: its columns, the one linking to the app's
+  // tracks among them, and its query settings, which have no record picker —
+  // the record editor never links to it.
+  "data-structure/schema-table": dataStructure(
+    { height: 840 },
+    [
+      ...tablePath("/lastfm/scrobble"),
+      fieldsItemId("/lastfm/scrobble"),
+      querySettingsItemId("/lastfm/scrobble"),
+    ],
+    undefined,
+    FIXTURE_SCHEMAS_JSON,
+  ),
   // A table's fields: its columns with their types and statistics, the tables
   // referring to it, and a contextual query — `disc_number` and the credits
   // hidden, listed faded under the pressed "Show hidden fields".
@@ -1769,7 +1814,12 @@ export const STORIES: Record<string, Story> = {
     ],
     (stores) =>
       seedComputedColumns(stores, [
-        { tableName: "track", name: "year", expression: "album.year + 1" },
+        {
+          tableSchema: "main",
+          tableName: "track",
+          name: "year",
+          expression: "album.year + 1",
+        },
         TAGCOUNT_COLUMN,
       ]),
   ),
@@ -1784,7 +1834,12 @@ export const STORIES: Record<string, Story> = {
     ],
     (stores) =>
       seedComputedColumns(stores, [
-        { tableName: "album", name: "decade", expression: "yeer / 10 * 10" },
+        {
+          tableSchema: "main",
+          tableName: "album",
+          name: "decade",
+          expression: "yeer / 10 * 10",
+        },
       ]),
   ),
   // A table's fields as the database gives them, for the test to act on: the
@@ -1873,6 +1928,7 @@ export const STORIES: Record<string, Story> = {
     (stores) =>
       seedCustomComparisons(stores, [
         {
+          tableSchema: "main",
           tableName: "track",
           name: "album_title",
           expression: "album.title:@x",
@@ -1886,7 +1942,12 @@ export const STORIES: Record<string, Story> = {
     comparisonPath("album", "label"),
     (stores) =>
       seedCustomComparisons(stores, [
-        { tableName: "album", name: "label", expression: "labl:@x" },
+        {
+          tableSchema: "main",
+          tableName: "album",
+          name: "label",
+          expression: "labl:@x",
+        },
       ]),
   ),
   // `album`'s record picker opened into its editor, on its sorting, with a
@@ -2360,8 +2421,18 @@ export const STORIES: Record<string, Story> = {
   // value — and one with no expression yet, offering its pencil.
   "record-editor/computed-columns": withComputedColumns(recordEditor([1]), [
     TAGCOUNT_COLUMN,
-    { tableName: "track", name: "label", expression: "album.label" },
-    { tableName: "track", name: "unwritten", expression: "" },
+    {
+      tableSchema: "main",
+      tableName: "track",
+      name: "label",
+      expression: "album.label",
+    },
+    {
+      tableSchema: "main",
+      tableName: "track",
+      name: "unwritten",
+      expression: "",
+    },
   ]),
   // A computed column being added (the test does the adding): the new field at
   // the bottom, its default name selected to be typed over.

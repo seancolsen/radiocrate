@@ -33,7 +33,7 @@ const row = (
   tableName: string,
   name: string,
   expression: string | null,
-): ComputedColumnRow => ({ tableName, name, expression });
+): ComputedColumnRow => ({ tableSchema: "main", tableName, name, expression });
 
 const TABLES = [table("role", "id", "title"), table("track", "id", "title")];
 

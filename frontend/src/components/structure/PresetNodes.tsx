@@ -3,6 +3,7 @@ import type { Preset } from "api-client";
 import { Icons, type IconComponent } from "../../icons";
 import { sectionNoun, type Section } from "../../query/definition";
 import type { PresetSectionGroup } from "../../query/presetGroups";
+import { isCurrentSchemaTable } from "../../query/schema";
 import {
   presetItemId,
   presetSectionItemId,
@@ -140,8 +141,8 @@ function PresetSectionNode(props: {
 
 /** A table's "Query settings": its presets, by section, and — for a table the
  * database has — its text search, its linked record comparison, its custom
- * comparisons (`ComparisonNodes.tsx`) and its record picker
- * (`TableSettingNodes.tsx`). */
+ * comparisons (`ComparisonNodes.tsx`) and, for one of the current schema, which
+ * the record editor links to, its record picker (`TableSettingNodes.tsx`). */
 export function QuerySettingsNode(props: {
   table: string;
   sections: readonly PresetSectionGroup[];
@@ -177,7 +178,9 @@ export function QuerySettingsNode(props: {
           />
         ))}
       {props.inSchema && <CustomComparisonsNode table={props.table} />}
-      {props.inSchema && <RecordPickerNode table={props.table} />}
+      {props.inSchema && isCurrentSchemaTable(props.table) && (
+        <RecordPickerNode table={props.table} />
+      )}
     </TreeNode>
   );
 }

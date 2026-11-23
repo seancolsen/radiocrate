@@ -9,6 +9,7 @@ import {
   defaultTableSettings,
   effectiveSetting,
   generatedPrelude,
+  groupBySchema,
   groupTableSettings,
   listedTables,
   orderTables,
@@ -38,6 +39,7 @@ describe("groupTableSettings", () => {
   it("keys each row by its table", () => {
     const grouped = groupTableSettings([
       {
+        tableSchema: "main",
         tableName: "track",
         visible: false,
         order: 2,
@@ -141,7 +143,14 @@ describe("tablePrelude", () => {
 });
 
 describe("generatedPrelude", () => {
-  const computed = [{ tableName: "role", name: "upper", expression: "name" }];
+  const computed = [
+    {
+      tableSchema: "main",
+      tableName: "role",
+      name: "upper",
+      expression: "name",
+    },
+  ];
 
   it("defines the tables' computed columns, then what their settings say", () => {
     expect(
@@ -182,7 +191,12 @@ describe("generatedPrelude", () => {
 
   it("defines the tables' custom comparisons last", () => {
     const comparisons = [
-      { tableName: "role", name: "named", expression: "name:@x" },
+      {
+        tableSchema: "main",
+        tableName: "role",
+        name: "named",
+        expression: "name:@x",
+      },
     ];
     expect(
       generatedPrelude(named("rating", "role"), {}, computed, comparisons).text,
@@ -320,9 +334,9 @@ describe("tableMoveOrders", () => {
 
   it("numbers every table the first time they're arranged", () => {
     expect(tableMoveOrders(names, {}, "track", undefined, "album")).toEqual([
-      { tableName: "track", order: 1 },
-      { tableName: "album", order: 2 },
-      { tableName: "artist", order: 3 },
+      { tableSchema: "main", tableName: "track", order: 1 },
+      { tableSchema: "main", tableName: "album", order: 2 },
+      { tableSchema: "main", tableName: "artist", order: 3 },
     ]);
   });
 
@@ -333,7 +347,7 @@ describe("tableMoveOrders", () => {
       track: { order: 3 },
     });
     expect(tableMoveOrders(names, s, "track", "album", "artist")).toEqual([
-      { tableName: "track", order: 1.5 },
+      { tableSchema: "main", tableName: "track", order: 1.5 },
     ]);
   });
 
@@ -341,5 +355,55 @@ describe("tableMoveOrders", () => {
     expect(tableMoveOrders(names, {}, "album", undefined, "artist")).toEqual(
       [],
     );
+  });
+});
+
+describe("tables of other schemas", () => {
+  it("are keyed by schema as well as name", () => {
+    const row = (tableSchema: string, visible: boolean) => ({
+      tableSchema,
+      tableName: "artist",
+      visible,
+      order: null,
+      defaultTextSearch: null,
+      linkedRecordComparison: null,
+      recordPickerSorting: null,
+      recordPickerDisplay: null,
+    });
+    const grouped = groupTableSettings([
+      row("lastfm", false),
+      row("main", true),
+    ]);
+    expect(grouped["artist"].visible).toBe(true);
+    expect(grouped["/lastfm/artist"].visible).toBe(false);
+  });
+
+  it("are grouped by schema, after the app's own", () => {
+    const names = ["/zz/a", "track", "/lastfm/b", "album", "/lastfm/a"];
+    expect(groupBySchema(names, (n) => n)).toEqual([
+      { schema: "main", items: ["track", "album"] },
+      { schema: "lastfm", items: ["/lastfm/b", "/lastfm/a"] },
+      { schema: "zz", items: ["/zz/a"] },
+    ]);
+    // The app's own are there, as the list's top level, even with none.
+    expect(groupBySchema(["/zz/a"], (n) => n)).toEqual([
+      { schema: "main", items: [] },
+      { schema: "zz", items: ["/zz/a"] },
+    ]);
+  });
+
+  it("are ordered among their schema's, and written by schema", () => {
+    expect(
+      tableMoveOrders(
+        ["/lastfm/artist", "/lastfm/scrobble"],
+        {},
+        "/lastfm/scrobble",
+        undefined,
+        "/lastfm/artist",
+      ),
+    ).toEqual([
+      { tableSchema: "lastfm", tableName: "scrobble", order: 1 },
+      { tableSchema: "lastfm", tableName: "artist", order: 2 },
+    ]);
   });
 });

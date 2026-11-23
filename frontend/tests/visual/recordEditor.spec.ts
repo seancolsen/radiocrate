@@ -1745,7 +1745,12 @@ test("the picker's sorting and display are the table's, for the next picker on i
   await expect
     .poll(() => writes)
     .toEqual([
-      { tableName: "album", setting: "recordPickerDisplay", text: "$title" },
+      {
+        tableSchema: "main",
+        tableName: "album",
+        setting: "recordPickerDisplay",
+        text: "$title",
+      },
     ]);
 
   // The next picker on albums opens with it.

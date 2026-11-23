@@ -1,5 +1,6 @@
 import type { Preset, Source, TableSummary } from "api-client";
 import type { QueryDefinition } from "../query/definition";
+import { splitTableName } from "../query/schema";
 
 // The canned backend answers shared by the visual-test harness (`dev/harness/`,
 // which fulfills them from a stubbed `fetch`) and by the Playwright specs that
@@ -138,7 +139,8 @@ const summary = (
   rowCount: number,
   columns: [string, number, number][],
 ): TableSummary => ({
-  name,
+  schema: splitTableName(name).schema,
+  name: splitTableName(name).table,
   rowCount,
   columns: columns.map(([column, approxUnique, nullPercentage]) => ({
     name: column,
@@ -148,7 +150,9 @@ const summary = (
 });
 
 /** `table.summarize` for the tables of the record fixture's schema
- * (`recordFixture.ts`): a collection of some twelve thousand tracks. */
+ * (`recordFixture.ts`): a collection of some twelve thousand tracks. Its
+ * other schemas' (`FIXTURE_SCHEMAS_JSON`) come last; the stories without them
+ * never ask for theirs. */
 export const TABLE_SUMMARIES_FIXTURE: TableSummary[] = [
   summary("album", 1204, [
     ["id", 1204, 0],
@@ -203,5 +207,29 @@ export const TABLE_SUMMARIES_FIXTURE: TableSummary[] = [
   summary("track_tag", 3105, [
     ["track", 2764, 0],
     ["tag", 37, 0],
+  ]),
+  // The other schemas of `FIXTURE_SCHEMAS_JSON`.
+  summary("/lastfm/artist", 812, [
+    ["mbid", 812, 0],
+    ["name", 809, 0],
+  ]),
+  summary("/lastfm/scrobble", 30544, [
+    ["id", 30544, 0],
+    ["track", 7210, 12.5],
+    ["artist", 790, 0],
+    ["title", 8102, 0],
+    ["played_at", 30544, 0],
+  ]),
+  summary("/metadata/computed_column", 2, [
+    ["table_schema", 1, 0],
+    ["table_name", 1, 0],
+    ["name", 2, 0],
+    ["expression", 2, 0],
+  ]),
+  summary("/metadata/table", 3, [
+    ["table_schema", 1, 0],
+    ["table_name", 3, 0],
+    ["visible", 2, 0],
+    ["order", 2, 33.33],
   ]),
 ];

@@ -2573,8 +2573,18 @@ describe("computed columns", () => {
   let prelude: string;
   beforeEach(() => {
     rows = [
-      { tableName: "disc", name: "decade", expression: "year / 10" },
-      { tableName: "disc", name: "era", expression: "decade" },
+      {
+        tableSchema: "main",
+        tableName: "disc",
+        name: "decade",
+        expression: "year / 10",
+      },
+      {
+        tableSchema: "main",
+        tableName: "disc",
+        name: "era",
+        expression: "decade",
+      },
     ];
     prelude = "#disc.decade = year / 10\n#disc.era = decade";
   });
@@ -2731,7 +2741,14 @@ describe("computed columns", () => {
   });
 
   it("read as empty, unasked, with no expression to compute", async () => {
-    rows = [{ tableName: "disc", name: "unwritten", expression: "" }];
+    rows = [
+      {
+        tableSchema: "main",
+        tableName: "disc",
+        name: "unwritten",
+        expression: "",
+      },
+    ];
     serveDiscs({ a1: "Lemonade" }, {});
     const model = discForm();
     model.start();
@@ -2799,7 +2816,15 @@ describe("computed columns", () => {
 
     it("gains a new one's field, and reads the values again once they've stopped changing", async () => {
       const model = await loaded();
-      rows = [...rows, { tableName: "disc", name: "epoch", expression: "1" }];
+      rows = [
+        ...rows,
+        {
+          tableSchema: "main",
+          tableName: "disc",
+          name: "epoch",
+          expression: "1",
+        },
+      ];
       model.syncComputedColumns();
       expect(keysOf(model)).toEqual([
         "id",
@@ -2892,7 +2917,10 @@ describe("computed columns", () => {
     // One thing is added at a time.
     expect(model.store.getState().provisional).toBeNull();
 
-    rows = [...rows, { tableName: "disc", name: "fresh", expression: "" }];
+    rows = [
+      ...rows,
+      { tableSchema: "main", tableName: "disc", name: "fresh", expression: "" },
+    ];
     model.syncComputedColumns();
     model.finishAddComputed("fresh");
     const s = model.store.getState();

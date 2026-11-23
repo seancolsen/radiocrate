@@ -52,6 +52,7 @@ import {
 import {
   identifyingColumns,
   primaryKey,
+  rowTable,
   type SchemaTable,
 } from "../../query/schema";
 import {
@@ -1379,7 +1380,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     const changed = new Set<string>();
     for (const node of Object.values(get().records)) {
       const now = JSON.stringify(
-        rows.filter((r) => r.tableName === node.table),
+        rows.filter((r) => rowTable(r) === node.table),
       );
       const before = computedRowsSeen.get(node.table);
       if (before !== undefined && before !== now) changed.add(node.table);

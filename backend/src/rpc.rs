@@ -291,27 +291,42 @@ fn dispatch_legacy(
         "metadata.field.set_visible" => {
             let p: MetadataFieldSetVisibleParams = from_params(params)?;
             state.write(origin, &[Topic::FieldMetadata], |conn| {
-                set_field_visible(conn, &p.table_name, &p.field, p.visible)?;
+                set_field_visible(conn, &p.table_schema, &p.table_name, &p.field, p.visible)?;
                 Ok(Value::Null)
             })
         }
         "metadata.field.set_order" => {
             let p: MetadataFieldSetOrderParams = from_params(params)?;
             state.write_mut(origin, &[Topic::FieldMetadata], |conn| {
-                set_field_order(conn, &p.table_name, &p.orders).map(|()| Value::Null)
+                set_field_order(conn, &p.table_schema, &p.table_name, &p.orders)
+                    .map(|()| Value::Null)
             })
         }
         "metadata.field.set_display" => {
             let p: MetadataFieldSetDisplayParams = from_params(params)?;
             state.write(origin, &[Topic::FieldMetadata], |conn| {
-                upsert_field_metadata(conn, &p.table_name, &p.field, "display", &p.display)?;
+                upsert_field_metadata(
+                    conn,
+                    &p.table_schema,
+                    &p.table_name,
+                    &p.field,
+                    "display",
+                    &p.display,
+                )?;
                 Ok(Value::Null)
             })
         }
         "metadata.field.set_sorting" => {
             let p: MetadataFieldSetSortingParams = from_params(params)?;
             state.write(origin, &[Topic::FieldMetadata], |conn| {
-                upsert_field_metadata(conn, &p.table_name, &p.field, "sorting", &p.sorting)?;
+                upsert_field_metadata(
+                    conn,
+                    &p.table_schema,
+                    &p.table_name,
+                    &p.field,
+                    "sorting",
+                    &p.sorting,
+                )?;
                 Ok(Value::Null)
             })
         }
@@ -322,7 +337,7 @@ fn dispatch_legacy(
         "metadata.table.set_visible" => {
             let p: MetadataTableSetVisibleParams = from_params(params)?;
             state.write(origin, &[Topic::TableSettings], |conn| {
-                upsert_table_metadata(conn, &p.table_name, "visible", &p.visible)?;
+                upsert_table_metadata(conn, &p.table_schema, &p.table_name, "visible", &p.visible)?;
                 Ok(Value::Null)
             })
         }
@@ -336,7 +351,7 @@ fn dispatch_legacy(
             let p: MetadataTableSetQuerydownParams = from_params(params)?;
             state.write(origin, &[Topic::TableSettings], |conn| {
                 let column = table_querydown_column(p.setting);
-                upsert_table_metadata(conn, &p.table_name, column, &p.text)?;
+                upsert_table_metadata(conn, &p.table_schema, &p.table_name, column, &p.text)?;
                 Ok(Value::Null)
             })
         }
@@ -357,8 +372,14 @@ fn dispatch_legacy(
                 origin,
                 &[Topic::ComputedColumns, Topic::FieldMetadata],
                 |conn| {
-                    rename_computed_column(conn, &p.table_name, &p.name, &p.new_name)
-                        .map(|()| Value::Null)
+                    rename_computed_column(
+                        conn,
+                        &p.table_schema,
+                        &p.table_name,
+                        &p.name,
+                        &p.new_name,
+                    )
+                    .map(|()| Value::Null)
                 },
             )
         }
@@ -367,7 +388,10 @@ fn dispatch_legacy(
             state.write_mut(
                 origin,
                 &[Topic::ComputedColumns, Topic::FieldMetadata],
-                |conn| delete_computed_column(conn, &p.table_name, &p.name).map(|()| Value::Null),
+                |conn| {
+                    delete_computed_column(conn, &p.table_schema, &p.table_name, &p.name)
+                        .map(|()| Value::Null)
+                },
             )
         }
         "metadata.custom_comparison.list" => state.read(|conn| -> Result<Value, String> {
@@ -384,14 +408,15 @@ fn dispatch_legacy(
         "metadata.custom_comparison.rename" => {
             let p: MetadataCustomComparisonRenameParams = from_params(params)?;
             state.write(origin, &[Topic::CustomComparisons], |conn| {
-                rename_custom_comparison(conn, &p.table_name, &p.name, &p.new_name)
+                rename_custom_comparison(conn, &p.table_schema, &p.table_name, &p.name, &p.new_name)
                     .map(|()| Value::Null)
             })
         }
         "metadata.custom_comparison.delete" => {
             let p: MetadataCustomComparisonDeleteParams = from_params(params)?;
             state.write(origin, &[Topic::CustomComparisons], |conn| {
-                delete_custom_comparison(conn, &p.table_name, &p.name).map(|()| Value::Null)
+                delete_custom_comparison(conn, &p.table_schema, &p.table_name, &p.name)
+                    .map(|()| Value::Null)
             })
         }
         "keybinding.list" => state.read(|conn| -> Result<Value, String> {
@@ -773,36 +798,37 @@ fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
 fn list_field_metadata(conn: &Connection) -> Result<Vec<FieldMetadataRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_name, union_extract(field, 'column_name'), \
+            "SELECT table_schema, table_name, union_extract(field, 'column_name'), \
              union_extract(field, 'multi_link').related_table_name, \
              union_extract(field, 'multi_link').fk_column_name, visible, \"order\", display, \
              sorting, union_extract(field, 'contextual_query')::text, \
              union_extract(field, 'computed_column') \
              FROM metadata.field \
-             ORDER BY table_name, union_tag(field)::text, field::text",
+             ORDER BY table_schema, table_name, union_tag(field)::text, field::text",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            let column_name: Option<String> = row.get(1)?;
-            let contextual_query: Option<String> = row.get(8)?;
-            let computed_column: Option<String> = row.get(9)?;
+            let column_name: Option<String> = row.get(2)?;
+            let contextual_query: Option<String> = row.get(9)?;
+            let computed_column: Option<String> = row.get(10)?;
             let field = match (column_name, contextual_query, computed_column) {
                 (Some(name), _, _) => FieldRef::ColumnName(name),
                 (None, Some(id), _) => FieldRef::ContextualQuery(id),
                 (None, None, Some(name)) => FieldRef::ComputedColumn(name),
                 (None, None, None) => FieldRef::MultiLink(MultiLink {
-                    related_table_name: row.get(2)?,
-                    fk_column_name: row.get(3)?,
+                    related_table_name: row.get(3)?,
+                    fk_column_name: row.get(4)?,
                 }),
             };
             Ok(FieldMetadataRow {
-                table_name: row.get(0)?,
+                table_schema: row.get(0)?,
+                table_name: row.get(1)?,
                 field,
-                visible: row.get(4)?,
-                order: row.get(5)?,
-                display: row.get(6)?,
-                sorting: row.get(7)?,
+                visible: row.get(5)?,
+                order: row.get(6)?,
+                display: row.get(7)?,
+                sorting: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -831,6 +857,7 @@ fn field_ref_sql(field: &FieldRef) -> (&'static str, Vec<&str>) {
 /// no target.
 fn upsert_field_metadata(
     conn: &Connection,
+    table_schema: &str,
     table_name: &str,
     field: &FieldRef,
     column: &'static str,
@@ -838,10 +865,11 @@ fn upsert_field_metadata(
 ) -> Result<(), String> {
     let (field_sql, field_params) = field_ref_sql(field);
     let sql = format!(
-        "INSERT INTO metadata.field (table_name, field, {column}) VALUES (?, {field_sql}, ?) \
+        "INSERT INTO metadata.field (table_schema, table_name, field, {column}) \
+         VALUES (?, ?, {field_sql}, ?) \
          ON CONFLICT DO UPDATE SET {column} = excluded.{column}"
     );
-    let mut params: Vec<&dyn duckdb::ToSql> = vec![&table_name];
+    let mut params: Vec<&dyn duckdb::ToSql> = vec![&table_schema, &table_name];
     params.extend(field_params.iter().map(|p| p as &dyn duckdb::ToSql));
     params.push(value);
     conn.execute(&sql, duckdb::params_from_iter(params))
@@ -853,23 +881,32 @@ fn upsert_field_metadata(
 /// customized about it. Leaves its `order` as it is.
 fn set_field_visible(
     conn: &Connection,
+    table_schema: &str,
     table_name: &str,
     field: &FieldRef,
     visible: bool,
 ) -> Result<(), String> {
-    upsert_field_metadata(conn, table_name, field, "visible", &visible)
+    upsert_field_metadata(conn, table_schema, table_name, field, "visible", &visible)
 }
 
 /// Sets the sort keys of a table's fields in one transaction, creating the rows of
 /// any field not customized yet. Leaves their `visible` as it is.
 fn set_field_order(
     conn: &mut Connection,
+    table_schema: &str,
     table_name: &str,
     orders: &[FieldOrder],
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for entry in orders {
-        upsert_field_metadata(&tx, table_name, &entry.field, "\"order\"", &entry.order)?;
+        upsert_field_metadata(
+            &tx,
+            table_schema,
+            table_name,
+            &entry.field,
+            "\"order\"",
+            &entry.order,
+        )?;
     }
     tx.commit().map_err(|e| e.to_string())
 }
@@ -877,21 +914,22 @@ fn set_field_order(
 fn list_table_metadata(conn: &Connection) -> Result<Vec<TableMetadataRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_name, visible, \"order\", default_text_search, \
+            "SELECT table_schema, table_name, visible, \"order\", default_text_search, \
              linked_record_comparison, record_picker_sorting, record_picker_display \
-             FROM metadata.\"table\" ORDER BY table_name",
+             FROM metadata.\"table\" ORDER BY table_schema, table_name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(TableMetadataRow {
-                table_name: row.get(0)?,
-                visible: row.get(1)?,
-                order: row.get(2)?,
-                default_text_search: row.get(3)?,
-                linked_record_comparison: row.get(4)?,
-                record_picker_sorting: row.get(5)?,
-                record_picker_display: row.get(6)?,
+                table_schema: row.get(0)?,
+                table_name: row.get(1)?,
+                visible: row.get(2)?,
+                order: row.get(3)?,
+                default_text_search: row.get(4)?,
+                linked_record_comparison: row.get(5)?,
+                record_picker_sorting: row.get(6)?,
+                record_picker_display: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -913,15 +951,16 @@ fn table_querydown_column(setting: TableQuerydownSetting) -> &'static str {
 /// leaving the rest of that row as it is.
 fn upsert_table_metadata(
     conn: &Connection,
+    table_schema: &str,
     table_name: &str,
     column: &'static str,
     value: &dyn duckdb::ToSql,
 ) -> Result<(), String> {
     let sql = format!(
-        "INSERT INTO metadata.\"table\" (table_name, {column}) VALUES (?, ?) \
-         ON CONFLICT (table_name) DO UPDATE SET {column} = excluded.{column}"
+        "INSERT INTO metadata.\"table\" (table_schema, table_name, {column}) VALUES (?, ?, ?) \
+         ON CONFLICT (table_schema, table_name) DO UPDATE SET {column} = excluded.{column}"
     );
-    conn.execute(&sql, duckdb::params![table_name, value])
+    conn.execute(&sql, duckdb::params![table_schema, table_name, value])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -931,7 +970,13 @@ fn upsert_table_metadata(
 fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for entry in orders {
-        upsert_table_metadata(&tx, &entry.table_name, "\"order\"", &entry.order)?;
+        upsert_table_metadata(
+            &tx,
+            &entry.table_schema,
+            &entry.table_name,
+            "\"order\"",
+            &entry.order,
+        )?;
     }
     tx.commit().map_err(|e| e.to_string())
 }
@@ -939,16 +984,17 @@ fn set_table_order(conn: &mut Connection, orders: &[TableOrder]) -> Result<(), S
 fn list_computed_columns(conn: &Connection) -> Result<Vec<ComputedColumnRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_name, name, expression FROM metadata.computed_column \
-             ORDER BY table_name, name",
+            "SELECT table_schema, table_name, name, expression FROM metadata.computed_column \
+             ORDER BY table_schema, table_name, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(ComputedColumnRow {
-                table_name: row.get(0)?,
-                name: row.get(1)?,
-                expression: row.get(2)?,
+                table_schema: row.get(0)?,
+                table_name: row.get(1)?,
+                name: row.get(2)?,
+                expression: row.get(3)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -959,17 +1005,24 @@ fn list_computed_columns(conn: &Connection) -> Result<Vec<ComputedColumnRow>, St
 /// Creates a computed column, or sets the expression of the one of that name.
 fn set_computed_column(conn: &Connection, column: &ComputedColumnRow) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO metadata.computed_column (table_name, name, expression) VALUES (?, ?, ?) \
-         ON CONFLICT (table_name, name) DO UPDATE SET expression = excluded.expression",
-        duckdb::params![column.table_name, column.name, column.expression],
+        "INSERT INTO metadata.computed_column (table_schema, table_name, name, expression) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT (table_schema, table_name, name) DO UPDATE SET expression = excluded.expression",
+        duckdb::params![
+            column.table_schema,
+            column.table_name,
+            column.name,
+            column.expression
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// The condition picking out a computed column's row of `metadata.field`, binding
-/// the table's name and then the column's.
-const COMPUTED_COLUMN_FIELD: &str = "table_name = ? AND union_tag(field) = 'computed_column' \
+/// the table's schema, then its name, and then the column's.
+const COMPUTED_COLUMN_FIELD: &str = "table_schema = ? AND table_name = ? \
+     AND union_tag(field) = 'computed_column' \
      AND union_extract(field, 'computed_column') = ?";
 
 /// Renames a computed column, and with it the row of `metadata.field` keyed by its
@@ -977,14 +1030,16 @@ const COMPUTED_COLUMN_FIELD: &str = "table_name = ? AND union_tag(field) = 'comp
 /// name another of the table's computed columns has fails, and changes nothing.
 fn rename_computed_column(
     conn: &mut Connection,
+    table_schema: &str,
     table_name: &str,
     name: &str,
     new_name: &str,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
-        "UPDATE metadata.computed_column SET name = ? WHERE table_name = ? AND name = ?",
-        duckdb::params![new_name, table_name, name],
+        "UPDATE metadata.computed_column SET name = ? \
+         WHERE table_schema = ? AND table_name = ? AND name = ?",
+        duckdb::params![new_name, table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
@@ -992,7 +1047,7 @@ fn rename_computed_column(
             "UPDATE metadata.field SET field = union_value(computed_column := ?) \
              WHERE {COMPUTED_COLUMN_FIELD}"
         ),
-        duckdb::params![new_name, table_name, name],
+        duckdb::params![new_name, table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
@@ -1002,18 +1057,20 @@ fn rename_computed_column(
 /// name: a later column given the same name starts afresh.
 fn delete_computed_column(
     conn: &mut Connection,
+    table_schema: &str,
     table_name: &str,
     name: &str,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
-        "DELETE FROM metadata.computed_column WHERE table_name = ? AND name = ?",
-        duckdb::params![table_name, name],
+        "DELETE FROM metadata.computed_column \
+         WHERE table_schema = ? AND table_name = ? AND name = ?",
+        duckdb::params![table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
         &format!("DELETE FROM metadata.field WHERE {COMPUTED_COLUMN_FIELD}"),
-        duckdb::params![table_name, name],
+        duckdb::params![table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
@@ -1022,16 +1079,18 @@ fn delete_computed_column(
 fn list_custom_comparisons(conn: &Connection) -> Result<Vec<CustomComparisonRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_name, name, expression FROM metadata.custom_comparison \
-             ORDER BY table_name, name",
+            "SELECT table_schema, table_name, name, expression \
+             FROM metadata.custom_comparison \
+             ORDER BY table_schema, table_name, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(CustomComparisonRow {
-                table_name: row.get(0)?,
-                name: row.get(1)?,
-                expression: row.get(2)?,
+                table_schema: row.get(0)?,
+                table_name: row.get(1)?,
+                name: row.get(2)?,
+                expression: row.get(3)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1042,9 +1101,10 @@ fn list_custom_comparisons(conn: &Connection) -> Result<Vec<CustomComparisonRow>
 /// Creates a custom comparison, or sets the condition of the one of that name.
 fn set_custom_comparison(conn: &Connection, row: &CustomComparisonRow) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO metadata.custom_comparison (table_name, name, expression) VALUES (?, ?, ?) \
-         ON CONFLICT (table_name, name) DO UPDATE SET expression = excluded.expression",
-        duckdb::params![row.table_name, row.name, row.expression],
+        "INSERT INTO metadata.custom_comparison (table_schema, table_name, name, expression) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT (table_schema, table_name, name) DO UPDATE SET expression = excluded.expression",
+        duckdb::params![row.table_schema, row.table_name, row.name, row.expression],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1054,22 +1114,30 @@ fn set_custom_comparison(conn: &Connection, row: &CustomComparisonRow) -> Result
 /// fails, and changes nothing.
 fn rename_custom_comparison(
     conn: &Connection,
+    table_schema: &str,
     table_name: &str,
     name: &str,
     new_name: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE metadata.custom_comparison SET name = ? WHERE table_name = ? AND name = ?",
-        duckdb::params![new_name, table_name, name],
+        "UPDATE metadata.custom_comparison SET name = ? \
+         WHERE table_schema = ? AND table_name = ? AND name = ?",
+        duckdb::params![new_name, table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn delete_custom_comparison(conn: &Connection, table_name: &str, name: &str) -> Result<(), String> {
+fn delete_custom_comparison(
+    conn: &Connection,
+    table_schema: &str,
+    table_name: &str,
+    name: &str,
+) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM metadata.custom_comparison WHERE table_name = ? AND name = ?",
-        duckdb::params![table_name, name],
+        "DELETE FROM metadata.custom_comparison \
+         WHERE table_schema = ? AND table_name = ? AND name = ?",
+        duckdb::params![table_schema, table_name, name],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1141,37 +1209,44 @@ fn delete_setting(conn: &Connection, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// What `SUMMARIZE` reports for every table (and view) of the app's own: those
-/// of the `main` schema of the database itself, the ones introspection lists
-/// without a schema. That leaves out the `metadata` and `settings` schemas (which
-/// introspection lists under their schema, for Querydown) and any session's temp
-/// tables. In table name order.
+/// What `SUMMARIZE` reports for every table (and view) of the database itself,
+/// in every schema: the app's own in `main`, and those of `metadata`, `settings`
+/// and any schema the user has made, which the Data structure page lists too. That
+/// leaves out attached databases and any session's temp tables. In schema then
+/// table name order.
 fn summarize_tables(conn: &Connection) -> Result<Vec<TableSummary>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT table_catalog, table_name FROM information_schema.tables \
-             WHERE table_schema = 'main' AND table_catalog = current_database() \
-             ORDER BY table_name",
+            "SELECT table_catalog, table_schema, table_name FROM information_schema.tables \
+             WHERE table_catalog = current_database() \
+             AND table_schema NOT IN ('information_schema', 'pg_catalog') \
+             ORDER BY table_schema, table_name",
         )
         .map_err(|e| e.to_string())?;
-    let names: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+    let names: Vec<(String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
     names
         .into_iter()
-        .map(|(catalog, name)| summarize_table(conn, &catalog, name))
+        .map(|(catalog, schema, name)| summarize_table(conn, &catalog, schema, name))
         .collect()
 }
 
 /// One table's `SUMMARIZE`. The table is named in full, catalog and all: a temp
 /// table of the same name sits in a `main` schema of its own.
-fn summarize_table(conn: &Connection, catalog: &str, name: String) -> Result<TableSummary, String> {
+fn summarize_table(
+    conn: &Connection,
+    catalog: &str,
+    schema: String,
+    name: String,
+) -> Result<TableSummary, String> {
     let sql = format!(
         "SELECT column_name, approx_unique, null_percentage::DOUBLE, \"count\" \
-         FROM (SUMMARIZE {}.main.{})",
+         FROM (SUMMARIZE {}.{}.{})",
         crate::dml::quote_ident(catalog),
+        crate::dml::quote_ident(&schema),
         crate::dml::quote_ident(&name),
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -1190,6 +1265,7 @@ fn summarize_table(conn: &Connection, catalog: &str, name: String) -> Result<Tab
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
     Ok(TableSummary {
+        schema,
         name,
         row_count,
         columns,
@@ -1568,6 +1644,7 @@ mod tests {
 
     fn computed_row(table_name: &str, name: &str, expression: Option<&str>) -> ComputedColumnRow {
         ComputedColumnRow {
+            table_schema: "main".to_string(),
             table_name: table_name.to_string(),
             name: name.to_string(),
             expression: expression.map(str::to_string),
@@ -1581,6 +1658,7 @@ mod tests {
         order: Option<f64>,
     ) -> FieldMetadataRow {
         FieldMetadataRow {
+            table_schema: "main".to_string(),
             table_name: table_name.to_string(),
             field,
             visible,
@@ -1603,7 +1681,7 @@ mod tests {
     #[test]
     fn hiding_a_field_leaves_its_order_and_ordering_leaves_its_visibility() {
         let mut conn = setup();
-        set_field_visible(&conn, "track", &column("genre"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &column("genre"), false).unwrap();
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
             vec![field_row("track", column("genre"), false, None)],
@@ -1611,6 +1689,7 @@ mod tests {
 
         set_field_order(
             &mut conn,
+            "main",
             "track",
             &[
                 order_of(column("genre"), 1.0),
@@ -1626,8 +1705,14 @@ mod tests {
             ],
         );
 
-        set_field_visible(&conn, "track", &column("genre"), true).unwrap();
-        set_field_order(&mut conn, "track", &[order_of(column("title"), 0.5)]).unwrap();
+        set_field_visible(&conn, "main", "track", &column("genre"), true).unwrap();
+        set_field_order(
+            &mut conn,
+            "main",
+            "track",
+            &[order_of(column("title"), 0.5)],
+        )
+        .unwrap();
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
             vec![
@@ -1642,9 +1727,9 @@ mod tests {
         let conn = setup();
         let credits = multi_link("credit", "track");
         let set = |column, value: Option<&str>| {
-            upsert_field_metadata(&conn, "track", &credits, column, &value).unwrap();
+            upsert_field_metadata(&conn, "main", "track", &credits, column, &value).unwrap();
         };
-        set_field_visible(&conn, "track", &credits, false).unwrap();
+        set_field_visible(&conn, "main", "track", &credits, false).unwrap();
 
         set("display", Some("$artist.name $role"));
         set("sorting", Some("\\\\role"));
@@ -1672,9 +1757,15 @@ mod tests {
     fn a_multi_link_field_round_trips_and_updates_in_place() {
         let mut conn = setup();
         let credits = multi_link("credit", "track");
-        set_field_visible(&conn, "track", &credits, false).unwrap();
-        set_field_order(&mut conn, "track", &[order_of(credits.clone(), 3.0)]).unwrap();
-        set_field_visible(&conn, "track", &credits, true).unwrap();
+        set_field_visible(&conn, "main", "track", &credits, false).unwrap();
+        set_field_order(
+            &mut conn,
+            "main",
+            "track",
+            &[order_of(credits.clone(), 3.0)],
+        )
+        .unwrap();
+        set_field_visible(&conn, "main", "track", &credits, true).unwrap();
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
             vec![field_row("track", credits, true, Some(3.0))],
@@ -1687,11 +1778,12 @@ mod tests {
         let query = contextual_query(Q1);
         set_field_order(
             &mut conn,
+            "main",
             "track",
             &[order_of(column("title"), 1.0), order_of(query.clone(), 2.0)],
         )
         .unwrap();
-        set_field_visible(&conn, "track", &query, false).unwrap();
+        set_field_visible(&conn, "main", "track", &query, false).unwrap();
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
             vec![
@@ -1710,10 +1802,10 @@ mod tests {
                 order_of(column("title"), second),
             ]
         };
-        set_field_order(&mut conn, "track", &orders(1.0, 2.0)).unwrap();
+        set_field_order(&mut conn, "main", "track", &orders(1.0, 2.0)).unwrap();
         let [credits, title] = orders(3.0, 4.0);
         let repeated = [credits.clone(), title, credits];
-        set_field_order(&mut conn, "track", &repeated).unwrap();
+        set_field_order(&mut conn, "main", "track", &repeated).unwrap();
         assert_eq!(
             list_field_metadata(&conn).unwrap(),
             vec![
@@ -1745,7 +1837,7 @@ mod tests {
                 column("{'related_table_name': credit, 'fk_column_name': track}"),
             ),
         ] {
-            set_field_visible(&conn, table_name, &field, false).unwrap();
+            set_field_visible(&conn, "main", table_name, &field, false).unwrap();
         }
         assert_eq!(list_field_metadata(&conn).unwrap().len(), 11);
     }
@@ -1753,6 +1845,7 @@ mod tests {
     #[test]
     fn a_field_goes_over_the_wire_as_a_union_of_its_kinds() {
         let params: MetadataFieldSetOrderParams = from_params(serde_json::json!({
+            "tableSchema": "main",
             "tableName": "track",
             "orders": [
                 { "field": { "columnName": "title" }, "order": 1.0 },
@@ -1775,6 +1868,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(field_row("a", multi_link("b", "c"), true, None)).unwrap(),
             serde_json::json!({
+                "tableSchema": "main",
                 "tableName": "a",
                 "field": { "multiLink": { "relatedTableName": "b", "fkColumnName": "c" } },
                 "visible": true,
@@ -1787,6 +1881,7 @@ mod tests {
 
     fn table_row(table_name: &str, visible: bool, order: Option<f64>) -> TableMetadataRow {
         TableMetadataRow {
+            table_schema: "main".to_string(),
             table_name: table_name.to_string(),
             visible,
             order,
@@ -1806,15 +1901,17 @@ mod tests {
     #[test]
     fn a_tables_metadata_is_set_a_column_at_a_time() {
         let mut conn = setup();
-        upsert_table_metadata(&conn, "role", "visible", &false).unwrap();
+        upsert_table_metadata(&conn, "main", "role", "visible", &false).unwrap();
         set_table_order(
             &mut conn,
             &[
                 TableOrder {
+                    table_schema: "main".to_string(),
                     table_name: "track".to_string(),
                     order: 1.0,
                 },
                 TableOrder {
+                    table_schema: "main".to_string(),
                     table_name: "role".to_string(),
                     order: 2.0,
                 },
@@ -1830,7 +1927,14 @@ mod tests {
         );
 
         let set = |setting, text: Option<&str>| {
-            upsert_table_metadata(&conn, "track", table_querydown_column(setting), &text).unwrap();
+            upsert_table_metadata(
+                &conn,
+                "main",
+                "track",
+                table_querydown_column(setting),
+                &text,
+            )
+            .unwrap();
         };
         set(TableQuerydownSetting::DefaultTextSearch, Some("title:@x"));
         set(
@@ -1857,30 +1961,56 @@ mod tests {
         );
     }
 
+    /// Writes a field's `column` as the RPCs did before migration 0017, when a
+    /// table went by its name alone: what the tests of earlier migrations set
+    /// their rows up with.
+    fn legacy_upsert_field(
+        conn: &Connection,
+        table_name: &str,
+        field: &FieldRef,
+        column: &str,
+        value: &dyn duckdb::ToSql,
+    ) {
+        let (field_sql, field_params) = field_ref_sql(field);
+        let sql = format!(
+            "INSERT INTO metadata.field (table_name, field, {column}) VALUES (?, {field_sql}, ?) \
+             ON CONFLICT DO UPDATE SET {column} = excluded.{column}"
+        );
+        let mut params: Vec<&dyn duckdb::ToSql> = vec![&table_name];
+        params.extend(field_params.iter().map(|p| p as &dyn duckdb::ToSql));
+        params.push(value);
+        conn.execute(&sql, duckdb::params_from_iter(params))
+            .unwrap();
+    }
+
+    /// Writes a computed column as the RPCs did before migration 0017.
+    fn legacy_set_computed_column(conn: &Connection, row: &ComputedColumnRow) {
+        conn.execute(
+            "INSERT INTO metadata.computed_column (table_name, name, expression) \
+             VALUES (?, ?, ?) \
+             ON CONFLICT (table_name, name) DO UPDATE SET expression = excluded.expression",
+            duckdb::params![row.table_name, row.name, row.expression],
+        )
+        .unwrap();
+    }
+
     #[test]
     fn migration_0012_keeps_field_metadata() {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_through(&mut conn, 11);
-        set_field_visible(&conn, "track", &column("title"), false).unwrap();
-        set_field_order(
-            &mut conn,
-            "track",
-            &[order_of(multi_link("credit", "track"), 2.0)],
-        )
-        .unwrap();
-        upsert_field_metadata(
+        legacy_upsert_field(&conn, "track", &column("title"), "visible", &false);
+        legacy_upsert_field(
             &conn,
             "track",
             &multi_link("credit", "track"),
-            "display",
-            &Some("$role"),
-        )
-        .unwrap();
+            "\"order\"",
+            &2.0,
+        );
         // Read as text: `list_field_metadata` asks for a kind of field this schema
         // doesn't have yet.
         let rows = |conn: &Connection| -> Vec<String> {
             conn.prepare(
-                "SELECT concat_ws(' | ', table_name, field, visible, \"order\", display, sorting) \
+                "SELECT concat_ws(' | ', table_name, field, visible, \"order\") \
                  FROM metadata.field ORDER BY 1",
             )
             .unwrap()
@@ -1898,7 +2028,14 @@ mod tests {
         // The rebuilt table still keeps one row per field. Counted rather than
         // listed: `list_field_metadata` asks for a kind of field a later
         // migration adds.
-        set_field_visible(&conn, "track", &column("title"), true).unwrap();
+        legacy_upsert_field(&conn, "track", &column("title"), "visible", &true);
+        legacy_upsert_field(
+            &conn,
+            "track",
+            &multi_link("credit", "track"),
+            "display",
+            &Some("$role"),
+        );
         assert_eq!(count(&conn, "SELECT count(*) FROM metadata.field"), 2);
         assert_eq!(count(&conn, "SELECT count(*) FROM contextual_query"), 0);
     }
@@ -1927,19 +2064,20 @@ mod tests {
         let mut conn = setup();
         set_computed_column(&conn, &computed_row("track", "decade", Some("year / 10"))).unwrap();
         set_computed_column(&conn, &computed_row("album", "decade", Some("year / 10"))).unwrap();
-        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &computed_column("decade"), false).unwrap();
         set_field_order(
             &mut conn,
+            "main",
             "track",
             &[order_of(computed_column("decade"), 3.0)],
         )
         .unwrap();
         // Neither another table's column of the name, nor a real column of it,
         // is the one renamed.
-        set_field_visible(&conn, "album", &computed_column("decade"), false).unwrap();
-        set_field_visible(&conn, "track", &column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "album", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &column("decade"), false).unwrap();
 
-        rename_computed_column(&mut conn, "track", "decade", "era").unwrap();
+        rename_computed_column(&mut conn, "main", "track", "decade", "era").unwrap();
 
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
@@ -1957,7 +2095,7 @@ mod tests {
             ],
         );
         // The renamed field still has the one row.
-        set_field_visible(&conn, "track", &computed_column("era"), true).unwrap();
+        set_field_visible(&conn, "main", "track", &computed_column("era"), true).unwrap();
         assert_eq!(list_field_metadata(&conn).unwrap().len(), 3);
     }
 
@@ -1967,6 +2105,7 @@ mod tests {
         expression: Option<&str>,
     ) -> CustomComparisonRow {
         CustomComparisonRow {
+            table_schema: "main".into(),
             table_name: table_name.into(),
             name: name.into(),
             expression: expression.map(Into::into),
@@ -1991,9 +2130,9 @@ mod tests {
         );
 
         // A name the table's other comparison has is refused, and changes nothing.
-        assert!(rename_custom_comparison(&conn, "track", "tag", "artist").is_err());
-        rename_custom_comparison(&conn, "track", "tag", "genre").unwrap();
-        delete_custom_comparison(&conn, "album", "tag").unwrap();
+        assert!(rename_custom_comparison(&conn, "main", "track", "tag", "artist").is_err());
+        rename_custom_comparison(&conn, "main", "track", "tag", "genre").unwrap();
+        delete_custom_comparison(&conn, "main", "album", "tag").unwrap();
         assert_eq!(
             list_custom_comparisons(&conn).unwrap(),
             vec![
@@ -2008,9 +2147,9 @@ mod tests {
         let mut conn = setup();
         set_computed_column(&conn, &computed_row("track", "decade", Some("a"))).unwrap();
         set_computed_column(&conn, &computed_row("track", "era", Some("b"))).unwrap();
-        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &computed_column("decade"), false).unwrap();
 
-        assert!(rename_computed_column(&mut conn, "track", "decade", "era").is_err());
+        assert!(rename_computed_column(&mut conn, "main", "track", "decade", "era").is_err());
 
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
@@ -2030,11 +2169,11 @@ mod tests {
         let mut conn = setup();
         set_computed_column(&conn, &computed_row("track", "decade", Some("a"))).unwrap();
         set_computed_column(&conn, &computed_row("track", "era", Some("b"))).unwrap();
-        set_field_visible(&conn, "track", &computed_column("decade"), false).unwrap();
-        set_field_visible(&conn, "track", &computed_column("era"), false).unwrap();
-        set_field_visible(&conn, "track", &column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &computed_column("decade"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &computed_column("era"), false).unwrap();
+        set_field_visible(&conn, "main", "track", &column("decade"), false).unwrap();
 
-        delete_computed_column(&mut conn, "track", "decade").unwrap();
+        delete_computed_column(&mut conn, "main", "track", "decade").unwrap();
 
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
@@ -2053,21 +2192,21 @@ mod tests {
     fn migration_0014_keeps_field_metadata() {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_through(&mut conn, 13);
-        set_field_visible(&conn, "track", &column("title"), false).unwrap();
-        set_field_order(
-            &mut conn,
+        legacy_upsert_field(&conn, "track", &column("title"), "visible", &false);
+        legacy_upsert_field(
+            &conn,
             "track",
-            &[order_of(multi_link("credit", "track"), 2.0)],
-        )
-        .unwrap();
-        upsert_field_metadata(
+            &multi_link("credit", "track"),
+            "\"order\"",
+            &2.0,
+        );
+        legacy_upsert_field(
             &conn,
             "artist",
             &contextual_query(Q1),
             "display",
             &Some("$title"),
-        )
-        .unwrap();
+        );
         // Read as text: `list_field_metadata` asks for a kind of field this schema
         // doesn't have yet.
         let rows = |conn: &Connection| -> Vec<String> {
@@ -2088,9 +2227,12 @@ mod tests {
 
         assert_eq!(rows(&conn), before);
         // The rebuilt table still keeps one row per field.
-        set_field_visible(&conn, "track", &column("title"), true).unwrap();
-        assert_eq!(list_field_metadata(&conn).unwrap().len(), 3);
-        assert_eq!(list_computed_columns(&conn).unwrap(), vec![]);
+        legacy_upsert_field(&conn, "track", &column("title"), "visible", &true);
+        assert_eq!(count(&conn, "SELECT count(*) FROM metadata.field"), 3);
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM metadata.computed_column"),
+            0
+        );
     }
 
     /// The `querydown_prelude` setting migration 0014 leaves, having started from
@@ -2165,14 +2307,33 @@ mod tests {
             // Not a track: not one of the app's.
             computed_row("album", "lastplay", Some("3")),
         ] {
-            set_computed_column(&conn, &row).unwrap();
+            legacy_set_computed_column(&conn, &row);
         }
-        set_field_visible(&conn, "track", &computed_column("lastplay"), false).unwrap();
-        set_field_visible(&conn, "track", &computed_column("firstplay"), false).unwrap();
-        set_field_visible(&conn, "album", &computed_column("lastplay"), false).unwrap();
-        set_field_visible(&conn, "track", &column("lastplay"), false).unwrap();
+        legacy_upsert_field(
+            &conn,
+            "track",
+            &computed_column("lastplay"),
+            "visible",
+            &false,
+        );
+        legacy_upsert_field(
+            &conn,
+            "track",
+            &computed_column("firstplay"),
+            "visible",
+            &false,
+        );
+        legacy_upsert_field(
+            &conn,
+            "album",
+            &computed_column("lastplay"),
+            "visible",
+            &false,
+        );
+        legacy_upsert_field(&conn, "track", &column("lastplay"), "visible", &false);
 
-        crate::db::migrate_through(&mut conn, 16);
+        // Read through the RPCs, which name tables as migration 0017 does.
+        crate::db::migrate_through(&mut conn, 17);
 
         assert_eq!(
             list_computed_columns(&conn).unwrap(),
@@ -2196,6 +2357,133 @@ mod tests {
     }
 
     #[test]
+    fn migration_0017_puts_every_tables_metadata_in_main() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 16);
+        legacy_upsert_field(&conn, "track", &column("title"), "visible", &false);
+        legacy_upsert_field(
+            &conn,
+            "track",
+            &multi_link("credit", "track"),
+            "display",
+            &Some("$role"),
+        );
+        legacy_set_computed_column(&conn, &computed_row("track", "decade", Some("year / 10")));
+        conn.execute_batch(
+            "INSERT INTO metadata.\"table\" (table_name, visible, \"order\", default_text_search) \
+             VALUES ('role', false, 2.0, NULL), ('track', true, 1.0, 'title:@x');
+             INSERT INTO metadata.custom_comparison (table_name, name, expression) \
+             VALUES ('track', 'tag', '#tag{name:@x}');",
+        )
+        .unwrap();
+
+        crate::db::migrate_through(&mut conn, 17);
+
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                field_row("track", column("title"), false, None),
+                FieldMetadataRow {
+                    display: Some("$role".to_string()),
+                    ..field_row("track", multi_link("credit", "track"), true, None)
+                },
+            ],
+        );
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![computed_row("track", "decade", Some("year / 10"))],
+        );
+        assert_eq!(
+            list_table_metadata(&conn).unwrap(),
+            vec![
+                table_row("role", false, Some(2.0)),
+                TableMetadataRow {
+                    default_text_search: Some("title:@x".to_string()),
+                    ..table_row("track", true, Some(1.0))
+                },
+            ],
+        );
+        assert_eq!(
+            list_custom_comparisons(&conn).unwrap(),
+            vec![comparison_row("track", "tag", Some("#tag{name:@x}"))],
+        );
+        // The rebuilt tables still keep one row per field and per table.
+        set_field_visible(&conn, "main", "track", &column("title"), true).unwrap();
+        upsert_table_metadata(&conn, "main", "role", "visible", &true).unwrap();
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 2);
+        assert_eq!(list_table_metadata(&conn).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn tables_of_one_name_in_two_schemas_are_customized_apart() {
+        let mut conn = setup();
+        set_field_visible(&conn, "main", "artist", &column("name"), false).unwrap();
+        set_field_visible(&conn, "lastfm", "artist", &column("name"), true).unwrap();
+        upsert_table_metadata(&conn, "lastfm", "artist", "visible", &false).unwrap();
+        set_table_order(
+            &mut conn,
+            &[TableOrder {
+                table_schema: "main".to_string(),
+                table_name: "artist".to_string(),
+                order: 1.0,
+            }],
+        )
+        .unwrap();
+        let lastfm = |row: ComputedColumnRow| ComputedColumnRow {
+            table_schema: "lastfm".to_string(),
+            ..row
+        };
+        set_computed_column(&conn, &computed_row("artist", "tracks", Some("#track"))).unwrap();
+        set_computed_column(&conn, &lastfm(computed_row("artist", "tracks", Some("0")))).unwrap();
+        set_field_visible(&conn, "lastfm", "artist", &computed_column("tracks"), false).unwrap();
+        set_custom_comparison(
+            &conn,
+            &CustomComparisonRow {
+                table_schema: "lastfm".to_string(),
+                ..comparison_row("artist", "named", Some("mbid:@x"))
+            },
+        )
+        .unwrap();
+
+        // Each schema's rows are its own: renaming and deleting reach only them.
+        rename_computed_column(&mut conn, "lastfm", "artist", "tracks", "plays").unwrap();
+        delete_custom_comparison(&conn, "main", "artist", "named").unwrap();
+
+        assert_eq!(
+            list_field_metadata(&conn).unwrap(),
+            vec![
+                FieldMetadataRow {
+                    table_schema: "lastfm".to_string(),
+                    ..field_row("artist", column("name"), true, None)
+                },
+                FieldMetadataRow {
+                    table_schema: "lastfm".to_string(),
+                    ..field_row("artist", computed_column("plays"), false, None)
+                },
+                field_row("artist", column("name"), false, None),
+            ],
+        );
+        assert_eq!(
+            list_table_metadata(&conn).unwrap(),
+            vec![
+                TableMetadataRow {
+                    table_schema: "lastfm".to_string(),
+                    ..table_row("artist", false, None)
+                },
+                table_row("artist", true, Some(1.0)),
+            ],
+        );
+        assert_eq!(
+            list_computed_columns(&conn).unwrap(),
+            vec![
+                lastfm(computed_row("artist", "plays", Some("0"))),
+                computed_row("artist", "tracks", Some("#track")),
+            ],
+        );
+        assert_eq!(list_custom_comparisons(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
     fn the_table_refuses_a_second_row_for_a_field() {
         let conn = setup();
         for field in [
@@ -2204,8 +2492,9 @@ mod tests {
             "union_value(contextual_query := '00000000-0000-0000-0000-0000000000e1'::uuid)",
             "union_value(computed_column := 'last_play')",
         ] {
-            let insert =
-                format!("INSERT INTO metadata.field (table_name, field) VALUES ('a', {field})");
+            let insert = format!(
+                "INSERT INTO metadata.field (table_schema, table_name, field) VALUES ('main', 'a', {field})"
+            );
             conn.execute_batch(&insert).unwrap();
             assert!(conn.execute_batch(&insert).is_err());
         }
@@ -2231,27 +2520,49 @@ mod tests {
     }
 
     #[test]
-    fn summarize_reports_every_main_table_with_its_column_statistics() {
+    fn summarize_reports_every_table_with_its_column_statistics() {
         let conn = setup();
         conn.execute_batch(
             "INSERT INTO album (id, title, year) VALUES \
              (uuid(), 'Blue', 1971), (uuid(), 'Blue', NULL), (uuid(), 'Hejira', NULL), \
              (uuid(), NULL, NULL);
-             CREATE TEMP TABLE artist (only_in_temp integer);",
+             CREATE TEMP TABLE artist (only_in_temp integer);
+             CREATE SCHEMA lastfm;
+             CREATE TABLE lastfm.artist (mbid text);
+             INSERT INTO lastfm.artist VALUES ('a'), ('b');",
         )
         .unwrap();
         let tables = summarize_tables(&conn).unwrap();
 
-        // The same tables introspection lists, in the same order.
+        // The same tables introspection lists, in every schema, each by its schema.
         let json: String = conn
             .query_row(introspection::introspection_sql(), [], |row| row.get(0))
             .unwrap();
         let schema = introspection::Schema::parse(&json).unwrap();
-        let names = |tables: &[TableSummary]| -> Vec<String> {
-            tables.iter().map(|t| t.name.clone()).collect()
-        };
-        let introspected: Vec<String> = schema.current_tables().map(|t| t.name.clone()).collect();
-        assert_eq!(names(&tables), introspected);
+        let mut summarized: Vec<(String, String)> = tables
+            .iter()
+            .map(|t| (t.schema.clone(), t.name.clone()))
+            .collect();
+        let mut introspected: Vec<(String, String)> = schema
+            .tables
+            .iter()
+            .map(|t| {
+                let schema = t.schema.last().map_or("main", String::as_str);
+                (schema.to_string(), t.name.clone())
+            })
+            .collect();
+        summarized.sort();
+        introspected.sort();
+        assert_eq!(summarized, introspected);
+        assert!(summarized.contains(&("metadata".to_string(), "field".to_string())));
+
+        // A table of another schema is told apart from the app's of its name.
+        let theirs = tables
+            .iter()
+            .find(|t| t.schema == "lastfm" && t.name == "artist")
+            .unwrap();
+        assert_eq!(theirs.row_count, 2);
+        assert_eq!(theirs.columns.len(), 1);
 
         let album = tables.iter().find(|t| t.name == "album").unwrap();
         assert_eq!(album.row_count, 4);
@@ -2268,7 +2579,10 @@ mod tests {
 
         // An empty table has no share of NULLs to report, and the temp table that
         // shares its name is passed over for the real one.
-        let artist = tables.iter().find(|t| t.name == "artist").unwrap();
+        let artist = tables
+            .iter()
+            .find(|t| t.schema == "main" && t.name == "artist")
+            .unwrap();
         assert_eq!(artist.row_count, 0);
         assert_eq!(
             artist.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
@@ -2436,67 +2750,67 @@ mod tests {
             ("preset.delete", json!({ "id": P1 }), vec![Presets]),
             (
                 "metadata.field.set_visible",
-                json!({ "tableName": "track", "field": field, "visible": false }),
+                json!({ "tableSchema": "main", "tableName": "track", "field": field, "visible": false }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_order",
-                json!({ "tableName": "track", "orders": [{ "field": field, "order": 1.0 }] }),
+                json!({ "tableSchema": "main", "tableName": "track", "orders": [{ "field": field, "order": 1.0 }] }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_display",
-                json!({ "tableName": "track", "field": field, "display": "x" }),
+                json!({ "tableSchema": "main", "tableName": "track", "field": field, "display": "x" }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.field.set_sorting",
-                json!({ "tableName": "track", "field": field, "sorting": "x" }),
+                json!({ "tableSchema": "main", "tableName": "track", "field": field, "sorting": "x" }),
                 vec![FieldMetadata],
             ),
             (
                 "metadata.table.set_visible",
-                json!({ "tableName": "track", "visible": false }),
+                json!({ "tableSchema": "main", "tableName": "track", "visible": false }),
                 vec![TableSettings],
             ),
             (
                 "metadata.table.set_order",
-                json!({ "orders": [{ "tableName": "track", "order": 1.0 }] }),
+                json!({ "orders": [{ "tableSchema": "main", "tableName": "track", "order": 1.0 }] }),
                 vec![TableSettings],
             ),
             (
                 "metadata.table.set_querydown",
-                json!({ "tableName": "track", "setting": "defaultTextSearch", "text": "x" }),
+                json!({ "tableSchema": "main", "tableName": "track", "setting": "defaultTextSearch", "text": "x" }),
                 vec![TableSettings],
             ),
             (
                 "metadata.computed_column.set",
-                json!({ "tableName": "track", "name": "c", "expression": "1" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "expression": "1" }),
                 vec![ComputedColumns],
             ),
             (
                 "metadata.computed_column.rename",
-                json!({ "tableName": "track", "name": "c", "newName": "d" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "newName": "d" }),
                 vec![ComputedColumns, FieldMetadata],
             ),
             (
                 "metadata.computed_column.delete",
-                json!({ "tableName": "track", "name": "d" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "d" }),
                 vec![ComputedColumns, FieldMetadata],
             ),
             (
                 "metadata.custom_comparison.set",
-                json!({ "tableName": "track", "name": "c", "expression": "1" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "expression": "1" }),
                 vec![CustomComparisons],
             ),
             (
                 "metadata.custom_comparison.rename",
-                json!({ "tableName": "track", "name": "c", "newName": "d" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "c", "newName": "d" }),
                 vec![CustomComparisons],
             ),
             (
                 "metadata.custom_comparison.delete",
-                json!({ "tableName": "track", "name": "d" }),
+                json!({ "tableSchema": "main", "tableName": "track", "name": "d" }),
                 vec![CustomComparisons],
             ),
             (

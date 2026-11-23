@@ -41,6 +41,7 @@ import { tokenize } from "querydown-js";
 import { ANNOTATION_SCHEMA } from "../query/columns";
 import type { Section } from "../query/definition";
 import type { QueryDiagnostic } from "../query/diagnostics";
+import { querydownTableName } from "../query/schema";
 
 /** Draws `diagnostic`'s ranges over the editor's text (`null` clears them).
  * The caller makes sure the diagnostic is about the text the editor holds:
@@ -271,7 +272,10 @@ export function querydownSupport(
   completer: Completer | null,
   context: () => QuerydownContext,
 ): Extension {
-  const baseTable = () => context().baseTable;
+  const baseTable = () => {
+    const base = context().baseTable;
+    return base === undefined ? undefined : querydownTableName(base);
+  };
   const definitions = () => context().definitions;
   return querydown({
     tokenize,

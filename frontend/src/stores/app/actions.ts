@@ -86,7 +86,11 @@ import {
 import {
   addInferredLinks,
   INTROSPECTION_SQL,
+  isCurrentSchemaTable,
   parseSchemaTables,
+  readSchemaTables,
+  rowTable,
+  tableRef,
 } from "../../query/schema";
 import { compilePlaylist, compileSavedQuery } from "../../query/compile";
 import { runRecordQuery } from "../../query/recordData";
@@ -1717,6 +1721,10 @@ export function createAppActions(
     const sources = await analyzeColumnSources(sql);
     if (runTokens.get(tabId) !== token) return; // a newer run superseded this one
     if (!sources) return; // unparseable — no affordances
+    // The analyzer names a table without its schema, so the rows of a table in
+    // another schema would pass for the app's own of that name (`/lastfm/track`
+    // for tracks): they get no affordances either.
+    if (!isCurrentSchemaTable(selectResultBase(get(), tabId))) return;
 
     // A list of track ids isn't a playable row (an aggregated `[track.id, …]`).
     const isListColumn = (i: number) => result.columns[i]?.isList ?? false;
@@ -3536,7 +3544,7 @@ export function createAppActions(
     });
     void after.then(() =>
       writeFieldMetadata(() =>
-        metadataFieldSetOrder({ tableName: table, orders }),
+        metadataFieldSetOrder({ ...tableRef(table), orders }),
       ),
     );
   };
@@ -3726,10 +3734,10 @@ export function createAppActions(
     const local = get().computedColumns.data;
     let data: readonly ComputedColumnRow[] = rows;
     for (const row of local) {
-      if (saves.has(computedColumnSaveKey(row.tableName, row.name))) {
+      if (saves.has(computedColumnSaveKey(rowTable(row), row.name))) {
         data = withComputedExpression(
           data,
-          row.tableName,
+          rowTable(row),
           row.name,
           row.expression,
         );
@@ -3746,10 +3754,10 @@ export function createAppActions(
     const local = get().customComparisons.data;
     let data: readonly CustomComparisonRow[] = rows;
     for (const row of local) {
-      if (saves.has(comparisonSaveKey(row.tableName, row.name))) {
+      if (saves.has(comparisonSaveKey(rowTable(row), row.name))) {
         data = withComparisonExpression(
           data,
-          row.tableName,
+          rowTable(row),
           row.name,
           row.expression,
         );
@@ -4003,11 +4011,11 @@ export function createAppActions(
         if (json === get().schema.json) return true;
         asRemote(() =>
           set((s) => {
-            s.schema = {
+            s.schema = castDraft({
               status: "ready",
               json,
-              tables: castDraft(parseSchemaTables(json)),
-            };
+              ...readSchemaTables(json),
+            });
           }),
         );
         break;
@@ -4090,7 +4098,11 @@ export function createAppActions(
         const raw = await runSqlScalar(INTROSPECTION_SQL);
         const json = addInferredLinks(raw);
         set((s) => {
-          s.schema = { status: "ready", json, tables: parseSchemaTables(json) };
+          s.schema = castDraft({
+            status: "ready",
+            json,
+            ...readSchemaTables(json),
+          });
         });
       } catch (err) {
         // No error UI this phase — console only (see plan non-goals).
@@ -4125,7 +4137,11 @@ export function createAppActions(
         if (!anyFieldHidden(s.fieldMetadata.data)) s.showHiddenFields = false;
       });
       writeFieldMetadata(() =>
-        metadataFieldSetVisible({ tableName: table, field, visible: !hidden }),
+        metadataFieldSetVisible({
+          ...tableRef(table),
+          field,
+          visible: !hidden,
+        }),
       );
     },
     moveField: (table, field, above, below) => {
@@ -4145,7 +4161,7 @@ export function createAppActions(
         }
       });
       writeFieldMetadata(() =>
-        metadataFieldSetOrder({ tableName: table, orders }),
+        metadataFieldSetOrder({ ...tableRef(table), orders }),
       );
       return true;
     },
@@ -4159,12 +4175,12 @@ export function createAppActions(
         writeFieldMetadata(() =>
           section === "display"
             ? metadataFieldSetDisplay({
-                tableName: table,
+                ...tableRef(table),
                 field,
                 display: text,
               })
             : metadataFieldSetSorting({
-                tableName: table,
+                ...tableRef(table),
                 field,
                 sorting: text,
               }),
@@ -4203,7 +4219,7 @@ export function createAppActions(
         if (!anyTableHidden(s.tableSettings.data)) s.showHiddenTables = false;
       });
       void writeTableSettings(() =>
-        metadataTableSetVisible({ tableName: table, visible: !hidden }),
+        metadataTableSetVisible({ ...tableRef(table), visible: !hidden }),
       );
     },
     moveTable: (tables, table, above, below) => {
@@ -4216,9 +4232,9 @@ export function createAppActions(
       );
       if (orders.length === 0) return false;
       set((s) => {
-        for (const { tableName, order } of orders) {
-          (s.tableSettings.data[tableName] ??= defaultTableSettings()).order =
-            order;
+        for (const row of orders) {
+          (s.tableSettings.data[rowTable(row)] ??=
+            defaultTableSettings()).order = row.order;
         }
       });
       void writeTableSettings(() => metadataTableSetOrder({ orders }));
@@ -4240,7 +4256,7 @@ export function createAppActions(
         if (prelude) rerunOpenPages();
         return writeTableSettings(() =>
           metadataTableSetQuerydown({
-            tableName: table,
+            ...tableRef(table),
             setting,
             text: latest,
           }),
@@ -4276,7 +4292,11 @@ export function createAppActions(
         typed,
         takenComputedNames(s0.schema.tables, s0.computedColumns.data, table),
       );
-      const row: ComputedColumnRow = { tableName: table, name, expression: "" };
+      const row: ComputedColumnRow = {
+        ...tableRef(table),
+        name,
+        expression: "",
+      };
       set((s) => {
         s.computedColumns.data = [...s.computedColumns.data, row];
       });
@@ -4306,7 +4326,7 @@ export function createAppActions(
       saves.flush(computedColumnSaveKey(table, name));
       set((s) => {
         s.computedColumns.data = s.computedColumns.data.map((row) =>
-          row.tableName === table && row.name === name
+          rowTable(row) === table && row.name === name
             ? { ...row, name: next }
             : row,
         );
@@ -4326,7 +4346,7 @@ export function createAppActions(
       });
       void writeComputedColumn(() =>
         metadataComputedColumnRename({
-          tableName: table,
+          ...tableRef(table),
           name,
           newName: next,
         }),
@@ -4374,7 +4394,7 @@ export function createAppActions(
       const field: FieldRef = { computedColumn: name };
       set((s) => {
         s.computedColumns.data = s.computedColumns.data.filter(
-          (row) => !(row.tableName === table && row.name === name),
+          (row) => !(rowTable(row) === table && row.name === name),
         );
         const metadata = s.fieldMetadata.data[table];
         if (metadata) {
@@ -4385,7 +4405,7 @@ export function createAppActions(
         delete s.structure.expanded[structureFieldId(table, field)];
       });
       void writeComputedColumn(() =>
-        metadataComputedColumnDelete({ tableName: table, name }),
+        metadataComputedColumnDelete({ ...tableRef(table), name }),
       );
       // The rows on screen may have been compiled with the column.
       rerunOpenPages();
@@ -4412,7 +4432,7 @@ export function createAppActions(
         takenComparisonNames(get().customComparisons.data, table),
       );
       const row: CustomComparisonRow = {
-        tableName: table,
+        ...tableRef(table),
         name,
         expression: "",
       };
@@ -4440,7 +4460,7 @@ export function createAppActions(
       saves.flush(comparisonSaveKey(table, name));
       set((s) => {
         s.customComparisons.data = s.customComparisons.data.map((row) =>
-          row.tableName === table && row.name === name
+          rowTable(row) === table && row.name === name
             ? { ...row, name: next }
             : row,
         );
@@ -4454,7 +4474,7 @@ export function createAppActions(
       });
       void writeComparison(() =>
         metadataCustomComparisonRename({
-          tableName: table,
+          ...tableRef(table),
           name,
           newName: next,
         }),
@@ -4509,12 +4529,12 @@ export function createAppActions(
       saves.cancel(comparisonSaveKey(table, name));
       set((s) => {
         s.customComparisons.data = s.customComparisons.data.filter(
-          (row) => !(row.tableName === table && row.name === name),
+          (row) => !(rowTable(row) === table && row.name === name),
         );
         delete s.structure.expanded[comparisonItemId(table, name)];
       });
       void writeComparison(() =>
-        metadataCustomComparisonDelete({ tableName: table, name }),
+        metadataCustomComparisonDelete({ ...tableRef(table), name }),
       );
       // The rows on screen may have been compiled with the comparison.
       rerunOpenPages();
@@ -4909,7 +4929,11 @@ export function createAppActions(
     },
     setSchemaJson: (json) =>
       set((s) => {
-        s.schema = { status: "ready", json, tables: parseSchemaTables(json) };
+        s.schema = castDraft({
+          status: "ready",
+          json,
+          ...readSchemaTables(json),
+        });
       }),
     runQuery,
     ensureRun: (tabId) => {

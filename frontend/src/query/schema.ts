@@ -9,8 +9,12 @@
 // Schemas: the JSON lists the tables of every schema, so Querydown can query
 // `#/metadata/field` as well as `#track`. A table outside the current schema
 // (`main`) carries a `schema` path, and so does each end of a link to or from
-// one. The rest of the app works with the current schema's tables alone, which
-// it names alone, so `parseSchemaTables` returns only those.
+// one. The app names a table as Querydown does after the `#`: alone in the
+// current schema (`track`), by its schema in another (`/lastfm/scrobble`) — see
+// `qualifiedTableName`. The record editor works with the current schema's
+// tables alone, so `parseSchemaTables` returns only those; the lists of tables
+// (a query's base, the Data structure page) add the other schemas' from
+// `parseOtherSchemaTables`.
 //
 // It also carries the record-identity convention (`primaryKey` /
 // `identifyingColumns`), which decides what counts as "the primary key" of a
@@ -120,23 +124,77 @@ export interface SchemaColumn {
 /** One introspected table: its columns and its UNIQUE / PRIMARY KEY constraints
  * (each a list of column names). Ports `introspection::Table`. */
 export interface SchemaTable {
+  /** As the app names it: by its schema outside the current one
+   * (`qualifiedTableName`). */
   name: string;
   columns: SchemaColumn[];
   uniqueConstraints: string[][];
 }
 
-/** Whether a raw table is in the current schema, where the app names it alone. */
-const isCurrent = (table: RawTable): boolean =>
-  (table.schema ?? []).length === 0;
+// ── Naming tables across schemas ────────────────────────────────────────────
 
-/** Parses an introspection JSON document into the tables of its current schema:
- * the app's own, the ones it names alone, picks a query's base table from and
- * edits records of. The other schemas' tables are left to the compiler, so a
- * table of the same name in one of them is never mistaken for an app table.
- * Returns `[]` for a document without a `tables` array (the enriched JSON
- * always has one; this just keeps a malformed payload from throwing on the
- * results path). */
-export function parseSchemaTables(json: string): SchemaTable[] {
+/** The schema the app's own tables are in: the one a table is named in alone. */
+export const CURRENT_SCHEMA = "main";
+
+/** How the app names a table: alone in the current schema (`track`), and by its
+ * schema in another (`/lastfm/scrobble`), just as Querydown writes it after the
+ * `#`. Whatever keeps a table by name keeps it so: a query's base, a preset's,
+ * each table's customizations in the app store, the Data structure page's item
+ * ids. */
+export function qualifiedTableName(schema: string, table: string): string {
+  return schema === CURRENT_SCHEMA ? table : `/${schema}/${table}`;
+}
+
+/** A table's name, as {@link qualifiedTableName} gives it, split back into its
+ * schema and the table's own name. */
+export function splitTableName(name: string): {
+  schema: string;
+  table: string;
+} {
+  if (!name.startsWith("/")) return { schema: CURRENT_SCHEMA, table: name };
+  const slash = name.indexOf("/", 1);
+  if (slash === -1) return { schema: CURRENT_SCHEMA, table: name };
+  return { schema: name.slice(1, slash), table: name.slice(slash + 1) };
+}
+
+/** Whether a table's name names one in the current schema: one of the app's
+ * own, whose records the record editor edits. */
+export const isCurrentSchemaTable = (name: string): boolean =>
+  splitTableName(name).schema === CURRENT_SCHEMA;
+
+/** A table's own name, without its schema: what a list of tables shows under
+ * its schema's heading. */
+export const tableLabel = (name: string): string => splitTableName(name).table;
+
+/** A table's name as the compiler takes a base table: alone in the current
+ * schema, as its schema and name in another. */
+export function querydownTableName(name: string): string | string[] {
+  const { schema, table } = splitTableName(name);
+  return schema === CURRENT_SCHEMA ? table : [schema, table];
+}
+
+/** A table's name split for the wire: the shape every `metadata.*` row and
+ * call names a table with. */
+export function tableRef(name: string): {
+  tableSchema: string;
+  tableName: string;
+} {
+  const { schema, table } = splitTableName(name);
+  return { tableSchema: schema, tableName: table };
+}
+
+/** The name of the table a `metadata.*` row is about. */
+export const rowTable = (row: {
+  tableSchema: string;
+  tableName: string;
+}): string => qualifiedTableName(row.tableSchema, row.tableName);
+
+// ── Parsing ─────────────────────────────────────────────────────────────────
+
+/** The raw tables of an introspection document, or `[]` for one without a
+ * `tables` array (the enriched JSON always has one; this just keeps a malformed
+ * payload from throwing on the results path). */
+function rawTables(json: string): RawTable[] {
   let root: Record<string, unknown>;
   try {
     root = JSON.parse(json) as Record<string, unknown>;
@@ -144,16 +202,57 @@ export function parseSchemaTables(json: string): SchemaTable[] {
     return [];
   }
   const tables = root["tables"];
-  if (!Array.isArray(tables)) return [];
-  return (tables as RawTable[]).filter(isCurrent).map((t) => ({
-    name: t.name,
+  return Array.isArray(tables) ? (tables as RawTable[]) : [];
+}
+
+function toSchemaTable(t: RawTable, name: string): SchemaTable {
+  return {
+    name,
     columns: (t.columns ?? []).map((c) => ({
       name: c.name,
       type: c.type,
       nullable: c.nullable ?? true,
     })),
     uniqueConstraints: t.unique_constraints ?? [],
-  }));
+  };
+}
+
+/** Parses an introspection JSON document into the tables of its current schema:
+ * the app's own, the ones it names alone and edits records of. The other
+ * schemas' tables are left out, so a table of the same name in one of them is
+ * never mistaken for an app table. */
+export function parseSchemaTables(json: string): SchemaTable[] {
+  return rawTables(json)
+    .filter((t) => (t.schema ?? []).length === 0)
+    .map((t) => toSchemaTable(t, t.name));
+}
+
+/** The tables of the database's other schemas (`metadata`, `settings`, the
+ * user's own), each named by its schema (`/lastfm/scrobble`), in schema then
+ * table order. What a query can be based on, and the Data structure page
+ * lists, beside the current schema's. A table of another attached database is
+ * left to the compiler. */
+export function parseOtherSchemaTables(json: string): SchemaTable[] {
+  return rawTables(json).flatMap((t) =>
+    t.schema?.length === 1
+      ? [toSchemaTable(t, qualifiedTableName(t.schema[0], t.name))]
+      : [],
+  );
+}
+
+/** Every table of an introspection document the app lists, as the app store
+ * keeps them: the current schema's (`tables`), the other schemas'
+ * (`otherTables`), and both together, the current schema's first
+ * (`allTables`) — what a query can be based on, and what the app's
+ * definitions are generated for. */
+export function readSchemaTables(json: string): {
+  tables: SchemaTable[];
+  otherTables: SchemaTable[];
+  allTables: SchemaTable[];
+} {
+  const tables = parseSchemaTables(json);
+  const otherTables = parseOtherSchemaTables(json);
+  return { tables, otherTables, allTables: [...tables, ...otherTables] };
 }
 
 /** The column that identifies a single record in `table`, by RadioCrate's

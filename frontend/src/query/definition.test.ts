@@ -210,6 +210,14 @@ describe("fullQueryBase", () => {
     ).toBe("album");
   });
 
+  it("reads a table of another schema by its schema", () => {
+    expect(fullQueryBase("#/lastfm/scrobble\n$title")).toBe("/lastfm/scrobble");
+    // A definition on one isn't where the query starts.
+    expect(
+      fullQueryBase("#/lastfm/scrobble.year = 1\n#/lastfm/artist $name"),
+    ).toBe("/lastfm/artist");
+  });
+
   it("is empty when no line names one", () => {
     expect(fullQueryBase("")).toBe("");
     expect(fullQueryBase("$title #album")).toBe("");

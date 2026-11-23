@@ -13,6 +13,7 @@ import {
   presetSectionPath,
   structureFieldKind,
   structureFields,
+  tableSummary,
 } from "./structure";
 
 const column = (name: string, type = "VARCHAR", nullable = true) => ({
@@ -61,7 +62,12 @@ const QUERY: ContextualQuery = {
   definition: { ...emptyDefinition(), base: "track" },
 };
 
-const DECADE = { tableName: "track", name: "decade", expression: "year / 10" };
+const DECADE = {
+  tableSchema: "main",
+  tableName: "track",
+  name: "decade",
+  expression: "year / 10",
+};
 
 describe("structureFields", () => {
   it("lists columns, referring tables, computed columns and contextual queries", () => {
@@ -209,5 +215,33 @@ describe("computedColumnPath", () => {
       "table:track/fields",
       `table:track/fields/${fieldRefKey({ computedColumn: "last_play" })}`,
     ]);
+  });
+});
+
+describe("a table of another schema", () => {
+  it("is reached through its schema's folder", () => {
+    expect(presetSectionPath("/lastfm/scrobble", "sort")).toEqual([
+      "tables",
+      "schema:lastfm",
+      "table:/lastfm/scrobble",
+      "table:/lastfm/scrobble/query",
+      "table:/lastfm/scrobble/query/sort",
+    ]);
+    expect(computedColumnPath("track", "x").slice(0, 2)).toEqual([
+      "tables",
+      "table:track",
+    ]);
+  });
+
+  it("has its own statistics, apart from the app's table of its name", () => {
+    const summary = (schema: string, rowCount: number) => ({
+      schema,
+      name: "artist",
+      rowCount,
+      columns: [],
+    });
+    const summaries = [summary("lastfm", 2), summary("main", 5)];
+    expect(tableSummary(summaries, "artist")?.rowCount).toBe(5);
+    expect(tableSummary(summaries, "/lastfm/artist")?.rowCount).toBe(2);
   });
 });

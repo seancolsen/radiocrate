@@ -245,6 +245,22 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  test(`query-builder/base-schemas - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "query-builder/base-schemas",
+      colorScheme,
+    );
+    await page.getByRole("menuitem", { name: "Base" }).click();
+    await expect(page.getByText("lastfm", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("menuitemradio", { name: "scrobble" }),
+    ).toBeChecked();
+    await expect(stage).toHaveScreenshot(
+      snapshot("query-builder/base-schemas", colorScheme),
+    );
+  });
+
   // Preset expanded, no unsaved edits: the inline editor (name +
   // apply-by-default + definition), no star/revert/save.
   test(`filter-builder/preset-expanded - ${colorScheme}`, async ({ page }) => {

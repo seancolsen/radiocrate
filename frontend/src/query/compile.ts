@@ -45,7 +45,7 @@ import {
 } from "./sourceMap";
 import { computedDefinition } from "./computedColumns";
 import { comparisonDefinition } from "./customComparisons";
-import type { SchemaTable } from "./schema";
+import { querydownTableName, type SchemaTable } from "./schema";
 import {
   preludeMapped,
   settingCheck,
@@ -87,7 +87,7 @@ function compileSections(
       compile_sections(
         schemaJson,
         "duckdb",
-        base,
+        querydownTableName(base),
         definitions.text,
         sections.filter.text,
         sections.sort.text,
