@@ -380,8 +380,13 @@ export function keyConditions(keys: readonly RecordKey[]): string {
   return `[\n${groups.join("\n")}\n]`;
 }
 
-/** Querydown conditions matching every record whose `column` points at one of
+/** Querydown conditions matching every record whose `column` is one of
  * `values` — the children of all the records the form is on, in one query.
+ *
+ * To match a link by the id it holds, `column` names the id through the link
+ * (`track.id`, not `track`): comparing a link itself goes through the linked
+ * table's linked record comparison (`tableSettings.ts`), which compares a
+ * track's title, say, rather than its id.
  *
  * Bare conditions inside `[…]` are alternatives, which is exactly what's wanted
  * here: unlike a composite key, one condition is one whole alternative, so no
@@ -389,8 +394,8 @@ export function keyConditions(keys: readonly RecordKey[]): string {
  *
  * ```
  * [
- *   track:="t1"
- *   track:="t2"
+ *   track.id:="t1"
+ *   track.id:="t2"
  * ]
  * ```
  *

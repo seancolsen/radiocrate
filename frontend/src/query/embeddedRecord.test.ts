@@ -185,7 +185,7 @@ describe("preview queries", () => {
       ),
     ).toEqual({
       base: "credit",
-      filter: `track:="t1"`,
+      filter: `track.id:="t1"`,
       sort: "\\\\order \\\\artist.name \\\\artist",
       // The identifying columns first — that's how each child is addressed —
       // then the preview, then every column: what decides which of the records
@@ -214,7 +214,7 @@ describe("preview queries", () => {
         embedSpec(TABLES, "credit", "track"),
         columnsOf("credit"),
       ).filter,
-    ).toBe(`[\n  track:="t1"\n  track:="t2"\n]`);
+    ).toBe(`[\n  track.id:="t1"\n  track.id:="t2"\n]`);
   });
 
   it("falls back to ordering a list by its keys when there's no preview", () => {
@@ -228,7 +228,7 @@ describe("preview queries", () => {
       ),
     ).toEqual({
       base: "credit",
-      filter: `track:="t1"`,
+      filter: `track.id:="t1"`,
       sort: "\\\\track \\\\artist",
       display: "$track $artist\n$track $artist $order $role",
     });
@@ -240,7 +240,7 @@ describe("preview queries", () => {
       childRecordsTabQuery(field, ["t1"], embedSpec(TABLES, "credit", "track")),
     ).toEqual({
       base: "credit",
-      filter: `track:="t1"`,
+      filter: `track.id:="t1"`,
       sort: "\\\\order \\\\artist.name \\\\artist",
       // Only what the embedded records show — no keys ahead of it, and no
       // columns: nothing here collapses anything.
@@ -256,7 +256,7 @@ describe("preview queries", () => {
         ["t1", "t2"],
         embedSpec(TABLES, "credit", "track"),
       ).filter,
-    ).toBe(`[\n  track:="t1"\n  track:="t2"\n]`);
+    ).toBe(`[\n  track.id:="t1"\n  track.id:="t2"\n]`);
   });
 
   it("shows the keys in an opened query when there's no preview", () => {
@@ -265,7 +265,7 @@ describe("preview queries", () => {
       childRecordsTabQuery(field, ["t1"], { display: [], sort: "" }),
     ).toEqual({
       base: "credit",
-      filter: `track:="t1"`,
+      filter: `track.id:="t1"`,
       sort: "\\\\track \\\\artist",
       display: "$track $artist",
     });

@@ -12,7 +12,7 @@ describe("creditsQuery", () => {
   it("asks for a track's credits, in credit order then by name", () => {
     expect(creditsQuery("track", ["t1"])).toEqual({
       base: "credit",
-      filter: `track:="t1"`,
+      filter: `track.id:="t1"`,
       // Two literal backslashes per term — Querydown's ascending sort.
       sort: "\\\\order \\\\artist.name",
       display: "$artist.id $artist.name $order",
@@ -21,7 +21,7 @@ describe("creditsQuery", () => {
 
   it("reaches an album's credits through its tracks", () => {
     expect(creditsQuery("album", ["a1", "a2"]).filter).toBe(
-      `[\n  track.album:="a1"\n  track.album:="a2"\n]`,
+      `[\n  track.album.id:="a1"\n  track.album.id:="a2"\n]`,
     );
   });
 });

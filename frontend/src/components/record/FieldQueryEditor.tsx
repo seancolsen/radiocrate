@@ -44,7 +44,7 @@ import { useApp, useAppActions } from "../../stores/react";
 export const CONTEXT_QUERY_HELP =
   `${ID_VARIABLE} is the id of the record this query is shown on. ` +
   `Filter with it to find what's related to the record: on an artist, a ` +
-  `query of credits filtered by artist:=${ID_VARIABLE} lists the artist's ` +
+  `query of credits filtered by artist.id:=${ID_VARIABLE} lists the artist's ` +
   `credits. The query doesn't run until it has a filter.`;
 
 /** Each section's toggle, in the query builder's order. */

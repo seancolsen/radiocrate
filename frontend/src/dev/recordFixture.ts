@@ -365,15 +365,16 @@ function listOf(values: readonly string[]): string {
   return `[${[...new Set(values)].sort().join(", ")}]`;
 }
 
-/** Reads a column path out of a row: `title`, or `artist.name` — one hop
- * through the foreign key named by the first part, which the fixture resolves
- * the way the compiler's inferred links do (`<column>` → `<column>.id`). */
+/** Reads a column path out of a row: `title`, or `artist.name` — a hop
+ * through the foreign key named by each part but the last, which the fixture
+ * resolves the way the compiler's inferred links do (`<column>` →
+ * `<column>.id`), so `track.album.id` takes two. */
 function readPath(base: string, row: Row, path: string): string | null {
-  const [first, second] = path.split(".");
-  if (second === undefined) return row[first] ?? null;
+  const [first, ...rest] = path.split(".");
+  if (rest.length === 0) return row[first] ?? null;
   const id = row[first];
   const target = (TABLE_ROWS[first] ?? []).find((r) => r.id === id);
-  return target ? (target[second] ?? null) : null;
+  return target ? readPath(first, target, rest.join(".")) : null;
 }
 
 /** The computed columns `definitions` defines for `base`, by name, each with

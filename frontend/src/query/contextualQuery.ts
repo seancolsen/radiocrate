@@ -2,7 +2,7 @@
 // shown in the record editor as fields of every record of one table
 // (`contextual_query` in the database, migration 0012). The query reaches the
 // record it's shown on through `@id`, which is defined as the record's primary
-// key ahead of running it — so `artist:=@id`, written on a query of credits shown
+// key ahead of running it — so `artist.id:=@id`, written on a query of credits shown
 // on artists, lists the artist's credits.
 //
 // Pure, like the rest of `query/`: the app store holds the queries and writes

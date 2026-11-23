@@ -343,7 +343,7 @@ export function childRecordsTabQuery(
   const keys = field.keyColumns.map((c) => `$${c}`);
   return {
     base: field.table,
-    filter: linkConditions(field.column, parents),
+    filter: linkConditions(`${field.column}.id`, parents),
     sort: spec.sort || field.keyColumns.map((c) => `\\\\${c}`).join(" "),
     display: (spec.display.length > 0 ? spec.display : keys).join(" "),
   };

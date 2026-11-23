@@ -214,7 +214,7 @@ describe("playlistQuerydown", () => {
       [
         "#playlist_track",
         "",
-        `playlist:="${PLAYLIST}"`,
+        `playlist.id:="${PLAYLIST}"`,
         "",
         "track{",
         'artist:"a"\nyear:>1990',
@@ -263,7 +263,7 @@ describe("playlistQuerydown", () => {
     const entry = "00000000-0000-0000-0000-0000000000b1";
     const parts = { filter: "year:>1990", sort: "", display: "$title" };
     const text = playlistQuerydown(PLAYLIST, parts, { entryId: entry });
-    expect(text).toContain(`playlist:="${PLAYLIST}"\nid:="${entry}"\n`);
+    expect(text).toContain(`playlist.id:="${PLAYLIST}"\nid:="${entry}"\n`);
     expect(text).not.toContain("year:>1990");
     expect(text).toContain("$track.(\n$title\n)");
     expect(() =>

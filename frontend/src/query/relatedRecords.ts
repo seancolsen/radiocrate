@@ -34,7 +34,10 @@ export function creditsQuery(
 ): RecordQuery {
   return {
     base: "credit",
-    filter: linkConditions(table === "track" ? "track" : "track.album", ids),
+    filter: linkConditions(
+      table === "track" ? "track.id" : "track.album.id",
+      ids,
+    ),
     // Two literal backslashes per term: Querydown's ascending sort.
     sort: "\\\\order \\\\artist.name",
     display: "$artist.id $artist.name $order",

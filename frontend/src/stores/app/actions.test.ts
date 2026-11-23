@@ -1757,7 +1757,7 @@ describe("showChildRecords", () => {
     expect(s.activeTabId).toBe(tab.id);
     expect(tab.kind === "query" && tab.live.base).toBe("track");
     expect(tab.kind === "query" && tab.live.filter.custom).toBe(
-      `[\n  album:="x"\n  album:="y"\n]`,
+      `[\n  album.id:="x"\n  album.id:="y"\n]`,
     );
   });
 
@@ -1818,7 +1818,7 @@ describe("openRow", () => {
     bundle.actions.openRow("a", 0);
     const tab = newTab(bundle);
     expect(tab?.live.base).toBe("track");
-    expect(tab?.live.filter.custom).toBe(`album:="x"`);
+    expect(tab?.live.filter.custom).toBe(`album.id:="x"`);
     expect(bundle.store.getState().activeTabId).toBe(tab?.id);
   });
 

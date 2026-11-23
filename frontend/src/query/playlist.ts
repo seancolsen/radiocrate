@@ -210,7 +210,7 @@ export function playlistQuerydownMapped(
   const lines: (Mapped | string)[] = [
     "#playlist_track",
     "",
-    `playlist:="${playlistId}"`,
+    `playlist.id:="${playlistId}"`,
     "",
   ];
   if (options.entryId !== undefined) {

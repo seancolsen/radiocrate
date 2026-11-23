@@ -901,7 +901,7 @@ describe("opening child records", () => {
     expect(openRecords).toHaveBeenCalledWith(
       {
         base: "credit",
-        filter: `track:="t1"`,
+        filter: `track.id:="t1"`,
         sort: "\\\\id \\\\role",
         display: "$id $role",
       },
@@ -929,7 +929,7 @@ describe("opening child records", () => {
     expect(openRecords).toHaveBeenCalledWith(
       {
         base: "credit",
-        filter: `[\n  track:="t1"\n  track:="t2"\n]`,
+        filter: `[\n  track.id:="t1"\n  track.id:="t2"\n]`,
         sort: "\\\\id \\\\role",
         display: "$id $role",
       },
@@ -1383,7 +1383,7 @@ describe("a multi-record field on several records", () => {
 
     // One query for both tracks' tags, filtered to either of them.
     expect(runner.mock.calls[1]?.[0].filter).toBe(
-      `[\n  track:="t1"\n  track:="t2"\n]`,
+      `[\n  track.id:="t1"\n  track.id:="t2"\n]`,
     );
     expect(s.lists[TAGS_LIST]?.childIds).toEqual([ROCK, `${TAGS_LIST}[1]`]);
     // "Rock" is on both tracks: one row standing for two records, previewed by

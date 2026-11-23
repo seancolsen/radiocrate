@@ -765,7 +765,7 @@ const FEATURED_QUERY: ContextualQuery = {
   definition: {
     ...emptyDefinition(),
     base: "credit",
-    filter: { custom: 'track:=@id\nrole:="role-featured"', presets: [] },
+    filter: { custom: 'track.id:=@id\nrole:="role-featured"', presets: [] },
     sort: { custom: "\\\\order" },
     display: { custom: "$artist.name" },
   },
@@ -780,7 +780,7 @@ const CREDITS_BY_ARTIST_QUERY: ContextualQuery = {
   definition: {
     ...emptyDefinition(),
     base: "credit",
-    filter: { custom: "track:=@id", presets: [] },
+    filter: { custom: "track.id:=@id", presets: [] },
     display: { custom: "$artist.name \\gs2 $%count \\sd1" },
   },
 };

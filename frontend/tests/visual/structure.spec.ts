@@ -123,7 +123,7 @@ for (const colorScheme of SCHEMES) {
       query.getByRole("button", { name: "Base table" }),
     ).toBeVisible();
     await expect(query.getByLabel("Filter of featured")).toContainText(
-      "track:=@id",
+      "track.id:=@id",
     );
     await expect(stage).toHaveScreenshot(
       snapshot("data-structure/field-editors", colorScheme),

@@ -1459,7 +1459,7 @@ test("a multi-record field opens its records in a new query tab beside this one"
   // by what their embedded records show (there are no presets to prefer).
   expect(opened.tab?.live).toEqual({
     base: "credit",
-    filter: { custom: `track:="track-3"`, presets: [] },
+    filter: { custom: `track.id:="track-3"`, presets: [] },
     sort: { custom: expect.stringMatching(/^\\\\order /) },
     display: { custom: expect.stringContaining("$artist.name") },
   });
