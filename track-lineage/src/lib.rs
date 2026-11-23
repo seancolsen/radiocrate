@@ -20,7 +20,7 @@ use polyglot_sql::{parse_one, DialectType};
 use wasm_bindgen::prelude::*;
 
 /// The base-table columns each output column of `sql` traces back to, as a JSON
-/// array of arrays of `[table, column]` string pairs — the outer index is the
+/// array of arrays of `[catalog, schema, table, column]` — the outer index is the
 /// output column's 0-based position in the query's projection order (which
 /// matches the Arrow result columns *before* hidden columns are dropped).
 ///
@@ -89,8 +89,11 @@ fn alias_positionally(select: &mut Select) -> Vec<String> {
     names
 }
 
-/// Appends `root`'s leaf sources to `out` as a JSON array of `[table, column]`
-/// pairs. A "leaf" is a lineage node with no further downstream.
+/// Appends `root`'s leaf sources to `out` as a JSON array of `[catalog, schema,
+/// table, column]` entries. A "leaf" is a lineage node with no further
+/// downstream. The catalog and schema are the ones the SQL qualifies the table
+/// with, `null` where it doesn't: `"lastfm"."track"` is not the `track` of the
+/// current schema, and only the caller knows which schema that is.
 fn write_sources(out: &mut String, root: &LineageNode) {
     out.push('[');
     let mut first = true;
@@ -109,12 +112,24 @@ fn write_sources(out: &mut String, root: &LineageNode) {
         }
         first = false;
         out.push('[');
+        write_json_qualifier(out, source_table.catalog.as_ref());
+        out.push(',');
+        write_json_qualifier(out, source_table.schema.as_ref());
+        out.push(',');
         write_json_string(out, &source_table.name.name);
         out.push(',');
         write_json_string(out, &col.name.name);
         out.push(']');
     }
     out.push(']');
+}
+
+/// Writes a table's qualifier as a JSON string, or `null` for none.
+fn write_json_qualifier(out: &mut String, qualifier: Option<&Identifier>) {
+    match qualifier {
+        Some(id) => write_json_string(out, &id.name),
+        None => out.push_str("null"),
+    }
 }
 
 /// Writes `s` as a JSON string literal. Identifiers are plain in practice, but a
@@ -145,7 +160,7 @@ mod tests {
             FROM "playlist_track" LEFT JOIN "track" ON "playlist_track"."track" = "track"."id""#;
         assert_eq!(
             column_sources(sql).unwrap(),
-            r#"[[["playlist_track","id"]],[["playlist_track","position"]],[["track","id"]],[["track","title"]]]"#
+            r#"[[[null,null,"playlist_track","id"]],[[null,null,"playlist_track","position"]],[[null,null,"track","id"]],[[null,null,"track","title"]]]"#
         );
     }
 
@@ -157,8 +172,22 @@ mod tests {
             LEFT JOIN "cte0" ON "track"."id" = "cte0"."pk""#;
         let json = column_sources(sql).unwrap();
         assert!(
-            json.starts_with(r#"[[["track","id"]],[["album","id"]],[["track","title"]],["#),
+            json.starts_with(
+                r#"[[[null,null,"track","id"]],[[null,null,"album","id"]],[[null,null,"track","title"]],["#
+            ),
             "{json}"
+        );
+    }
+
+    #[test]
+    fn a_table_keeps_the_schema_and_catalog_it_is_named_with() {
+        let sql = r#"SELECT "playlist_track"."id", "track"."id", "t"."id"
+            FROM "app"."playlist_track" AS "playlist_track"
+            LEFT JOIN "track" ON "playlist_track"."track" = "track"."id"
+            LEFT JOIN "other"."lastfm"."track" AS "t" ON "t"."id" = "track"."id""#;
+        assert_eq!(
+            column_sources(sql).unwrap(),
+            r#"[[[null,"app","playlist_track","id"]],[[null,null,"track","id"]],[["other","lastfm","track","id"]]]"#
         );
     }
 }

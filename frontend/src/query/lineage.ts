@@ -22,7 +22,12 @@
 
 import init, { column_sources } from "track-lineage";
 import wasmUrl from "track-lineage/track_lineage_bg.wasm?url";
-import { identifyingColumns, type SchemaTable } from "./schema";
+import {
+  CURRENT_SCHEMA,
+  identifyingColumns,
+  qualifiedTableName,
+  type SchemaTable,
+} from "./schema";
 
 let ready: Promise<void> | undefined;
 
@@ -34,6 +39,7 @@ function trackLineageReady(): Promise<void> {
 
 /** One base-table column an output column traces back to. */
 export interface ColumnSource {
+  /** As the app names it: by its schema outside the current one. */
   table: string;
   column: string;
 }
@@ -42,6 +48,29 @@ export interface ColumnSource {
  * the Arrow result columns *before* hidden columns are dropped), the base-table
  * columns it traces back to. */
 export type ColumnSources = readonly (readonly ColumnSource[])[];
+
+/** One source as the WASM reports it: the catalog and schema the SQL names
+ * the table with (`null` where it doesn't), the table, and the column. */
+type Qualified = [string | null, string | null, string, string];
+
+/** A source named as the app names its table (`qualifiedTableName`): alone in
+ * the current schema, by its schema in another (`/lastfm/track`), so that it
+ * never passes for the app's own table of its name. A table in another
+ * attached database names none of the app's tables: it's left out. */
+function columnSource([catalog, schema, table, column]: Qualified):
+  [ColumnSource] | [] {
+  if (catalog !== null) return [];
+  return [
+    { table: qualifiedTableName(schema ?? CURRENT_SCHEMA, table), column },
+  ];
+}
+
+/** The WASM's JSON answer as {@link ColumnSources}, each table named as the
+ * app names it. */
+export function parseColumnSources(json: string): ColumnSources {
+  const raw = JSON.parse(json) as Qualified[][];
+  return raw.map((sources) => sources.flatMap(columnSource));
+}
 
 /** Traces every output column of `sql` back to its source table columns.
  * `undefined` when the SQL can't be parsed or analyzed — callers then offer no
@@ -54,10 +83,7 @@ export async function analyzeColumnSources(
     await trackLineageReady();
     const json = column_sources(sql);
     if (json === undefined) return undefined;
-    const raw = JSON.parse(json) as [string, string][][];
-    return raw.map((sources) =>
-      sources.map(([table, column]) => ({ table, column })),
-    );
+    return parseColumnSources(json);
   } catch (err) {
     console.error("lineage analysis failed", err);
     return undefined;

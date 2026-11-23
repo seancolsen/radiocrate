@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { recordKeyColumns, trackIdColumn, type ColumnSources } from "./lineage";
+import {
+  parseColumnSources,
+  recordKeyColumns,
+  trackIdColumn,
+  type ColumnSources,
+} from "./lineage";
 import { parseSchemaTables } from "./schema";
 
 // The interpretation layer over the WASM lineage analysis: given each output
@@ -99,5 +104,41 @@ describe("recordKeyColumns", () => {
       TABLES,
     );
     expect(found.map((f) => f.table)).toEqual(["track", "credit"]);
+  });
+});
+
+describe("parseColumnSources", () => {
+  // As the WASM reports `SELECT "playlist_track"."id", "track"."id",
+  // "t"."id" FROM "app"."playlist_track" … JOIN "track" … JOIN
+  // "other"."lastfm"."track" AS "t"`.
+  const parsed = parseColumnSources(
+    JSON.stringify([
+      [[null, "app", "playlist_track", "id"]],
+      [[null, null, "track", "id"]],
+      [["other", "lastfm", "track", "id"]],
+      [[null, "main", "album", "id"]],
+    ]),
+  );
+
+  it("names each table as the app does, by its schema outside the current one", () => {
+    expect(parsed).toEqual([
+      [{ table: "/app/playlist_track", column: "id" }],
+      [{ table: "track", column: "id" }],
+      // Another attached database's table names none of the app's.
+      [],
+      [{ table: "album", column: "id" }],
+    ]);
+  });
+
+  it("never takes another schema's table for the app's of its name", () => {
+    const tracks = parseColumnSources(
+      JSON.stringify([
+        [[null, "lastfm", "track", "id"]],
+        [[null, null, "track", "title"]],
+      ]),
+    );
+    expect(trackIdColumn(tracks)).toBeUndefined();
+    expect(recordKeyColumns(tracks, TABLES)).toEqual([]);
+    expect(trackIdColumn(parsed)).toBe(1);
   });
 });

@@ -86,7 +86,6 @@ import {
 import {
   addInferredLinks,
   INTROSPECTION_SQL,
-  isCurrentSchemaTable,
   parseSchemaTables,
   readSchemaTables,
   rowTable,
@@ -1721,10 +1720,6 @@ export function createAppActions(
     const sources = await analyzeColumnSources(sql);
     if (runTokens.get(tabId) !== token) return; // a newer run superseded this one
     if (!sources) return; // unparseable — no affordances
-    // The analyzer names a table without its schema, so the rows of a table in
-    // another schema would pass for the app's own of that name (`/lastfm/track`
-    // for tracks): they get no affordances either.
-    if (!isCurrentSchemaTable(selectResultBase(get(), tabId))) return;
 
     // A list of track ids isn't a playable row (an aggregated `[track.id, …]`).
     const isListColumn = (i: number) => result.columns[i]?.isList ?? false;
