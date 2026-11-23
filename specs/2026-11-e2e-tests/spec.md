@@ -1,6 +1,6 @@
 # End-to-end tests
 
-**Status:** proposed, nothing built · **Date:** 2026-11-23
+**Status:** decided, nothing built · **Date:** 2026-11-23
 
 RadioCrate has unit tests (Vitest, `cargo test -p backend`), component
 snapshots (the harness), and behavioral Playwright specs that drive the
@@ -33,7 +33,11 @@ Numbers marked *measured* were taken in the dev container while writing this.
   light theme only.
 - **Visibility for agents** comes from *unasserted* screenshots: a `look()`
   helper that saves a PNG at each step only when asked, plus a screenshot and
-  trace on every failure. Looking is free in CI; only asserting costs.
+  trace on every failure. Looking costs an ordinary run nothing; only
+  asserting costs.
+- **What runs:** the production frontend build, served by a debug build of the
+  `radiocrate` binary. Agents build that binary with a new
+  `cargo xtask e2e-build`, allowed whenever `cargo check` is.
 - **Backend changes:** one hidden `--fixed-now` option. **Frontend changes:**
   measure elapsed time with `performance.now()` in two places, and one more
   accessor on the test facade.
@@ -227,15 +231,38 @@ along the way.
   `dist/build-id.txt`.
 - `globalSetup` **refuses to run when the binary is older than the backend
   sources** (`backend/src`, `radiocrate/src`, `api-schema`, `introspection`).
-  An agent that changed the backend and couldn't rebuild would otherwise get a
-  green run of the old code.
+  An agent that changed the backend and didn't rebuild would otherwise get a
+  green run of the old code. The error names the command that fixes it
+  (§4.5).
 
-The alternative is the Vite dev server proxying to `radiocrate-server`. It
-saves the 20 s build but the proxy has one fixed target, so per-worker servers
-would need a custom proxy, and the thing under test would no longer be the
-thing that ships.
+The Vite dev server proxying to `radiocrate-server` was considered and
+rejected. It saves the 20 s build, but the proxy has one fixed target, so
+per-worker servers would need a custom proxy, and the thing under test would no
+longer be the thing that ships.
 
-Building the binary is the one step that needs cargo. See decision 1 in §9.
+### 4.5 Building the server binary
+
+Building the binary is the one step that needs cargo. It goes through a new
+xtask, so that what it builds is fixed in one place:
+
+```sh
+cargo xtask e2e-build   # cargo build -p radiocrate, dev profile, nothing else
+```
+
+It builds the one crate in the dev profile, never `--release` and never
+`--workspace`. That way it reuses the dev-profile `libduckdb-sys` that
+`cargo test -p backend` already compiles, and the cost should be our own
+crates plus a link. Phase 1 measures that, and if it turns out to recompile
+DuckDB, this decision is reopened before going further.
+
+**Who may run it.** Agents may run it under the same condition as `cargo
+check`: when they haven't changed the top-level `Cargo.toml` or
+`backend/Cargo.toml`. After a change there, the user builds, as for any other
+cargo command. Phase 1 adds this rule to `CLAUDE.md`'s "Validation" section,
+next to the one for `cargo xtask vendor-querydown`.
+
+`globalSetup` never runs cargo itself, even when the binary is stale. Doing so
+would get around that rule whenever the suite ran after a dependency change.
 
 ---
 
@@ -362,8 +389,12 @@ snapshot also sits on more asynchronous state than a story does.
 
 - **About one per spec file**, at the state that is the point of the journey
   and that no story can reach: real data, through the real pipeline, in the
-  assembled app. Start with a ceiling of 12 for the whole suite and raise it
-  on purpose.
+  assembled app.
+- **At most 12 for the whole suite.** `globalSetup` counts the baselines
+  under `tests/e2e/__screenshots__/` and fails when there are more than
+  `PIXEL_BUDGET` (12, in `support/globalSetup.ts`). A test that needs a 13th
+  either replaces an existing one or raises the constant in the same change,
+  where a reviewer sees it.
 - **Light theme only.** The theme has nothing to do with the backend. Dark is
   the harness's job.
 - **A region, not the page**, wherever one region is the point. The smoke
@@ -385,8 +416,8 @@ doesn't need a committed baseline:
   stage it was in.
 
 This is how I'd meet the wish to capture a test's lifecycle visually: many
-`look()` calls, few `toHaveScreenshot()` calls. CI pays for neither the
-captures nor the comparisons unless something fails.
+`look()` calls, few `toHaveScreenshot()` calls. An ordinary run pays for
+neither the captures nor the comparisons unless something fails.
 
 ### 6.4 Guards on every test
 
@@ -455,7 +486,7 @@ frontend/
   tests/e2e/
     fixtures.ts                test.extend: server, page (clock), app, api, db, guards
     support/
-      globalSetup.ts           binary check, frontend build, template build
+      globalSetup.ts           binary check, frontend build, template build, pixel budget
       template.ts              input hash, generator invocation
       server.ts                spawn, ready, kill
       app.ts                   page object: explorer, grid, record editor
@@ -481,11 +512,13 @@ tests" once phase 2 lands, with the table from §2 and the rules from §6.
 1. **Walking skeleton.** `--now`, `--collection`, `--db-dir` and
    `--server-bin` on the generator. `--fixed-now` on both binaries (a change
    under `backend/src` and `radiocrate/src`, no `Cargo.toml` edit).
-   `IdleQueue` and the audio engine on `performance.now()`. The E2E config,
-   `globalSetup`, the `server` and `page` fixtures. One smoke test: the app
-   boots on the sample library, the explorer lists Tracks, Albums and Artists,
-   and Tracks opens to 63 rows. Re-measure the per-test cost with the current
-   binary.
+   `cargo xtask e2e-build`, and its rule in `CLAUDE.md` (§4.5). `IdleQueue`
+   and the audio engine on `performance.now()`. The E2E config, `globalSetup`
+   (with the stale-binary check and the pixel budget), the `server` and `page`
+   fixtures. One smoke test: the app boots on the sample library, the explorer
+   lists Tracks, Albums and Artists, and Tracks opens to 63 rows. Measure what
+   `e2e-build` costs after a backend change, and re-measure the per-test cost
+   with the current binary.
 2. **Assertion toolkit and the core journeys.** `gridText` on the facade, the
    `app` page object, `look()`, the guards, `api` and `db`. Then:
    - build a query (filter, sort, a time-relative preset) and read the rows
@@ -509,26 +542,20 @@ catching things before spending on 3.
 
 ---
 
-## 9. Decisions for you
+## 9. Decisions
 
-1. **How does the server binary get built?** The suite needs a debug build of
-   `radiocrate`, and `CLAUDE.md` forbids agents `cargo build`. Without a way
-   to build it, an agent that touches the backend can't run E2E at all. I'd
-   add `cargo xtask e2e-build` (a dev-profile build of `radiocrate`, nothing
-   else) and allow it under the same condition as `cargo check`: no change to
-   the top-level or backend `Cargo.toml`. It reuses the dev-profile
-   `libduckdb-sys` that `cargo test -p backend` already compiles, so the cost
-   should be our own crates plus a link. The alternative is that you build it
-   and agents only run E2E for frontend changes.
-2. **Production build or Vite dev server?** I recommend the production build
-   (§4.4). The cost is a 20 s frontend build on the first run after a frontend
-   change.
-3. **Does E2E run in CI on every push?** I found no CI configuration in the
-   repo, so I couldn't measure against it. My estimate for 40 tests at 4
-   workers is one to two minutes, plus the template build when its inputs
-   changed.
-4. **The pixel ceiling of 12** (§6.2) is a starting number. Say if you want it
-   lower or higher.
+These were open questions in the first draft. Each one is settled as
+recommended, and the sections above already describe the result.
+
+1. **Agents build the server binary with `cargo xtask e2e-build`** (§4.5),
+   allowed under the same condition as `cargo check`. Without it, an agent
+   that touched the backend couldn't run the suite at all. The alternative was
+   for you to build it and for agents to run E2E only after frontend changes.
+2. **The suite runs the production build** (§4.4), not the Vite dev server.
+   The cost is a 20 s frontend build on the first run after a frontend change.
+3. **The pixel budget is 12** (§6.2), enforced by `globalSetup`.
+4. **CI is out of scope for now.** The suite is for local runs, by you and by
+   agents. Running it in CI is a separate decision, once the repo has CI.
 
 ---
 
