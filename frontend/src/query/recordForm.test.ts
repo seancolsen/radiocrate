@@ -254,18 +254,36 @@ describe("Querydown generation", () => {
 
   it("matches a record on every column of its key, exactly", () => {
     expect(
-      keyConditions([
+      keyConditions(TABLES, "credit", [
         [
           { column: "track", value: "t1" },
           { column: "artist", value: "a1" },
         ],
       ]),
-    ).toBe(`track:="t1"\nartist:="a1"`);
+    ).toBe(`track.id:="t1"\nartist.id:="a1"`);
+  });
+
+  it("compares a key column that's a link by the id it holds", () => {
+    // `track` and `artist` link to tables, so they're compared through the link:
+    // the link itself would go through the linked record comparison, which
+    // compares a track's title. `ord` links nowhere and is compared as is.
+    expect(
+      keyConditions(TABLES, "credit", [
+        [
+          { column: "track", value: "t1" },
+          { column: "ord", value: "1" },
+        ],
+      ]),
+    ).toBe(`track.id:="t1"\nord:="1"`);
+    // A table the schema hasn't got has no links to know of.
+    expect(
+      keyConditions(TABLES, "gone", [[{ column: "track", value: "t1" }]]),
+    ).toBe(`track:="t1"`);
   });
 
   it("matches several records as alternatives, each key a group of its own", () => {
     expect(
-      keyConditions([
+      keyConditions(TABLES, "track", [
         [{ column: "id", value: "t1" }],
         [{ column: "id", value: "t2" }],
       ]),
@@ -273,7 +291,7 @@ describe("Querydown generation", () => {
     // A composite key stays one alternative: its columns are AND-ed inside the
     // group, and the groups are OR-ed.
     expect(
-      keyConditions([
+      keyConditions(TABLES, "credit", [
         [
           { column: "track", value: "t1" },
           { column: "artist", value: "a1" },
@@ -284,8 +302,8 @@ describe("Querydown generation", () => {
         ],
       ]),
     ).toBe(
-      `[\n  {\n    track:="t1"\n    artist:="a1"\n  }\n` +
-        `  {\n    track:="t2"\n    artist:="a2"\n  }\n]`,
+      `[\n  {\n    track.id:="t1"\n    artist.id:="a1"\n  }\n` +
+        `  {\n    track.id:="t2"\n    artist.id:="a2"\n  }\n]`,
     );
   });
 
@@ -302,7 +320,9 @@ describe("Querydown generation", () => {
   it("loads a record's values and its related-record counts in one query", () => {
     const fields = buildFormFields(TABLES, "track");
     expect(
-      recordDataQuery("track", fields, [[{ column: "id", value: "t1" }]]),
+      recordDataQuery(TABLES, "track", fields, [
+        [{ column: "id", value: "t1" }],
+      ]),
     ).toEqual({
       base: "track",
       filter: `id:="t1"`,
@@ -315,7 +335,7 @@ describe("Querydown generation", () => {
 
   it("loads every record the form is on in one query", () => {
     const fields = buildFormFields(TABLES, "credit", ["track"]);
-    const query = recordDataQuery("credit", fields, [
+    const query = recordDataQuery(TABLES, "credit", fields, [
       [
         { column: "track", value: "t1" },
         { column: "artist", value: "a1" },
@@ -326,7 +346,7 @@ describe("Querydown generation", () => {
       ],
     ]);
     expect(query.display).toBe("$track $artist $artist $ord $role");
-    expect(query.filter).toContain(`track:="t2"`);
+    expect(query.filter).toContain(`track.id:="t2"`);
   });
 
   it("signs a key the same way whichever side of the query it comes from", () => {

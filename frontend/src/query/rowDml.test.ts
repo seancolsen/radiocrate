@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { narrowedDefinition, type RowRecord } from "./rowDml";
 import { emptyDefinition, type QueryDefinition } from "./definition";
+import type { SchemaTable } from "./schema";
 
 // The half of the row re-read that's decidable without a backend: whether a
 // query can be narrowed to one record at all, and what that narrowed query is.
@@ -10,6 +11,18 @@ import { emptyDefinition, type QueryDefinition } from "./definition";
 function definition(over: Partial<QueryDefinition> = {}): QueryDefinition {
   return { ...emptyDefinition(), base: "track", ...over };
 }
+
+const uuid = (name: string) => ({ name, type: "UUID", nullable: false });
+const TABLES: SchemaTable[] = [
+  { name: "track", columns: [uuid("id")], uniqueConstraints: [["id"]] },
+  { name: "album", columns: [uuid("id")], uniqueConstraints: [["id"]] },
+  { name: "artist", columns: [uuid("id")], uniqueConstraints: [["id"]] },
+  {
+    name: "credit",
+    columns: [uuid("track"), uuid("artist")],
+    uniqueConstraints: [["track", "artist"]],
+  },
+];
 
 const track: RowRecord = {
   table: "track",
@@ -27,7 +40,7 @@ describe("narrowedDefinition", () => {
       sort: { custom: "\\\\title" },
       display: { custom: "$title $#play" },
     });
-    expect(narrowedDefinition(def, [track, album])).toEqual({
+    expect(narrowedDefinition(def, [track, album], TABLES)).toEqual({
       base: "track",
       filter: { custom: 'id:="t-1"', presets: [] },
       sort: { custom: "" },
@@ -37,7 +50,7 @@ describe("narrowedDefinition", () => {
 
   it("keeps a display that's a preset reference, so the columns stay the same", () => {
     const def = definition({ display: { preset: "display-preset-id" } });
-    expect(narrowedDefinition(def, [track])?.display).toEqual({
+    expect(narrowedDefinition(def, [track], TABLES)?.display).toEqual({
       preset: "display-preset-id",
     });
   });
@@ -51,23 +64,24 @@ describe("narrowedDefinition", () => {
       ],
     };
     expect(
-      narrowedDefinition(definition({ base: "credit" }), [credit])?.filter,
-    ).toEqual({ custom: 'track:="t-1"\nartist:="a-9"', presets: [] });
+      narrowedDefinition(definition({ base: "credit" }), [credit], TABLES)
+        ?.filter,
+    ).toEqual({ custom: 'track.id:="t-1"\nartist.id:="a-9"', presets: [] });
   });
 
   it("gives up on a hand-written whole query — there are no sections to replace", () => {
     const def = definition({ full: '#track{id:="t-1"} $title' });
-    expect(narrowedDefinition(def, [track])).toBeUndefined();
+    expect(narrowedDefinition(def, [track], TABLES)).toBeUndefined();
   });
 
   it("gives up when the row identifies no record of the base table", () => {
-    expect(narrowedDefinition(definition(), [album])).toBeUndefined();
-    expect(narrowedDefinition(definition(), [])).toBeUndefined();
+    expect(narrowedDefinition(definition(), [album], TABLES)).toBeUndefined();
+    expect(narrowedDefinition(definition(), [], TABLES)).toBeUndefined();
   });
 
   it("gives up without a base table", () => {
     expect(
-      narrowedDefinition(definition({ base: "  " }), [track]),
+      narrowedDefinition(definition({ base: "  " }), [track], TABLES),
     ).toBeUndefined();
   });
 });

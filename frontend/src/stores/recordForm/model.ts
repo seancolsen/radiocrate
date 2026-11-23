@@ -1123,7 +1123,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     setEmbed(id, { status: "loading", cells: [] });
     try {
       const { rows, columns } = await runDisplayQuery(
-        embeddedRecordQuery(table, key, spec),
+        embeddedRecordQuery(opts.tables, table, key, spec),
         opts.schemaJson,
       );
       if (embedTokens.get(id) !== token) return;
@@ -1191,7 +1191,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     patchRecord(id, { status: "loading", error: null });
     try {
       const rows = await runRecordQuery(
-        recordDataQuery(node.table, data, keys),
+        recordDataQuery(opts.tables, node.table, data, keys),
         opts.schemaJson,
       );
       if (tokens.get(id) !== token) return;
@@ -1287,7 +1287,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const rows = await runRecordQuery(
         {
           base: node.table,
-          filter: keyConditions(keys),
+          filter: keyConditions(opts.tables, node.table, keys),
           sort: "",
           display: computedDisplay(
             keyColumns,
@@ -1658,7 +1658,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
     try {
       const { rows, columns } = await runDisplayQuery(
-        embeddedRecordQuery(table, key, spec),
+        embeddedRecordQuery(opts.tables, table, key, spec),
         opts.schemaJson,
       );
       if (embedTokens.get(id) !== token) return;

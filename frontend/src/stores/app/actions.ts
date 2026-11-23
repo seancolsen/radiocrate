@@ -2588,7 +2588,7 @@ export function createAppActions(
     if (schema.json === undefined) return;
     const initial = relatedRecordsTabName(listed, undefined);
     void runRecordQuery(
-      descriptorQuery(table, columns, records[0].key),
+      descriptorQuery(schema.tables, table, columns, records[0].key),
       schema.json,
     )
       .then((rows) => {

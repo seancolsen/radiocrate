@@ -54,13 +54,14 @@ export function textColumns(table: SchemaTable | undefined): string[] {
 /** A query for the text columns of one record, answering rows of
  * `textColumns(table)`'s cells. */
 export function descriptorQuery(
+  tables: readonly SchemaTable[],
   table: string,
   columns: readonly string[],
   key: RecordKey,
 ): RecordQuery {
   return {
     base: table,
-    filter: keyConditions([key]),
+    filter: keyConditions(tables, table, [key]),
     sort: "",
     display: columns.map((c) => `$${c}`).join(" "),
   };

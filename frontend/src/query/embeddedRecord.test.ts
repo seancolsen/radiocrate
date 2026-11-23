@@ -303,6 +303,7 @@ describe("preview queries", () => {
   it("fetches one record's preview by key", () => {
     expect(
       embeddedRecordQuery(
+        TABLES,
         "artist",
         [{ column: "id", value: "a1" }],
         embedSpec(TABLES, "artist"),

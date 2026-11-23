@@ -247,13 +247,14 @@ export function defaultEmbedSections(
  *
  * The result's columns are positional — one per entry of `spec.display`. */
 export function embeddedRecordQuery(
+  tables: readonly SchemaTable[],
   table: string,
   key: RecordKey,
   spec: EmbedSpec,
 ): RecordQuery {
   return {
     base: table,
-    filter: keyConditions([key]),
+    filter: keyConditions(tables, table, [key]),
     sort: "",
     display: spec.display.join(" "),
   };

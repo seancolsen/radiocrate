@@ -50,7 +50,7 @@ import type { PlaylistDefinition } from "./playlist";
 import { analyzeColumnSources, recordKeyColumns } from "./lineage";
 import { querydownReady } from "./querydown";
 import { keyConditions, type RecordKey } from "./recordForm";
-import { parseSchemaTables } from "./schema";
+import { parseSchemaTables, type SchemaTable } from "./schema";
 
 /** A record a result row identifies: the table, plus the key values that row
  * carries for it. Structurally the store's `RecordRef` — the store passes those
@@ -145,7 +145,11 @@ async function refreshRow(
 ): Promise<RowLocation | undefined> {
   await querydownReady();
   if (context.kind === "playlist") return await fetchEntryRow(context);
-  const narrowed = narrowedDefinition(context.definition, context.records);
+  const narrowed = narrowedDefinition(
+    context.definition,
+    context.records,
+    parseSchemaTables(context.schemaJson),
+  );
   return narrowed === undefined
     ? await findRowInFullRun(context)
     : await fetchNarrowedRow(narrowed, context);
@@ -162,6 +166,7 @@ async function refreshRow(
 export function narrowedDefinition(
   def: QueryDefinition,
   records: readonly RowRecord[],
+  tables: readonly SchemaTable[],
 ): QueryDefinition | undefined {
   if (def.full != null) return undefined;
   const base = def.base.trim().toLowerCase();
@@ -170,7 +175,10 @@ export function narrowedDefinition(
   if (!record || record.key.length === 0) return undefined;
   return {
     base: def.base,
-    filter: { custom: keyConditions([record.key]), presets: [] },
+    filter: {
+      custom: keyConditions(tables, record.table, [record.key]),
+      presets: [],
+    },
     sort: { custom: "" },
     display: def.display,
   };

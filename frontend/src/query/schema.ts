@@ -169,6 +169,19 @@ export function inferLinks(tables: readonly SchemaTable[]): SchemaLink[] {
   return links;
 }
 
+/** The columns of `table` that link to another table — each holding the `id` of
+ * a record there. */
+export function linkColumns(
+  tables: readonly SchemaTable[],
+  table: string,
+): Set<string> {
+  return new Set(
+    inferLinks(tables)
+      .filter((link) => link.fromTable === table)
+      .map((link) => link.fromColumn),
+  );
+}
+
 /** Rewrites the `links` array of a raw introspection JSON document with
  * convention-inferred links, preserving every other field. Ports
  * `add_inferred_links` + `infer_links` (`introspection/src/lib.rs:147`): for

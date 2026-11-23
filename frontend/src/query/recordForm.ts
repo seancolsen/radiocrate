@@ -12,6 +12,7 @@ import { pluralOrRaw } from "./entityNames";
 import {
   identifyingColumns,
   inferLinks,
+  linkColumns,
   primaryKey,
   type SchemaTable,
 } from "./schema";
@@ -344,9 +345,15 @@ export function quoteValue(value: string, quote: '"' | "'" = '"'): string {
   return `^e${quote}${escaped}${quote}`;
 }
 
-/** Querydown conditions matching exactly the records `keys` identifies. `:=` is
- * the exact-equality operator — plain `:` would compile to a substring match on
- * a text column.
+/** Querydown conditions matching exactly the records of `table` that `keys`
+ * identifies. `:=` is the exact-equality operator — plain `:` would compile to a
+ * substring match on a text column.
+ *
+ * A key column that links to another table is compared through the link, by the
+ * `id` it holds (`track.id`): comparing the link itself goes through the linked
+ * table's linked record comparison (`tableSettings.ts`), which compares a
+ * track's title, say, rather than its id. So `credit`, keyed on its links
+ * `(track, artist)`, gets `track.id` and `artist.id` conditions.
  *
  * The columns of one key are AND-ed, as newline-separated conditions always
  * are. Several keys are OR-ed: `[…]` encloses alternatives, and each key's
@@ -356,19 +363,26 @@ export function quoteValue(value: string, quote: '"' | "'" = '"'): string {
  * ```
  * [
  *   {
- *     track:="t1"
- *     artist:="a1"
+ *     track.id:="t1"
+ *     artist.id:="a1"
  *   }
  *   {
- *     track:="t2"
- *     artist:="a2"
+ *     track.id:="t2"
+ *     artist.id:="a2"
  *   }
  * ]
  * ```
  */
-export function keyConditions(keys: readonly RecordKey[]): string {
+export function keyConditions(
+  tables: readonly SchemaTable[],
+  table: string,
+  keys: readonly RecordKey[],
+): string {
+  const links = linkColumns(tables, table);
+  const path = (column: string) =>
+    links.has(column) ? `${column}.id` : column;
   const conditions = (key: RecordKey) =>
-    key.map((p) => `${p.column}:=${quoteValue(p.value)}`);
+    key.map((p) => `${path(p.column)}:=${quoteValue(p.value)}`);
   // One record needs no alternatives, and reads better without them.
   if (keys.length <= 1) return conditions(keys[0] ?? []).join("\n");
   const groups = keys.map(
@@ -435,6 +449,7 @@ function displayExpr(field: DataField): string {
  * The result's columns are positional: the key columns first, then one per entry
  * of `fields`, in order. */
 export function recordDataQuery(
+  tables: readonly SchemaTable[],
   table: string,
   fields: readonly DataField[],
   keys: readonly RecordKey[],
@@ -442,7 +457,7 @@ export function recordDataQuery(
   const keyColumns = keys[0]?.map((p) => `$${p.column}`) ?? [];
   return {
     base: table,
-    filter: keyConditions(keys),
+    filter: keyConditions(tables, table, keys),
     sort: "",
     display: [...keyColumns, ...fields.map(displayExpr)].join(" "),
   };
