@@ -1141,9 +1141,11 @@ fn delete_setting(conn: &Connection, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// What `SUMMARIZE` reports for every table (and view) introspection lists: those
-/// of the `main` schema of the database itself, which leaves out the `metadata` and
-/// `settings` schemas and any session's temp tables. In table name order.
+/// What `SUMMARIZE` reports for every table (and view) of the app's own: those
+/// of the `main` schema of the database itself, the ones introspection lists
+/// without a schema. That leaves out the `metadata` and `settings` schemas (which
+/// introspection lists under their schema, for Querydown) and any session's temp
+/// tables. In table name order.
 fn summarize_tables(conn: &Connection) -> Result<Vec<TableSummary>, String> {
     let mut stmt = conn
         .prepare(
@@ -2210,13 +2212,22 @@ mod tests {
     }
 
     #[test]
-    fn the_metadata_schema_stays_out_of_introspection() {
+    fn introspection_puts_the_other_schemas_tables_under_their_schema() {
         let conn = setup();
+        conn.execute_batch("CREATE TEMP TABLE staging_track (id UUID);")
+            .unwrap();
         let json: String = conn
             .query_row(introspection::introspection_sql(), [], |row| row.get(0))
             .unwrap();
         let schema = introspection::Schema::parse(&json).unwrap();
+        // Querydown sees `metadata.field` as `#/metadata/field`, but the app, which names
+        // tables alone, never mistakes it for one of its own.
+        let field = schema.tables.iter().find(|t| t.name == "field").unwrap();
+        assert_eq!(field.schema, ["metadata"]);
         assert!(schema.table("field").is_none());
+        assert!(schema.table("track").unwrap().is_current());
+        // A session's temp tables stay out altogether.
+        assert!(schema.tables.iter().all(|t| t.name != "staging_track"));
     }
 
     #[test]
@@ -2239,7 +2250,7 @@ mod tests {
         let names = |tables: &[TableSummary]| -> Vec<String> {
             tables.iter().map(|t| t.name.clone()).collect()
         };
-        let introspected: Vec<String> = schema.tables.iter().map(|t| t.name.clone()).collect();
+        let introspected: Vec<String> = schema.current_tables().map(|t| t.name.clone()).collect();
         assert_eq!(names(&tables), introspected);
 
         let album = tables.iter().find(|t| t.name == "album").unwrap();

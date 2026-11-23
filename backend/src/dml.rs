@@ -380,11 +380,12 @@ fn do_delete(
 
     // Dangling-reference check, evaluated against live transaction state: for every column that
     // references this table, fail if any still-present row points at a row we're about to delete.
+    // A referencing table can be in another schema, which it's named with.
     for link in schema.incoming_links(table_name) {
         let check_sql = format!(
             "SELECT EXISTS(SELECT 1 FROM {from_table} f WHERE f.{from_column} IS NOT NULL \
              AND f.{from_column} IN (SELECT {to_column} FROM {del_table} WHERE {where_clause}))",
-            from_table = quote_ident(&link.from_table),
+            from_table = quote_qualified(&link.from_schema, &link.from_table),
             from_column = quote_ident(&link.from_column),
             to_column = quote_ident(&link.to_column),
             del_table = quote_ident(table_name),
@@ -403,7 +404,13 @@ fn do_delete(
                 format!(
                     "cannot delete from \"{table_name}\": a row in \"{}\" still references it via \
                      column \"{}\"",
-                    link.from_table, link.from_column
+                    link.from_schema
+                        .iter()
+                        .chain([&link.from_table])
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join("."),
+                    link.from_column
                 ),
             ));
         }
@@ -595,6 +602,17 @@ fn query_returning_row(
 /// SQL goes through this; values are always bound as parameters, never interpolated.
 pub(crate) fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// A table's name for SQL, preceded by the names of the schema it's in (none for the current one).
+fn quote_qualified(schema: &[String], table: &str) -> String {
+    schema
+        .iter()
+        .map(String::as_str)
+        .chain([table])
+        .map(quote_ident)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// Converts a scalar JSON value to a `DuckDB` bind value. String values bind as text and rely on
@@ -954,6 +972,30 @@ mod tests {
     }
 
     #[test]
+    fn delete_album_referenced_from_another_schema_rejected() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        conn.execute_batch(&format!(
+            "CREATE SCHEMA lastfm; CREATE TABLE lastfm.scrobble (album UUID); \
+             INSERT INTO lastfm.scrobble VALUES ('{ALBUM1}');"
+        ))
+        .unwrap();
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "d", "operation": "delete", "table": "album", "where": { "id": ALBUM1 } }
+            ]}),
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("\"lastfm.scrobble\""),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM album"), 1);
+    }
+
+    #[test]
     fn null_out_references_then_delete_album_succeeds() {
         let mut conn = setup();
         insert_file(&conn, FILE1);
@@ -1246,7 +1288,7 @@ mod tests {
     fn every_app_table_has_a_place_in_the_topic_map() {
         let conn = setup();
         let schema = introspect(&conn).unwrap();
-        let migrated: BTreeSet<&str> = schema.tables.iter().map(|t| t.name.as_str()).collect();
+        let migrated: BTreeSet<&str> = schema.current_tables().map(|t| t.name.as_str()).collect();
         let mapped: BTreeSet<&str> = TABLE_TOPICS.iter().map(|(table, _)| *table).collect();
         assert_eq!(mapped, migrated);
     }

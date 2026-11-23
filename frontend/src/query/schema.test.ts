@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   addInferredLinks,
   identifyingColumns,
+  INTROSPECTION_SQL,
   parseSchemaTables,
   primaryKey,
   type SchemaTable,
@@ -30,10 +32,92 @@ const SAMPLE = `{
 }`;
 
 interface Link {
-  from: { table: string; column: string };
-  to: { table: string; column: string };
+  from: { table: string; schema?: string[]; column: string };
+  to: { table: string; schema?: string[]; column: string };
   unique: boolean;
 }
+
+describe("INTROSPECTION_SQL", () => {
+  it("is the shared crate's query, without its comments", () => {
+    const shared = readFileSync(
+      new URL("../../../introspection/resources/duckdb.sql", import.meta.url),
+      "utf8",
+    );
+    const uncommented = shared
+      .split("\n")
+      .filter((line) => !line.startsWith("--"))
+      .join("\n")
+      .trim();
+    expect(INTROSPECTION_SQL).toBe(uncommented);
+  });
+});
+
+// The same fixture as the Rust `SCHEMAS`: the app's `track` and `album`, a
+// `metadata` table named like one of them, and a table of another schema that
+// refers to the app's `track` and to its own schema's `album`.
+const SCHEMAS = `{
+  "tables": [
+    { "name": "track", "unique_constraints": [["id"]], "columns": [
+      { "name": "id", "type": "UUID", "nullable": false },
+      { "name": "album", "type": "UUID", "nullable": true }
+    ] },
+    { "name": "album", "unique_constraints": [["id"]], "columns": [
+      { "name": "id", "type": "UUID", "nullable": false }
+    ] },
+    { "name": "track", "schema": ["metadata"], "columns": [
+      { "name": "note", "type": "VARCHAR", "nullable": true }
+    ] },
+    { "name": "album", "schema": ["lastfm"], "columns": [
+      { "name": "id", "type": "UUID", "nullable": false }
+    ] },
+    { "name": "scrobble", "schema": ["lastfm"], "columns": [
+      { "name": "track", "type": "UUID", "nullable": false },
+      { "name": "album", "type": "UUID", "nullable": true }
+    ] }
+  ],
+  "links": []
+}`;
+
+describe("schemas", () => {
+  it("links a column to its own schema's table, then the current schema's", () => {
+    expect(linksOf(addInferredLinks(SCHEMAS))).toEqual([
+      {
+        from: { table: "track", column: "album" },
+        to: { table: "album", column: "id" },
+        unique: false,
+      },
+      {
+        from: { table: "scrobble", schema: ["lastfm"], column: "track" },
+        to: { table: "track", column: "id" },
+        unique: false,
+      },
+      {
+        from: { table: "scrobble", schema: ["lastfm"], column: "album" },
+        to: { table: "album", schema: ["lastfm"], column: "id" },
+        unique: false,
+      },
+    ]);
+  });
+
+  it("keeps every schema's tables in the compiler's JSON", () => {
+    const out = JSON.parse(addInferredLinks(SCHEMAS)) as {
+      tables: { name: string; schema?: string[] }[];
+    };
+    expect(out.tables.map((t) => [t.schema ?? [], t.name])).toEqual([
+      [[], "track"],
+      [[], "album"],
+      [["metadata"], "track"],
+      [["lastfm"], "album"],
+      [["lastfm"], "scrobble"],
+    ]);
+  });
+
+  it("parses only the current schema's tables for the app", () => {
+    const tables = parseSchemaTables(SCHEMAS);
+    expect(tables.map((t) => t.name)).toEqual(["track", "album"]);
+    expect(tables[0]!.columns.map((c) => c.name)).toEqual(["id", "album"]);
+  });
+});
 const linksOf = (json: string): Link[] =>
   (JSON.parse(json) as { links: Link[] }).links;
 
