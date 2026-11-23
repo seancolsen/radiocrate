@@ -54,6 +54,23 @@ describe("stringifyArrowValue", () => {
     expect(stringifyArrowValue(42)).toBe("42");
   });
 
+  it("joins a list cell's elements with a comma and a space, unbracketed", () => {
+    const type = new arrow.List(
+      new arrow.Field("item", new arrow.Utf8(), true),
+    );
+    const vector = arrow.vectorFromArray([["Foo", null, "Bar"]], type);
+    expect(stringifyArrowValue(vector.get(0), type)).toBe("Foo, Bar");
+  });
+
+  it("renders a list of timestamps through the element type", () => {
+    const element = new arrow.TimestampSecond();
+    const type = new arrow.List(new arrow.Field("item", element, true));
+    const vector = arrow.vectorFromArray([[1782651944000]], type);
+    expect(stringifyArrowValue(vector.get(0), type)).toBe(
+      "2026-06-28 13:05:44",
+    );
+  });
+
   it("returns '' for null/undefined regardless of type", () => {
     const type = new arrow.TimestampSecond();
     expect(stringifyArrowValue(null, type)).toBe("");

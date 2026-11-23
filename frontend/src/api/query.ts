@@ -8,6 +8,7 @@ import {
   DataType,
   IntervalUnit,
   tableFromIPC,
+  Vector as ArrowVector,
   type DataType as ArrowType,
   type Vector,
 } from "apache-arrow";
@@ -149,10 +150,23 @@ export function isListLikeValue(v: unknown): boolean {
  * type falls through to the crude `String(value)` default (dates and decimals
  * should still be verified against a real backend, per plan §3.4).
  *
+ * A list cell — wherever one is shown as text rather than as pills: a record
+ * picker's results, an embedded record, a record field — reads as its elements
+ * joined with `", "` (`Foo, Bar`), not Arrow's own `[Foo,Bar]`. NULL elements
+ * are left out, as they'd have nothing to show.
+ *
  * DEVIATION: Arrow's JS `.get()` already returns display-ready primitives for
  * strings/numbers/bools. */
 export function stringifyArrowValue(value: unknown, type?: ArrowType): string {
   if (value == null) return "";
+  if (value instanceof ArrowVector) {
+    // A list cell is a sub-vector whose own `type` is the element type.
+    const elementType = value.type as ArrowType;
+    return Array.from(value as Iterable<unknown>)
+      .filter((e) => e != null)
+      .map((e) => stringifyArrowValue(e, elementType))
+      .join(", ");
+  }
   if (type && DataType.isTimestamp(type) && typeof value === "number") {
     return formatNaiveTimestamp(value);
   }
