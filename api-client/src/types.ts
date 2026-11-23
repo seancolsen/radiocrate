@@ -13,18 +13,21 @@ export type JsonValue =
 /**
  * A single DML operation. The `values` and `where` maps are keyed by *database
  * column names* and are sent verbatim — serde's `rename_all` on the server only
- * touches declared struct fields, never these free-form map keys.
+ * touches declared struct fields, never these free-form map keys. `schema`
+ * names the schema `table` is in; absent (or `main`), it's the app's own.
  */
 export type DmlOperation =
   | {
       operation: "insert";
       id: string;
+      schema?: string;
       table: string;
       values: Record<string, JsonValue>;
     }
   | {
       operation: "update";
       id: string;
+      schema?: string;
       table: string;
       where: Record<string, JsonValue>;
       values: Record<string, JsonValue>;
@@ -32,6 +35,7 @@ export type DmlOperation =
   | {
       operation: "delete";
       id: string;
+      schema?: string;
       table: string;
       where: Record<string, JsonValue>;
     };

@@ -36,11 +36,15 @@ struct DmlParams {
 enum Operation {
     Insert {
         id: String,
+        #[serde(default)]
+        schema: Option<String>,
         table: String,
         values: Map<String, Value>,
     },
     Update {
         id: String,
+        #[serde(default)]
+        schema: Option<String>,
         table: String,
         #[serde(rename = "where")]
         where_: Map<String, Value>,
@@ -48,10 +52,39 @@ enum Operation {
     },
     Delete {
         id: String,
+        #[serde(default)]
+        schema: Option<String>,
         table: String,
         #[serde(rename = "where")]
         where_: Map<String, Value>,
     },
+}
+
+/// The schema an operation names no schema for, which introspection names tables in alone.
+const CURRENT_SCHEMA: &str = "main";
+
+/// The table an operation writes: the path of its schema, as introspection gives it (empty for the
+/// current schema, `["app"]` for another of the database), and its name.
+struct Target<'a> {
+    schema: Vec<String>,
+    name: &'a str,
+}
+
+impl Target<'_> {
+    /// The table as SQL names it, quoted, with its schema if it's not the current one's.
+    fn sql(&self) -> String {
+        quote_qualified(&self.schema, self.name)
+    }
+}
+
+/// The table as an error message names it: `app.playlist_track`, or `track` alone.
+impl std::fmt::Display for Target<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for part in &self.schema {
+            write!(f, "{part}.")?;
+        }
+        f.write_str(self.name)
+    }
 }
 
 impl Operation {
@@ -72,11 +105,18 @@ impl Operation {
         }
     }
 
-    fn table(&self) -> &str {
-        match self {
-            Operation::Insert { table, .. }
-            | Operation::Update { table, .. }
-            | Operation::Delete { table, .. } => table,
+    /// The table the operation writes: in the schema it names, or the current one (`main`) if it
+    /// names none.
+    fn target(&self) -> Target<'_> {
+        let (Operation::Insert { schema, table, .. }
+        | Operation::Update { schema, table, .. }
+        | Operation::Delete { schema, table, .. }) = self;
+        Target {
+            schema: match schema.as_deref() {
+                None | Some(CURRENT_SCHEMA) => Vec::new(),
+                Some(name) => vec![name.to_string()],
+            },
+            name: table,
         }
     }
 
@@ -131,7 +171,10 @@ fn topics_of(operations: &[Operation]) -> Vec<Topic> {
         .filter_map(|op| {
             TABLE_TOPICS
                 .iter()
-                .find(|(table, _)| *table == op.table())
+                .find(|(table, _)| {
+                    let target = op.target();
+                    target.schema.is_empty() && *table == target.name
+                })
                 .and_then(|(_, topic)| *topic)
         })
         .collect();
@@ -151,22 +194,20 @@ fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr>
     // resolving operation-references.
     let mut results: HashMap<String, Value> = HashMap::new();
     for op in operations {
+        let target = op.target();
         match op {
-            Operation::Insert { id, table, values } => {
-                let row = do_insert(&tx, &schema, id, table, values, &results)?;
+            Operation::Insert { id, values, .. } => {
+                let row = do_insert(&tx, &schema, id, &target, values, &results)?;
                 results.insert(id.clone(), row);
             }
             Operation::Update {
-                id,
-                table,
-                where_,
-                values,
+                id, where_, values, ..
             } => {
-                let row = do_update(&tx, &schema, id, table, where_, values, &results)?;
+                let row = do_update(&tx, &schema, id, &target, where_, values, &results)?;
                 results.insert(id.clone(), row);
             }
-            Operation::Delete { id, table, where_ } => {
-                do_delete(&tx, &schema, id, table, where_)?;
+            Operation::Delete { id, where_, .. } => {
+                do_delete(&tx, &schema, id, &target, where_)?;
             }
         }
     }
@@ -265,11 +306,11 @@ fn do_insert(
     tx: &Connection,
     schema: &Schema,
     op_id: &str,
-    table_name: &str,
+    target: &Target<'_>,
     values: &Map<String, Value>,
     results: &HashMap<String, Value>,
 ) -> Result<Value, RpcErr> {
-    let table = lookup_table(schema, table_name, op_id)?;
+    let table = lookup_table(schema, target, op_id)?;
     if values.is_empty() {
         return Err(op_err(op_id, "insert has no values".to_string()));
     }
@@ -282,7 +323,7 @@ fn do_insert(
     for (column, value) in values {
         require_column(table, column, op_id)?;
         binds.push(resolve_value(
-            schema, table_name, op_id, column, value, results,
+            schema, target, op_id, column, value, results,
         )?);
         columns.push(quote_ident(column));
         value_exprs.push("?".to_string());
@@ -300,7 +341,7 @@ fn do_insert(
 
     let sql = format!(
         "INSERT INTO {} ({}) VALUES ({}) RETURNING {}",
-        quote_ident(table_name),
+        target.sql(),
         columns.join(", "),
         value_exprs.join(", "),
         returning_list(table),
@@ -328,12 +369,12 @@ fn do_update(
     tx: &Connection,
     schema: &Schema,
     op_id: &str,
-    table_name: &str,
+    target: &Target<'_>,
     where_: &Map<String, Value>,
     values: &Map<String, Value>,
     results: &HashMap<String, Value>,
 ) -> Result<Value, RpcErr> {
-    let table = lookup_table(schema, table_name, op_id)?;
+    let table = lookup_table(schema, target, op_id)?;
     if values.is_empty() {
         return Err(op_err(op_id, "update has no values".to_string()));
     }
@@ -344,7 +385,7 @@ fn do_update(
     for (column, value) in values {
         require_column(table, column, op_id)?;
         binds.push(resolve_value(
-            schema, table_name, op_id, column, value, results,
+            schema, target, op_id, column, value, results,
         )?);
         assignments.push(format!("{} = ?", quote_ident(column)));
     }
@@ -354,7 +395,7 @@ fn do_update(
 
     let sql = format!(
         "UPDATE {} SET {} WHERE {} RETURNING {}",
-        quote_ident(table_name),
+        target.sql(),
         assignments.join(", "),
         where_sql,
         returning_list(table),
@@ -362,7 +403,7 @@ fn do_update(
     query_returning_row(tx, &sql, &binds, table, op_id)?.ok_or_else(|| {
         op_err(
             op_id,
-            format!("update matched no rows in table \"{table_name}\""),
+            format!("update matched no rows in table \"{target}\""),
         )
     })
 }
@@ -371,24 +412,24 @@ fn do_delete(
     tx: &Connection,
     schema: &Schema,
     op_id: &str,
-    table_name: &str,
+    target: &Target<'_>,
     where_: &Map<String, Value>,
 ) -> Result<(), RpcErr> {
-    let table = lookup_table(schema, table_name, op_id)?;
+    let table = lookup_table(schema, target, op_id)?;
     validate_where(table, where_, op_id)?;
     let (where_sql, where_binds) = build_where(where_, op_id)?;
 
     // Dangling-reference check, evaluated against live transaction state: for every column that
     // references this table, fail if any still-present row points at a row we're about to delete.
     // A referencing table can be in another schema, which it's named with.
-    for link in schema.incoming_links(table_name) {
+    for link in schema.incoming_links_in(&target.schema, target.name) {
         let check_sql = format!(
             "SELECT EXISTS(SELECT 1 FROM {from_table} f WHERE f.{from_column} IS NOT NULL \
              AND f.{from_column} IN (SELECT {to_column} FROM {del_table} WHERE {where_clause}))",
             from_table = quote_qualified(&link.from_schema, &link.from_table),
             from_column = quote_ident(&link.from_column),
             to_column = quote_ident(&link.to_column),
-            del_table = quote_ident(table_name),
+            del_table = target.sql(),
             where_clause = where_sql,
         );
         let dangling: bool = tx
@@ -402,7 +443,7 @@ fn do_delete(
             return Err(op_err(
                 op_id,
                 format!(
-                    "cannot delete from \"{table_name}\": a row in \"{}\" still references it via \
+                    "cannot delete from \"{target}\": a row in \"{}\" still references it via \
                      column \"{}\"",
                     link.from_schema
                         .iter()
@@ -416,18 +457,14 @@ fn do_delete(
         }
     }
 
-    let delete_sql = format!(
-        "DELETE FROM {} WHERE {}",
-        quote_ident(table_name),
-        where_sql
-    );
+    let delete_sql = format!("DELETE FROM {} WHERE {}", target.sql(), where_sql);
     let affected = tx
         .execute(&delete_sql, duckdb::params_from_iter(where_binds.iter()))
         .map_err(|e| op_err(op_id, e.to_string()))?;
     if affected == 0 {
         return Err(op_err(
             op_id,
-            format!("delete matched no rows in table \"{table_name}\""),
+            format!("delete matched no rows in table \"{target}\""),
         ));
     }
     Ok(())
@@ -439,12 +476,12 @@ fn do_delete(
 
 fn lookup_table<'a>(
     schema: &'a Schema,
-    table_name: &str,
+    target: &Target<'_>,
     op_id: &str,
 ) -> Result<&'a Table, RpcErr> {
     schema
-        .table(table_name)
-        .ok_or_else(|| op_err(op_id, format!("no such table \"{table_name}\"")))
+        .table_in(&target.schema, target.name)
+        .ok_or_else(|| op_err(op_id, format!("no such table \"{target}\"")))
 }
 
 fn require_column(table: &Table, column: &str, op_id: &str) -> Result<(), RpcErr> {
@@ -519,7 +556,7 @@ fn build_where(
 /// operation-reference, valid only on a foreign-key column, resolving to the referenced record's id.
 fn resolve_value(
     schema: &Schema,
-    table_name: &str,
+    target: &Target<'_>,
     op_id: &str,
     column: &str,
     value: &Value,
@@ -528,7 +565,10 @@ fn resolve_value(
     match as_reference(value)? {
         None => json_scalar_to_duck(value).map_err(|e| op_err(op_id, e)),
         Some(reference) => {
-            if schema.link(table_name, column).is_none() {
+            if schema
+                .link_in(&target.schema, target.name, column)
+                .is_none()
+            {
                 return Err(op_err(
                     op_id,
                     format!(
@@ -1279,6 +1319,136 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.data, Some(json!({ "operation": { "id": "e0" } })));
+    }
+
+    /// A schema of the user's beside the app's: `lastfm.scrobble` links to the app's `track` (no
+    /// `track` of its own), and to `lastfm.artist`, which shares its name with the app's.
+    fn with_lastfm(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE SCHEMA lastfm;
+             CREATE TABLE lastfm.artist (id UUID PRIMARY KEY, name TEXT NOT NULL);
+             CREATE TABLE lastfm.scrobble (
+               id UUID PRIMARY KEY, track UUID, artist UUID, note TEXT
+             );",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_operation_naming_a_schema_writes_that_schemas_table() {
+        let mut conn = setup();
+        with_lastfm(&conn);
+        insert_file(&conn, FILE1);
+        insert_track(&conn, TRACK1, FILE1, None);
+        let out = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "a", "operation": "insert", "schema": "lastfm", "table": "artist",
+                  "values": { "name": "Prince" } },
+                // References resolve through the links of the operation's own schema: to its
+                // `artist`, and on to the app's `track`.
+                { "id": "s", "operation": "insert", "schema": "lastfm", "table": "scrobble",
+                  "values": { "artist": { "id": "a" }, "track": TRACK1, "note": "first" } }
+            ]}),
+        )
+        .unwrap();
+        let artist = out["a"]["id"].as_str().unwrap().to_string();
+        let scrobble = out["s"]["id"].as_str().unwrap().to_string();
+        assert_eq!(out["s"]["artist"], artist.as_str());
+        // The app's `artist` of the same name is untouched.
+        assert_eq!(count(&conn, "SELECT count(*) FROM main.artist"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM lastfm.artist"), 1);
+
+        let out = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "u", "operation": "update", "schema": "lastfm", "table": "scrobble",
+                  "where": { "id": scrobble }, "values": { "note": "again" } }
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out["u"]["note"], "again");
+
+        // The scrobble still refers to the artist, so it goes first.
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "d", "operation": "delete", "schema": "lastfm", "table": "artist",
+                  "where": { "id": artist } }
+            ]}),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("lastfm.scrobble"), "{}", err.message);
+        dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "d0", "operation": "delete", "schema": "lastfm", "table": "scrobble",
+                  "where": { "id": scrobble } },
+                { "id": "d1", "operation": "delete", "schema": "lastfm", "table": "artist",
+                  "where": { "id": artist } }
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM lastfm.artist"), 0);
+    }
+
+    #[test]
+    fn an_operation_naming_no_schema_or_main_writes_the_apps_table() {
+        let mut conn = setup();
+        with_lastfm(&conn);
+        dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "a", "operation": "insert", "table": "artist",
+                  "values": { "name": "Prince" } },
+                { "id": "b", "operation": "insert", "schema": "main", "table": "artist",
+                  "values": { "name": "Bowie" } }
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM main.artist"), 2);
+        assert_eq!(count(&conn, "SELECT count(*) FROM lastfm.artist"), 0);
+        // A table only another schema has is no table of the app's.
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "s", "operation": "insert", "table": "scrobble",
+                  "values": { "note": "x" } }
+            ]}),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("no such table"), "{}", err.message);
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "s", "operation": "insert", "schema": "nowhere", "table": "artist",
+                  "values": { "name": "x" } }
+            ]}),
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("no such table \"nowhere.artist\""),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_reference_must_be_a_link_of_the_operations_own_schema() {
+        let mut conn = setup();
+        with_lastfm(&conn);
+        // `note` links nowhere, in either schema.
+        let err = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "a", "operation": "insert", "table": "artist",
+                  "values": { "name": "Prince" } },
+                { "id": "s", "operation": "insert", "schema": "lastfm", "table": "scrobble",
+                  "values": { "note": { "id": "a" } } }
+            ]}),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("not a foreign key"), "{}", err.message);
     }
 
     /// `TABLE_TOPICS` lists every table the migrations leave in the main

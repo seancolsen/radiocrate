@@ -183,6 +183,13 @@ export function tableRef(name: string): {
   return { tableSchema: schema, tableName: table };
 }
 
+/** A table's name split for a DML operation: the table alone in the current
+ * schema, with its `schema` in another, which the backend writes it in. */
+export function dmlTable(name: string): { schema?: string; table: string } {
+  const { schema, table } = splitTableName(name);
+  return schema === CURRENT_SCHEMA ? { table } : { schema, table };
+}
+
 /** The name of the table a `metadata.*` row is about. */
 export const rowTable = (row: {
   tableSchema: string;

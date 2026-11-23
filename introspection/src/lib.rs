@@ -146,25 +146,50 @@ impl Schema {
     /// Looks up a table of the current schema by name.
     #[must_use]
     pub fn table(&self, name: &str) -> Option<&Table> {
-        self.current_tables().find(|t| t.name == name)
+        self.table_in(&[], name)
+    }
+
+    /// Looks up a table by the path of its schema (empty for the current one, `["app"]` for another
+    /// schema of the database) and its name.
+    #[must_use]
+    pub fn table_in(&self, schema: &[String], name: &str) -> Option<&Table> {
+        self.tables
+            .iter()
+            .find(|t| t.schema == schema && t.name == name)
     }
 
     /// The links whose target is the current schema's `table` — i.e. every `(from_table,
     /// from_column)` in the database, in any schema, that references this table. Used by the DML
     /// delete path to find dangling references.
     pub fn incoming_links<'a>(&'a self, table: &'a str) -> impl Iterator<Item = &'a Link> {
+        self.incoming_links_in(&[], table)
+    }
+
+    /// The links whose target is `table` of the schema at path `schema`, from any schema.
+    pub fn incoming_links_in<'a>(
+        &'a self,
+        schema: &'a [String],
+        table: &'a str,
+    ) -> impl Iterator<Item = &'a Link> {
         self.links
             .iter()
-            .filter(move |l| l.to_schema.is_empty() && l.to_table == table)
+            .filter(move |l| l.to_schema == schema && l.to_table == table)
     }
 
     /// The link whose source is the current schema's `table.column`, if that column is an inferred
     /// foreign key.
     #[must_use]
     pub fn link(&self, table: &str, column: &str) -> Option<&Link> {
+        self.link_in(&[], table, column)
+    }
+
+    /// The link whose source is `table.column` of the schema at path `schema`, if that column is an
+    /// inferred foreign key.
+    #[must_use]
+    pub fn link_in(&self, schema: &[String], table: &str, column: &str) -> Option<&Link> {
         self.links
             .iter()
-            .find(|l| l.from_schema.is_empty() && l.from_table == table && l.from_column == column)
+            .find(|l| l.from_schema == schema && l.from_table == table && l.from_column == column)
     }
 }
 
@@ -394,6 +419,22 @@ mod tests {
         );
         let scrobble = schema.tables.iter().find(|t| t.name == "scrobble").unwrap();
         assert_eq!(scrobble.schema, ["lastfm"]);
+    }
+
+    #[test]
+    fn lookups_by_schema_find_the_tables_and_links_of_that_schema() {
+        let schema = Schema::parse(SCHEMAS).unwrap();
+        let lastfm = ["lastfm".to_string()];
+        assert_eq!(schema.table_in(&lastfm, "scrobble").unwrap().schema, lastfm);
+        // `album` is a table of both: each lookup finds its own.
+        assert_eq!(schema.table_in(&lastfm, "album").unwrap().columns.len(), 1);
+        assert!(schema.table_in(&[], "album").unwrap().is_current());
+        assert!(schema.table_in(&lastfm, "track").is_none());
+        assert!(schema.link_in(&lastfm, "scrobble", "track").is_some());
+        // Only `lastfm`'s own scrobbles refer to its albums.
+        let incoming: Vec<_> = schema.incoming_links_in(&lastfm, "album").collect();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].from_table, "scrobble");
     }
 
     #[test]

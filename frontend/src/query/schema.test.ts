@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   addInferredLinks,
+  dmlTable,
   identifyingColumns,
   INTROSPECTION_SQL,
   parseOtherSchemaTables,
@@ -284,6 +285,11 @@ describe("naming a table across schemas", () => {
     });
     expect(rowTable(tableRef("/lastfm/artist"))).toBe("/lastfm/artist");
     expect(rowTable(tableRef("artist"))).toBe("artist");
+    expect(dmlTable("/app/playlist_track")).toEqual({
+      schema: "app",
+      table: "playlist_track",
+    });
+    expect(dmlTable("track")).toEqual({ table: "track" });
   });
 });
 
