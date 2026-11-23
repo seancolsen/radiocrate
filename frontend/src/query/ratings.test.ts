@@ -23,26 +23,26 @@ describe("parseRatings", () => {
   it("reads the display columns positionally", () => {
     expect(
       parseRatings([
-        ["r1", "1", "🗑️", "Skip"],
-        ["r4", "4", "❤️", "Love"],
+        ["r1", "-1", "🗑️", "Skip"],
+        ["r4", "2", "❤️", "Love"],
       ]),
     ).toEqual([
-      { id: "r1", value: "1", symbol: "🗑️", description: "Skip" },
-      { id: "r4", value: "4", symbol: "❤️", description: "Love" },
+      { id: "r1", value: "-1", symbol: "🗑️", description: "Skip" },
+      { id: "r4", value: "2", symbol: "❤️", description: "Love" },
     ]);
   });
 
   it("keeps a rating whose nullable columns are NULL", () => {
-    expect(parseRatings([["r1", "1", null, null]])).toEqual([
-      { id: "r1", value: "1", symbol: null, description: null },
+    expect(parseRatings([["r1", "-1", null, null]])).toEqual([
+      { id: "r1", value: "-1", symbol: null, description: null },
     ]);
   });
 
   it("drops a row with no id — it names no record to point a track at", () => {
     expect(
       parseRatings([
-        [null, "1", "🗑️", "Skip"],
-        ["", "2", null, null],
+        [null, "-1", "🗑️", "Skip"],
+        ["", "0", null, null],
       ]),
     ).toEqual([]);
   });
@@ -51,20 +51,20 @@ describe("parseRatings", () => {
 describe("ratingLabel", () => {
   const rating = {
     id: "r4",
-    value: "4",
+    value: "2",
     symbol: "❤️",
     description: "Love",
   };
 
   it("reads value, symbol and description", () => {
-    expect(ratingLabel(rating)).toBe("4: ❤️ (Love)");
+    expect(ratingLabel(rating)).toBe("2: ❤️ (Love)");
   });
 
   it("drops the parts a rating hasn't got", () => {
-    expect(ratingLabel({ ...rating, symbol: null })).toBe("4 (Love)");
-    expect(ratingLabel({ ...rating, description: null })).toBe("4: ❤️");
+    expect(ratingLabel({ ...rating, symbol: null })).toBe("2 (Love)");
+    expect(ratingLabel({ ...rating, description: null })).toBe("2: ❤️");
     expect(ratingLabel({ ...rating, symbol: null, description: null })).toBe(
-      "4",
+      "2",
     );
   });
 });

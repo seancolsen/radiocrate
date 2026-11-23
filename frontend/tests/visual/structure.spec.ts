@@ -746,7 +746,7 @@ test("a field's context menu hides it, and brings it back", async ({
   const fields = row(stage, "Fields");
   const showHidden = fields.getByRole("button", { name: "Show hidden fields" });
   // Nothing hidden, nothing to show.
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
   await expect(showHidden).toHaveCount(0);
 
   const title = row(stage, "title Column");
@@ -769,13 +769,13 @@ test("a field's context menu hides it, and brings it back", async ({
     ]);
   // It's gone from the list, and the toggle that shows it is there.
   await expect(title).toHaveCount(0);
-  await expect(row(stage, "Fields 17 fields")).toBeVisible();
+  await expect(row(stage, "Fields 18 fields")).toBeVisible();
   await expect(showHidden).toHaveAttribute("aria-pressed", "false");
 
   // Shown, it's listed faded.
   await showHidden.click();
   await expect(showHidden).toHaveAttribute("aria-pressed", "true");
-  await expect(row(stage, "Fields 18 fields")).toBeVisible();
+  await expect(row(stage, "Fields 19 fields")).toBeVisible();
   await expect(title.locator(".opacity-60")).toHaveCount(1);
 
   await title.click({ button: "right" });
@@ -840,7 +840,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 }) => {
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the query goes.
-  const fields = row(stage, "Fields 18 fields");
+  const fields = row(stage, "Fields 19 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -859,7 +859,7 @@ test("Add field adds a contextual query, and opens it on its filter", async ({
 
   const added = row(stage, "credits by role Query");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 19 fields")).toBeVisible();
+  await expect(row(stage, "Fields 20 fields")).toBeVisible();
   // The filter is guessed from the schema's links, and has the caret.
   const filter = stage.getByLabel("Filter of credits by role");
   await expect(filter).toContainText("track.id:@id");
@@ -875,7 +875,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
   const stage = await openStory(page, "data-structure/add-field", "light");
   // From a closed "Fields": adding opens it, since that's where the column
   // goes.
-  const fields = row(stage, "Fields 18 fields");
+  const fields = row(stage, "Fields 19 fields");
   await fields.click();
   await expect(fields).toHaveAttribute("aria-expanded", "false");
   await row(stage, "Fields").getByRole("button", { name: "Add field" }).click();
@@ -890,7 +890,7 @@ test("Add field adds a computed column, and opens it on its expression", async (
 
   const added = row(stage, "release_decade Computed");
   await expect(added).toHaveAttribute("aria-expanded", "true");
-  await expect(row(stage, "Fields 19 fields")).toBeVisible();
+  await expect(row(stage, "Fields 20 fields")).toBeVisible();
   expect(await calls(page, "metadata.computed_column.set")).toEqual([
     {
       method: "metadata.computed_column.set",

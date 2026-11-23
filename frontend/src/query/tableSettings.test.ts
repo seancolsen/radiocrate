@@ -87,6 +87,22 @@ describe("effectiveSetting", () => {
     );
   });
 
+  it("has the app's defaults for the other tables it ships with", () => {
+    expect(builtInSetting("album", "defaultTextSearch")).toBe(
+      "[title:@x ++#artist{name:@x}]",
+    );
+    expect(builtInSetting("play", "defaultTextSearch")).toBe(
+      "track[title:@x album.title:@x ++#artist{name:@x}]",
+    );
+    expect(builtInSetting("rating", "defaultTextSearch")).toBe(
+      "[symbol:@x description:@x]",
+    );
+    expect(builtInSetting("file", "linkedRecordComparison")).toBe("path:@x");
+    expect(builtInSetting("role", "linkedRecordComparison")).toBe("name:@x");
+    expect(builtInSetting("tag", "linkedRecordComparison")).toBe("name:@x");
+    expect(builtInSetting("credit", "defaultTextSearch")).toBe(null);
+  });
+
   it("doesn't take a table's default from the object prototype", () => {
     expect(builtInSetting("constructor", "defaultTextSearch")).toBe(null);
   });
@@ -95,11 +111,12 @@ describe("effectiveSetting", () => {
 describe("tablePrelude", () => {
   it("defines each table's settings, for the tables the database has", () => {
     const prelude = tablePrelude(
-      named("rating", "track", "role"),
+      named("rating", "track", "credit"),
       settings({ rating: { linkedRecordComparison: "symbol:@x" } }),
     );
     expect(prelude.text).toBe(
       [
+        "#rating.__querydown_default_text_search:@x = [symbol:@x description:@x]",
         "#rating.__querydown_linked_record_comparison:@x = symbol:@x",
         "#track.__querydown_default_text_search:@x = [",
         "  title:@x",
@@ -146,7 +163,7 @@ describe("generatedPrelude", () => {
   const computed = [
     {
       schemaName: "main",
-      tableName: "role",
+      tableName: "credit",
       name: "upper",
       expression: "name",
     },
@@ -154,62 +171,62 @@ describe("generatedPrelude", () => {
 
   it("defines the tables' computed columns, then what their settings say", () => {
     expect(
-      generatedPrelude(named("rating", "role"), {}, computed, []).text,
+      generatedPrelude(named("file", "credit"), {}, computed, []).text,
     ).toBe(
       [
-        "#role.upper = name",
-        "#rating.__querydown_linked_record_comparison:@x = value:@x",
+        "#credit.upper = name",
+        "#file.__querydown_linked_record_comparison:@x = path:@x",
       ].join("\n"),
     );
   });
 
   it("is only the one, where there's nothing of the other", () => {
-    expect(generatedPrelude(named("role"), {}, computed, []).text).toBe(
-      "#role.upper = name",
+    expect(generatedPrelude(named("credit"), {}, computed, []).text).toBe(
+      "#credit.upper = name",
     );
-    expect(generatedPrelude(named("rating"), {}, [], []).text).toBe(
-      "#rating.__querydown_linked_record_comparison:@x = value:@x",
+    expect(generatedPrelude(named("file"), {}, [], []).text).toBe(
+      "#file.__querydown_linked_record_comparison:@x = path:@x",
     );
-    expect(generatedPrelude(named("role"), {}, [], []).text).toBe("");
+    expect(generatedPrelude(named("credit"), {}, [], []).text).toBe("");
   });
 
   it("leaves out the one definition asked to, of either kind", () => {
-    const tables = named("rating", "role");
+    const tables = named("file", "credit");
     expect(
       generatedPrelude(tables, {}, computed, [], {
-        table: "role",
+        table: "credit",
         computedColumn: "upper",
       }).text,
-    ).toBe("#rating.__querydown_linked_record_comparison:@x = value:@x");
+    ).toBe("#file.__querydown_linked_record_comparison:@x = path:@x");
     expect(
       generatedPrelude(tables, {}, computed, [], {
-        table: "rating",
+        table: "file",
         setting: "linkedRecordComparison",
       }).text,
-    ).toBe("#role.upper = name");
+    ).toBe("#credit.upper = name");
   });
 
   it("defines the tables' custom comparisons last", () => {
     const comparisons = [
       {
         schemaName: "main",
-        tableName: "role",
+        tableName: "credit",
         name: "named",
         expression: "name:@x",
       },
     ];
     expect(
-      generatedPrelude(named("rating", "role"), {}, computed, comparisons).text,
+      generatedPrelude(named("file", "credit"), {}, computed, comparisons).text,
     ).toBe(
       [
-        "#role.upper = name",
-        "#rating.__querydown_linked_record_comparison:@x = value:@x",
-        "#role.named:@x = name:@x",
+        "#credit.upper = name",
+        "#file.__querydown_linked_record_comparison:@x = path:@x",
+        "#credit.named:@x = name:@x",
       ].join("\n"),
     );
     expect(
-      generatedPrelude(named("role"), {}, [], comparisons, {
-        table: "role",
+      generatedPrelude(named("credit"), {}, [], comparisons, {
+        table: "credit",
         comparison: "named",
       }).text,
     ).toBe("");
@@ -217,13 +234,13 @@ describe("generatedPrelude", () => {
 
   it("goes ahead of the user's prelude, each traced to where it's edited", () => {
     const prelude = composePrelude(
-      generatedPrelude(named("role"), {}, computed, []),
+      generatedPrelude(named("credit"), {}, computed, []),
       "@mine = 3",
     );
-    expect(prelude.text).toBe("#role.upper = name\n@mine = 3");
+    expect(prelude.text).toBe("#credit.upper = name\n@mine = 3");
     expect(
       locate(prelude, prelude.text.indexOf("name"))?.segment.origin,
-    ).toEqual({ kind: "computedColumn", table: "role", name: "upper" });
+    ).toEqual({ kind: "computedColumn", table: "credit", name: "upper" });
     expect(
       locate(prelude, prelude.text.indexOf("@mine"))?.segment.origin,
     ).toEqual({ kind: "prelude" });
@@ -232,10 +249,10 @@ describe("generatedPrelude", () => {
 
 describe("composePrelude", () => {
   it("puts the tables' definitions ahead of the user's prelude", () => {
-    const generated = tablePrelude(named("album"), {});
+    const generated = tablePrelude(named("file"), {});
     const prelude = composePrelude(generated, "#track.year = album.year");
     expect(prelude.text).toBe(
-      "#album.__querydown_linked_record_comparison:@x = title:@x\n#track.year = album.year",
+      "#file.__querydown_linked_record_comparison:@x = path:@x\n#track.year = album.year",
     );
     // A position in the user's prelude is one in its own text.
     expect(locate(prelude, prelude.text.indexOf("album.year"))).toMatchObject({
@@ -246,8 +263,8 @@ describe("composePrelude", () => {
 
   it("is either part alone when the other is empty", () => {
     expect(composePrelude(tablePrelude([], {}), "x").text).toBe("x");
-    expect(composePrelude(tablePrelude(named("album"), {}), "").text).toBe(
-      "#album.__querydown_linked_record_comparison:@x = title:@x",
+    expect(composePrelude(tablePrelude(named("file"), {}), "").text).toBe(
+      "#file.__querydown_linked_record_comparison:@x = path:@x",
     );
   });
 });

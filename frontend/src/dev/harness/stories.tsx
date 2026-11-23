@@ -556,10 +556,10 @@ const trackRecord = (n: number): RecordRef => ({
  * Put straight into the store rather than loaded, so the story needs no
  * stand-in backend for it. */
 const RATINGS_FIXTURE: readonly Rating[] = [
-  { id: "rating-1", value: "1", symbol: "🗑️", description: "Skip" },
-  { id: "rating-2", value: "2", symbol: "✔️", description: "Like" },
-  { id: "rating-3", value: "3", symbol: "⭐", description: "Prefer" },
-  { id: "rating-4", value: "4", symbol: "❤️", description: "Love" },
+  { id: "rating-skip", value: "-1", symbol: "🗑️", description: "Skip" },
+  { id: "rating-like", value: "0", symbol: "✔️", description: "Like" },
+  { id: "rating-prefer", value: "1", symbol: "⭐", description: "Prefer" },
+  { id: "rating-love", value: "2", symbol: "❤️", description: "Love" },
 ];
 
 /** The record of `table` with `id` `id`, as a result row identifies it. */

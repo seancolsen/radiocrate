@@ -52,11 +52,15 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
       name: "artists",
       expression: "#credit.artist.name%list_all(\\\\order \\\\artist.name)",
     },
+    {
+      name: "main_artists",
+      expression: "#credit{role:@null}.artist.name%list_all(\\\\order)",
+    },
     { name: "year", expression: "album.year" },
     { name: "added", expression: "file.added" },
     { name: "duration", expression: "file.duration" },
     { name: "play_count", expression: "#play" },
-    { name: "tags", expression: "#tag.name%list(\\s)" },
+    { name: "tags", expression: "#tag.name%list_all(\\\\#track \\d)" },
   ],
   artist: [
     { name: "added", expression: "#track.file.added%min" },
@@ -65,18 +69,25 @@ export const BUILT_IN_COMPUTED_COLUMNS: Readonly<
     { name: "play_count", expression: "#play" },
     { name: "album_count", expression: "#track.album.title%distinct" },
     { name: "track_count", expression: "#track" },
+    { name: "avg_rating", expression: "#rating.value%avg" },
   ],
   album: [
     {
       name: "main_artists",
       expression: "#credit.artist.name%top(\\\\%count \\d)",
     },
+    {
+      name: "duration",
+      expression: "#file.duration|seconds%sum|seconds_to_duration",
+    },
     { name: "added", expression: "#track.file.added%min" },
     { name: "first_play", expression: "#play.timestamp%min" },
     { name: "last_play", expression: "#play.timestamp%max" },
     { name: "play_count", expression: "#play" },
     { name: "track_count", expression: "#track" },
+    { name: "avg_rating", expression: "#rating.value%avg" },
   ],
+  tag: [{ name: "track_count", expression: "#track" }],
 };
 
 /** The app's own computed columns of `table`. */

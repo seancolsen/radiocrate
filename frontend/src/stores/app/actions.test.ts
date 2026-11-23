@@ -1987,8 +1987,8 @@ describe("showArtistRecords", () => {
 
 describe("loadRatings", () => {
   const loaded = [
-    { id: "r1", value: "1", symbol: "🗑️", description: "Skip" },
-    { id: "r4", value: "4", symbol: "❤️", description: "Love" },
+    { id: "r1", value: "-1", symbol: "🗑️", description: "Skip" },
+    { id: "r4", value: "2", symbol: "❤️", description: "Love" },
   ];
   const withSchema = () => {
     const bundle = createAppStore(fakeEnv());

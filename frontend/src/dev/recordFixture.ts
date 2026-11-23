@@ -436,7 +436,9 @@ function linkColumns(table: string): string[] {
  * - a table joining the two links to both (`#tag` on a track, by `track_tag`;
  *   `#track` on an artist, by `credit`);
  * - `table` links to a table that's related to `base` itself (`#play` on an
- *   album, by its tracks; `#play` on an artist, by its credits' tracks). */
+ *   album, by its tracks; `#play` on an artist, by its credits' tracks);
+ * - a table related to `base` links to `table` (`#rating` on an artist, by
+ *   its credits' tracks). */
 function relatedRows(table: string, base: string, row: Row, depth = 2): Row[] {
   const rows = TABLE_ROWS[table] ?? [];
   const links = linkColumns(table);
@@ -456,6 +458,13 @@ function relatedRows(table: string, base: string, row: Row, depth = 2): Row[] {
       relatedRows(link, base, row, depth - 1).map((r) => r.id),
     );
     if (ids.size > 0) return rows.filter((r) => ids.has(r[link]));
+  }
+  for (const via of Object.keys(TABLE_ROWS)) {
+    if (via === base || !linkColumns(via).includes(table)) continue;
+    const ids = new Set(
+      relatedRows(via, base, row, depth - 1).map((r) => r[table]),
+    );
+    if (ids.size > 0) return rows.filter((r) => ids.has(r.id));
   }
   return [];
 }
@@ -479,6 +488,20 @@ function readPath(base: string, row: Row, path: string): string | null {
   const id = row[first];
   const target = (TABLE_ROWS[first] ?? []).find((r) => r.id === id);
   return target ? readPath(first, target, rest.join(".")) : null;
+}
+
+/** The seconds in a duration as DuckDB prints an interval (`00:03:16`). */
+function parseSeconds(duration: string): number {
+  return duration
+    .split(":")
+    .reduce((total, part) => total * 60 + Number(part), 0);
+}
+
+/** Seconds as DuckDB prints the interval they make (`00:19:44`). */
+function formatSeconds(seconds: number): string {
+  return [seconds / 3600, (seconds % 3600) / 60, seconds % 60]
+    .map((part) => String(Math.floor(part)).padStart(2, "0"))
+    .join(":");
 }
 
 /** The computed columns `definitions` defines for `base`, by name, each with
@@ -505,10 +528,13 @@ function computedDefinitions(
  *
  * - a column path, or another computed column (`album.year`);
  * - a count of related records (`#play`);
- * - the least, greatest, list, distinct count or commonest values of a column
- *   across them (`#play.timestamp%max`, `#credit.artist.name%list_all(…)`,
- *   `#tag.name%list(…)`, `#track.album.title%distinct`,
- *   `#credit.artist.name%top(…)`), whatever the arguments say. */
+ * - the least, greatest, list, distinct count, commonest values or mean of a
+ *   column across them (`#play.timestamp%max`,
+ *   `#credit.artist.name%list_all(…)`, `#tag.name%list(…)`,
+ *   `#track.album.title%distinct`, `#credit.artist.name%top(…)`,
+ *   `#rating.value%avg`), whatever the arguments say, of all of them or of
+ *   those with a column NULL (`#credit{role:@null}.artist.name%list_all(…)`);
+ * - a total of durations (`#file.duration|seconds%sum|seconds_to_duration`). */
 function readValue(
   base: string,
   row: Row,
@@ -521,14 +547,31 @@ function readValue(
   }
   const count = /^#(\w+)$/.exec(expression);
   if (count) return String(relatedCount(count[1], base, row));
-  const aggregate = /^#(\w+)\.([\w.]+)%(\w+)/.exec(expression);
+  const aggregate =
+    /^#(\w+)(?:\{(\w+):@null\})?\.([\w.]+)(\|seconds)?%(\w+)(\|seconds_to_duration)?/.exec(
+      expression,
+    );
   if (aggregate) {
-    const [, table, column, fn] = aggregate;
+    const [, table, nullColumn, column, toSeconds, fn, toDuration] = aggregate;
     const values = relatedRows(table, base, row)
+      .filter(
+        (related) => nullColumn === undefined || related[nullColumn] == null,
+      )
       .map((related) => readPath(table, related, column))
       .filter((value) => value !== null);
     if (fn === "distinct") return String(new Set(values).size);
     if (values.length === 0) return null;
+    if (fn === "sum" && toSeconds && toDuration) {
+      return formatSeconds(
+        values.reduce((total, value) => total + parseSeconds(value), 0),
+      );
+    }
+    if (fn === "avg") {
+      return String(
+        values.reduce((total, value) => total + Number(value), 0) /
+          values.length,
+      );
+    }
     if (fn === "list_all") return `[${values.join(", ")}]`;
     if (fn === "list") return listOf(values);
     if (fn === "top") {

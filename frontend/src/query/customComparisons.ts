@@ -41,6 +41,15 @@ export const BUILT_IN_COMPARISONS: Readonly<
   Record<string, readonly BuiltInComparison[]>
 > = {
   track: [{ name: "artist", expression: "++#artist{name:@x}" }],
+  album: [
+    { name: "artist", expression: "++#artist{name:@x}" },
+    { name: "tag", expression: "++#tag{name:@x}" },
+  ],
+  artist: [
+    { name: "album", expression: "++#album{title:@x}" },
+    { name: "tag", expression: "++#tag{name:@x}" },
+  ],
+  play: [{ name: "artist", expression: "++#artist{name:@x}" }],
 };
 
 /** The app's own custom comparisons on `table`. */

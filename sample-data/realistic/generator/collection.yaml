@@ -61,10 +61,10 @@ audio:
 path_template: "{album_artist} - {album}/{track_number:02d}. {title}.flac"
 
 ratings:
-  skip: 1
-  like: 2
-  prefer: 3
-  love: 4
+  skip: -1
+  like: 0
+  prefer: 1
+  love: 2
 
 albums:
   - title: "Sgt. Pepper’s Lonely Hearts Club Band"

@@ -38,11 +38,12 @@ const row = (
 const TABLES = [table("role", "id", "title"), table("track", "id", "title")];
 
 describe("the app's own computed columns", () => {
-  it("are the ones the app defines for tracks, artists and albums", () => {
+  it("are the ones the app defines for tracks, artists, albums and tags", () => {
     expect(BUILT_IN_COMPUTED_COLUMNS["track"]?.map((c) => c.name)).toEqual([
       "first_play",
       "last_play",
       "artists",
+      "main_artists",
       "year",
       "added",
       "duration",
@@ -56,13 +57,19 @@ describe("the app's own computed columns", () => {
       "play_count",
       "album_count",
       "track_count",
+      "avg_rating",
     ]);
     expect(BUILT_IN_COMPUTED_COLUMNS["album"]?.map((c) => c.name)).toEqual([
       "main_artists",
+      "duration",
       "added",
       "first_play",
       "last_play",
       "play_count",
+      "track_count",
+      "avg_rating",
+    ]);
+    expect(BUILT_IN_COMPUTED_COLUMNS["tag"]?.map((c) => c.name)).toEqual([
       "track_count",
     ]);
     expect(builtInExpression("track", "last_play")).toBe("#play.timestamp%max");
@@ -70,8 +77,14 @@ describe("the app's own computed columns", () => {
     expect(builtInExpression("track", "artists")).toBe(
       "#credit.artist.name%list_all(\\\\order \\\\artist.name)",
     );
-    // A single backslash ahead of a flag.
-    expect(builtInExpression("track", "tags")).toBe("#tag.name%list(\\s)");
+    // Two ahead of the sort key, and a single backslash ahead of its flag.
+    expect(builtInExpression("track", "tags")).toBe(
+      "#tag.name%list_all(\\\\#track \\d)",
+    );
+    // Only the credits with no role: the track's main artists.
+    expect(builtInExpression("track", "main_artists")).toBe(
+      "#credit{role:@null}.artist.name%list_all(\\\\order)",
+    );
     expect(builtInExpression("album", "main_artists")).toBe(
       "#credit.artist.name%top(\\\\%count \\d)",
     );
@@ -260,11 +273,12 @@ describe("computedPrelude", () => {
       "#track.first_play = #play.timestamp%min",
       "#track.last_play = #play.timestamp%max",
       "#track.artists = #credit.artist.name%list_all(\\\\order \\\\artist.name)",
+      "#track.main_artists = #credit{role:@null}.artist.name%list_all(\\\\order)",
       "#track.year = album.year + 1",
       "#track.added = file.added",
       "#track.duration = file.duration",
       "#track.play_count = #play",
-      "#track.tags = #tag.name%list(\\s)",
+      "#track.tags = #tag.name%list_all(\\\\#track \\d)",
       "#track.mine = id",
     ]);
   });

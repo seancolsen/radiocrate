@@ -158,9 +158,21 @@ export const BUILT_IN_TABLE_QUERYDOWN: Readonly<
 ]`,
     linkedRecordComparison: "title:@x",
   },
-  album: { linkedRecordComparison: "title:@x" },
+  album: {
+    defaultTextSearch: "[title:@x ++#artist{name:@x}]",
+    linkedRecordComparison: "title:@x",
+  },
   artist: { linkedRecordComparison: "name:@x" },
-  rating: { linkedRecordComparison: "value:@x" },
+  file: { linkedRecordComparison: "path:@x" },
+  play: {
+    defaultTextSearch: "track[title:@x album.title:@x ++#artist{name:@x}]",
+  },
+  rating: {
+    defaultTextSearch: "[symbol:@x description:@x]",
+    linkedRecordComparison: "value:@x",
+  },
+  role: { linkedRecordComparison: "name:@x" },
+  tag: { linkedRecordComparison: "name:@x" },
 };
 
 /** The app's default for a table's prelude setting, if it has one. */

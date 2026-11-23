@@ -1313,10 +1313,19 @@ mod tests {
     const P1: &str = "00000000-0000-0000-0000-0000000000a1";
     const F1: &str = "00000000-0000-0000-0000-0000000000f1";
 
-    /// A fresh in-memory database with the real migration schema applied.
+    /// A fresh in-memory database with the real migration schema applied, less
+    /// the app's default customizations (migration 0020), so that each test
+    /// starts from only what it puts there itself.
     fn setup() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_through(&mut conn, u32::MAX);
+        conn.execute_batch(
+            "DELETE FROM metadata.\"table\";
+             DELETE FROM metadata.field;
+             DELETE FROM metadata.contextual_query;
+             DELETE FROM app.preset;",
+        )
+        .unwrap();
         conn
     }
 
@@ -1430,7 +1439,9 @@ mod tests {
         .unwrap();
 
         // Read through the RPCs, which find the tables where migration 0018 puts them.
-        crate::db::migrate_through(&mut conn, u32::MAX);
+        // Not through 0020, whose default presets a library with presets of its own
+        // goes without.
+        crate::db::migrate_through(&mut conn, 19);
 
         // The first default sort by name keeps it; filter defaults all keep theirs,
         // and so does another table's sort.
@@ -2693,6 +2704,74 @@ mod tests {
         assert_eq!(
             count(&conn, "SELECT count(*) FROM metadata.relationship"),
             15
+        );
+    }
+
+    #[test]
+    fn a_new_library_starts_with_the_apps_defaults() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, u32::MAX);
+
+        // Migration 0003's vocabularies.
+        let ratings: Vec<(f32, String)> = conn
+            .prepare("SELECT value, description FROM rating ORDER BY value")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            ratings,
+            [
+                (-1.0, "Skip".to_string()),
+                (0.0, "Like".to_string()),
+                (1.0, "Prefer".to_string()),
+                (2.0, "Love".to_string()),
+            ]
+        );
+        let roles: Vec<String> = conn
+            .prepare("SELECT name FROM role ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(roles, ["Composer", "Featured", "Remix"]);
+
+        // Migration 0020's customizations, every row of which the RPCs read back.
+        assert_eq!(list_table_metadata(&conn).unwrap().len(), 10);
+        assert_eq!(list_field_metadata(&conn).unwrap().len(), 59);
+        assert_eq!(list_presets(&conn).unwrap().len(), 29);
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM metadata.contextual_query"),
+            3
+        );
+        // Each is about one of the app's own tables, in `main`.
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM (
+                   SELECT table_name FROM metadata.\"table\"
+                   UNION ALL SELECT table_name FROM metadata.field
+                   UNION ALL SELECT table_name FROM metadata.contextual_query
+                   UNION ALL SELECT base_table FROM app.preset
+                 )
+                 WHERE table_name NOT IN (
+                   SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'
+                 )"
+            ),
+            0
+        );
+        // Each contextual query's field is one the migration made a query for.
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM metadata.field
+                 WHERE union_tag(field) = 'contextual_query'
+                   AND union_extract(field, 'contextual_query')
+                     NOT IN (SELECT id FROM metadata.contextual_query)"
+            ),
+            0
         );
     }
 

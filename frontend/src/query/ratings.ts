@@ -56,7 +56,7 @@ export async function fetchRatings(schemaJson: string): Promise<Rating[]> {
   return parseRatings(await runRecordQuery(RATINGS_QUERY, schemaJson));
 }
 
-/** One rating as the menu says it: `4: ❤️ (Love)`. A rating missing its symbol
+/** One rating as the menu says it: `2: ❤️ (Love)`. A rating missing its symbol
  * or its description simply drops that part — both columns are nullable, and a
  * row that carries neither still reads as its value. */
 export function ratingLabel(rating: Rating): string {

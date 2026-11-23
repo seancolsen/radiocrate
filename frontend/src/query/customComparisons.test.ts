@@ -30,12 +30,21 @@ const row = (
 });
 
 describe("the app's own custom comparisons", () => {
-  it("compare tracks by artist", () => {
+  it("compare tracks, albums and plays by artist", () => {
     expect(builtInComparison("track", "artist")).toBe("++#artist{name:@x}");
+    expect(builtInComparison("album", "artist")).toBe("++#artist{name:@x}");
+    expect(builtInComparison("play", "artist")).toBe("++#artist{name:@x}");
+  });
+
+  it("compare albums and artists by tag, and artists by album", () => {
+    expect(builtInComparison("album", "tag")).toBe("++#tag{name:@x}");
+    expect(builtInComparison("artist", "tag")).toBe("++#tag{name:@x}");
+    expect(builtInComparison("artist", "album")).toBe("++#album{title:@x}");
   });
 
   it("are no other table's, nor the object prototype's", () => {
-    expect(builtInComparison("album", "artist")).toBeNull();
+    expect(builtInComparison("credit", "artist")).toBeNull();
+    expect(builtInComparison("track", "album")).toBeNull();
     expect(builtInComparison("constructor", "artist")).toBeNull();
   });
 });
@@ -113,21 +122,21 @@ describe("names", () => {
 describe("comparisonPrelude", () => {
   it("defines each comparison with a condition, for the tables the database has", () => {
     const prelude = comparisonPrelude(
-      [table("album"), table("track")],
+      [table("role"), table("track")],
       [
-        row("album", "label", "label.name:@x"),
-        row("album", "blank", ""),
+        row("role", "label", "label.name:@x"),
+        row("role", "blank", ""),
         row("gone", "x", "id:@x"),
       ],
     );
     expect(prelude.text.split("\n")).toEqual([
-      "#album.label:@x = label.name:@x",
+      "#role.label:@x = label.name:@x",
       "#track.artist:@x = ++#artist{name:@x}",
     ]);
     expect(locate(prelude, prelude.text.indexOf("label.name"))).toMatchObject({
       offset: 0,
       segment: {
-        origin: { kind: "customComparison", table: "album", name: "label" },
+        origin: { kind: "customComparison", table: "role", name: "label" },
       },
     });
   });
