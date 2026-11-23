@@ -1,7 +1,8 @@
 -- The app's default customizations, so that a new library starts out set up
 -- for its music rather than bare: the record editor's fields arranged, the
--- tables ordered with a record picker each, a few contextual queries, and
--- presets for every table, applied by default where it has one.
+-- tables ordered with a record picker each, a few contextual queries, presets
+-- for every table, applied by default where it has one, and saved queries of
+-- its tracks, albums and artists in the explorer.
 --
 -- This migration only inserts rows, all of them into tables that are empty in
 -- a database that has never been customized, and touches nothing else. A
@@ -16,7 +17,8 @@
 --
 -- Fields name the app's computed columns, and contextual queries are keyed by
 -- the ids below, which `metadata.field` refers to. Presets are written against
--- the app's computed columns and table settings too.
+-- the app's computed columns and table settings too, and the saved queries
+-- name their tables' default presets by id.
 
 insert into metadata."table"
   (schema_name, table_name, visible, "order", record_picker_sorting, record_picker_display)
@@ -199,7 +201,7 @@ $duration @{width:30 align:right size:small formatter:{type:duration}}
 $rating.symbol @{width:20 align:center}
 $play_count @{suffix:''𝅘𝅥𝅮'' width:25 align:right}
 $last_play @{width:[80 150] formatter:{type:relativeTime}}', true),
-  ('84c4fda4-6a74-4089-b387-e14222fb82c1', 'Good', 'track', 'filter', '!rating:<0', true),
+  ('84c4fda4-6a74-4089-b387-e14222fb82c1', 'Good', 'track', 'filter', '!rating:<0', false),
   ('bf14d5ab-af20-4650-ae80-19fbc67aae34', 'Great', 'track', 'filter', 'rating:>0', false),
   ('1cd6e574-1713-45a1-b7a4-14b6ddaca5ea', 'Not played', 'track', 'filter', 'play_count:0', false),
   ('2fc3a8ca-6c23-4351-8c90-19e2c03c712e', 'Not played recently', 'track', 'filter', '!last_play:<1m', false),
@@ -225,3 +227,20 @@ $tag.name @{width:[150 300]}', true),
 \\tag.track_count \d
 \\tag.id', true)
 ) as v (id, name, base_table, section, definition, is_default);
+
+-- A few saved queries in the explorer, so that a new library has something to
+-- open: every track, album and artist, each with its table's default presets,
+-- as a new query on that table gets them.
+insert into app.query (id, definition)
+values
+  ('bafb2a66-f062-445b-906b-4349e13c107e', '{"base":"track","filter":{"custom":"","presets":[]},"sort":{"custom":""},"display":{"preset":"664c00e4-5d71-4c05-bfda-fe106f0701e5"}}'),
+  ('598cf1e7-2966-4982-88ef-9030474b83a1', '{"base":"album","filter":{"custom":"","presets":[]},"sort":{"preset":"39265b89-7e0f-4663-b01d-965a87aefbcb"},"display":{"preset":"e6c56c27-1c41-4b26-96a6-3b114ad2ba37"}}'),
+  ('8af59b39-e734-4cdc-86e6-6ec3ab01c994', '{"base":"artist","filter":{"custom":"","presets":[]},"sort":{"preset":"4256c6c8-1316-4a05-82c1-394b6e192e9a"},"display":{"preset":"e36ed370-671d-4b9b-af2e-d80cf4d38eac"}}');
+
+insert into app.source (id, name, created_at, modified_at, last_play, source_folder, position, query)
+select id::uuid, name, now()::timestamp_s, now()::timestamp_s, now()::timestamp_s, null, position, query::uuid
+from (values
+  ('d71f68f3-21d9-48a5-b22e-85df3573c774', 'Tracks', 0, 'bafb2a66-f062-445b-906b-4349e13c107e'),
+  ('f66e39b4-3ea1-44f1-8d47-8798dcdd9f1c', 'Albums', 1, '598cf1e7-2966-4982-88ef-9030474b83a1'),
+  ('c49c83bb-5d81-4cf0-b040-e6a668b55a25', 'Artists', 2, '8af59b39-e734-4cdc-86e6-6ec3ab01c994')
+) as v (id, name, position, query);

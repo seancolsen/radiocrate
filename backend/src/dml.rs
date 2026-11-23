@@ -784,10 +784,14 @@ mod tests {
     const ARTIST1: &str = "44444444-4444-4444-4444-444444444444";
     const MISSING: &str = "99999999-9999-9999-9999-999999999999";
 
-    /// A fresh in-memory database with the real migration schema applied.
+    /// A fresh in-memory database with the real migration schema applied, less
+    /// the saved queries migration 0020 starts a library with, so that the
+    /// tests count only the sources they make.
     fn setup() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_through(&mut conn, u32::MAX);
+        conn.execute_batch("DELETE FROM app.source; DELETE FROM app.query;")
+            .unwrap();
         conn
     }
 

@@ -1323,7 +1323,9 @@ mod tests {
             "DELETE FROM metadata.\"table\";
              DELETE FROM metadata.field;
              DELETE FROM metadata.contextual_query;
-             DELETE FROM app.preset;",
+             DELETE FROM app.preset;
+             DELETE FROM app.source;
+             DELETE FROM app.query;",
         )
         .unwrap();
         conn
@@ -1362,8 +1364,9 @@ mod tests {
         ))
         .unwrap();
 
-        // Read through the RPCs, which find the tables where migration 0018 puts them.
-        crate::db::migrate_through(&mut conn, u32::MAX);
+        // Read through the RPCs, which find the tables where migration 0018 puts
+        // them. Not through 0020, whose saved queries a library has as well.
+        crate::db::migrate_through(&mut conn, 19);
 
         let sources = list_sources(&conn).unwrap();
         assert_eq!(sources.len(), 2);
@@ -2773,6 +2776,35 @@ mod tests {
             ),
             0
         );
+        // The explorer's saved queries, in order, each on its table's default
+        // presets and no others.
+        let sources: Vec<(String, String)> = list_sources(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.definition))
+            .collect();
+        let names: Vec<&str> = sources.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["Tracks", "Albums", "Artists"]);
+        let presets = list_presets(&conn).unwrap();
+        for (name, definition) in &sources {
+            let def: serde_json::Value = serde_json::from_str(definition).unwrap();
+            let base = def["base"].as_str().unwrap();
+            let mut used: Vec<&str> = def["filter"]["presets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain([&def["sort"]["preset"], &def["display"]["preset"]])
+                .filter_map(|id| id.as_str())
+                .collect();
+            let mut defaults: Vec<&str> = presets
+                .iter()
+                .filter(|p| p.is_default && p.base_table == base)
+                .map(|p| p.id.as_str())
+                .collect();
+            used.sort_unstable();
+            defaults.sort_unstable();
+            assert_eq!(used, defaults, "{name}");
+        }
     }
 
     #[test]
