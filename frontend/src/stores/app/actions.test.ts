@@ -3471,30 +3471,27 @@ describe("playlist tabs", () => {
     expect(compileSavedQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves the entries out of what a playlist page's rows edit", async () => {
-    const entries = {
-      table: "playlist_track",
-      keyColumns: ["id"],
-      keyIndices: [0],
-    };
-    const tracks = { table: "track", keyColumns: ["id"], keyIndices: [2] };
+  it("edits only the current schema's records: a playlist's entries are in `app`", async () => {
     vi.mocked(analyzeColumnSources).mockResolvedValue([]);
-    vi.mocked(recordKeyColumns).mockReturnValue([entries, tracks]);
+    bundle.actions.setSchemaJson(
+      JSON.stringify({
+        tables: [
+          { name: "track", columns: [], unique_constraints: [["id"]] },
+          {
+            name: "playlist_track",
+            schema: ["app"],
+            columns: [],
+            unique_constraints: [["id"]],
+          },
+        ],
+        links: [],
+      }),
+    );
     openPlaylistTab();
-    openQueryTab(bundle, "q");
     await run(SOURCE);
-    await run("q");
-    await vi.waitFor(() => {
-      expect(bundle.store.getState().pages[SOURCE]?.lineage?.records).toEqual([
-        tracks,
-      ]);
-      // A query of entries still edits them.
-      expect(bundle.store.getState().pages["q"]?.lineage?.records).toEqual([
-        entries,
-        tracks,
-      ]);
-    });
-    vi.mocked(recordKeyColumns).mockReturnValue([]);
+    await vi.waitFor(() => expect(recordKeyColumns).toHaveBeenCalled());
+    const tables = vi.mocked(recordKeyColumns).mock.lastCall?.[1];
+    expect(tables?.map((t) => t.name)).toEqual(["track"]);
   });
 
   it("re-reads a row by the entry it lists", () => {
@@ -5311,6 +5308,7 @@ describe("contextual queries", () => {
     expect(operations(0)).toEqual([
       expect.objectContaining({
         operation: "insert",
+        schema: "app",
         table: "contextual_query",
         values: expect.objectContaining({
           id,
@@ -5341,6 +5339,7 @@ describe("contextual queries", () => {
       {
         operation: "update",
         id: "op1",
+        schema: "app",
         table: "contextual_query",
         where: { id },
         values: { name: "b" },
@@ -5411,6 +5410,7 @@ describe("contextual queries", () => {
         {
           operation: "delete",
           id: "op1",
+          schema: "app",
           table: "contextual_query",
           where: { id },
         },

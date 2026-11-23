@@ -3,11 +3,18 @@ import { entityNames, nounFor, pluralOrRaw } from "./entityNames";
 
 describe("entityNames", () => {
   it("maps irregular and multi-word tables", () => {
-    expect(entityNames("query")).toEqual(["query", "queries"]);
-    expect(entityNames("playlist_track")).toEqual([
+    expect(entityNames("rating")).toEqual(["rating", "ratings"]);
+    expect(entityNames("track_tag")).toEqual(["track tag", "track tags"]);
+  });
+
+  it("names the app's own tables by their schema", () => {
+    expect(entityNames("/app/query")).toEqual(["query", "queries"]);
+    expect(entityNames("/app/playlist_track")).toEqual([
       "playlist track",
       "playlist tracks",
     ]);
+    // `main` has none of them since migration 0018.
+    expect(entityNames("playlist_track")).toBeUndefined();
   });
 
   it("picks the noun by count", () => {

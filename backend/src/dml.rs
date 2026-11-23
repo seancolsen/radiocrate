@@ -140,28 +140,29 @@ pub(crate) fn handle(
     state.write_mut(origin, &topics, |conn| run(conn, &params.operations))
 }
 
-/// Every table the app's migrations create in the main schema (the one DML reaches), and the change
-/// topic a write to it announces. A table with no topic holds data that only query results and the
-/// record editor show, and those reload only when the user asks. A table that isn't listed at all is
-/// one the user created, which is data of the same kind. A test holds this list to the migrations.
-const TABLE_TOPICS: &[(&str, Option<Topic>)] = &[
-    ("source", Some(Topic::Sources)),
-    ("query", Some(Topic::Sources)),
-    ("playlist", Some(Topic::Sources)),
-    ("source_folder", Some(Topic::Sources)),
-    ("preset", Some(Topic::Presets)),
-    ("contextual_query", Some(Topic::ContextualQueries)),
-    ("rating", Some(Topic::Ratings)),
-    ("album", None),
-    ("artist", None),
-    ("credit", None),
-    ("file", None),
-    ("play", None),
-    ("playlist_track", None),
-    ("role", None),
-    ("tag", None),
-    ("track", None),
-    ("track_tag", None),
+/// Every table the app's migrations create in the `main` and `app` schemas, by schema and name, and
+/// the change topic a write to it announces. A table with no topic holds data that only query results
+/// and the record editor show, and those reload only when the user asks. A table that isn't listed at
+/// all is one the user created, which is data of the same kind. A test holds this list to the
+/// migrations.
+const TABLE_TOPICS: &[(&str, &str, Option<Topic>)] = &[
+    ("app", "source", Some(Topic::Sources)),
+    ("app", "query", Some(Topic::Sources)),
+    ("app", "playlist", Some(Topic::Sources)),
+    ("app", "source_folder", Some(Topic::Sources)),
+    ("app", "preset", Some(Topic::Presets)),
+    ("app", "contextual_query", Some(Topic::ContextualQueries)),
+    ("app", "playlist_track", None),
+    ("main", "rating", Some(Topic::Ratings)),
+    ("main", "album", None),
+    ("main", "artist", None),
+    ("main", "credit", None),
+    ("main", "file", None),
+    ("main", "play", None),
+    ("main", "role", None),
+    ("main", "tag", None),
+    ("main", "track", None),
+    ("main", "track_tag", None),
 ];
 
 /// The topics a batch of operations changes, each once.
@@ -171,11 +172,16 @@ fn topics_of(operations: &[Operation]) -> Vec<Topic> {
         .filter_map(|op| {
             TABLE_TOPICS
                 .iter()
-                .find(|(table, _)| {
+                .find(|(schema, table, _)| {
                     let target = op.target();
-                    target.schema.is_empty() && *table == target.name
+                    let named = match target.schema.as_slice() {
+                        [] => CURRENT_SCHEMA,
+                        [name] => name.as_str(),
+                        _ => return false,
+                    };
+                    *schema == named && *table == target.name
                 })
-                .and_then(|(_, topic)| *topic)
+                .and_then(|(_, _, topic)| *topic)
         })
         .collect();
     topics.into_iter().collect()
@@ -1228,13 +1234,13 @@ mod tests {
         dml(
             conn,
             json!({ "operations": [
-                { "id": "e0", "operation": "insert", "table": "playlist",
+                { "id": "e0", "operation": "insert", "schema": "app", "table": "playlist",
                   "values": { "id": PLAYLIST1, "definition": "{}" } },
-                { "id": "e1", "operation": "insert", "table": "source",
+                { "id": "e1", "operation": "insert", "schema": "app", "table": "source",
                   "values": { "id": SOURCE1, "name": "Mix", "created_at": "2026-10-06 12:34:56",
                               "modified_at": "2026-10-06 12:34:56", "last_play": "2026-10-06 12:34:56",
                               "source_folder": null, "position": -1, "playlist": { "id": "e0" } } },
-                { "id": "e2", "operation": "insert", "table": "playlist_track",
+                { "id": "e2", "operation": "insert", "schema": "app", "table": "playlist_track",
                   "values": { "id": ENTRY1, "playlist": PLAYLIST1, "track": TRACK1, "position": 1.5 } }
             ]}),
         )
@@ -1250,7 +1256,7 @@ mod tests {
         assert_eq!(
             count(
                 &conn,
-                "SELECT epoch(created_at)::bigint FROM source WHERE name = 'Mix'"
+                "SELECT epoch(created_at)::bigint FROM app.source WHERE name = 'Mix'"
             ),
             1_791_290_096
         );
@@ -1268,7 +1274,7 @@ mod tests {
         let err = dml(
             &mut conn,
             json!({ "operations": [
-                { "id": "e0", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+                { "id": "e0", "operation": "delete", "schema": "app", "table": "playlist", "where": { "id": PLAYLIST1 } }
             ]}),
         )
         .unwrap_err();
@@ -1277,14 +1283,14 @@ mod tests {
         let err = dml(
             &mut conn,
             json!({ "operations": [
-                { "id": "e0", "operation": "delete", "table": "source", "where": { "id": SOURCE1 } },
-                { "id": "e1", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+                { "id": "e0", "operation": "delete", "schema": "app", "table": "source", "where": { "id": SOURCE1 } },
+                { "id": "e1", "operation": "delete", "schema": "app", "table": "playlist", "where": { "id": PLAYLIST1 } }
             ]}),
         )
         .unwrap_err();
         assert_eq!(err.data, Some(json!({ "operation": { "id": "e1" } })));
         assert_eq!(
-            count(&conn, "SELECT count(*) FROM source"),
+            count(&conn, "SELECT count(*) FROM app.source"),
             1,
             "rolled back"
         );
@@ -1292,14 +1298,17 @@ mod tests {
         dml(
             &mut conn,
             json!({ "operations": [
-                { "id": "e0", "operation": "delete", "table": "playlist_track", "where": { "id": ENTRY1 } },
-                { "id": "e1", "operation": "delete", "table": "source", "where": { "id": SOURCE1 } },
-                { "id": "e2", "operation": "delete", "table": "playlist", "where": { "id": PLAYLIST1 } }
+                { "id": "e0", "operation": "delete", "schema": "app", "table": "playlist_track", "where": { "id": ENTRY1 } },
+                { "id": "e1", "operation": "delete", "schema": "app", "table": "source", "where": { "id": SOURCE1 } },
+                { "id": "e2", "operation": "delete", "schema": "app", "table": "playlist", "where": { "id": PLAYLIST1 } }
             ]}),
         )
         .unwrap();
         for table in ["playlist_track", "source", "playlist"] {
-            assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 0);
+            assert_eq!(
+                count(&conn, &format!("SELECT count(*) FROM app.{table}")),
+                0
+            );
         }
         // The track itself is untouched.
         assert_eq!(count(&conn, "SELECT count(*) FROM track"), 1);
@@ -1451,15 +1460,26 @@ mod tests {
         assert!(err.message.contains("not a foreign key"), "{}", err.message);
     }
 
-    /// `TABLE_TOPICS` lists every table the migrations leave in the main
-    /// schema, and nothing else, so a migration that adds an app table has to
-    /// decide whether it's live.
+    /// `TABLE_TOPICS` lists every table the migrations leave in the `main` and
+    /// `app` schemas, and nothing else, so a migration that adds an app table
+    /// has to decide whether it's live.
     #[test]
     fn every_app_table_has_a_place_in_the_topic_map() {
         let conn = setup();
         let schema = introspect(&conn).unwrap();
-        let migrated: BTreeSet<&str> = schema.current_tables().map(|t| t.name.as_str()).collect();
-        let mapped: BTreeSet<&str> = TABLE_TOPICS.iter().map(|(table, _)| *table).collect();
+        let migrated: BTreeSet<(&str, &str)> = schema
+            .tables
+            .iter()
+            .filter_map(|t| match t.schema.as_slice() {
+                [] => Some((CURRENT_SCHEMA, t.name.as_str())),
+                [name] if name == "app" => Some(("app", t.name.as_str())),
+                _ => None,
+            })
+            .collect();
+        let mapped: BTreeSet<(&str, &str)> = TABLE_TOPICS
+            .iter()
+            .map(|(schema, table, _)| (*schema, *table))
+            .collect();
         assert_eq!(mapped, migrated);
     }
 }

@@ -32,7 +32,7 @@ export async function fetchPlaylistEntries(
 ): Promise<PlaylistEntry[]> {
   const table = await runSql(
     `select id::text as id, track::text as track, position ` +
-      `from playlist_track ${entriesOf(playlistId)} ` +
+      `from app.playlist_track ${entriesOf(playlistId)} ` +
       `order by position, track, id;`,
   );
   const ids = table.getChild("id");
@@ -56,7 +56,7 @@ export async function fetchMaxPosition(
   playlistId: string,
 ): Promise<number | null> {
   const table = await runSql(
-    `select max(position) as max from playlist_track ${entriesOf(playlistId)};`,
+    `select max(position) as max from app.playlist_track ${entriesOf(playlistId)};`,
   );
   const max: unknown = table.getChild("max")?.get(0);
   return max == null ? null : Number(max);

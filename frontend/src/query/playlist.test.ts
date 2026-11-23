@@ -212,7 +212,7 @@ describe("playlistQuerydown", () => {
       }),
     ).toBe(
       [
-        "#playlist_track",
+        "#/app/playlist_track",
         "",
         `playlist.id:="${PLAYLIST}"`,
         "",

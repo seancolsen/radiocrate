@@ -235,6 +235,13 @@ track"). **Whenever a migration adds, renames or drops a table, update
 `ENTITY_NAMES` in the same change.** Tables missing from it (user-created ones
 found by introspection) are expected, and every use falls back gracefully.
 
+A table outside `main` is keyed as the app names it, by its schema: the app's
+own records (saved queries, playlists and their entries, folders, presets,
+contextual queries) live in the `app` schema since migration 0018, so they're
+`/app/playlist_track` and so on. Backend SQL names them `app.playlist_track`,
+and a DML operation sends `schema: "app"` with them (`dmlTable` in
+`frontend/src/query/schema.ts`, `APP_TABLES` in `query/appTables.ts`).
+
 ## Live updates: what a change on one device does on another
 
 Each device in the foreground holds open `GET /api/events`, a Server-Sent

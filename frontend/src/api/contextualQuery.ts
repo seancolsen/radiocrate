@@ -5,15 +5,19 @@
 import { dml, type DmlResult, type JsonValue } from "api-client";
 import type { ContextualQuery } from "../query/contextualQuery";
 import { definitionFromStored, definitionToStored } from "../query/definition";
+import { APP_TABLES } from "../query/appTables";
+import { dmlTable } from "../query/schema";
 import { runSql } from "./query";
 
-const TABLE = "contextual_query";
+/** The table, as SQL names it, and as DML does: in the `app` schema. */
+const TABLE_SQL = "app.contextual_query";
+const TABLE = dmlTable(APP_TABLES.contextualQuery);
 
 /** Every contextual query, of every table. */
 export async function fetchContextualQueries(): Promise<ContextualQuery[]> {
   const table = await runSql(
     `select id::text as id, table_name, name, query ` +
-      `from ${TABLE} order by table_name, name, id;`,
+      `from ${TABLE_SQL} order by table_name, name, id;`,
   );
   const column = (name: string) => table.getChild(name);
   const queries: ContextualQuery[] = [];
@@ -46,7 +50,7 @@ function write(
             values: operation.values,
           }
         : { operation: "delete" as const, where: { id: operation.id } };
-  return dml({ operations: [{ ...op, id: "op1", table: TABLE }] });
+  return dml({ operations: [{ ...op, id: "op1", ...TABLE }] });
 }
 
 export function insertContextualQuery(

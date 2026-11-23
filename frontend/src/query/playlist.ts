@@ -2,7 +2,7 @@
 //
 // A playlist stores the same filter / sort / display sections a query does, but
 // with no base table (the base is always `track`) and no full-Querydown mode. Its
-// rows come from `playlist_track`, so the sections can't be compiled as they are
+// rows come from `playlist_track` (in the `app` schema), so the sections can't be compiled as they are
 // for a query: every section is scoped to each entry's related track instead
 // (`track{…}`, `\\track.(…)`, `$track.(…)`), which is what lets the presets
 // written for `track` apply unchanged. See "The playlist query" in
@@ -21,6 +21,7 @@ import {
   type QueryDefinition,
   type SectionContent,
 } from "./definition";
+import { APP_TABLES } from "./appTables";
 import { joinMapped, trimMapped, unmapped, type Mapped } from "./sourceMap";
 
 /** The table every playlist's sections are written against. */
@@ -208,7 +209,7 @@ export function playlistQuerydownMapped(
     throw new Error(`Not a playlist id: ${JSON.stringify(playlistId)}`);
   }
   const lines: (Mapped | string)[] = [
-    "#playlist_track",
+    `#${APP_TABLES.playlistTrack}`,
     "",
     `playlist.id:="${playlistId}"`,
     "",

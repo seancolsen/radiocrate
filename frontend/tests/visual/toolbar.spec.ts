@@ -357,7 +357,7 @@ test("a new query waits, filter focused, until it's touched or asked to show all
     if (
       r.url().endsWith("/api/query") &&
       !sql.includes("'tables'") &&
-      !sql.includes("from contextual_query")
+      !sql.includes("from app.contextual_query")
     ) {
       runs.push(sql);
     }

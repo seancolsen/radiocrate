@@ -81,7 +81,7 @@ async function mockBackend(page: Page): Promise<Sent> {
     const sql = route.request().postData() ?? "";
     const table = sql.includes("max(position)")
       ? maxPosition
-      : sql.includes("from playlist_track")
+      : sql.includes("from app.playlist_track")
         ? entries
         : undefined;
     return table

@@ -235,11 +235,13 @@ describe("createPlaylistWrites", () => {
     expect(writes).toEqual([
       {
         operation: "insert",
+        schema: "app",
         table: "playlist",
         values: { id: "p1", definition: "{}" },
       },
       {
         operation: "insert",
+        schema: "app",
         table: "source",
         values: {
           id: "s1",
@@ -254,11 +256,13 @@ describe("createPlaylistWrites", () => {
       },
       {
         operation: "insert",
+        schema: "app",
         table: "playlist_track",
         values: { id: "n0", playlist: "p1", track: "t1", position: 1 },
       },
       {
         operation: "insert",
+        schema: "app",
         table: "playlist_track",
         values: { id: "n1", playlist: "p1", track: "t1", position: 2 },
       },
@@ -284,10 +288,30 @@ describe("deletePlaylistWrites", () => {
     expect(
       deletePlaylistWrites({ sourceId: "s1", playlistId: "p1" }, ["a", "b"]),
     ).toEqual([
-      { operation: "delete", table: "playlist_track", where: { id: "a" } },
-      { operation: "delete", table: "playlist_track", where: { id: "b" } },
-      { operation: "delete", table: "source", where: { id: "s1" } },
-      { operation: "delete", table: "playlist", where: { id: "p1" } },
+      {
+        operation: "delete",
+        schema: "app",
+        table: "playlist_track",
+        where: { id: "a" },
+      },
+      {
+        operation: "delete",
+        schema: "app",
+        table: "playlist_track",
+        where: { id: "b" },
+      },
+      {
+        operation: "delete",
+        schema: "app",
+        table: "source",
+        where: { id: "s1" },
+      },
+      {
+        operation: "delete",
+        schema: "app",
+        table: "playlist",
+        where: { id: "p1" },
+      },
     ]);
   });
 
@@ -304,24 +328,42 @@ describe("addEntriesWrites", () => {
       apply: [
         {
           operation: "insert",
+          schema: "app",
           table: "playlist_track",
           values: { id: "n0", playlist: "p1", track: "t2", position: 6 },
         },
         {
           operation: "insert",
+          schema: "app",
           table: "playlist_track",
           values: { id: "n1", playlist: "p1", track: "t1", position: 7 },
         },
         {
           operation: "insert",
+          schema: "app",
           table: "playlist_track",
           values: { id: "n2", playlist: "p1", track: "t2", position: 8 },
         },
       ],
       revert: [
-        { operation: "delete", table: "playlist_track", where: { id: "n0" } },
-        { operation: "delete", table: "playlist_track", where: { id: "n1" } },
-        { operation: "delete", table: "playlist_track", where: { id: "n2" } },
+        {
+          operation: "delete",
+          schema: "app",
+          table: "playlist_track",
+          where: { id: "n0" },
+        },
+        {
+          operation: "delete",
+          schema: "app",
+          table: "playlist_track",
+          where: { id: "n1" },
+        },
+        {
+          operation: "delete",
+          schema: "app",
+          table: "playlist_track",
+          where: { id: "n2" },
+        },
       ],
     });
   });
@@ -336,11 +378,17 @@ describe("removeEntriesWrites", () => {
   it("is undone by re-inserting the whole records", () => {
     expect(removeEntriesWrites("p1", [entry("a", 2.5, "t1")])).toEqual({
       apply: [
-        { operation: "delete", table: "playlist_track", where: { id: "a" } },
+        {
+          operation: "delete",
+          schema: "app",
+          table: "playlist_track",
+          where: { id: "a" },
+        },
       ],
       revert: [
         {
           operation: "insert",
+          schema: "app",
           table: "playlist_track",
           values: { id: "a", playlist: "p1", track: "t1", position: 2.5 },
         },
@@ -355,6 +403,7 @@ describe("setPositionsWrites", () => {
       apply: [
         {
           operation: "update",
+          schema: "app",
           table: "playlist_track",
           where: { id: "a" },
           values: { position: 1 },
@@ -363,6 +412,7 @@ describe("setPositionsWrites", () => {
       revert: [
         {
           operation: "update",
+          schema: "app",
           table: "playlist_track",
           where: { id: "a" },
           values: { position: 3 },

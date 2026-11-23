@@ -3,8 +3,10 @@
 //
 // Pure data and two lookups, so the framework-free modules can use it.
 
-/** Table name → `[singular, plural]` noun. Multi-word tables drop their
- * underscores (`playlist_track` → "playlist track").
+/** Table name → `[singular, plural]` noun, by the table's name as the app
+ * gives it (`qualifiedTableName`): alone in `main`, by its schema elsewhere,
+ * as the app's own records in `app` are (migration 0018). Multi-word tables
+ * drop their underscores (`playlist_track` → "playlist track").
  *
  * KEEP THIS IN STEP WITH THE SCHEMA: every migration that adds, renames or
  * drops a user-facing table (backend/src/migrations/) updates this table in
@@ -16,20 +18,21 @@ export const ENTITY_NAMES: Readonly<Record<string, readonly [string, string]>> =
   {
     album: ["album", "albums"],
     artist: ["artist", "artists"],
-    contextual_query: ["contextual query", "contextual queries"],
+    "/app/contextual_query": ["contextual query", "contextual queries"],
     credit: ["credit", "credits"],
     deletion: ["deletion", "deletions"],
     file: ["file", "files"],
     play: ["play", "plays"],
-    playlist: ["playlist", "playlists"],
-    playlist_track: ["playlist track", "playlist tracks"],
-    preset: ["preset", "presets"],
-    query: ["query", "queries"],
+    "/app/playlist": ["playlist", "playlists"],
+    "/app/playlist_track": ["playlist track", "playlist tracks"],
+    "/app/preset": ["preset", "presets"],
+    "/app/query": ["query", "queries"],
     query_folder: ["query folder", "query folders"],
     rating: ["rating", "ratings"],
     role: ["role", "roles"],
     settings: ["setting", "settings"],
-    source: ["source", "sources"],
+    "/app/source": ["source", "sources"],
+    "/app/source_folder": ["folder", "folders"],
     tag: ["tag", "tags"],
     track: ["track", "tracks"],
     track_tag: ["track tag", "track tags"],

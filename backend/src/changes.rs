@@ -167,16 +167,21 @@ fn event(name: &str, payload: &impl serde::Serialize) -> Event {
 const TOPIC_TABLES: &[(Topic, &[&str])] = &[
     (
         Topic::Sources,
-        &["source", "query", "playlist", "source_folder"],
+        &[
+            "app.source",
+            "app.query",
+            "app.playlist",
+            "app.source_folder",
+        ],
     ),
-    (Topic::Presets, &["preset"]),
+    (Topic::Presets, &["app.preset"]),
     (Topic::Settings, &["settings.settings"]),
     (Topic::Keybindings, &["settings.keybinding"]),
     (Topic::FieldMetadata, &["metadata.field"]),
     (Topic::TableSettings, &["metadata.\"table\""]),
     (Topic::ComputedColumns, &["metadata.computed_column"]),
     (Topic::CustomComparisons, &["metadata.custom_comparison"]),
-    (Topic::ContextualQueries, &["contextual_query"]),
+    (Topic::ContextualQueries, &["app.contextual_query"]),
     (Topic::Ratings, &["rating"]),
 ];
 

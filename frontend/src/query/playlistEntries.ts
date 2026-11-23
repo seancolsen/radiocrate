@@ -17,6 +17,8 @@
 
 import type { DmlOperation, DmlRequest, JsonValue } from "api-client";
 import type { QueryResult } from "./result";
+import { APP_TABLES } from "./appTables";
+import { dmlTable } from "./schema";
 
 /** One `playlist_track` record. */
 export interface PlaylistEntry {
@@ -276,19 +278,23 @@ function insertEntry(playlistId: string, entry: PlaylistEntry): PlaylistWrite {
     track: entry.track,
     position: entry.position,
   };
-  return { operation: "insert", table: "playlist_track", values };
+  return { operation: "insert", ...dmlTable(APP_TABLES.playlistTrack), values };
 }
 
 /** An entry's delete. */
 function deleteEntry(id: string): PlaylistWrite {
-  return { operation: "delete", table: "playlist_track", where: { id } };
+  return {
+    operation: "delete",
+    ...dmlTable(APP_TABLES.playlistTrack),
+    where: { id },
+  };
 }
 
 /** An entry's move to another position. */
 function updatePosition(id: string, position: number): PlaylistWrite {
   return {
     operation: "update",
-    table: "playlist_track",
+    ...dmlTable(APP_TABLES.playlistTrack),
     where: { id },
     values: { position },
   };
@@ -309,12 +315,12 @@ export function createPlaylistWrites(
   return [
     {
       operation: "insert",
-      table: "playlist",
+      ...dmlTable(APP_TABLES.playlist),
       values: { id: playlist.playlistId, definition: playlist.definition },
     },
     {
       operation: "insert",
-      table: "source",
+      ...dmlTable(APP_TABLES.source),
       values: {
         id: playlist.sourceId,
         name: playlist.name,
@@ -341,10 +347,14 @@ export function deletePlaylistWrites(
 ): PlaylistWrite[] {
   return [
     ...entryIds.map(deleteEntry),
-    { operation: "delete", table: "source", where: { id: playlist.sourceId } },
     {
       operation: "delete",
-      table: "playlist",
+      ...dmlTable(APP_TABLES.source),
+      where: { id: playlist.sourceId },
+    },
+    {
+      operation: "delete",
+      ...dmlTable(APP_TABLES.playlist),
       where: { id: playlist.playlistId },
     },
   ];

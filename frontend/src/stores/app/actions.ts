@@ -1726,15 +1726,13 @@ export function createAppActions(
     const trackCol = trackIdColumn(sources);
     const playable = trackCol !== undefined && !isListColumn(trackCol);
     const schemaJson = get().schema.json;
-    // A playlist page's rows stand for their tracks. The entries themselves
-    // aren't for editing, so the record editor begins at the track ("Edit
-    // track", not "Edit playlist_track").
-    const playlist = selectPageTab(get(), tabId)?.kind === "playlist";
+    // Only the current schema's tables are the record editor's. So a playlist
+    // page's rows stand for their tracks alone: the entries, in `app`, aren't
+    // for editing ("Edit track", never "Edit playlist_track").
     const records = schemaJson
       ? recordKeyColumns(sources, parseSchemaTables(schemaJson))
           // A key whose value arrives as a list identifies no one record.
           .filter((k) => !k.keyIndices.some(isListColumn))
-          .filter((k) => !playlist || k.table !== "playlist_track")
       : [];
 
     set((s) => {

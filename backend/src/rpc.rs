@@ -496,9 +496,9 @@ fn list_sources(conn: &Connection) -> Result<Vec<Source>, String> {
              epoch(s.modified_at)::bigint, epoch(s.last_play)::bigint, \
              coalesce(q.definition, p.definition), s.source_folder::text, s.position, \
              s.query::text, s.playlist::text \
-             FROM source s \
-             LEFT JOIN query q ON q.id = s.query \
-             LEFT JOIN playlist p ON p.id = s.playlist \
+             FROM app.source s \
+             LEFT JOIN app.query q ON q.id = s.query \
+             LEFT JOIN app.playlist p ON p.id = s.playlist \
              ORDER BY s.position, s.created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -540,12 +540,12 @@ fn add_query(conn: &mut Connection, source: &Source) -> Result<(), String> {
     }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO query (id, definition) VALUES (TRY_CAST(? AS UUID), ?)",
+        "INSERT INTO app.query (id, definition) VALUES (TRY_CAST(? AS UUID), ?)",
         duckdb::params![query_id, source.definition],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO source (id, name, created_at, modified_at, last_play, source_folder, position, query) \
+        "INSERT INTO app.source (id, name, created_at, modified_at, last_play, source_folder, position, query) \
          VALUES (TRY_CAST(? AS UUID), ?, make_timestamp(? * 1000000)::timestamp_s, \
          make_timestamp(? * 1000000)::timestamp_s, make_timestamp(? * 1000000)::timestamp_s, \
          TRY_CAST(? AS UUID), ?, TRY_CAST(? AS UUID))",
@@ -570,7 +570,7 @@ fn delete_query(conn: &mut Connection, id: &str) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let query_id: Option<String> = tx
         .query_row(
-            "SELECT query::text FROM source WHERE id = TRY_CAST(? AS UUID)",
+            "SELECT query::text FROM app.source WHERE id = TRY_CAST(? AS UUID)",
             duckdb::params![id],
             |row| row.get(0),
         )
@@ -582,12 +582,12 @@ fn delete_query(conn: &mut Connection, id: &str) -> Result<(), String> {
         return Ok(());
     };
     tx.execute(
-        "DELETE FROM source WHERE id = TRY_CAST(? AS UUID)",
+        "DELETE FROM app.source WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
-        "DELETE FROM query WHERE id = TRY_CAST(? AS UUID)",
+        "DELETE FROM app.query WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![query_id],
     )
     .map_err(|e| e.to_string())?;
@@ -596,7 +596,7 @@ fn delete_query(conn: &mut Connection, id: &str) -> Result<(), String> {
 
 fn record_play(conn: &Connection, id: &str, last_play: i64) -> Result<(), String> {
     conn.execute(
-        "UPDATE source SET last_play = make_timestamp(? * 1000000)::timestamp_s WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE app.source SET last_play = make_timestamp(? * 1000000)::timestamp_s WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![last_play, id],
     )
     .map_err(|e| e.to_string())?;
@@ -605,7 +605,7 @@ fn record_play(conn: &Connection, id: &str, last_play: i64) -> Result<(), String
 
 fn rename_source(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
     conn.execute(
-        "UPDATE source SET name = ? WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE app.source SET name = ? WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, id],
     )
     .map_err(|e| e.to_string())?;
@@ -619,11 +619,11 @@ fn arrange(conn: &mut Connection, placements: &[Placement]) -> Result<(), String
     for p in placements {
         let sql = match p.kind {
             TreeItemKind::Source => {
-                "UPDATE source SET source_folder = TRY_CAST(? AS UUID), position = ? \
+                "UPDATE app.source SET source_folder = TRY_CAST(? AS UUID), position = ? \
                  WHERE id = TRY_CAST(? AS UUID)"
             }
             TreeItemKind::Folder => {
-                "UPDATE source_folder SET parent = TRY_CAST(? AS UUID), position = ? \
+                "UPDATE app.source_folder SET parent = TRY_CAST(? AS UUID), position = ? \
                  WHERE id = TRY_CAST(? AS UUID)"
             }
         };
@@ -637,7 +637,7 @@ fn list_folders(conn: &Connection) -> Result<Vec<SourceFolder>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id::text, name, parent::text, position \
-             FROM source_folder ORDER BY position, name",
+             FROM app.source_folder ORDER BY position, name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -655,7 +655,7 @@ fn list_folders(conn: &Connection) -> Result<Vec<SourceFolder>, String> {
 
 fn add_folder(conn: &Connection, folder: &SourceFolder) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO source_folder (id, name, parent, position) \
+        "INSERT INTO app.source_folder (id, name, parent, position) \
          VALUES (TRY_CAST(? AS UUID), ?, TRY_CAST(? AS UUID), ?)",
         duckdb::params![folder.id, folder.name, folder.parent, folder.position],
     )
@@ -665,7 +665,7 @@ fn add_folder(conn: &Connection, folder: &SourceFolder) -> Result<(), String> {
 
 fn rename_folder(conn: &Connection, id: &str, name: &str) -> Result<(), String> {
     conn.execute(
-        "UPDATE source_folder SET name = ? WHERE id = TRY_CAST(? AS UUID)",
+        "UPDATE app.source_folder SET name = ? WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, id],
     )
     .map_err(|e| e.to_string())?;
@@ -674,7 +674,7 @@ fn rename_folder(conn: &Connection, id: &str, name: &str) -> Result<(), String> 
 
 fn delete_folder(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM source_folder WHERE id = TRY_CAST(? AS UUID)",
+        "DELETE FROM app.source_folder WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
@@ -686,7 +686,7 @@ fn list_presets(conn: &Connection) -> Result<Vec<Preset>, String> {
         .prepare(
             "SELECT id::text, name, base_table, section, definition, is_default, \
              epoch(created_at)::bigint, epoch(modified_at)::bigint \
-             FROM preset ORDER BY name",
+             FROM app.preset ORDER BY name",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -717,7 +717,7 @@ fn displace_default(
     section: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE preset SET is_default = false \
+        "UPDATE app.preset SET is_default = false \
          WHERE is_default AND section IN ('sort', 'display') \
          AND base_table = ? AND section = ? AND id <> TRY_CAST(? AS UUID)",
         duckdb::params![base_table, section, id],
@@ -734,7 +734,7 @@ fn add_preset(conn: &mut Connection, preset: &Preset) -> Result<(), String> {
         displace_default(&tx, &preset.id, &preset.base_table, &preset.section)?;
     }
     tx.execute(
-        "INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
+        "INSERT INTO app.preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
          VALUES (TRY_CAST(? AS UUID), ?, ?, ?, ?, ?, make_timestamp(? * 1000000)::timestamp_s, \
          make_timestamp(? * 1000000)::timestamp_s)",
         duckdb::params![
@@ -766,7 +766,7 @@ fn update_preset(
     if is_default {
         let slot: Option<(String, String)> = tx
             .query_row(
-                "SELECT base_table, section FROM preset WHERE id = TRY_CAST(? AS UUID)",
+                "SELECT base_table, section FROM app.preset WHERE id = TRY_CAST(? AS UUID)",
                 duckdb::params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -777,7 +777,7 @@ fn update_preset(
         }
     }
     tx.execute(
-        "UPDATE preset SET name = ?, definition = ?, is_default = ?, \
+        "UPDATE app.preset SET name = ?, definition = ?, is_default = ?, \
          modified_at = make_timestamp(? * 1000000)::timestamp_s \
          WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![name, definition, is_default, modified_at, id],
@@ -788,7 +788,7 @@ fn update_preset(
 
 fn delete_preset(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM preset WHERE id = TRY_CAST(? AS UUID)",
+        "DELETE FROM app.preset WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![id],
     )
     .map_err(|e| e.to_string())?;
@@ -1285,15 +1285,15 @@ fn update_definition(
     for table in ["query", "playlist"] {
         tx.execute(
             &format!(
-                "UPDATE {table} SET definition = ? \
-                 WHERE id = (SELECT {table} FROM source WHERE id = TRY_CAST(? AS UUID))"
+                "UPDATE app.{table} SET definition = ? \
+                 WHERE id = (SELECT {table} FROM app.source WHERE id = TRY_CAST(? AS UUID))"
             ),
             duckdb::params![definition, id],
         )
         .map_err(|e| e.to_string())?;
     }
     tx.execute(
-        "UPDATE source SET modified_at = make_timestamp(? * 1000000)::timestamp_s \
+        "UPDATE app.source SET modified_at = make_timestamp(? * 1000000)::timestamp_s \
          WHERE id = TRY_CAST(? AS UUID)",
         duckdb::params![modified_at, id],
     )
@@ -1353,7 +1353,8 @@ mod tests {
         ))
         .unwrap();
 
-        crate::db::migrate_through(&mut conn, 6);
+        // Read through the RPCs, which find the tables where migration 0018 puts them.
+        crate::db::migrate_through(&mut conn, u32::MAX);
 
         let sources = list_sources(&conn).unwrap();
         assert_eq!(sources.len(), 2);
@@ -1428,7 +1429,8 @@ mod tests {
         ))
         .unwrap();
 
-        crate::db::migrate_through(&mut conn, 7);
+        // Read through the RPCs, which find the tables where migration 0018 puts them.
+        crate::db::migrate_through(&mut conn, u32::MAX);
 
         // The first default sort by name keeps it; filter defaults all keep theirs,
         // and so does another table's sort.
@@ -1446,11 +1448,78 @@ mod tests {
     }
 
     #[test]
+    fn migration_0018_moves_the_apps_records_into_their_own_schema() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 17);
+        conn.execute_batch(&format!(
+            "INSERT INTO source_folder (id, name, parent, position) VALUES ('{F1}', 'folder', NULL, 2);
+             INSERT INTO query (id, definition) VALUES ('{Q1}', 'def');
+             INSERT INTO playlist (id, definition) VALUES ('{P1}', '{{}}');
+             INSERT INTO source (id, name, created_at, modified_at, last_play, source_folder, position, query, playlist)
+             VALUES ('{S1}', 'q', '2024-01-01', '2024-01-01', '2024-01-01', '{F1}', 3, '{Q1}', NULL),
+                    ('{S2}', 'p', '2024-01-01', '2024-01-01', '2024-01-01', NULL, 4, NULL, '{P1}');
+             INSERT INTO playlist_track (id, playlist, track, position)
+             VALUES (uuid(), '{P1}', uuid(), 1.5);
+             INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at)
+             VALUES ('{Q2}', 'by year', 'track', 'sort', 'x', true, now(), now());
+             INSERT INTO contextual_query (id, table_name, name, query)
+             VALUES (uuid(), 'track', 'Same album', NULL);"
+        ))
+        .unwrap();
+
+        crate::db::migrate_through(&mut conn, 18);
+
+        let sources = list_sources(&conn).unwrap();
+        assert_eq!(sources.len(), 2);
+        let q = sources.iter().find(|s| s.id == S1).unwrap();
+        assert_eq!(
+            (q.definition.as_str(), q.parent.as_deref(), q.position),
+            ("def", Some(F1), 3)
+        );
+        assert_eq!(list_folders(&conn).unwrap()[0].id, F1);
+        assert_eq!(preset_defaults(&conn), [("by year".to_string(), true)]);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM app.playlist_track WHERE position = 1.5"
+            ),
+            1
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.contextual_query"), 1);
+        // Nothing of them is left in `main`.
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'main' \
+                 AND table_name IN ('source', 'source_folder', 'query', 'playlist', \
+                 'playlist_track', 'preset', 'contextual_query')"
+            ),
+            0
+        );
+        // The constraints came along: a source wraps exactly one thing, and a table has one
+        // default sort.
+        assert!(
+            conn.execute_batch(
+                "INSERT INTO app.source (id, name, created_at, modified_at, last_play) \
+                 VALUES ('00000000-0000-0000-0000-0000000000b9', 'x', now(), now(), now())"
+            )
+            .is_err()
+        );
+        assert!(
+            conn.execute_batch(
+                "INSERT INTO app.preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
+                 VALUES ('00000000-0000-0000-0000-0000000000b9', 'x', 'track', 'sort', '', true, now(), now())"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn a_table_has_at_most_one_default_sort_and_display() {
         let conn = setup();
         let insert = |id: &str, base_table: &str, section: &str, is_default: bool| {
             conn.execute_batch(&format!(
-                "INSERT INTO preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
+                "INSERT INTO app.preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
                  VALUES ('{id}', 'x', '{base_table}', '{section}', '', {is_default}, now(), now())"
             ))
         };
@@ -1506,7 +1575,7 @@ mod tests {
         let conn = setup();
         let insert = |id: &str, query: &str, playlist: &str| {
             conn.execute_batch(&format!(
-                "INSERT INTO source (id, name, created_at, modified_at, last_play, query, playlist) \
+                "INSERT INTO app.source (id, name, created_at, modified_at, last_play, query, playlist) \
                  VALUES ('{id}', 'x', now(), now(), now(), {query}, {playlist})"
             ))
         };
@@ -1532,8 +1601,8 @@ mod tests {
         let mut conn = setup();
         add_query(&mut conn, &query(S1, Q1, "a query", 1)).unwrap();
         conn.execute_batch(&format!(
-            "INSERT INTO playlist (id, definition) VALUES ('{P1}', 'pdef');
-             INSERT INTO source (id, name, created_at, modified_at, last_play, position, playlist)
+            "INSERT INTO app.playlist (id, definition) VALUES ('{P1}', 'pdef');
+             INSERT INTO app.source (id, name, created_at, modified_at, last_play, position, playlist)
              VALUES ('{S2}', 'a playlist', now(), now(), now(), 0, '{P1}');"
         ))
         .unwrap();
@@ -1559,8 +1628,8 @@ mod tests {
         let mut conn = setup();
         add_query(&mut conn, &query(S1, Q1, "q", 0)).unwrap();
         conn.execute_batch(&format!(
-            "INSERT INTO playlist (id, definition) VALUES ('{P1}', 'old');
-             INSERT INTO source (id, name, created_at, modified_at, last_play, playlist)
+            "INSERT INTO app.playlist (id, definition) VALUES ('{P1}', 'old');
+             INSERT INTO app.source (id, name, created_at, modified_at, last_play, playlist)
              VALUES ('{S2}', 'p', now(), now(), now(), '{P1}');"
         ))
         .unwrap();
@@ -1582,10 +1651,10 @@ mod tests {
     fn query_add_and_delete_span_both_tables() {
         let mut conn = setup();
         add_query(&mut conn, &query(S1, Q1, "q", 0)).unwrap();
-        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.query"), 1);
         delete_query(&mut conn, S1).unwrap();
-        assert_eq!(count(&conn, "SELECT count(*) FROM source"), 0);
-        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.source"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.query"), 0);
     }
 
     #[test]
@@ -1597,7 +1666,7 @@ mod tests {
         source.kind = SourceKind::Query;
         source.query_id = None;
         assert!(add_query(&mut conn, &source).is_err());
-        assert_eq!(count(&conn, "SELECT count(*) FROM query"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.query"), 0);
     }
 
     #[test]
@@ -2897,13 +2966,13 @@ mod tests {
         let state = test_state();
         let (_, mut rx) = state.changes.subscribe();
         let playlist = json!({ "operations": [
-            { "operation": "insert", "id": "p", "table": "playlist", "values": { "definition": "{}" } },
-            { "operation": "insert", "id": "s", "table": "source", "values": {
+            { "operation": "insert", "id": "p", "schema": "app", "table": "playlist", "values": { "definition": "{}" } },
+            { "operation": "insert", "id": "s", "schema": "app", "table": "source", "values": {
                 "name": "Mix", "created_at": "2024-01-01 00:00:00",
                 "modified_at": "2024-01-01 00:00:00", "last_play": "2024-01-01 00:00:00",
                 "playlist": { "id": "p" }
             } },
-            { "operation": "insert", "id": "c", "table": "contextual_query", "values": {
+            { "operation": "insert", "id": "c", "schema": "app", "table": "contextual_query", "values": {
                 "table_name": "track", "name": "Same album"
             } },
         ] });

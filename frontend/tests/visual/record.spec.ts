@@ -1678,6 +1678,7 @@ test.describe("contextual queries", () => {
             {
               operation: "update",
               id: "op1",
+              schema: "app",
               table: "contextual_query",
               where: { id: "query-featured" },
               values: { name: "guests" },
@@ -1719,6 +1720,7 @@ test.describe("contextual queries", () => {
       operations: [
         {
           operation: "insert",
+          schema: "app",
           table: "contextual_query",
           values: { table_name: "track", name: "credited" },
         },
@@ -1778,6 +1780,7 @@ test.describe("contextual queries", () => {
         operations: [
           {
             operation: "update",
+            schema: "app",
             table: "contextual_query",
             where: { id: "query-featured" },
           },
