@@ -37,7 +37,11 @@ import {
 } from "../../query/recordForm";
 import { sectionGrammar } from "../../editor/querydownEditor";
 import { listedTables } from "../../query/tableSettings";
-import { selectContextualQuery, selectFieldQuerydown } from "../../stores/app";
+import {
+  selectContextualQuery,
+  selectFieldQuerydown,
+  selectPreludeText,
+} from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 
 /** What a contextual query's editor says about `@id`, behind its "?". */
@@ -87,7 +91,7 @@ interface FieldQueryEditorProps {
  *   records' sorting and display, kept in the field's metadata: what's
  *   generated for them until the user writes their own, which "Restore
  *   default", in the ⋮ inside the text, goes back to. They're checked as the
- *   form's queries are compiled: on the field's own table, with no prelude.
+ *   form's queries are compiled: on the field's own table, under the prelude.
  *
  * What's typed is the query's at once, in every form that shows it, and is
  * written once the app goes quiet, or as the editor goes away.
@@ -201,6 +205,7 @@ const EmbedQuerySource = forwardRef<
       multi ? field.keyColumns : [field.keyColumn],
     );
   }, [tables, field]);
+  const prelude = useApp(selectPreludeText);
   const { setFieldQuerydown, flushFieldQuerydown } = useAppActions();
   // Nothing typed waits on the idle queue once the editor has gone.
   useEffect(
@@ -219,7 +224,7 @@ const EmbedQuerySource = forwardRef<
       sections={sections}
       section={section}
       base={field.table}
-      definitions=""
+      definitions={prelude}
       text={stored ?? generated[part]}
       onChange={(text) => setFieldQuerydown(table, ref, part, text)}
       inputActions={

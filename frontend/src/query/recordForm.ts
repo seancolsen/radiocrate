@@ -319,14 +319,26 @@ export function fieldRef(field: FormField): FieldRef {
 
 /** A Querydown query in the four parts `compile_sections` takes. The record
  * editor's own queries write no `definitions` — they query real columns only — but
- * a contextual query runs under the prelude, with `@id` defined, and the query
- * reading a record's computed columns runs under the prelude that defines them. */
+ * any query carrying Querydown the user wrote runs under the prelude, which is
+ * what defines the computed columns, comparisons and text searches it may use:
+ * a contextual query (with `@id` defined too), the sorting and display of a
+ * field's embedded records, the record picker's sections, and the query reading
+ * a record's computed columns. */
 export interface RecordQuery {
   base: string;
   filter: string;
   sort: string;
   display: string;
   definitions?: string;
+}
+
+/** `query`, compiled under `definitions` — the prelude, for a query carrying the
+ * user's Querydown. Left as it is when there are none. */
+export function underDefinitions(
+  query: RecordQuery,
+  definitions: string,
+): RecordQuery {
+  return definitions.trim() === "" ? query : { ...query, definitions };
 }
 
 /** A value as a Querydown string literal; the compiler emits a properly quoted

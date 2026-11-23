@@ -14,7 +14,11 @@ import {
   SETTING_VARIABLE,
   type PreludeSetting,
 } from "../../query/tableSettings";
-import { selectTableQuerydown, selectUserPrelude } from "../../stores/app";
+import {
+  selectPreludeText,
+  selectTableQuerydown,
+  selectUserPrelude,
+} from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
 import DiagnosticMessage from "../builder/DiagnosticMessage";
 import QuerydownEditor from "../builder/QuerydownEditor";
@@ -226,6 +230,7 @@ function RecordPickerEditor(props: { table: string }): JSX.Element {
     () => recordPickerDefaults(tables, table),
     [tables, table],
   );
+  const prelude = useApp(selectPreludeText);
   const { setTableQuerydown, flushTableQuerydown } = useAppActions();
   // Nothing typed waits on the idle queue once the editor has gone.
   useEffect(
@@ -247,7 +252,7 @@ function RecordPickerEditor(props: { table: string }): JSX.Element {
           setSection(next === "display" ? "display" : "sort")
         }
         base={table}
-        definitions=""
+        definitions={prelude}
         text={stored ?? generated[section]}
         onChange={(text) => setTableQuerydown(table, part, text)}
         onEscape={() => focusOwnRow(wrapRef.current)}

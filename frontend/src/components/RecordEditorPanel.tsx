@@ -386,17 +386,16 @@ function PanelForm(props: {
         keys: records.map((record) => record.key),
         schemaJson,
         fieldMetadata: () => stores.app.store.getState().fieldMetadata.data,
+        prelude: () => selectPreludeText(stores.app.store.getState()),
         expansion: stores.recordExpansion,
         contextualQueries: {
           list: () => stores.app.store.getState().contextualQueries.data,
           presets: () => selectEffectivePresets(stores.app.store.getState()),
-          prelude: () => selectPreludeText(stores.app.store.getState()),
         },
         openContextualQuery: (queryId, value) =>
           stores.app.actions.openContextualQueryTab(tabId, queryId, value),
         computedColumns: {
           list: () => stores.app.store.getState().computedColumns.data,
-          prelude: () => selectPreludeText(stores.app.store.getState()),
         },
         // The save is a write *from* result rows, so it goes through the
         // store: what it changed is read back into the rows the editor was

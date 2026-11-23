@@ -61,6 +61,7 @@ import {
   keySignature,
   keyConditions,
   recordDataQuery,
+  underDefinitions,
   type ComputedField,
   type ContextQueryField,
   type FormField,
@@ -213,6 +214,13 @@ export interface RecordFormOptions {
    * read whenever embedded records are fetched, and absent to go by what the form
    * generates. A change reaches the form through `refreshEmbeds`. */
   fieldMetadata?: () => MetadataByTable;
+  /** The Querydown prelude in force, as it stands now: the definitions every
+   * query carrying the user's Querydown compiles under — a contextual query, a
+   * computed column, a field's customized sorting and display — so that what
+   * they write can use the computed columns, comparisons and text searches it
+   * defines. The form's own queries, which read real columns only, compile
+   * without it. Absent, there's none. */
+  prelude?: () => string;
   /** What the user has left expanded in earlier forms: this form opens with the
    * same items open, and records what the user opens and closes in it. Absent,
    * everything starts closed and stays forgotten. */
@@ -225,9 +233,9 @@ export interface RecordFormOptions {
    * is `value` somewhere other than the form — the query page opens them in a new
    * query tab. */
   openContextualQuery?: (queryId: string, value: string) => void;
-  /** The computed columns defined for each table, and the prelude that defines
-   * them — read whenever a record's fields are built and whenever their values
-   * are. A change reaches the form through `syncComputedColumns`. Absent,
+  /** The computed columns defined for each table — read whenever a record's
+   * fields are built and whenever their values are (under `prelude`, which
+   * defines them). A change reaches the form through `syncComputedColumns`. Absent,
    * records have none. */
   computedColumns?: ComputedColumnSource;
 }
@@ -242,20 +250,17 @@ export interface RemoteChange {
 
 /** Where the form reads computed columns from (see
  * `RecordFormOptions.computedColumns`): the user's rows, which the app's own
- * columns are worked out beside, and the prelude a query needs to refer to any
- * of them. */
+ * columns are worked out beside. */
 export interface ComputedColumnSource {
   list: () => readonly ComputedColumnRow[];
-  prelude: () => string;
 }
 
 /** Where the form reads contextual queries from (see
- * `RecordFormOptions.contextualQueries`): the queries, and the presets and prelude
- * they're compiled with. */
+ * `RecordFormOptions.contextualQueries`): the queries, and the presets they're
+ * compiled with (under `RecordFormOptions.prelude`). */
 export interface ContextualQuerySource {
   list: () => readonly ContextualQuery[];
   presets: () => readonly Preset[];
-  prelude: () => string;
 }
 
 /** Everything the form can be told to do. Stable for the model's life, so a
@@ -779,6 +784,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
   /** The pending `refreshEmbeds` of each field being edited. */
   const embedRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /** The prelude in force (`RecordFormOptions.prelude`). */
+  const prelude = () => opts.prelude?.() ?? "";
+  /** `query` — one carrying a field's sorting and display, which may be the
+   * user's — compiled under the prelude, so that what they wrote can use the
+   * computed columns and the rest it defines. */
+  const underPrelude = (query: RecordQuery) =>
+    underDefinitions(query, prelude());
+
   /** The preview columns for a table are the same every time, so the (pure)
    * generation runs once per table + contextual filter. */
   const specs = new Map<string, EmbedSpec>();
@@ -1123,7 +1136,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     setEmbed(id, { status: "loading", cells: [] });
     try {
       const { rows, columns } = await runDisplayQuery(
-        embeddedRecordQuery(opts.tables, table, key, spec),
+        underPrelude(embeddedRecordQuery(opts.tables, table, key, spec)),
         opts.schemaJson,
       );
       if (embedTokens.get(id) !== token) return;
@@ -1280,7 +1293,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     });
     if (defined.length === 0) return;
 
-    const definitions = source.prelude();
+    const definitions = prelude();
     /** The values of `asked`, one list per field, each index-aligned to the
      * node's keys. */
     const read = async (asked: readonly ComputedField[]) => {
@@ -1384,28 +1397,27 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
   };
 
-  /** The rows behind a multi-record field. Those of a field whose customization
-   * won't run — the schema has moved on, or it was saved half-written — are fetched
-   * as generated instead, since the list is the only way to its records: the
-   * editor it was written in is where that shows. */
+  /** The rows behind a multi-record field, under the prelude. Those of a field
+   * whose customization won't run — the schema has moved on, it was saved
+   * half-written, or the prelude it leans on won't compile — are fetched as
+   * generated instead, and without the prelude, since the list is the only way
+   * to its records: the editor it was written in is where that shows. What's
+   * generated reads real columns only, so it needs no prelude. */
   const fetchChildRows = async (
     field: MultiRecordField,
     parents: readonly string[],
     spec: EmbedSpec,
     columns: readonly string[],
   ): Promise<RecordResult> => {
-    const run = (s: EmbedSpec) =>
-      runDisplayQuery(
-        childRecordsQuery(field, parents, s, columns),
-        opts.schemaJson,
-      );
+    const query = (s: EmbedSpec) =>
+      childRecordsQuery(field, parents, s, columns);
     try {
-      return await run(spec);
+      return await runDisplayQuery(underPrelude(query(spec)), opts.schemaJson);
     } catch (err) {
       const generated = generatedSpec(field);
-      if (spec === generated) throw err;
+      if (spec === generated && prelude().trim() === "") throw err;
       console.error("customized child records failed", errorMessage(err));
-      return run(generated);
+      return runDisplayQuery(query(generated), opts.schemaJson);
     }
   };
 
@@ -1559,7 +1571,9 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     tokens.set(id, token);
     const columns = columnsOf(field.table);
     const result = await runDisplayQuery(
-      childRecordsQuery(field, parents, fieldSpec(recordId, field), columns),
+      underPrelude(
+        childRecordsQuery(field, parents, fieldSpec(recordId, field), columns),
+      ),
       opts.schemaJson,
     );
     if (tokens.get(id) !== token) return;
@@ -1658,7 +1672,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     }
     try {
       const { rows, columns } = await runDisplayQuery(
-        embeddedRecordQuery(opts.tables, table, key, spec),
+        underPrelude(embeddedRecordQuery(opts.tables, table, key, spec)),
         opts.schemaJson,
       );
       if (embedTokens.get(id) !== token) return;
@@ -1857,7 +1871,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           query.definition,
           source.presets(),
           keyColumns,
-          contextDefinitions(source.prelude(), value),
+          contextDefinitions(prelude(), value),
           specFor(field.table).display.join(" "),
         );
       const keyed = rowsQuery(field.keyColumns);

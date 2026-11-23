@@ -422,10 +422,11 @@ describe("customizing a field's embedded records", () => {
   const settle = () => vi.advanceTimersByTimeAsync(300);
 
   /** A form whose field metadata is `metadata.current` at the moment it's read. */
-  function customizable(initial: MetadataByTable = {}) {
+  function customizable(initial: MetadataByTable = {}, prelude?: string) {
     const metadata = { current: initial };
     const model = form([trackKey("t1")], {
       fieldMetadata: () => metadata.current,
+      prelude: prelude === undefined ? undefined : () => prelude,
     });
     return { model, metadata };
   }
@@ -483,6 +484,64 @@ describe("customizing a field's embedded records", () => {
     model.start();
     await settle();
     expect(runner.mock.calls.at(-1)?.[0].display).toBe("$title $id");
+  });
+
+  describe("under the prelude", () => {
+    const PRELUDE = "#credit.billing = role\n#album.label = title";
+
+    it("lists a multi-record field, so what the user wrote can use a computed column", async () => {
+      serve({
+        track: [trackRow("t1", "Formation", "Pop", 1)],
+        credit: [listRow("c1", "Vocals", ["Vocals"])],
+      });
+      const { model } = customizable(
+        creditsCustom("$billing", "\\\\billing"),
+        PRELUDE,
+      );
+      model.start();
+      await settle();
+      model.toggleField(ROOT_ID, credits(model), true);
+      await settle();
+      const query = runner.mock.calls.at(-1)?.[0];
+      expect(query?.display).toBe("$id $billing\n$id $track $role");
+      expect(query?.definitions).toBe(PRELUDE);
+      expect(cellsOf(model, childAt(0))).toEqual(["Vocals"]);
+    });
+
+    it("previews a scalar linked record", async () => {
+      serve({
+        track: [trackRow("t1", "Formation", "Pop", 0, 0, "a1")],
+        albums: { a1: "Lemonade" },
+      });
+      const { model } = customizable(albumCustom("$label"), PRELUDE);
+      model.start();
+      await settle();
+      const [data, embed] = runner.mock.calls.map(([query]) => query);
+      expect(embed?.display).toBe("$label");
+      expect(embed?.definitions).toBe(PRELUDE);
+      // The record's own data reads real columns only.
+      expect(data?.definitions).toBeUndefined();
+    });
+
+    it("lists a field as generated, without it, when the prelude won't compile", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      serve({ track: [trackRow("t1", "Formation", "Pop", 1)] });
+      const { model } = customizable({}, "#credit.broken = (");
+      model.start();
+      await settle();
+      runner
+        .mockRejectedValueOnce(new Error("compile: unexpected end"))
+        .mockResolvedValueOnce([["c1", "c1", "Vocals", "c1", "t1", "Vocals"]]);
+      model.toggleField(ROOT_ID, credits(model), true);
+      await settle();
+      const [failed, retried] = runner.mock.calls
+        .slice(-2)
+        .map(([query]) => query);
+      expect(failed?.definitions).toBe("#credit.broken = (");
+      expect(retried?.definitions).toBeUndefined();
+      expect(model.store.getState().lists[CREDITS_LIST]?.status).toBe("loaded");
+      error.mockRestore();
+    });
   });
 
   describe("annotations", () => {
@@ -2083,10 +2142,10 @@ describe("contextual queries", () => {
       },
     ];
     const model = form(keys, {
+      prelude: () => "#track.year = album.year",
       contextualQueries: {
         list: () => queries,
         presets: () => [],
-        prelude: () => "#track.year = album.year",
       },
       ...extra,
     });
@@ -2443,7 +2502,6 @@ describe("contextual queries", () => {
         contextualQueries: {
           list: () => queries,
           presets: () => [],
-          prelude: () => "",
         },
       });
     serveQueried([["c1", "Vocals"]]);
@@ -2528,7 +2586,8 @@ describe("computed columns", () => {
       table: "disc",
       keys,
       schemaJson: "{}",
-      computedColumns: { list: () => rows, prelude: () => prelude },
+      prelude: () => prelude,
+      computedColumns: { list: () => rows },
     });
   /** The queries that read computed columns: the only ones with definitions. */
   const computedCalls = () =>
@@ -2570,7 +2629,8 @@ describe("computed columns", () => {
       table: "disc",
       keys: [discKey("a1")],
       schemaJson: "{}",
-      computedColumns: { list: () => rows, prelude: () => prelude },
+      prelude: () => prelude,
+      computedColumns: { list: () => rows },
       contextualQueries: {
         list: () => [
           {
@@ -2581,7 +2641,6 @@ describe("computed columns", () => {
           },
         ],
         presets: () => [],
-        prelude: () => prelude,
       },
     });
     expect(keysOf(model)).toEqual([
@@ -2854,7 +2913,8 @@ describe("computed columns", () => {
       keys: [discKey("a1")],
       schemaJson: "{}",
       runDml,
-      computedColumns: { list: () => rows, prelude: () => prelude },
+      prelude: () => prelude,
+      computedColumns: { list: () => rows },
     });
     model.start();
     await flush();

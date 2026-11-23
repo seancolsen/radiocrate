@@ -7,6 +7,7 @@ import {
   quoteValue,
   recordDataQuery,
   valueTypeOf,
+  underDefinitions,
 } from "./recordForm";
 import type { SchemaTable } from "./schema";
 
@@ -355,5 +356,20 @@ describe("Querydown generation", () => {
     // A NULL cell is not the empty string, and a key isn't run together.
     expect(keySignature([null])).not.toBe(keySignature([""]));
     expect(keySignature(["a", "b"])).not.toBe(keySignature(["ab"]));
+  });
+});
+
+describe("underDefinitions", () => {
+  const query = { base: "track", filter: "", sort: "", display: "$year" };
+
+  it("compiles a query under the prelude", () => {
+    expect(underDefinitions(query, "#track.year = album.year")).toEqual({
+      ...query,
+      definitions: "#track.year = album.year",
+    });
+  });
+
+  it("leaves a query as it is with no prelude", () => {
+    expect(underDefinitions(query, "  \n")).toBe(query);
   });
 });

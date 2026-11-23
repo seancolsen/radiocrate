@@ -5,8 +5,13 @@ import {
   selectFieldOf,
   type RecordFormModel,
 } from "../../stores/recordForm";
-import { selectTableQuerydown } from "../../stores/app";
-import { useAppActions, useFormState, useStores } from "../../stores/react";
+import { selectPreludeText, selectTableQuerydown } from "../../stores/app";
+import {
+  useApp,
+  useAppActions,
+  useFormState,
+  useStores,
+} from "../../stores/react";
 import { runDisplayQuery } from "../../query/recordData";
 import type { ScalarLinkField } from "../../query/recordForm";
 
@@ -74,6 +79,7 @@ function PickerAdapter(props: {
         spec.display.join(" "),
     };
   });
+  const prelude = useApp(selectPreludeText);
   const { setTableQuerydown, flushTableQuerydown } = useAppActions();
   // Nothing typed waits on the idle queue once the picker has gone.
   useEffect(
@@ -103,6 +109,7 @@ function PickerAdapter(props: {
         setTableQuerydown(field.table, "recordPickerDisplay", text)
       }
       runQuery={(query) => runDisplayQuery(query, schemaJson)}
+      definitions={prelude}
       onPick={(keyValue, cells, columns) => {
         if (distinct) {
           model.pickDistinctRecord(

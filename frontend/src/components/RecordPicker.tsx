@@ -7,7 +7,7 @@ import { Icons } from "../icons";
 import { CanvasGrid } from "../grid/canvasGrid";
 import type { EmbedPreview } from "../query/embedPreview";
 import { recordPickerQuery } from "../query/embeddedRecord";
-import type { RecordQuery } from "../query/recordForm";
+import { underDefinitions, type RecordQuery } from "../query/recordForm";
 import type { ColumnMetadata } from "../query/columns";
 import type { RecordResult, RecordRows } from "../query/recordData";
 import { buildResultFromStringRows } from "../query/result";
@@ -56,6 +56,10 @@ interface RecordPickerProps {
   /** Runs one picker query. The picker builds the query (it knows its own
    * column order); the caller decides how it reaches a database. */
   runQuery: (query: RecordQuery) => Promise<RecordResult>;
+  /** The definitions the picker's queries compile under — the prelude, whose
+   * computed columns and text search the user's filter, sorting and display
+   * can use, and which its editors complete from. */
+  definitions?: string;
   /** The user chose a record: its key value, and the preview cells already
    * loaded for it and how they're shown — so whatever replaces this modal renders
    * without a further request. */
@@ -136,9 +140,13 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
       const mine = ++token.current;
       setLoading(true);
       try {
-        const { table, keyColumn, runQuery } = latest.current.props;
+        const { table, keyColumn, runQuery, definitions } =
+          latest.current.props;
         const result = await runQuery(
-          recordPickerQuery(table, [keyColumn], filter, sort, display),
+          underDefinitions(
+            recordPickerQuery(table, [keyColumn], filter, sort, display),
+            definitions ?? "",
+          ),
         );
         if (token.current !== mine) return;
         setResults(result.rows);
@@ -291,7 +299,11 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
             singleLine
             ref={searchRef}
             value={filter}
-            context={{ grammar: "conditions", baseTable: props.table }}
+            context={{
+              grammar: "conditions",
+              baseTable: props.table,
+              definitions: props.definitions,
+            }}
             hint={`Filter ${props.table}`}
             onInput={setFilter}
             onClear={() => setFilter("")}
@@ -318,7 +330,11 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
         <div className="mt-2">
           <CustomInput
             value={sort}
-            context={{ grammar: "sorting", baseTable: props.table }}
+            context={{
+              grammar: "sorting",
+              baseTable: props.table,
+              definitions: props.definitions,
+            }}
             hint="Sort"
             onInput={changeSort}
             onClear={() => changeSort("")}
@@ -329,7 +345,11 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
         <div className="mt-2">
           <CustomInput
             value={display}
-            context={{ grammar: "display", baseTable: props.table }}
+            context={{
+              grammar: "display",
+              baseTable: props.table,
+              definitions: props.definitions,
+            }}
             hint="Display"
             onInput={changeDisplay}
             onClear={() => changeDisplay("")}
