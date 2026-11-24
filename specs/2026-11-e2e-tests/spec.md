@@ -1,6 +1,6 @@
 # End-to-end tests
 
-**Status:** phases 1 and 2 built (2026-11-24); phase 3 not started · **Date:** 2026-11-23
+**Status:** phases 1–3 built (2026-11-24); phase 4 as needed · **Date:** 2026-11-23
 
 RadioCrate has unit tests (Vitest, `cargo test -p backend`), component
 snapshots (the harness), and behavioral Playwright specs that drive the
@@ -591,7 +591,14 @@ Checked while building phases 1 and 2 (2026-11-23/24):
   across template rebuilds, so §3.4 hasn't bitten yet.
 - Autosave fires under the frozen `Date` now that `IdleQueue` measures with
   `performance.now()` (`query.spec.ts`).
-- The whole suite (12 tests, 4 workers) runs in about 50 s.
+- The whole suite (12 tests, 4 workers) runs in about 50 s. With phase 3, 25
+  tests take about 2 minutes, and the expect timeout is 10 s: under four
+  workers a cold page's first rows have taken nearly 6 s.
+- Chromium plays the silent FLACs headlessly through the real stream endpoint
+  (a Range request, answered `206 audio/flac`), and a track played to its end
+  logs one `play` at the frozen instant (`playback.spec.ts`).
+- Two contexts on one server see each other's changes through the change
+  stream (`liveUpdates.spec.ts`, phase 5 of the live-updates spec).
 
 Ports are taken from the OS rather than `4300 + parallelIndex`, and the run
 directory is keyed by the runner's pid, so two suites can run at once (setup
@@ -599,6 +606,4 @@ holds a lock on `target/e2e/`).
 
 Not checked:
 
-- Chromium playing the silent FLACs headlessly through the real stream
-  endpoint. The existing playback specs use a stubbed backend.
 - Memory use of four servers and four browsers at once.

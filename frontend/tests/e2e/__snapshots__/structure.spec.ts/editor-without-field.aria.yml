@@ -1,0 +1,81 @@
+- complementary "Edit track":
+    - separator "Resize record editor"
+    - heading "Edit track" [level=2]
+    - button "Record actions":
+        - img
+    - button "Close record editor":
+        - img
+    - img
+    - text: title
+    - textbox "title": Lovely Rita
+    - button "Expand main_artists":
+        - img
+    - img
+    - text: main_artists The Beatles
+    - button "Expand credits":
+        - img
+    - img
+    - text: credits 1
+    - button "Add credit":
+        - img
+    - button "Open credits in new tab":
+        - img
+    - text: (ordered)
+    - button "Expand album":
+        - img
+    - img
+    - text: album Sgt. Pepper’s Lonely Hearts Club Band
+    - button "Clear album":
+        - img
+    - button "Expand year":
+        - img
+    - img
+    - text: year 1967
+    - button "Expand duration":
+        - img
+    - img
+    - text: duration 00:02:42
+    - button "Expand rating":
+        - img
+    - img
+    - text: rating 0 ✔️ Like
+    - button "Clear rating":
+        - img
+    - button "Expand added":
+        - img
+    - img
+    - text: /added \d+-\d+-\d+ \d+:\d+:\d+/
+    - button "Expand last_play":
+        - img
+    - img
+    - text: last_play 2026-01-14 22:51:01
+    - button "Expand plays":
+        - img
+    - img
+    - text: plays 32
+    - button "Add play":
+        - img
+    - button "Open plays in new tab":
+        - img
+    - img
+    - text: disc_number
+    - button "Edit disc_number":
+        - img
+    - button "Expand tags":
+        - img
+    - img
+    - text: tags Rock, Psychedelic Rock
+    - button "Expand track tags":
+        - img
+    - img
+    - text: track tags 2
+    - button "Add track tag":
+        - img
+    - button "Open track tags in new tab":
+        - img
+    - button "Expand file":
+        - img
+    - img
+    - text: file ./The Beatles - Sgt. Pepper’s Lonely Hearts Club Band/10. Lovely Rita.flac
+    - button "Clear file":
+        - img

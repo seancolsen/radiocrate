@@ -109,7 +109,10 @@ Keep the suite small: tens of journeys, not hundreds of cases.
 - **Import `test`, `expect` and `look` from `./fixtures`.** Every test gets
   `app` (the page object, `support/app.ts`, loaded and ready), `api.rpc` and
   `db.query`. The library is the realistic sample (63 tracks, every one rated
-  and played); `test.use({ library: "empty" })` gives a new, empty one.
+  and played); `test.use({ library: "empty" })` gives a new, empty one, and
+  `test.use({ privateCollection: true })` gives the test its own copy of the
+  audio files (`server.collection`) to change before a rescan. Never change
+  the shared `target/e2e/collection`.
 - **Time is frozen** at `E2E_NOW` (2026-01-15 12:00 UTC) in the fixture, the
   browser's `Date` and the server's `now()`. Measure durations with
   `performance.now()`, never by subtracting `Date.now()`s. Two plays of one
