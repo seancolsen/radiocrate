@@ -153,6 +153,7 @@ import {
   definitionForBase,
   definitionFromStored,
   definitionToStored,
+  defsEqual,
   emptyDefinition,
   hasSingleDefault,
   playlistOrderContent,
@@ -2622,6 +2623,30 @@ export function createAppActions(
     actions.focusBuilderSection(id, "filter");
   };
 
+  /** Whether `preset.list` has answered yet, this session. */
+  let presetsListed = false;
+
+  /** Gives each new query that was opened before the presets were listed its
+   * base table's default presets, as if they'd been there when it opened:
+   * "New query" doesn't wait for them, so {@link openNewQuery} may have seeded
+   * it from none. Only a query the user hasn't touched (`QueryTab.pristine`)
+   * that still holds the bare definition for its base, so nothing they chose
+   * is overwritten. An unsaved one's baseline moves with it, so it doesn't
+   * read as changed; a saved one saves the defaults as it would an edit. */
+  const seedPristineDefaults = (s: Draft<AppState>): string[] => {
+    const seeded: string[] = [];
+    for (const t of s.tabs) {
+      if (t.kind !== "query" || !t.pristine) continue;
+      if (!defsEqual(t.live, definitionForBase(t.live.base, []))) continue;
+      const def = definitionForBase(t.live.base, s.presets);
+      if (defsEqual(def, t.live)) continue;
+      t.live = castDraft(def);
+      if (!t.persisted) t.saved = castDraft(cloneDefinition(def));
+      seeded.push(t.id);
+    }
+    return seeded;
+  };
+
   // ── Writing to a result row ─────────────────────────────────────────────────
   //
   // Every write the app makes is made *from* a row: the play log as a track
@@ -4073,10 +4098,15 @@ export function createAppActions(
       });
       try {
         const data = await presetList();
+        const first = !presetsListed;
+        presetsListed = true;
+        let seeded: string[] = [];
         set((s) => {
           mergePresets(s, data);
           s.presetsStatus = "ready";
+          if (first) seeded = seedPristineDefaults(s);
         });
+        for (const id of seeded) deferSave(id);
       } catch (err) {
         console.error("preset list failed", err);
         set((s) => {

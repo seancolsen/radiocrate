@@ -199,18 +199,15 @@ test("a saved query autosaves its edits and reopens with them after a reload", a
   });
 });
 
-// BUG: a new query opened before `preset.list` has answered never gets its
-// table's default presets. `openNewQuery` (`stores/app/actions.ts`) builds the
-// definition from `definitionForBase("track", get().presets)` once, at
-// creation, and nothing fills the defaults in when the presets arrive. The
-// app is "ready" (its sources listed, New query enabled) before the presets
-// are, so a quick click gets a query with an empty display: every raw column,
-// ids and all, and saved that way. Here the preset list is held back until
-// the tab is open, to make the race certain.
+// "New query" doesn't wait for `preset.list`: the app is ready (its sources
+// listed, New query enabled) before the presets are, so a quick click opens a
+// query seeded from none. Once they land, a new query the user hasn't touched
+// gets its table's defaults, as if they'd been there when it opened, rather
+// than staying on an empty display (every raw column, ids and all). Here the
+// preset list is held back until the tab is open, to make the race certain.
 test("a new query opened before the presets load still gets its table's defaults", async ({
   page,
 }) => {
-  test.fail();
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;

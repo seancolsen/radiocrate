@@ -2556,6 +2556,140 @@ describe("a new query", () => {
   });
 });
 
+// "New query" doesn't wait for `preset.list`, so a quick click opens a query
+// seeded from no presets at all.
+describe("a new query opened before the presets load", () => {
+  const preset = (
+    id: string,
+    section: "filter" | "sort" | "display",
+    baseTable = "track",
+  ) => ({
+    id,
+    name: id,
+    baseTable,
+    section,
+    definition: "",
+    isDefault: true,
+    createdAt: 0,
+    modifiedAt: 0,
+  });
+  const PRESETS = [
+    preset("f", "filter"),
+    preset("s", "sort"),
+    preset("d", "display"),
+    preset("d-album", "display", "album"),
+  ];
+  const DEFAULTS: QueryDefinition = {
+    base: "track",
+    filter: { custom: "", presets: ["f"] },
+    sort: { preset: "s" },
+    display: { preset: "d" },
+  };
+
+  let bundle: AppStoreBundle;
+  let id: string;
+  const tab = () => selectQueryTab(bundle.store.getState(), id)!;
+  /** `preset.list` answering with `presets`. */
+  const land = async (presets = PRESETS) => {
+    vi.mocked(presetList).mockResolvedValueOnce(presets);
+    await bundle.actions.loadPresets();
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(sourceUpdateDefinition).mockReset();
+    vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
+    vi.mocked(runSql).mockClear();
+    bundle = createAppStore(fakeEnv());
+    expect(bundle.store.getState().presetsStatus).toBe("loading");
+    bundle.actions.newQueryTab();
+    id = bundle.store.getState().activeTabId!;
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("gets its table's defaults once they land, still untouched and unrun", async () => {
+    expect(tab().live.display).toEqual({ custom: "" });
+    await land();
+    expect(tab().live).toEqual(DEFAULTS);
+    expect(selectIsPristine(bundle.store.getState(), id)).toBe(true);
+    expect(runSql).not.toHaveBeenCalled();
+  });
+
+  it("moves its baseline with them, so it doesn't read as changed", async () => {
+    await land();
+    expect(tab().saved).toEqual(DEFAULTS);
+    expect(tab().saved).not.toBe(tab().live);
+    expect(selectCanUndo(bundle.store.getState(), id)).toBe(false);
+  });
+
+  it("gets the defaults of the table it's on", async () => {
+    bundle.actions.newQueryTab();
+    const other = bundle.store.getState().activeTabId!;
+    // Moved onto another table in the store alone, as a tab restored that way
+    // would be: `setBase` would touch it.
+    bundle.store.setState((s) => {
+      const t = s.tabs.find((x) => x.id === other);
+      if (t?.kind === "query") t.live.base = t.saved.base = "album";
+    });
+    await land();
+    expect(selectQueryTab(bundle.store.getState(), other)?.live).toEqual({
+      base: "album",
+      filter: { custom: "", presets: [] },
+      sort: { custom: "" },
+      display: { preset: "d-album" },
+    });
+    expect(tab().live).toEqual(DEFAULTS);
+  });
+
+  it("keeps what the user wrote in it before they landed", async () => {
+    bundle.actions.setFilterCustom(id, "jazz");
+    await land();
+    expect(tab().live).toEqual({
+      base: "track",
+      filter: { custom: "jazz", presets: [] },
+      sort: { custom: "" },
+      display: { custom: "" },
+    });
+  });
+
+  it("is left as it is when it was opened after them", async () => {
+    await land([]);
+    bundle.actions.newQueryTab();
+    const later = bundle.store.getState().activeTabId!;
+    // The Explorer's refresh brings a default the first list didn't have.
+    await land();
+    expect(
+      selectQueryTab(bundle.store.getState(), later)?.live.display,
+    ).toEqual({ custom: "" });
+  });
+
+  it("is seeded once the list lands after a failed attempt", async () => {
+    vi.mocked(presetList).mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(console, "error").mockImplementationOnce(() => {});
+    await bundle.actions.loadPresets();
+    expect(bundle.store.getState().presetsStatus).toBe("error");
+    await land();
+    expect(tab().live).toEqual(DEFAULTS);
+  });
+
+  it("saved before they landed, saves the defaults as an edit", async () => {
+    bundle.actions.saveQuery(id);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tab().persisted).toBe(true);
+    await land();
+    expect(tab().live).toEqual(DEFAULTS);
+    await vi.advanceTimersByTimeAsync(5000);
+    const written = vi
+      .mocked(sourceUpdateDefinition)
+      .mock.calls.map(([p]) => JSON.parse(p.definition) as unknown);
+    expect(written).toEqual([DEFAULTS]);
+    expect(tab().saved).toEqual(DEFAULTS);
+  });
+});
+
 describe("a superseded run token", () => {
   it("loses even if its lineage analysis resolves last", async () => {
     const bundle = createAppStore(fakeEnv());
