@@ -59,6 +59,9 @@ const QuerydownEditor = forwardRef<
     look?: "field" | "sheet" | "page";
     /** Room at the right for a control laid over the editor (the ⋮). */
     trailingSpace?: boolean;
+    /** The text isn't Querydown just now (a filter's basic text): it's neither
+     * highlighted nor completed as Querydown. */
+    plain?: boolean;
     diagnostic?: QueryDiagnostic | null;
     onKeyDown?: (event: KeyboardEvent) => void;
   }
@@ -141,7 +144,12 @@ const QuerydownEditor = forwardRef<
     querydownLoaded,
   );
   const schemaJson = useApp((s) => s.schema.json);
+  const plain = props.plain ?? false;
   useLayoutEffect(() => {
+    if (plain) {
+      viewRef.current?.dispatch({ effects: language.reconfigure([]) });
+      return;
+    }
     if (!loaded) return;
     const completer =
       schemaJson === undefined ? null : completerFor(schemaJson);
@@ -154,7 +162,7 @@ const QuerydownEditor = forwardRef<
         ),
       ),
     });
-  }, [language, loaded, schemaJson]);
+  }, [language, loaded, schemaJson, plain]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;

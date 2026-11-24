@@ -32,6 +32,7 @@ function preset(over: Partial<Preset> & { id: string }): Preset {
     baseTable: "track",
     section: "filter",
     definition: "",
+    filterStrategy: "querydown",
     isDefault: false,
     createdAt: 0,
     modifiedAt: 0,
@@ -129,6 +130,18 @@ describe("stored playlist definitions", () => {
     expect(
       playlistDefinitionFromStored(playlistDefinitionToStored(ordered)),
     ).toEqual(ordered);
+  });
+
+  it("keep a basic-text filter's strategy", () => {
+    const basic: PlaylistDefinition = {
+      ...def,
+      filter: { custom: "can't", presets: [], strategy: "basic_text" },
+    };
+    expect(
+      playlistDefinitionFromStored(playlistDefinitionToStored(basic)),
+    ).toEqual(basic);
+    // Querydown, the default, is stored by leaving the strategy out.
+    expect(playlistDefinitionToStored(def)).not.toContain("strategy");
   });
 
   it("carry no base and no full mode", () => {

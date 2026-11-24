@@ -271,6 +271,7 @@ function seedManagedPresets(stores: Stores): void {
     baseTable: "track",
     section,
     definition,
+    filterStrategy: "querydown" as const,
     isDefault,
     createdAt: 1_700_000_000,
     modifiedAt: 1_700_000_000,
@@ -283,6 +284,9 @@ function seedManagedPresets(stores: Stores): void {
     );
   });
 }
+
+/** A filter preset written in basic text, for the stories that show one. */
+const BASIC_TEXT_PRESET_ID = "00000000-0000-0000-0000-0000000000b5";
 
 /** A Data structure page story: the page alone, over the canned schema, with
  * the tree items `open` showing what's under them besides "Tables" itself,
@@ -1603,6 +1607,48 @@ export const STORIES: Record<string, Story> = {
         };
         preset.isDefault = true;
       });
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // A filter read as basic text: the strategy toggle shows `abc`, and the words
+  // aren't highlighted as Querydown. Under it, an open filter preset in basic
+  // text too, with the toggle beside its definition.
+  "filter-builder/basic-text": {
+    width: 720,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        filter: {
+          custom: `can't "stop" 1999`,
+          presets: [BASIC_TEXT_PRESET_ID],
+          strategy: "basic_text",
+        },
+      });
+      stores.app.store.setState((s) => {
+        s.presets.push({
+          ...s.presets.find((p) => p.id === VETTED_PRESET_ID)!,
+          id: BASIC_TEXT_PRESET_ID,
+          name: "live recordings",
+          definition: "live concert",
+          filterStrategy: "basic_text",
+        });
+      });
+      stores.app.actions.toggleBuilderSection(id, "filter");
+      stores.app.actions.toggleExpandPreset(id, BASIC_TEXT_PRESET_ID);
+    },
+    render: () => <QueryBuilder tabId={LEMONADE.id} />,
+  },
+  // An empty Querydown filter: the Querydown toggle and the placeholder that
+  // names the strategy. The test opens the toggle's menu over it.
+  "filter-builder/strategy": {
+    width: 480,
+    height: 140,
+    setup: (stores) => {
+      const id = openWithDefinition(stores, {
+        ...FILTER_DEF,
+        filter: { custom: "", presets: [] },
+      });
+      stores.app.actions.toggleBuilderSection(id, "filter");
     },
     render: () => <QueryBuilder tabId={LEMONADE.id} />,
   },

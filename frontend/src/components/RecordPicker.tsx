@@ -3,6 +3,7 @@ import { Modal } from "./ui/Modal";
 import IconButton from "./ui/IconButton";
 import LoadingRegion from "./ui/LoadingRegion";
 import CustomInput from "./builder/CustomInput";
+import FilterStrategyToggle from "./builder/FilterStrategyToggle";
 import { Icons } from "../icons";
 import { CanvasGrid } from "../grid/canvasGrid";
 import type { EmbedPreview } from "../query/embedPreview";
@@ -11,13 +12,21 @@ import { underDefinitions, type RecordQuery } from "../query/recordForm";
 import type { ColumnMetadata } from "../query/columns";
 import type { RecordResult, RecordRows } from "../query/recordData";
 import { buildResultFromStringRows } from "../query/result";
+import {
+  convertFilterText,
+  filterPlaceholder,
+  filterQuerydown,
+  type FilterStrategy,
+} from "../query/filterStrategy";
 
 // The modal record picker: a small query page in a dialog, letting the user
 // search a table and hand one record's key value — plus the preview cells
 // already loaded for it — back to whoever opened it.
 //
-// The search box takes Querydown filtering code, exactly as the toolbar's
-// filter section does; the sort and display sections behind the two icon
+// The search box takes basic text: words, each searched for in the table's
+// text (see `query/filterStrategy.ts`). The toggle on its left switches it to
+// Querydown filtering code, exactly as the toolbar's filter section takes, for
+// as long as the picker is open: each picker starts out on basic text. The sort and display sections behind the two icon
 // buttons take the same code and open pre-filled with whatever the caller
 // hands in as `initialSort` / `initialDisplay` — in the record editor, that's
 // what the user last settled on for the table, or until they have, what the
@@ -98,6 +107,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
   // The sort and display builders start from the caller's code and are the
   // user's from then on, so the props are read once.
   const [filter, setFilter] = useState("");
+  const [strategy, setStrategy] = useState<FilterStrategy>("basic_text");
   const [sort, setSort] = useState(props.initialSort);
   const [display, setDisplay] = useState(props.initialDisplay);
   /** Which of the two builders is open below the search box, if either. */
@@ -144,7 +154,13 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
           latest.current.props;
         const result = await runQuery(
           underDefinitions(
-            recordPickerQuery(table, [keyColumn], filter, sort, display),
+            recordPickerQuery(
+              table,
+              [keyColumn],
+              filterQuerydown(filter, strategy),
+              sort,
+              display,
+            ),
             definitions ?? "",
           ),
         );
@@ -169,7 +185,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
       settled.current ? DEBOUNCE_MS : 0,
     );
     return () => clearTimeout(timer);
-  }, [filter, sort, display]);
+  }, [filter, strategy, sort, display]);
 
   /** Nothing here to link to: scaffold a new record instead, carrying whatever
    * was searched for into its first text field. */
@@ -277,6 +293,12 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
     props.onDisplayChange?.(text);
   };
 
+  const changeStrategy = (next: FilterStrategy) => {
+    setFilter((text) => convertFilterText(text, strategy, next));
+    setStrategy(next);
+    searchRef.current?.focus();
+  };
+
   const toggleSection = (which: "sort" | "display") =>
     setSection((open) => (open === which ? null : which));
 
@@ -288,6 +310,7 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
       width="560px"
     >
       <div className="flex items-center gap-1">
+        <FilterStrategyToggle strategy={strategy} onChange={changeStrategy} />
         <div className="min-w-0 flex-1">
           <CustomInput
             singleLine
@@ -298,7 +321,8 @@ export default function RecordPicker(props: RecordPickerProps): JSX.Element {
               baseTable: props.table,
               definitions: props.definitions,
             }}
-            hint={`Filter ${props.table}`}
+            hint={filterPlaceholder(strategy)}
+            plain={strategy === "basic_text"}
             onInput={setFilter}
             onClear={() => setFilter("")}
             onKeyDown={onKeyDown}

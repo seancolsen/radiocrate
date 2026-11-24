@@ -326,6 +326,44 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // A basic-text filter and an open basic-text preset: each with the `abc`
+  // toggle on its left, and words left unhighlighted.
+  test(`filter-builder/basic-text - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(
+      page,
+      "filter-builder/basic-text",
+      colorScheme,
+    );
+    await expect(
+      stage.getByRole("button", { name: "Filter strategy" }),
+    ).toHaveCount(2);
+    await expect(stage.getByPlaceholder("Preset name")).toHaveValue(
+      "live recordings",
+    );
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/basic-text", colorScheme),
+    );
+  });
+
+  // The strategy toggle's tooltip says what's in force and what a click
+  // offers; its menu has both strategies, the one in force checked.
+  test(`filter-builder/strategy - ${colorScheme}`, async ({ page }) => {
+    const stage = await openStory(page, "filter-builder/strategy", colorScheme);
+    await expect(stage.getByPlaceholder("Querydown filter")).toBeVisible();
+    const toggle = stage.getByRole("button", { name: "Filter strategy" });
+    await toggle.hover();
+    await expect(page.getByRole("tooltip")).toHaveText(
+      "Filtering with Querydown conditions. Click to change to basic text.",
+    );
+    await toggle.click();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Querydown" }),
+    ).toBeChecked();
+    await expect(stage).toHaveScreenshot(
+      snapshot("filter-builder/strategy", colorScheme),
+    );
+  });
+
   // Two presets open at once.
   test(`filter-builder/presets-expanded - ${colorScheme}`, async ({ page }) => {
     const stage = await openStory(

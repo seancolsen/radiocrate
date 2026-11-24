@@ -55,6 +55,7 @@ export default function QueryPresetRow(props: {
       expanded={expanded}
       problem={problem}
       onToggle={() => toggleExpandPreset(tabId, id)}
+      strategyToggle
       actions={!expanded && remove}
       openActions={remove}
       editorActions={

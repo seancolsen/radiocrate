@@ -1,7 +1,8 @@
 import { useEffect, useMemo, type JSX, type ReactNode } from "react";
 import { Icons } from "../../icons";
 import { checkFragment } from "../../query/compile";
-import { asSection } from "../../query/definition";
+import { asSection, presetQuerydown } from "../../query/definition";
+import { filterPlaceholder } from "../../query/filterStrategy";
 import { sectionGrammar } from "../../editor/querydownEditor";
 import {
   selectPreset,
@@ -13,6 +14,7 @@ import { useApp, useAppActions } from "../../stores/react";
 import IconButton from "../ui/IconButton";
 import { Checkbox } from "../ui/Checkbox";
 import QuerydownEditor from "./QuerydownEditor";
+import FilterStrategyToggle from "./FilterStrategyToggle";
 import DiagnosticMessage, { diagnosticPlace } from "./DiagnosticMessage";
 import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
 
@@ -30,18 +32,27 @@ import { useCheckContext, useSettledDiagnostic } from "./useDiagnostics";
  * blank name.
  *
  * The definition is checked as it's typed, compiled as the preset's section of a
- * query on its table, and a problem with it shows under it. A new preset
- * focuses its name on mount. */
+ * query on its table, and a problem with it shows under it. A filter preset's
+ * definition may be basic text, which is checked as the Querydown it stands
+ * for; `strategyToggle` (a query's builder, not the Data structure page) puts
+ * the switch between the two beside it. A new preset focuses its name on
+ * mount. */
 export default function PresetEditor(props: {
   presetId: string;
   actions?: ReactNode;
+  strategyToggle?: boolean;
 }): JSX.Element {
   const { presetId } = props;
   const preset = useApp((s) => selectPreset(s, presetId));
   const isNew = useApp((s) => selectPresetIsNew(s, presetId));
   const unsaved = useApp((s) => selectPresetUnsaved(s, presetId));
-  const { patchPreset, savePreset, revertPreset, flushPresetSave } =
-    useAppActions();
+  const {
+    patchPreset,
+    setPresetFilterStrategy,
+    savePreset,
+    revertPreset,
+    flushPresetSave,
+  } = useAppActions();
 
   useEffect(() => () => flushPresetSave(presetId), [presetId, flushPresetSave]);
 
@@ -49,20 +60,24 @@ export default function PresetEditor(props: {
   const section = asSection(preset?.section ?? "filter");
   const definition = preset?.definition;
   const name = preset?.name ?? "";
+  const strategy =
+    section === "filter" ? (preset?.filterStrategy ?? "querydown") : null;
+  // What the compiler is given: a basic-text definition as its Querydown.
+  const querydown = preset && presetQuerydown(preset);
 
   const check = useCheckContext();
   const schemaJson = check?.schemaJson;
   const prelude = useApp(selectPrelude);
   const latest = useMemo(
     () =>
-      schemaJson === undefined || definition === undefined || baseTable === ""
+      schemaJson === undefined || querydown === undefined || baseTable === ""
         ? null
-        : checkFragment(schemaJson, prelude, baseTable, section, definition, {
+        : checkFragment(schemaJson, prelude, baseTable, section, querydown, {
             kind: "preset",
             id: presetId,
             section,
           }),
-    [schemaJson, prelude, baseTable, section, definition, presetId],
+    [schemaJson, prelude, baseTable, section, querydown, presetId],
   );
   const problem = useSettledDiagnostic(latest);
 
@@ -111,17 +126,32 @@ export default function PresetEditor(props: {
           {props.actions}
         </div>
       </div>
-      <QuerydownEditor
-        label="Preset definition"
-        value={definition ?? ""}
-        context={{
-          grammar: sectionGrammar(section),
-          baseTable,
-          definitions: prelude.text,
-        }}
-        onChange={(text) => patchPreset(presetId, { definition: text })}
-        diagnostic={problem?.origin?.kind === "preset" ? problem : null}
-      />
+      <div className="flex items-start gap-1">
+        {props.strategyToggle && strategy !== null && (
+          <FilterStrategyToggle
+            nested
+            strategy={strategy}
+            onChange={(next) => setPresetFilterStrategy(presetId, next)}
+          />
+        )}
+        <QuerydownEditor
+          label="Preset definition"
+          placeholder={
+            props.strategyToggle && strategy !== null
+              ? filterPlaceholder(strategy)
+              : undefined
+          }
+          value={definition ?? ""}
+          context={{
+            grammar: sectionGrammar(section),
+            baseTable,
+            definitions: prelude.text,
+          }}
+          plain={strategy === "basic_text"}
+          onChange={(text) => patchPreset(presetId, { definition: text })}
+          diagnostic={problem?.origin?.kind === "preset" ? problem : null}
+        />
+      </div>
       {problem && (
         <DiagnosticMessage
           diagnostic={problem}

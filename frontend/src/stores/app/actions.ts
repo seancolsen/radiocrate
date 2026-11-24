@@ -147,7 +147,6 @@ import {
   type Sections,
 } from "../../query/playlist";
 import {
-  appendCustom,
   asSection,
   cloneDefinition,
   definitionForBase,
@@ -155,7 +154,9 @@ import {
   definitionToStored,
   defsEqual,
   emptyDefinition,
+  filterStrategyOf,
   hasSingleDefault,
+  inlinedFilter,
   playlistOrderContent,
   presetSectionIn,
   rebasedDefinition,
@@ -167,6 +168,10 @@ import {
   type Section,
   type SectionContent,
 } from "../../query/definition";
+import {
+  convertFilterText,
+  type FilterStrategy,
+} from "../../query/filterStrategy";
 import {
   comparisonItemId,
   comparisonPath,
@@ -1149,6 +1154,10 @@ export interface AppActions {
   setFullText: (tabId: string, text: string) => void;
   setFilterCustom: (tabId: string, text: string) => void;
   clearFilterCustom: (tabId: string) => void;
+  /** Switch how the page's filter text is read, rewriting the text to suit
+   * (`convertFilterText`): basic text becomes the Querydown it stood for, so
+   * the filter finds the same records. */
+  setFilterStrategy: (tabId: string, strategy: FilterStrategy) => void;
   toggleFilterPreset: (tabId: string, presetId: string) => void;
   setSectionContent: (
     tabId: string,
@@ -1167,6 +1176,9 @@ export interface AppActions {
    * that uses it re-runs as it would for typed text, and a saved preset's write
    * is deferred until the app goes quiet (`api/idleQueue.ts`). */
   patchPreset: (id: string, patch: Partial<PresetFields>) => void;
+  /** Switch how filter preset `id`'s definition is read, rewriting it to suit,
+   * as {@link setFilterStrategy} does a page's filter. */
+  setPresetFilterStrategy: (id: string, strategy: FilterStrategy) => void;
   /** Writes saved preset `id`'s waiting changes now, without waiting for the app
    * to go quiet: the user has left its editor. */
   flushPresetSave: (id: string) => void;
@@ -1187,7 +1199,13 @@ export interface AppActions {
    * into the custom Querydown: after what's there, for a filter. */
   inlinePreset: (tabId: string, section: Section, id: string) => void;
 
-  openPresetSave: (section: Section, definition: string) => void;
+  /** Opens the "Save as preset" dialog on `definition`, written in
+   * `filterStrategy` (a filter's; Querydown otherwise). */
+  openPresetSave: (
+    section: Section,
+    definition: string,
+    filterStrategy?: FilterStrategy,
+  ) => void;
   cancelPresetSave: () => void;
   patchPresetSave: (patch: Partial<PresetSave>) => void;
   confirmPresetSave: (tabId: string) => void;
@@ -2200,10 +2218,17 @@ export function createAppActions(
     if (!preset) return;
     const name = preset.name.trim();
     if (name === "") return;
-    const { definition, isDefault } = preset;
+    const { definition, filterStrategy, isDefault } = preset;
     const modifiedAt = nowEpoch();
     try {
-      await presetUpdate({ id, name, definition, isDefault, modifiedAt });
+      await presetUpdate({
+        id,
+        name,
+        definition,
+        filterStrategy,
+        isDefault,
+        modifiedAt,
+      });
     } catch (err) {
       console.error("preset update failed", err);
       set((s) => {
@@ -2219,12 +2244,13 @@ export function createAppActions(
       if (
         now.name.trim() === name &&
         now.definition === definition &&
+        now.filterStrategy === filterStrategy &&
         now.isDefault === isDefault
       ) {
         delete s.presetSaves[id];
       } else if (s.presetSaves[id]) {
         s.presetSaves[id] = {
-          saved: { ...now, name, definition, isDefault },
+          saved: { ...now, name, definition, filterStrategy, isDefault },
           failed: false,
         };
       }
@@ -2345,6 +2371,7 @@ export function createAppActions(
       baseTable,
       section,
       definition: "",
+      filterStrategy: "querydown",
       isDefault: false,
       createdAt: now,
       modifiedAt: now,
@@ -5756,6 +5783,18 @@ export function createAppActions(
       editLive(tabId, (def) => {
         def.filter.custom = "";
       }),
+    setFilterStrategy: (tabId, strategy) =>
+      editLive(tabId, (def) => {
+        const from = filterStrategyOf(def.filter);
+        if (from === strategy) return;
+        def.filter.custom = convertFilterText(
+          def.filter.custom,
+          from,
+          strategy,
+        );
+        if (strategy === "basic_text") def.filter.strategy = strategy;
+        else delete def.filter.strategy;
+      }),
     toggleFilterPreset: (tabId, presetId) => {
       if (selectPageTab(get(), tabId)?.live.filter.presets.includes(presetId)) {
         removePresetFromPage(tabId, "filter", presetId);
@@ -6022,11 +6061,25 @@ export function createAppActions(
       });
       if (!isUnsavedPreset(id)) deferPresetSave(id);
       if (
-        patch.definition !== undefined &&
-        patch.definition !== before.definition
+        (patch.definition !== undefined &&
+          patch.definition !== before.definition) ||
+        (patch.filterStrategy !== undefined &&
+          patch.filterStrategy !== before.filterStrategy)
       ) {
         for (const tabId of presetUserPages(id)) runAfterTyping(tabId);
       }
+    },
+    setPresetFilterStrategy: (id, strategy) => {
+      const preset = selectPreset(get(), id);
+      if (!preset || preset.filterStrategy === strategy) return;
+      actions.patchPreset(id, {
+        filterStrategy: strategy,
+        definition: convertFilterText(
+          preset.definition,
+          preset.filterStrategy,
+          strategy,
+        ),
+      });
     },
     flushPresetSave: (id) => saves.flush(presetSaveKey(id)),
     savePreset: (id) => {
@@ -6090,11 +6143,11 @@ export function createAppActions(
       if (!preset) return;
       editLive(tabId, (def) => {
         if (section === "filter") {
+          const { custom, strategy } = inlinedFilter(def.filter, preset);
           def.filter.presets = def.filter.presets.filter((p) => p !== id);
-          def.filter.custom = appendCustom(
-            def.filter.custom,
-            preset.definition,
-          );
+          def.filter.custom = custom;
+          if (strategy === "basic_text") def.filter.strategy = strategy;
+          else delete def.filter.strategy;
         } else {
           def[section] = { custom: preset.definition.trim() };
         }
@@ -6102,9 +6155,15 @@ export function createAppActions(
       forgetPageUse(tabId, id);
     },
 
-    openPresetSave: (section, definition) =>
+    openPresetSave: (section, definition, filterStrategy = "querydown") =>
       set((s) => {
-        s.presetSave = { section, definition, name: "", isDefault: false };
+        s.presetSave = {
+          section,
+          definition,
+          filterStrategy: section === "filter" ? filterStrategy : "querydown",
+          name: "",
+          isDefault: false,
+        };
       }),
     cancelPresetSave: () =>
       set((s) => {
@@ -6127,6 +6186,7 @@ export function createAppActions(
         baseTable: base,
         section: save.section,
         definition: save.definition,
+        filterStrategy: save.filterStrategy,
         isDefault: save.isDefault,
         createdAt: now,
         modifiedAt: now,
@@ -6258,6 +6318,7 @@ export function createAppActions(
         ...blankPreset(preset.baseTable, asSection(preset.section)),
         name: `${preset.name} copy`,
         definition: preset.definition,
+        filterStrategy: preset.filterStrategy,
         // Two defaults would displace one another (sort, display) or double up
         // (filter) — a copy starts out as an ordinary preset.
       });

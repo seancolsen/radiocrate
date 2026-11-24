@@ -790,7 +790,7 @@ test("picking a record for one linked value re-points the records holding it", a
   await expect(
     picker(page).getByRole("button", { name: "New record" }),
   ).toBeHidden();
-  await searchPicker(page, "value:3.5");
+  await searchPicker(page, "value:3.5", { querydown: true });
   await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "1");
   await pickerCanvas(page).click({ position: { x: 100, y: 15 } });
   await expect(picker(page)).toBeHidden();
@@ -1500,7 +1500,7 @@ test("the + button scaffolds a new record, open and ready to type into", async (
   // be saved without, so that's what it starts with: the picker.
   await expect(credits.last()).toHaveText("New");
   await expect(picker(page).getByRole("heading")).toHaveText("Pick artist");
-  await expect(picker(page).getByPlaceholder(/^Filter /)).toBeFocused();
+  await expect(picker(page).getByPlaceholder(/ filter$/)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(picker(page)).toBeHidden();
 
@@ -1779,10 +1779,23 @@ const picker = (page: Page) => page.getByRole("dialog");
  * keyboard it the same way the main grid's own tests do. */
 const pickerCanvas = (page: Page) => picker(page).getByTestId("picker-results");
 
-/** Types into the picker's search box, which queries as it goes. */
-async function searchPicker(page: Page, text: string) {
+/** Types into the picker's search box, which queries as it goes. The box
+ * starts out on basic text; `querydown` switches it to Querydown first, through
+ * the filter strategy toggle on its left. */
+async function searchPicker(
+  page: Page,
+  text: string,
+  options: { querydown?: boolean } = {},
+) {
+  if (options.querydown) {
+    await picker(page).getByRole("button", { name: "Filter strategy" }).click();
+    await page.getByRole("menuitemradio", { name: "Querydown" }).click();
+    await expect(
+      picker(page).getByPlaceholder("Querydown filter"),
+    ).toBeFocused();
+  }
   await picker(page)
-    .getByPlaceholder(/^Filter /)
+    .getByPlaceholder(/ filter$/)
     .fill(text);
 }
 
@@ -1875,7 +1888,7 @@ test("the picker searches as the user types, and picking links the record", asyn
   await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
 
   // No Ctrl+Enter: the query re-runs off the keystrokes themselves.
-  await searchPicker(page, "name:Weeknd");
+  await searchPicker(page, "name:Weeknd", { querydown: true });
   await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "1");
 
   // Clicking a result closes the picker and hands the whole loaded record to
@@ -1894,7 +1907,7 @@ test("Up/Down and Enter drive the results without leaving the search box", async
   const editor = editorPanel(page);
   await editor.getByRole("button", { name: "Add credit" }).click();
 
-  const search = picker(page).getByPlaceholder(/^Filter /);
+  const search = picker(page).getByPlaceholder(/ filter$/);
   await expect(search).toBeFocused();
   await expect(pickerCanvas(page)).toHaveAttribute("data-rows", "3");
   // The first result starts highlighted; Down walks the list without the caret
@@ -2110,7 +2123,7 @@ test("one request carries the deletes, then the inserts", async ({ page }) => {
   // Credited again, afresh: a new credit, its artist picked (the first,
   // Beyoncé), and its place the next after Jack White's.
   await editor.getByRole("button", { name: "Add credit" }).click();
-  await expect(picker(page).getByPlaceholder(/^Filter /)).toBeFocused();
+  await expect(picker(page).getByPlaceholder(/ filter$/)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(picker(page)).toBeHidden();
 

@@ -35,6 +35,8 @@ const CustomInput = forwardRef<
      * newline at all — what the record picker's search box needs. */
     singleLine?: boolean;
     onKeyDown?: (e: KeyboardEvent) => void;
+    /** The text isn't Querydown (see `QuerydownEditor`'s `plain`). */
+    plain?: boolean;
   }
 >(function CustomInput(props, ref) {
   const hasText = props.value.trim() !== "";
@@ -48,6 +50,7 @@ const CustomInput = forwardRef<
         context={props.context}
         placeholder={props.hint}
         singleLine={props.singleLine}
+        plain={props.plain}
         trailingSpace={hasText}
         diagnostic={props.diagnostic}
         onKeyDown={props.onKeyDown}

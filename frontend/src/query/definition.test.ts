@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Preset } from "api-client";
 import {
   appendCustom,
+  assemble,
   definitionForBase,
+  definitionFromStored,
+  definitionToStored,
+  defsEqual,
   emptyDefinition,
+  inlinedFilter,
   fullQueryBase,
   presetSectionIn,
   rebasedDefinition,
@@ -22,6 +27,7 @@ function preset(over: Partial<Preset> & { id: string }): Preset {
     baseTable: "track",
     section: "filter",
     definition: "",
+    filterStrategy: "querydown",
     isDefault: false,
     createdAt: 0,
     modifiedAt: 0,
@@ -221,5 +227,93 @@ describe("fullQueryBase", () => {
   it("is empty when no line names one", () => {
     expect(fullQueryBase("")).toBe("");
     expect(fullQueryBase("$title #album")).toBe("");
+  });
+});
+
+describe("a basic-text filter", () => {
+  const basicPreset = preset({
+    id: "basic",
+    definition: "can't",
+    filterStrategy: "basic_text",
+  });
+  const def: QueryDefinition = {
+    ...emptyDefinition(),
+    base: "track",
+    filter: { custom: `go "now"`, presets: ["basic"], strategy: "basic_text" },
+  };
+
+  it("compiles as the Querydown it stands for, its presets' too", () => {
+    const source = assemble(def, [...PRESETS, basicPreset]);
+    expect(source.kind === "sections" && source.filter.text).toBe(
+      `go '"now"'\n"can't"`,
+    );
+  });
+
+  it("is traced to its editor, though not to a spot in what was typed", () => {
+    const source = assemble(def, [...PRESETS, basicPreset]);
+    if (source.kind !== "sections") throw new Error("not sectioned");
+    expect(source.filter.segments[0]).toMatchObject({
+      origin: { kind: "custom", section: "filter" },
+      source: `go '"now"'`,
+    });
+  });
+
+  it("flattens into a full query as its Querydown", () => {
+    expect(toFullQuery(def, [basicPreset])).toBe(`#track\ngo '"now"'\n"can't"`);
+  });
+
+  it("round-trips through storage, which leaves Querydown's out", () => {
+    expect(definitionFromStored(definitionToStored(def))).toEqual(def);
+    const querydown = { ...def, filter: { custom: "x", presets: [] } };
+    expect(definitionToStored(querydown)).not.toContain("strategy");
+    expect(defsEqual(def, { ...def, filter: { ...def.filter } })).toBe(true);
+    expect(
+      defsEqual(def, {
+        ...def,
+        filter: { custom: def.filter.custom, presets: ["basic"] },
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps its strategy across a change of base", () => {
+    expect(rebasedDefinition(def, "album", PRESETS).filter).toEqual({
+      custom: `go "now"`,
+      presets: [],
+      strategy: "basic_text",
+    });
+  });
+});
+
+describe("inlinedFilter", () => {
+  const querydownPreset = preset({ id: "q", definition: "year:>2000" });
+  const basicPreset = preset({
+    id: "b",
+    definition: "can't",
+    filterStrategy: "basic_text",
+  });
+
+  it("keeps one strategy's text as written", () => {
+    expect(
+      inlinedFilter({ custom: "a", presets: [] }, querydownPreset),
+    ).toEqual({ custom: "a\nyear:>2000", strategy: "querydown" });
+    expect(
+      inlinedFilter(
+        { custom: "go", presets: [], strategy: "basic_text" },
+        basicPreset,
+      ),
+    ).toEqual({ custom: "go\ncan't", strategy: "basic_text" });
+  });
+
+  it("makes Querydown of whichever side was basic text", () => {
+    expect(inlinedFilter({ custom: "a:b", presets: [] }, basicPreset)).toEqual({
+      custom: `a:b\n"can't"`,
+      strategy: "querydown",
+    });
+    expect(
+      inlinedFilter(
+        { custom: "a:b", presets: [], strategy: "basic_text" },
+        querydownPreset,
+      ),
+    ).toEqual({ custom: `"a:b"\nyear:>2000`, strategy: "querydown" });
   });
 });

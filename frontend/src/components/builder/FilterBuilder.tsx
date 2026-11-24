@@ -6,15 +6,18 @@ import {
   selectPreludeText,
 } from "../../stores/app";
 import { useApp, useAppActions } from "../../stores/react";
+import { filterPlaceholder } from "../../query/filterStrategy";
 import CustomInput from "./CustomInput";
 import { FilterEntryActions } from "./EntryActions";
+import FilterStrategyToggle from "./FilterStrategyToggle";
 import QueryPresetRow from "./QueryPresetRow";
 import { useBuilderFocus } from "./useBuilderFocus";
 
-/** The filter builder. A custom Querydown input combined (via AND at run time)
- * with any number of presets, listed below it, one to a line, each opening its
- * own inline editor. On a playlist, a filter that applies puts "Remove these
- * tracks" and "Keep only these tracks" at the foot. */
+/** The filter builder. A custom input combined (via AND at run time) with any
+ * number of presets, listed below it, one to a line, each opening its own
+ * inline editor. The input takes Querydown or basic text, as the toggle on its
+ * left says (`FilterStrategyToggle`). On a playlist, a filter that applies puts
+ * "Remove these tracks" and "Keep only these tracks" at the foot. */
 export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const live = useApp((s) => selectPageSections(s, props.tabId));
   const base = useApp((s) => selectPageBase(s, props.tabId));
@@ -23,8 +26,13 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
   const diagnostic = useApp((s) =>
     selectEditorDiagnostic(s, props.tabId, "filter"),
   );
-  const { setFilterCustom, clearFilterCustom, openPresetSave } =
-    useAppActions();
+  const {
+    setFilterCustom,
+    clearFilterCustom,
+    setFilterStrategy,
+    openPresetSave,
+  } = useAppActions();
+  const strategy = live?.filter.strategy ?? "querydown";
 
   const presets = live?.filter.presets ?? [];
 
@@ -37,23 +45,30 @@ export default function FilterBuilder(props: { tabId: string }): JSX.Element {
 
   return (
     <div className="flex flex-col gap-2">
-      <CustomInput
-        ref={inputRef}
-        value={live?.filter.custom ?? ""}
-        context={{
-          grammar: "conditions",
-          baseTable: base,
-          definitions: prelude,
-        }}
-        hint="Filter"
-        diagnostic={diagnostic}
-        canSave={canSave}
-        onInput={(t) => setFilterCustom(props.tabId, t)}
-        onClear={() => clearFilterCustom(props.tabId)}
-        onSaveAsPreset={() =>
-          openPresetSave("filter", live?.filter.custom ?? "")
-        }
-      />
+      <div className="flex items-start gap-1">
+        <FilterStrategyToggle
+          strategy={strategy}
+          onChange={(next) => setFilterStrategy(props.tabId, next)}
+        />
+        <CustomInput
+          ref={inputRef}
+          value={live?.filter.custom ?? ""}
+          context={{
+            grammar: "conditions",
+            baseTable: base,
+            definitions: prelude,
+          }}
+          hint={filterPlaceholder(strategy)}
+          plain={strategy === "basic_text"}
+          diagnostic={diagnostic}
+          canSave={canSave}
+          onInput={(t) => setFilterCustom(props.tabId, t)}
+          onClear={() => clearFilterCustom(props.tabId)}
+          onSaveAsPreset={() =>
+            openPresetSave("filter", live?.filter.custom ?? "", strategy)
+          }
+        />
+      </div>
       {presets.length > 0 && (
         <div className="flex flex-col items-start gap-1">
           {presets.map((id) => (

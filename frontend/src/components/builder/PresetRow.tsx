@@ -155,6 +155,9 @@ export default function PresetRow(props: {
   openActions?: ReactNode;
   /** Shown in the open editor, beside "Apply by default". */
   editorActions?: ReactNode;
+  /** A filter preset's editor offers to switch how its definition is read
+   * (`PresetEditor`'s `strategyToggle`). */
+  strategyToggle?: boolean;
   toggleProps?: PresetToggleProps;
 }): JSX.Element | null {
   const preset = useApp((s) => selectPreset(s, props.id));
@@ -174,7 +177,11 @@ export default function PresetRow(props: {
       toggleProps={props.toggleProps}
     >
       {props.expanded && (
-        <PresetEditor presetId={props.id} actions={props.editorActions} />
+        <PresetEditor
+          presetId={props.id}
+          actions={props.editorActions}
+          strategyToggle={props.strategyToggle}
+        />
       )}
     </PresetRowView>
   );

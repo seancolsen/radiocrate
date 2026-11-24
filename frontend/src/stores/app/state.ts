@@ -10,6 +10,7 @@ import type {
   TableSummary,
 } from "api-client";
 import type { AudioQualityPref, LoadedRange } from "../../audio/engine";
+import type { FilterStrategy } from "../../query/filterStrategy";
 import type { TreeItemRef } from "../../query/explorerTree";
 import type { LineageMapping } from "../../query/lineage";
 import type { QueryDefinition, Section } from "../../query/definition";
@@ -44,7 +45,10 @@ export type { ThemePref };
 export type { AudioQualityPref };
 
 /** The fields of a preset its editor edits. */
-export type PresetFields = Pick<Preset, "name" | "definition" | "isDefault">;
+export type PresetFields = Pick<
+  Preset,
+  "name" | "definition" | "filterStrategy" | "isDefault"
+>;
 
 /** How a saved preset stands against the backend while it has changes the
  * backend hasn't acknowledged, keyed by preset id in `presetSaves`. The changes
@@ -66,6 +70,8 @@ export interface PresetSaveState {
 export interface PresetSave {
   section: Section;
   definition: string;
+  /** How `definition` is read: the filter's strategy, for a filter. */
+  filterStrategy: FilterStrategy;
   name: string;
   isDefault: boolean;
 }

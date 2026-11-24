@@ -728,6 +728,7 @@ describe("toggleFilterPreset", () => {
         baseTable: "track",
         section: "filter",
         definition: "",
+        filterStrategy: "querydown" as const,
         isDefault: false,
         createdAt: 0,
         modifiedAt: 0,
@@ -779,6 +780,7 @@ describe("default presets", () => {
     baseTable,
     section,
     definition: "",
+    filterStrategy: "querydown" as const,
     isDefault: true,
     createdAt: 0,
     modifiedAt: 0,
@@ -813,6 +815,16 @@ describe("default presets", () => {
     bundle.actions.confirmPresetSave("a");
     const added = bundle.store.getState().presets.at(-1)!.id;
     expect(defaults(bundle)).toEqual(["f", "d", "s-album", added]);
+  });
+
+  it("saves a filter as a preset in the strategy it's written in", () => {
+    bundle.actions.openPresetSave("filter", "can't", "basic_text");
+    bundle.actions.patchPresetSave({ name: "cant" });
+    bundle.actions.confirmPresetSave("a");
+    expect(bundle.store.getState().presets.at(-1)).toMatchObject({
+      definition: "can't",
+      filterStrategy: "basic_text",
+    });
   });
 
   it("saving a new default filter keeps the others", () => {
@@ -855,6 +867,7 @@ describe("the Data structure page", () => {
     baseTable: "track",
     section,
     definition: `${id} definition`,
+    filterStrategy: "querydown" as const,
     isDefault,
     createdAt: 0,
     modifiedAt: 0,
@@ -1196,6 +1209,7 @@ describe("editing a preset", () => {
     baseTable: "track",
     section,
     definition: `title:${id}`,
+    filterStrategy: "querydown" as const,
     isDefault: false,
     createdAt: 0,
     modifiedAt: 0,
@@ -1344,6 +1358,42 @@ describe("editing a preset", () => {
     expect(runSql).not.toHaveBeenCalled();
   });
 
+  it("switches a filter preset's strategy, rewriting it, and writes both", async () => {
+    open("uses", ["f"]);
+    bundle.actions.setPresetFilterStrategy("f", "basic_text");
+    let f = bundle.store.getState().presets[0];
+    // Querydown is kept as written, to be read as words.
+    expect(f).toMatchObject({
+      definition: "title:f",
+      filterStrategy: "basic_text",
+    });
+    bundle.actions.patchPreset("f", { definition: "can't go" });
+    bundle.actions.setPresetFilterStrategy("f", "querydown");
+    f = bundle.store.getState().presets[0];
+    // Basic text becomes the Querydown it stood for.
+    expect(f).toMatchObject({
+      definition: `"can't" go`,
+      filterStrategy: "querydown",
+    });
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(presetUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "f",
+        definition: `"can't" go`,
+        filterStrategy: "querydown",
+      }),
+    );
+  });
+
+  it("re-runs a page using a preset whose strategy changes", async () => {
+    open("uses", ["f"]);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(runSql).mockClear();
+    bundle.actions.setPresetFilterStrategy("f", "basic_text");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runSql).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps unwritten changes through a reload of the list", async () => {
     vi.mocked(presetList).mockResolvedValueOnce([
       preset("f"),
@@ -1380,6 +1430,33 @@ describe("editing a preset", () => {
       bundle.actions.patchPreset("f", { definition: "title:edited" });
       bundle.actions.inlinePreset("a", "filter", "f");
       expect(live("a").filter.custom).toBe("title:edited");
+    });
+
+    it("inlines a basic-text preset into a basic-text filter as it's written", () => {
+      open("a", ["f"]);
+      bundle.actions.setFilterStrategy("a", "basic_text");
+      bundle.actions.setFilterCustom("a", "can't");
+      bundle.actions.patchPreset("f", {
+        definition: "go",
+        filterStrategy: "basic_text",
+      });
+      bundle.actions.inlinePreset("a", "filter", "f");
+      expect(live("a").filter).toEqual({
+        custom: "can't\ngo",
+        presets: [],
+        strategy: "basic_text",
+      });
+    });
+
+    it("inlines across strategies as Querydown, finding what it found", () => {
+      open("a", ["f"]);
+      bundle.actions.setFilterStrategy("a", "basic_text");
+      bundle.actions.setFilterCustom("a", "can't");
+      bundle.actions.inlinePreset("a", "filter", "f");
+      expect(live("a").filter).toEqual({
+        custom: `"can't"\ntitle:f`,
+        presets: [],
+      });
     });
 
     it("inlines a sort preset as the custom sort", () => {
@@ -1656,6 +1733,7 @@ describe("openRecordsTab", () => {
     baseTable,
     section,
     definition: "",
+    filterStrategy: "querydown" as const,
     isDefault: true,
     createdAt: 0,
     modifiedAt: 0,
@@ -1917,6 +1995,7 @@ describe("showArtistRecords", () => {
     baseTable: "album",
     section,
     definition: "",
+    filterStrategy: "querydown" as const,
     isDefault: true,
     createdAt: 0,
     modifiedAt: 0,
@@ -2569,6 +2648,7 @@ describe("a new query opened before the presets load", () => {
     baseTable,
     section,
     definition: "",
+    filterStrategy: "querydown" as const,
     isDefault: true,
     createdAt: 0,
     modifiedAt: 0,
@@ -3317,6 +3397,60 @@ describe("autosave", () => {
     await vi.advanceTimersByTimeAsync(IDLE);
     expect(written()).toEqual(["jazz"]);
     after.dispose();
+  });
+});
+
+describe("a filter's strategy", () => {
+  const IDLE = 5000;
+  let bundle: AppStoreBundle;
+  const filter = () =>
+    selectQueryTab(bundle.store.getState(), "a")?.live.filter;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(sourceUpdateDefinition).mockReset();
+    vi.mocked(sourceUpdateDefinition).mockResolvedValue(null);
+    bundle = createAppStore(fakeEnv());
+    openQueryTab(bundle, "a");
+    bundle.actions.ensureRun("a");
+  });
+  afterEach(() => {
+    bundle.dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps Querydown as written when switching to basic text", () => {
+    bundle.actions.setFilterCustom("a", "year:>2000");
+    bundle.actions.setFilterStrategy("a", "basic_text");
+    expect(filter()).toMatchObject({
+      custom: "year:>2000",
+      strategy: "basic_text",
+    });
+  });
+
+  it("turns basic text into the Querydown it stood for", () => {
+    bundle.actions.setFilterStrategy("a", "basic_text");
+    bundle.actions.setFilterCustom("a", `"it's cool"`);
+    bundle.actions.setFilterStrategy("a", "querydown");
+    expect(filter()).toEqual({
+      custom: `^e"\\"it's" 'cool"'`,
+      presets: [],
+    });
+  });
+
+  it("is stored with the query, and undone like any edit", async () => {
+    bundle.actions.setFilterStrategy("a", "basic_text");
+    await vi.advanceTimersByTimeAsync(IDLE);
+    const stored = JSON.parse(
+      vi.mocked(sourceUpdateDefinition).mock.calls.at(-1)![0].definition,
+    ) as { filter: unknown };
+    expect(stored.filter).toEqual({
+      custom: "",
+      presets: [],
+      strategy: "basic_text",
+    });
+    bundle.actions.undo("a");
+    expect(filter()?.strategy).toBeUndefined();
   });
 });
 

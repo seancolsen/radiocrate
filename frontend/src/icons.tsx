@@ -58,6 +58,7 @@ import UncheckAll from "~icons/material-symbols/close-small";
 import Base from "~icons/material-symbols/psychiatry";
 import Table from "~icons/material-symbols/table";
 import Querydown from "~icons/material-symbols/code";
+import BasicText from "~icons/material-symbols/abc";
 // One glyph, two concepts: `Rename` and `Edit` share the same icon.
 import Rename from "~icons/material-symbols/edit";
 import Edit from "~icons/material-symbols/edit";
@@ -132,6 +133,22 @@ const Spinner: IconComponent = ({ className, ...props }) => (
   <ProgressActivity className={cx("animate-spin", className)} {...props} />
 );
 
+/** Querydown's logo (`branding/logo-optimized.svg` in the Querydown repo, as
+ * its site's `icon.svg` draws it too): a magnifier and a down arrow in a
+ * rounded frame, in `currentColor` with the frame's white fill left out. Wider
+ * than tall, it's centered in the same 1.2em square as every other glyph. */
+const QuerydownLogo: IconComponent = (props) => (
+  <svg
+    viewBox="0 0 210 130"
+    width="1.2em"
+    height="1.2em"
+    fill="currentColor"
+    {...props}
+  >
+    <path d="m64.9 31.01c-8.722 0-17.44 3.299-24.04 9.896-13.19 13.19-13.19 34.89 0 48.08 10.3 10.3 25.76 12.56 38.33 6.785l12.66 13.87 14.78-13.48-12.56-13.77c7.76-13.04 6.054-30.32-5.123-41.49-6.597-6.597-15.32-9.896-24.04-9.896zm0 19.88c3.562 0 7.125 1.389 9.9 4.164 5.551 5.551 5.551 14.25 0 19.8-5.551 5.551-14.25 5.551-19.8 0-5.551-5.551-5.551-14.25 0-19.8 2.775-2.775 6.336-4.164 9.898-4.164zm85.7 48.11-30-33h20v-35h20v35h20zm-134.6-88c-2.761 0-5 2.239-5 5v98c0 2.761 2.239 5 5 5h178c2.761 0 5-2.239 5-5v-98c0-2.761-2.239-5-5-5zm-15 5c0-8.284 6.716-15 15-15h178c8.284 0 15 6.716 15 15v98c0 8.284-6.716 15-15 15h-178c-8.284 0-15-6.716-15-15z" />
+  </svg>
+);
+
 export const Icons = {
   Query, // query rows + tab handle icon
   Playlist, // playlist rows + tab handle icon
@@ -179,6 +196,8 @@ export const Icons = {
   Base, // Change-base menu entry
   Table, // a table row in the base submenu
   Querydown, // full-querydown mode: its Base-submenu entry and toolbar toggle
+  QuerydownFilter: QuerydownLogo, // a filter read as Querydown (its strategy toggle)
+  BasicTextFilter: BasicText, // a filter read as basic text (its strategy toggle)
   Rename, // rename query (wrench menu + double-click)
   Edit, // edit a record (results context menu, record editor title)
   Duplicate, // duplicate query (wrench menu)

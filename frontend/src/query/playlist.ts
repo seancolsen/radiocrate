@@ -11,6 +11,7 @@
 
 import type { Preset } from "api-client";
 import {
+  canonicalFilter,
   canonicalSection,
   defsEqual,
   definitionToStored,
@@ -109,7 +110,7 @@ export function playlistDefinitionFromQuery(
  * canonical key order, so that two equal definitions serialize identically. */
 export function playlistDefinitionToStored(def: PlaylistDefinition): string {
   return JSON.stringify({
-    filter: { custom: def.filter.custom, presets: [...def.filter.presets] },
+    filter: canonicalFilter(def.filter),
     sort: canonicalSection(def.sort),
     display: canonicalSection(def.display),
   });
@@ -130,6 +131,9 @@ export function playlistDefinitionFromStored(raw: string): PlaylistDefinition {
     filter: {
       custom: parsed?.filter?.custom ?? "",
       presets: parsed?.filter?.presets ?? [],
+      ...(parsed?.filter?.strategy === "basic_text"
+        ? { strategy: "basic_text" as const }
+        : {}),
     },
     sort: parsed?.sort ?? playlistOrderContent(),
     display: parsed?.display ?? { custom: "" },

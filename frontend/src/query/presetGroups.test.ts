@@ -8,6 +8,7 @@ const preset = (name: string, baseTable: string, section: string): Preset => ({
   baseTable,
   section,
   definition: "",
+  filterStrategy: "querydown",
   isDefault: false,
   createdAt: 0,
   modifiedAt: 0,

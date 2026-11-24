@@ -51,6 +51,7 @@ function preset(over: Partial<Preset> & { id: string }): Preset {
     baseTable: "track",
     section: "filter",
     definition: "",
+    filterStrategy: "querydown",
     isDefault: false,
     createdAt: 0,
     modifiedAt: 0,

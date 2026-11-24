@@ -55,7 +55,9 @@ export type TreeItemKind = "source" | "folder";
 
 export type Placement = { kind: TreeItemKind, id: string, parent: string | null, position: number, };
 
-export type Preset = { id: string, name: string, baseTable: string, section: string, definition: string, isDefault: boolean, createdAt: number, modifiedAt: number, };
+export type FilterStrategy = "querydown" | "basic_text";
+
+export type Preset = { id: string, name: string, baseTable: string, section: string, definition: string, filterStrategy: FilterStrategy, isDefault: boolean, createdAt: number, modifiedAt: number, };
 
 export type Keybinding = { commandId: string, chord: string | null, };
 
@@ -77,7 +79,7 @@ export type FolderRenameParams = { id: string, name: string, };
 
 export type FolderDeleteParams = { id: string, };
 
-export type PresetUpdateParams = { id: string, name: string, definition: string, isDefault: boolean, modifiedAt: number, };
+export type PresetUpdateParams = { id: string, name: string, definition: string, filterStrategy: FilterStrategy, isDefault: boolean, modifiedAt: number, };
 
 export type PresetDeleteParams = { id: string, };
 

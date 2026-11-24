@@ -10,16 +10,16 @@ use std::sync::Arc;
 
 use api_schema::{
     AppVersion, CLIENT_ID_HEADER, ColumnSummary, ComputedColumnRow, CustomComparisonRow,
-    FieldMetadataRow, FieldOrder, FieldRef, FolderDeleteParams, FolderRenameParams, Keybinding,
-    KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
-    MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams,
-    MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams,
-    MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams,
-    MetadataTableSetVisibleParams, MultiLink, Placement, Preset, PresetDeleteParams,
-    PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source,
-    SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams, SourceRenameParams,
-    SourceUpdateDefinitionParams, TableMetadataRow, TableOrder, TableQuerydownSetting,
-    TableSummary, Topic, TreeItemKind,
+    FieldMetadataRow, FieldOrder, FieldRef, FilterStrategy, FolderDeleteParams, FolderRenameParams,
+    Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams,
+    MetadataComputedColumnRenameParams, MetadataCustomComparisonDeleteParams,
+    MetadataCustomComparisonRenameParams, MetadataFieldSetDisplayParams,
+    MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams,
+    MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams,
+    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
+    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
+    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow,
+    TableOrder, TableQuerydownSetting, TableSummary, Topic, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -271,6 +271,7 @@ fn dispatch_legacy(
                     &p.id,
                     &p.name,
                     &p.definition,
+                    p.filter_strategy,
                     p.is_default,
                     p.modified_at,
                 )
@@ -684,8 +685,8 @@ fn delete_folder(conn: &Connection, id: &str) -> Result<(), String> {
 fn list_presets(conn: &Connection) -> Result<Vec<Preset>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id::text, name, base_table, section, definition, is_default, \
-             epoch(created_at)::bigint, epoch(modified_at)::bigint \
+            "SELECT id::text, name, base_table, section, definition, filter_strategy, \
+             is_default, epoch(created_at)::bigint, epoch(modified_at)::bigint \
              FROM app.preset ORDER BY name",
         )
         .map_err(|e| e.to_string())?;
@@ -697,9 +698,10 @@ fn list_presets(conn: &Connection) -> Result<Vec<Preset>, String> {
                 base_table: row.get(2)?,
                 section: row.get(3)?,
                 definition: row.get(4)?,
-                is_default: row.get(5)?,
-                created_at: row.get(6)?,
-                modified_at: row.get(7)?,
+                filter_strategy: FilterStrategy::from_stored(&row.get::<_, String>(5)?),
+                is_default: row.get(6)?,
+                created_at: row.get(7)?,
+                modified_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -734,8 +736,9 @@ fn add_preset(conn: &mut Connection, preset: &Preset) -> Result<(), String> {
         displace_default(&tx, &preset.id, &preset.base_table, &preset.section)?;
     }
     tx.execute(
-        "INSERT INTO app.preset (id, name, base_table, section, definition, is_default, created_at, modified_at) \
-         VALUES (TRY_CAST(? AS UUID), ?, ?, ?, ?, ?, make_timestamp(? * 1000000)::timestamp_s, \
+        "INSERT INTO app.preset (id, name, base_table, section, definition, filter_strategy, \
+         is_default, created_at, modified_at) \
+         VALUES (TRY_CAST(? AS UUID), ?, ?, ?, ?, ?, ?, make_timestamp(? * 1000000)::timestamp_s, \
          make_timestamp(? * 1000000)::timestamp_s)",
         duckdb::params![
             preset.id,
@@ -743,6 +746,7 @@ fn add_preset(conn: &mut Connection, preset: &Preset) -> Result<(), String> {
             preset.base_table,
             preset.section,
             preset.definition,
+            preset.filter_strategy.as_str(),
             preset.is_default,
             preset.created_at,
             preset.modified_at,
@@ -759,6 +763,7 @@ fn update_preset(
     id: &str,
     name: &str,
     definition: &str,
+    filter_strategy: FilterStrategy,
     is_default: bool,
     modified_at: i64,
 ) -> Result<(), String> {
@@ -777,10 +782,17 @@ fn update_preset(
         }
     }
     tx.execute(
-        "UPDATE app.preset SET name = ?, definition = ?, is_default = ?, \
+        "UPDATE app.preset SET name = ?, definition = ?, filter_strategy = ?, is_default = ?, \
          modified_at = make_timestamp(? * 1000000)::timestamp_s \
          WHERE id = TRY_CAST(? AS UUID)",
-        duckdb::params![name, definition, is_default, modified_at, id],
+        duckdb::params![
+            name,
+            definition,
+            filter_strategy.as_str(),
+            is_default,
+            modified_at,
+            id
+        ],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
@@ -1411,19 +1423,23 @@ mod tests {
             base_table: base_table.to_string(),
             section: section.to_string(),
             definition: String::new(),
+            filter_strategy: FilterStrategy::Querydown,
             is_default,
             created_at: 1_700_000_000,
             modified_at: 1_700_000_000,
         }
     }
 
-    /// Every preset's name, with whether it's a default, in name order.
+    /// Every preset's name, with whether it's a default, in name order. Read
+    /// directly rather than through `list_presets`, so that a test of an earlier
+    /// migration can read them without the columns a later one adds.
     fn preset_defaults(conn: &Connection) -> Vec<(String, bool)> {
-        list_presets(conn)
+        conn.prepare("SELECT name, is_default FROM app.preset ORDER BY name")
             .unwrap()
-            .into_iter()
-            .map(|p| (p.name, p.is_default))
-            .collect()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
     }
 
     #[test]
@@ -1567,7 +1583,16 @@ mod tests {
             ]
         );
 
-        update_preset(&mut conn, S1, "a", "", true, 1_700_000_001).unwrap();
+        update_preset(
+            &mut conn,
+            S1,
+            "a",
+            "",
+            FilterStrategy::Querydown,
+            true,
+            1_700_000_001,
+        )
+        .unwrap();
         assert_eq!(preset_defaults(&conn)[0], ("a".to_string(), true));
         assert_eq!(preset_defaults(&conn)[3], ("d".to_string(), false));
     }
@@ -1577,11 +1602,73 @@ mod tests {
         let mut conn = setup();
         add_preset(&mut conn, &preset(S1, "a", "track", "filter", true)).unwrap();
         add_preset(&mut conn, &preset(S2, "b", "track", "filter", false)).unwrap();
-        update_preset(&mut conn, S2, "b", "", true, 1_700_000_001).unwrap();
+        update_preset(
+            &mut conn,
+            S2,
+            "b",
+            "",
+            FilterStrategy::Querydown,
+            true,
+            1_700_000_001,
+        )
+        .unwrap();
         assert_eq!(
             preset_defaults(&conn),
             [("a".to_string(), true), ("b".to_string(), true)]
         );
+    }
+
+    #[test]
+    fn a_preset_keeps_its_filter_strategy() {
+        let mut conn = setup();
+        add_preset(&mut conn, &preset(S1, "a", "track", "filter", false)).unwrap();
+        let strategy = |conn: &Connection| list_presets(conn).unwrap()[0].filter_strategy;
+        assert_eq!(strategy(&conn), FilterStrategy::Querydown);
+
+        update_preset(
+            &mut conn,
+            S1,
+            "a",
+            "café",
+            FilterStrategy::BasicText,
+            false,
+            1_700_000_001,
+        )
+        .unwrap();
+        assert_eq!(strategy(&conn), FilterStrategy::BasicText);
+
+        let mut added = preset(S2, "b", "track", "filter", false);
+        added.filter_strategy = FilterStrategy::BasicText;
+        add_preset(&mut conn, &added).unwrap();
+        assert_eq!(
+            list_presets(&conn).unwrap()[1].filter_strategy,
+            FilterStrategy::BasicText
+        );
+    }
+
+    #[test]
+    fn migration_0021_reads_existing_presets_as_querydown() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_through(&mut conn, 20);
+        let insert = |conn: &Connection, id: &str| {
+            conn.execute_batch(&format!(
+                "INSERT INTO app.preset (id, name, base_table, section, definition, is_default, created_at, modified_at)
+                 VALUES ('{id}', 'sort {id}', 'nothing', 'sort', '', true, now(), now());"
+            ))
+        };
+        insert(&conn, S1).unwrap();
+        crate::db::migrate_through(&mut conn, 21);
+        let presets = list_presets(&conn).unwrap();
+        let preset = presets.iter().find(|p| p.id == S1).unwrap();
+        assert_eq!(preset.filter_strategy, FilterStrategy::Querydown);
+        assert!(preset.is_default);
+        assert!(
+            presets
+                .iter()
+                .all(|p| p.filter_strategy == FilterStrategy::Querydown)
+        );
+        // The default-sort index came back with the column.
+        assert!(insert(&conn, S2).is_err(), "two default sorts");
     }
 
     #[test]
@@ -3030,7 +3117,8 @@ mod tests {
             (
                 "preset.update",
                 json!({
-                    "id": P1, "name": "Sorted", "definition": "{}", "isDefault": true,
+                    "id": P1, "name": "Sorted", "definition": "{}",
+                    "filterStrategy": "querydown", "isDefault": true,
                     "modifiedAt": 1_700_000_001
                 }),
                 vec![Presets],

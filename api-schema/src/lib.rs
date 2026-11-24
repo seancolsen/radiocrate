@@ -122,9 +122,43 @@ pub struct FolderDeleteParams {
     pub id: String,
 }
 
+/// How a filter's text is read: as Querydown, or as basic text, words the
+/// frontend turns into Querydown search terms before compiling. Its values are
+/// spelled as `app.preset.filter_strategy` stores them (migration 0021), which is
+/// also how a query's stored definition spells its filter's strategy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterStrategy {
+    #[default]
+    Querydown,
+    BasicText,
+}
+
+impl FilterStrategy {
+    /// The value as the database stores it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FilterStrategy::Querydown => "querydown",
+            FilterStrategy::BasicText => "basic_text",
+        }
+    }
+
+    /// A stored value. Anything unrecognised reads as Querydown.
+    #[must_use]
+    pub fn from_stored(value: &str) -> Self {
+        match value {
+            "basic_text" => FilterStrategy::BasicText,
+            _ => FilterStrategy::Querydown,
+        }
+    }
+}
+
 /// A saved query-section preset as exchanged over the wire. The `section` is one
-/// of `filter`/`sort`/`display` and the `definition` is a raw Querydown fragment;
-/// both are opaque to the backend.
+/// of `filter`/`sort`/`display` and the `definition` is a raw Querydown fragment
+/// (or, for a filter whose `filter_strategy` is basic text, the words typed);
+/// all three are opaque to the backend. A sort or display preset's
+/// `filter_strategy` means nothing, and stays `querydown`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Preset {
@@ -133,6 +167,7 @@ pub struct Preset {
     pub base_table: String,
     pub section: String,
     pub definition: String,
+    pub filter_strategy: FilterStrategy,
     pub is_default: bool,
     #[ts(type = "number")]
     pub created_at: i64,
@@ -230,6 +265,7 @@ pub struct PresetUpdateParams {
     pub id: String,
     pub name: String,
     pub definition: String,
+    pub filter_strategy: FilterStrategy,
     pub is_default: bool,
     #[ts(type = "number")]
     pub modified_at: i64,
@@ -896,6 +932,7 @@ pub fn type_decls() -> Vec<String> {
         format!("export {}", SourceFolder::decl(&cfg)),
         format!("export {}", TreeItemKind::decl(&cfg)),
         format!("export {}", Placement::decl(&cfg)),
+        format!("export {}", FilterStrategy::decl(&cfg)),
         format!("export {}", Preset::decl(&cfg)),
         format!("export {}", Keybinding::decl(&cfg)),
         format!("export {}", Setting::decl(&cfg)),

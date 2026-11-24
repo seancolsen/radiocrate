@@ -106,6 +106,7 @@ function preset(id: string, definition: string): Preset {
     baseTable: "track",
     section: "filter",
     definition,
+    filterStrategy: "querydown",
     isDefault: false,
     createdAt: 1,
     modifiedAt: 1,

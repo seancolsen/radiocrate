@@ -7,6 +7,7 @@
 
 import type { Preset } from "api-client";
 import { definitionError } from "./diagnostics";
+import { filterQuerydown, type FilterStrategy } from "./filterStrategy";
 import {
   fromSource,
   joinMapped,
@@ -61,10 +62,39 @@ export function playlistOrderContent(): SectionContent {
 }
 
 /** The filter section: custom conditions AND-combined with any number of
- * presets (referenced by id). */
+ * presets (referenced by id). `strategy` is how `custom` is read: absent (and
+ * so left out of the stored JSON) for Querydown, or `"basic_text"` for words
+ * the user typed (see `filterStrategy.ts`). Each preset says for itself how its
+ * own definition is read. */
 export interface FilterParts {
   custom: string;
   presets: string[];
+  strategy?: FilterStrategy;
+}
+
+/** How `filter`'s custom text is read. */
+export function filterStrategyOf(filter: FilterParts): FilterStrategy {
+  return filter.strategy ?? "querydown";
+}
+
+/** `filter`'s parts with `strategy` set as a stored definition spells it: absent
+ * for Querydown. */
+export function canonicalFilter(filter: FilterParts): FilterParts {
+  return filter.strategy === "basic_text"
+    ? {
+        custom: filter.custom,
+        presets: [...filter.presets],
+        strategy: "basic_text",
+      }
+    : { custom: filter.custom, presets: [...filter.presets] };
+}
+
+/** Preset `preset`'s definition as the Querydown it stands for: a filter
+ * preset's may be basic text. */
+export function presetQuerydown(preset: Preset): string {
+  return preset.section === "filter"
+    ? filterQuerydown(preset.definition, preset.filterStrategy)
+    : preset.definition;
 }
 
 /** A saved query split into its four Querydown parts. `full`, when present, is
@@ -202,6 +232,31 @@ export function appendCustom(custom: string, text: string): string {
   return custom.trim() === "" ? added : `${custom}\n${added}`;
 }
 
+/** The custom filter text and strategy that inlining filter preset `preset`
+ * into `filter` leaves: the preset's definition added after the custom text, on
+ * a line of its own. Both in one strategy stay in it. When they differ, the
+ * result is Querydown, and whichever of the two is basic text becomes the
+ * Querydown it stood for, so the filter finds what it found with the preset. */
+export function inlinedFilter(
+  filter: FilterParts,
+  preset: Preset,
+): { custom: string; strategy: FilterStrategy } {
+  const strategy = filterStrategyOf(filter);
+  if (strategy === preset.filterStrategy) {
+    return {
+      custom: appendCustom(filter.custom, preset.definition),
+      strategy,
+    };
+  }
+  return {
+    custom: appendCustom(
+      filterQuerydown(filter.custom, strategy),
+      presetQuerydown(preset),
+    ),
+    strategy: "querydown",
+  };
+}
+
 /** A fresh definition for `base`, seeded with that table's default presets:
  * every default filter preset, plus the default sort and display, if any. */
 export function definitionForBase(
@@ -236,6 +291,9 @@ export function rebasedDefinition(
 ): QueryDefinition {
   const next = definitionForBase(base, presets);
   next.filter.custom = def.filter.custom;
+  if (def.filter.strategy !== undefined) {
+    next.filter.strategy = def.filter.strategy;
+  }
   return next;
 }
 
@@ -255,7 +313,7 @@ export function canonicalSection(c: SectionContent): unknown {
 function canonicalDef(def: QueryDefinition): unknown {
   return {
     base: def.base,
-    filter: { custom: def.filter.custom, presets: [...def.filter.presets] },
+    filter: canonicalFilter(def.filter),
     sort: canonicalSection(def.sort),
     display: canonicalSection(def.display),
     full: def.full ?? null,
@@ -282,6 +340,9 @@ export function definitionFromStored(raw: string): QueryDefinition {
     filter: {
       custom: parsed.filter?.custom ?? base.filter.custom,
       presets: parsed.filter?.presets ?? base.filter.presets,
+      ...(parsed.filter?.strategy === "basic_text"
+        ? { strategy: "basic_text" as const }
+        : {}),
     },
     sort: parsed.sort ?? base.sort,
     display: parsed.display ?? base.display,
@@ -309,7 +370,7 @@ export type CompileSource =
 export function definitionToStored(def: QueryDefinition): string {
   const out: Record<string, unknown> = {
     base: def.base,
-    filter: { custom: def.filter.custom, presets: [...def.filter.presets] },
+    filter: canonicalFilter(def.filter),
     sort: def.sort,
     display: def.display,
   };
@@ -353,7 +414,7 @@ function presetFragment(
       origin,
     );
   }
-  return trimMapped(fromSource(found.definition, origin));
+  return trimMapped(fromSource(presetQuerydown(found), origin));
 }
 
 /** Resolves a sort/display `SectionContent` to its Querydown fragment, trimmed.
@@ -435,8 +496,14 @@ export function resolveFilterParts(
   presets: readonly Preset[],
 ): Mapped[] {
   const parts: Mapped[] = [];
+  // Basic text is traced to its editor as the Querydown it becomes: a problem
+  // in it still points at the filter, though not at a spot in what was typed
+  // (its `source` isn't the editor's text, so nothing is underlined).
   const custom = trimMapped(
-    fromSource(filter.custom, { kind: "custom", section: "filter" }),
+    fromSource(filterQuerydown(filter.custom, filter.strategy), {
+      kind: "custom",
+      section: "filter",
+    }),
   );
   if (custom.text !== "") parts.push(custom);
   for (const id of filter.presets) {
@@ -460,10 +527,11 @@ export function toFullQuery(
   if (def.full != null) return def.full;
 
   const filterParts: string[] = [];
-  const custom = def.filter.custom.trim();
+  const custom = filterQuerydown(def.filter.custom, def.filter.strategy).trim();
   if (custom !== "") filterParts.push(custom);
   for (const id of def.filter.presets) {
-    const fragment = presets.find((p) => p.id === id)?.definition.trim();
+    const preset = presets.find((p) => p.id === id);
+    const fragment = preset && presetQuerydown(preset).trim();
     if (fragment) filterParts.push(fragment);
   }
 
