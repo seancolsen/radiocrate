@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -11,6 +12,7 @@ import { shallow } from "zustand/vanilla/shallow";
 import { CanvasGrid } from "../grid/canvasGrid";
 import {
   queuedRowPositions,
+  recordGroupsForRows,
   selectMultiSelect,
   selectRangeOrigin,
   selectPageDiagnostic,
@@ -24,7 +26,6 @@ import {
   selectRowSelection,
   selectTrackIdAt,
   type AppState,
-  type RecordGroup,
 } from "../stores/app";
 import { cx } from "./ui/cx";
 import { recordIdentity, selectModifiedRecords } from "../stores/forms";
@@ -66,15 +67,16 @@ import { dragChipTransform } from "./ui/DragChip";
 // shell's: the playlist is a question about the DOM, and the gap between rows
 // one for the grid.
 
-/** An open row context menu: where it was raised, the rows it acts on, and the
- * records those rows identify.
+/** An open row context menu: where it was raised, and the rows it acts on.
  *
- * The rows and records are captured when the menu is *raised* rather than read
- * from the store as it renders: the grid beneath is frozen and the menu blocks
- * every pointer event while it's up, so neither the selection nor the result
- * can move under it — and reading them here would mean subscribing this
- * component to both, which is exactly what the subscription bridge above
- * exists to avoid. */
+ * The rows are captured when the menu is *raised*: the grid beneath is frozen
+ * and the menu blocks every pointer event while it's up, so the selection
+ * can't move under it. What those rows *are* is another matter — the lineage
+ * analysis that says which records they carry lands after the rows do, so a
+ * menu raised before it can learn it while open. That's read from the store by
+ * the menu's body ({@link RowMenuEntries}), which is mounted only while the
+ * menu is up, so this component stays off the result and the lineage (which is
+ * what the subscription bridge above exists for). */
 interface RowMenu {
   x: number;
   y: number;
@@ -83,10 +85,49 @@ interface RowMenu {
    * being assembled in multi-select mode), in which case every selected row
    * (the bulk case; see `RecordEditorTarget`). */
   rows: readonly number[];
-  /** One group per table whose primary key those rows carry (a track row
-   * joined to its album offers both) — empty for rows that identify nothing,
-   * where the menu still offers "Select multiple". */
-  groups: readonly RecordGroup[];
+}
+
+/** The open row menu's entries for `rows`, from the records they identify as
+ * the store has them now: one group per table whose primary key the rows carry
+ * (a track row joined to its album offers both), empty for rows that identify
+ * nothing (or before the lineage analysis has landed), where the menu still
+ * offers "Select multiple" — and the entries for tracks once the rows turn out
+ * to be tracks. The result and the lineage are references already in state,
+ * combined with the rows here rather than by a selector that would build a
+ * fresh array on every store write. */
+function RowMenuEntries(props: {
+  tabId: string;
+  rows: readonly number[];
+}): JSX.Element {
+  const { removeRows, requestAddToPlaylist, setMultiSelect } = useAppActions();
+  const { tabId, rows } = props;
+  const result = useApp((s) => s.pages[tabId]?.result);
+  const lineage = useApp((s) => s.pages[tabId]?.lineage);
+  const groups = useMemo(
+    () => recordGroupsForRows(result, lineage, rows),
+    [result, lineage, rows],
+  );
+  // Rows that are tracks can be added to a playlist.
+  const tracks = lineage?.trackIdColumn !== undefined;
+  // A playlist's rows can be removed from it.
+  const playlist = useApp((s) => selectPageTab(s, tabId)?.kind === "playlist");
+  const multiSelect = useApp((s) => selectMultiSelect(s, tabId));
+  return (
+    <RowActionsMenu
+      tabId={tabId}
+      groups={groups}
+      trackRows={tracks ? rows : undefined}
+      onAddToPlaylist={
+        tracks ? () => requestAddToPlaylist(tabId, rows) : undefined
+      }
+      onRemoveFromPlaylist={
+        playlist ? () => removeRows(tabId, rows) : undefined
+      }
+      onSelectMultiple={
+        multiSelect ? undefined : () => setMultiSelect(tabId, true)
+      }
+    />
+  );
 }
 
 /** The rows whose records the editor is holding unsaved changes for — a ✱ on
@@ -175,10 +216,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     endRowDrag,
     hoverRowDrag,
     loadRatings,
-    removeRows,
-    requestAddToPlaylist,
     runQuery,
-    setMultiSelect,
     setResultsScroll,
     toggleQueuedRow,
   } = useAppActions();
@@ -186,14 +224,6 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
   // While the error strip shows a problem, these rows are an earlier
   // definition's: they stay usable, but fade back.
   const stale = useApp((s) => selectPageDiagnostic(s, props.tabId) !== null);
-  // A playlist's rows can be removed from it.
-  const playlist = useApp(
-    (s) => selectPageTab(s, props.tabId)?.kind === "playlist",
-  );
-  // Rows that are tracks can be added to a playlist.
-  const tracks = useApp(
-    (s) => s.pages[props.tabId]?.lineage?.trackIdColumn !== undefined,
-  );
   // How many rows this page has in hand, while they're being dragged (0
   // otherwise): every one lists an entry on a playlist's page, and holds a
   // track elsewhere.
@@ -286,17 +316,28 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
     const raiseMenu = (index: number, x: number, y: number) => {
       // The menu acts on the selection.
       aimAtRow(index);
-      const multiMode = selectMultiSelect(store.getState(), tabId);
-      const rows = [...selectRowSelection(store.getState(), tabId)];
-      const groups = selectRecordGroupsForRows(store.getState(), tabId, rows);
-      // Nothing editable in the targeted rows leaves the menu with only
-      // "Select multiple" — and nothing at all once that mode is already on.
-      if (groups.length === 0 && multiMode) return;
-      // The rating vocabulary is fetched the first time a menu that offers it
-      // is raised, which is here — an event handler, so no effect has to
-      // chase the menu's open state.
-      if (groups.some((group) => group.table === "track")) loadRatings();
-      setRowMenu({ x, y, rows, groups });
+      const state = store.getState();
+      const rows = [...selectRowSelection(state, tabId)];
+      // Rows that identify nothing, aren't tracks and aren't a playlist's
+      // leave the menu with only "Select multiple" — and nothing at all once
+      // that mode is already on, where it isn't raised (the toolbar's actions
+      // button is disabled then, too). That includes rows whose lineage hasn't
+      // landed yet: an absent mapping can't be told from one that found
+      // nothing, so an empty menu could stay empty; the next right-click, once
+      // it lands, finds the entries.
+      const offersNothing =
+        selectRecordGroupsForRows(state, tabId, rows).length === 0 &&
+        state.pages[tabId]?.lineage?.trackIdColumn === undefined &&
+        selectPageTab(state, tabId)?.kind !== "playlist";
+      if (offersNothing && selectMultiSelect(state, tabId)) return;
+      // The rating vocabulary is fetched as the menu is raised, which is here
+      // — an event handler, so no effect has to chase the menu's open state.
+      // Whether the rows are tracks can still be on its way (the lineage
+      // lands after the rows, and the menu takes its entries up as it does),
+      // so it isn't asked first: the vocabulary is loaded once and kept, as
+      // the toolbar's actions menu does.
+      loadRatings();
+      setRowMenu({ x, y, rows });
     };
 
     grid.setInteraction({
@@ -583,22 +624,7 @@ export default function QueryResults(props: { tabId: string }): JSX.Element {
         )}
       {rowMenu && (
         <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={closeMenu}>
-          <RowActionsMenu
-            tabId={props.tabId}
-            groups={rowMenu.groups}
-            trackRows={tracks ? rowMenu.rows : undefined}
-            onAddToPlaylist={
-              tracks
-                ? () => requestAddToPlaylist(props.tabId, rowMenu.rows)
-                : undefined
-            }
-            onRemoveFromPlaylist={
-              playlist ? () => removeRows(props.tabId, rowMenu.rows) : undefined
-            }
-            onSelectMultiple={
-              multiSelect ? undefined : () => setMultiSelect(props.tabId, true)
-            }
-          />
+          <RowMenuEntries tabId={props.tabId} rows={rowMenu.rows} />
         </ContextMenu>
       )}
     </div>

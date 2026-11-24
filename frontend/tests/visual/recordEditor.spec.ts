@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { SOURCES_FIXTURE } from "../../src/dev/fixtures";
+import type { lemonadeGridResult } from "../../src/dev/gridFixture";
 import type { AppStoreFacade } from "../../src/dev/seed";
 import { valueEditor } from "./harness";
 
@@ -129,6 +130,88 @@ test("rows with no primary key offer only multi-select", async ({ page }) => {
   await rightClickRow(page);
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Select multiple",
+  ]);
+});
+
+/** Lands the seeded rows again on the active tab, standing in for a run whose
+ * lineage analysis is still under way (`lineage: false`: a new result set,
+ * which takes the mapping away) and then for that analysis landing
+ * (`lineage: true`: the same rows as a refresh, which keeps the selection, now
+ * mapped as tracks carrying their albums). */
+async function landRows(page: Page, lineage: boolean) {
+  await page.evaluate((withLineage) => {
+    const w = window as unknown as AppWindow & {
+      __seededResult: typeof lemonadeGridResult;
+    };
+    const tabId = w.__appStore.state.activeTabId!;
+    const ids = (table: string) =>
+      Array.from({ length: 5 }, (_, r) => `${table}-${r + 1}`);
+    const seeded = w.__seededResult({
+      trackIds: ["t1", "t2", "t3", "t4", "t5"],
+      recordKeys: { track: ids("track"), album: ids("album") },
+    });
+    if (withLineage) {
+      w.__appStore.setResults(tabId, seeded.result, seeded.lineage, true);
+    } else {
+      w.__appStore.setResults(tabId, seeded.result);
+    }
+  }, lineage);
+}
+
+test("a menu raised before the lineage lands takes up its entries as it does", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await landRows(page, false);
+  await rightClickRow(page);
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Select multiple"]);
+
+  // The menu stays open on row 0 as the analysis lands, and offers what row 0
+  // turns out to be.
+  await landRows(page, true);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Edit track",
+    "Edit album",
+    "Show album tracks",
+    "Rate track",
+    "Queue track",
+    "Add to playlist…",
+    "Artists",
+    "Select multiple",
+  ]);
+  await menu.getByRole("menuitem", { name: "Edit track" }).click();
+  await expect(editorPanel(page)).toContainText("track-1");
+});
+
+test("in multi-select mode, rows the lineage hasn't landed for raise no menu", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await landRows(page, false);
+  await rightClickRow(page);
+  await page.getByRole("menuitem", { name: "Select multiple" }).click();
+  await expect(page.getByTestId("multi-select-toolbar")).toBeVisible();
+
+  // Nothing to offer yet, and "Select multiple" is already on: no menu at all
+  // (the toolbar's actions button is disabled for the same reason)…
+  await rightClickRow(page);
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Selection actions" }),
+  ).toBeDisabled();
+
+  // …until the analysis lands, when the same right-click finds the entries.
+  await landRows(page, true);
+  await rightClickRow(page);
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Edit track",
+    "Edit album",
+    "Show album tracks",
+    "Rate track",
+    "Queue track",
+    "Add to playlist…",
+    "Artists",
   ]);
 });
 

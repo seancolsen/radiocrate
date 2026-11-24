@@ -224,8 +224,8 @@ function QueueActions(props: {
 }
 
 /** "Rate track": the rating vocabulary, lowest value first — which loads the
- * first time a menu offering it is raised (see `loadRatings`), so it can still
- * be on its way. */
+ * first time a row menu or the selection's actions menu is raised (see
+ * `loadRatings`), so it can still be on its way. */
 function RateSubmenu(props: {
   onRate: (ratingId: string) => void;
 }): JSX.Element {
