@@ -236,8 +236,9 @@ test("a new query opened before the presets load still gets its table's defaults
   await input(page, "Filter").fill(MOST_PLAYED);
   await expect(toolbar(page).getByText("10 tracks")).toBeVisible();
   await look(page, "new-query");
-  // The display preset "Basic" in force: artists first, then the title.
+  // The display preset "Basic" in force: artists first, then the title (on
+  // whichever row; the query has no sort).
   await expect
-    .poll(() => app.grid.text(1))
-    .toMatch(/^The Beatles\tLucy in the Sky With Diamonds\t/);
+    .poll(() => app.grid.text())
+    .toMatch(/^The Beatles\tLucy in the Sky With Diamonds\t1967\t/m);
 });

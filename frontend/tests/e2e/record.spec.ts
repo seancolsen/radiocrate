@@ -28,13 +28,6 @@ async function gridRows(app: App): Promise<string[][]> {
     .map((line) => line.split("\t"));
 }
 
-/** The titles of the rows `first` … `last`, as the grid shows them. */
-async function titlesOf(app: App, first: number, last: number) {
-  return (await gridRows(app))
-    .slice(first, last + 1)
-    .map((cells) => cells[TITLE]);
-}
-
 /** The rating column of the track titled `title`, as the grid shows it. */
 async function ratingOf(app: App, title: string): Promise<string | undefined> {
   return (await gridRows(app)).find((cells) => cells[TITLE] === title)?.[
@@ -118,19 +111,16 @@ test("one edit in the record editor lands on every selected track", async ({
 }) => {
   await openTracks(app);
   const editor = editorPanel(page);
-  const first = (await app.grid.find("Getting Better"))!;
-  const last = first + 2;
-  const titles = await titlesOf(app, first, last);
-  expect(titles).toEqual([
-    "Getting Better",
-    "Good Morning Good Morning",
-    "Lovely Rita",
-  ]);
+  // Three tracks of one album, picked by title: the query has no sort, so
+  // they needn't be neighbors.
+  const titles = ["Getting Better", "Good Morning Good Morning", "Lovely Rita"];
 
   await test.step("select three rows and open the editor on them", async () => {
-    await (await app.grid.row(first)).click();
-    await (await app.grid.row(last)).click({ modifiers: ["Shift"] });
-    await (await app.grid.row(last)).openMenu();
+    await (await app.grid.row(titles[0]!)).click();
+    for (const title of titles.slice(1)) {
+      await (await app.grid.row(title)).click({ modifiers: ["Control"] });
+    }
+    await (await app.grid.row(titles[2]!)).openMenu();
     await page.getByRole("menuitem", { name: "Edit track" }).click();
     await expect(editor.getByRole("heading")).toHaveText("Edit 3 tracks");
     // What three real tracks agree on, and how many values they hold where

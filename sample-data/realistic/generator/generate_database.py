@@ -32,8 +32,10 @@ database the very thing that keeps the listening history looking current.
 The end-to-end tests build their template database with this script too, but
 hold it still: `--now` pins the instant every "days ago" counts back from (and
 the scanner's clock with it), `--collection` and `--db-dir` point it at the
-tests' own copy of the files, and `--server-bin` scans with an already-built
-binary instead of `cargo run`. See `specs/2026-11-e2e-tests/spec.md` §3.
+tests' own copy of the files, `--server-bin` scans with an already-built
+binary instead of `cargo run`, and `--stable-ids` rewrites every minted id
+into one derived from its row's content (see `stable_ids.py`). See
+`specs/2026-11-e2e-tests/spec.md` §3.
 """
 
 import argparse
@@ -49,6 +51,7 @@ import duckdb
 import yaml
 
 from layout import relative_path
+from stable_ids import stabilize_ids
 
 # Resolved, because the scanner runs as a subprocess from the repo root:
 # every path handed to it has to survive leaving this directory.
@@ -56,6 +59,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFINITION = SCRIPT_DIR / "collection.yaml"
 DEFAULT_COLLECTION_DIR = SCRIPT_DIR.parent / "collection"
 REPO_ROOT = SCRIPT_DIR.parents[2]
+# Ids written literally here are already stable; `--stable-ids` keeps them.
+MIGRATIONS_DIR = REPO_ROOT / "backend" / "src" / "migrations"
 # The backend's default database directory within a collection.
 DB_DIR_NAME = ".radiocrate"
 # The file the backend always keeps in its database directory.
@@ -307,6 +312,12 @@ def parse_args() -> argparse.Namespace:
         type=lambda p: Path(p).resolve(),
         help="A built radiocrate binary to scan with (default: `cargo run -p backend`)",
     )
+    parser.add_argument(
+        "--stable-ids",
+        action="store_true",
+        help="Rewrite the ids the scan and the migrations minted into ones derived "
+        "from each row's content, so that two builds of the same inputs are identical",
+    )
     return parser.parse_args()
 
 
@@ -339,6 +350,8 @@ def generate_database() -> None:
         check_every_track_was_scanned(conn)
         import_user_data(conn)
         summarize(conn, definition)
+        if args.stable_ids:
+            stabilize_ids(conn, MIGRATIONS_DIR)
 
     print(f"\n✓ {db_path} is ready")
 

@@ -142,10 +142,11 @@ are paid only on the run after one of those changes.
 The generator also needs `--collection`, `--db-dir` and `--server-bin`, so it
 can scan the E2E copy with the already-built binary instead of `cargo run`.
 
-### 3.4 Reproducible ids (later, if needed)
+### 3.4 Reproducible ids
 
-The scanner mints random UUIDs, so each rebuild of the template has different
-ids. Tests must never hard-code one. They find records by what the user sees
+The scanner mints random UUIDs, so without help each rebuild of the template
+has different ids. Tests must never hard-code one either way: an id still moves
+whenever the data around it changes. They find records by what the user sees
 (a title, a name).
 
 The remaining exposure is **tie-breaking**. A sort whose keys tie falls back
@@ -153,11 +154,17 @@ to physical order or to an explicit `\\id`, and both can differ between
 rebuilds. The symptom would be an unrelated snapshot changing row order right
 after someone adds a migration.
 
-The fix, if it shows up, is a pass at the end of `generate_database.py` that
-rewrites ids deterministically: walk the tables parents-first using
+The fix is a pass at the end of `generate_database.py` that rewrites ids
+deterministically: walk the tables parents-first using
 `metadata.relationship`, rank each table's rows by their column values, and
-replace each id with a UUIDv5 of table and rank. I'd leave it out of the first
-phases and add it the first time a tie bites.
+replace each id with a UUIDv5 of table and rank.
+
+**Built.** `generate_database.py --stable-ids` (`stable_ids.py` beside it) does
+this and lays each rewritten table out again in rank order, keeps the ids that
+migrations write literally, and fails rather than guess when two rows tie on
+every column or a minted id appears outside a declared link. The template is
+built with it, so two builds are identical, ids and physical row order
+included.
 
 Committing an `EXPORT DATABASE` dump as the fixture would give the same
 stability with no ranking pass and no scan at build time. I don't recommend
@@ -588,7 +595,7 @@ Checked while building phases 1 and 2 (2026-11-23/24):
 - Per test: copying the template, spawning the server and answering its first
   query took 65–117 ms over five samples, not the ~0.3 s estimated.
 - Building the template: about 5 s. Row order in the unsorted Tracks grid held
-  across template rebuilds, so §3.4 hasn't bitten yet.
+  across template rebuilds even before §3.4 was built.
 - Autosave fires under the frozen `Date` now that `IdleQueue` measures with
   `performance.now()` (`query.spec.ts`).
 - The whole suite (12 tests, 4 workers) runs in about 50 s. With phase 3, 25

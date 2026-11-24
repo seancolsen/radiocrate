@@ -97,6 +97,9 @@ export function ensureTemplate(): boolean {
       building,
       "--server-bin",
       SERVER_BIN,
+      // Ids derived from content, so a sort that ties falls back the same
+      // way on every rebuild (spec §3.4).
+      "--stable-ids",
     ],
     {
       cwd: REPO_ROOT,

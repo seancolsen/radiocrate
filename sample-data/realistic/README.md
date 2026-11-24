@@ -86,8 +86,11 @@ Four options exist for the end-to-end tests, which build their own pinned copy
 (see `specs/2026-11-e2e-tests/spec.md`): `--now "2026-01-15 12:00:00"` generates
 as if it were that moment (and pins the scanner's database clock to it),
 `--collection` and `--db-dir` point it at another copy of the files and another
-database directory, and `--server-bin` scans with an already-built binary
-instead of `cargo run`.
+database directory, `--server-bin` scans with an already-built binary
+instead of `cargo run`, and `--stable-ids` finishes by rewriting every id the
+scan and the migrations minted into a UUIDv5 of its table and its rank among
+the table's rows (`generator/stable_ids.py`). Ids a migration writes literally
+are kept. With all five, two builds come out identical, ids included.
 
 The import fails loudly rather than quietly under-filling the database: if a
 track in the definition doesn't match a scanned file, or the final counts don't
