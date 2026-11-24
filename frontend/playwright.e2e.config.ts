@@ -17,6 +17,10 @@ export default defineConfig({
   // __snapshots__/<spec>/. The name passed to the matcher is the state.
   snapshotPathTemplate: "{testDir}/__snapshots__/{testFileName}/{arg}{ext}",
   expect: {
+    // The debug server answers a cold page's burst of requests one at a time,
+    // and four workers share the machine: a first load after a reload has
+    // taken nearly 6 s. The suite checks results, not latency.
+    timeout: 10_000,
     toHaveScreenshot: {
       pathTemplate: "{testDir}/__screenshots__/{testFileName}/{arg}{ext}",
     },

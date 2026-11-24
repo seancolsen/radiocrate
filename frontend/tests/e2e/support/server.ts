@@ -19,6 +19,8 @@ const READY_TIMEOUT_MS = 20_000;
 
 export interface Server {
   baseURL: string;
+  /** The collection of audio files the server serves. */
+  collection: string;
   /** Everything the server has logged so far. */
   log(): string;
   /** Stops the server and waits for it to exit. */
@@ -31,6 +33,9 @@ export interface ServerOptions {
   /** The database to start from: the template's (the default), or `null` for
    * none, so the server migrates a new, empty library. */
   template?: string | null;
+  /** The collection to serve: the suite's shared copy (the default), or a
+   * directory of this test's own, for a test that adds or deletes files. */
+  collection?: string;
 }
 
 /** A port nothing is listening on, from the OS. Another process could take it
@@ -47,6 +52,16 @@ function freePort(): Promise<number> {
   });
 }
 
+/** Copies the suite's collection to `dest`, mtimes and all, so the template's
+ * database still matches every file in it: a rescan of the copy finds nothing
+ * changed until the test changes something. */
+export function copyCollection(dest: string): void {
+  fs.cpSync(COLLECTION_DIR, dest, {
+    recursive: true,
+    preserveTimestamps: true,
+  });
+}
+
 export async function startServer(options: ServerOptions): Promise<Server> {
   const template =
     options.template === undefined
@@ -58,7 +73,11 @@ export async function startServer(options: ServerOptions): Promise<Server> {
   }
   for (let attempt = 1; ; attempt++) {
     try {
-      return await spawnServer(options.dbDir, await freePort());
+      return await spawnServer(
+        options.dbDir,
+        options.collection ?? COLLECTION_DIR,
+        await freePort(),
+      );
     } catch (error) {
       if (attempt >= 3 || !String(error).includes("Address already in use")) {
         throw error;
@@ -67,14 +86,18 @@ export async function startServer(options: ServerOptions): Promise<Server> {
   }
 }
 
-async function spawnServer(dbDir: string, port: number): Promise<Server> {
+async function spawnServer(
+  dbDir: string,
+  collection: string,
+  port: number,
+): Promise<Server> {
   const child = spawn(
     SERVER_BIN,
     [
       "--color",
       "never",
       "serve",
-      COLLECTION_DIR,
+      collection,
       "--db-dir",
       dbDir,
       "--no-scan",
@@ -95,6 +118,7 @@ async function spawnServer(dbDir: string, port: number): Promise<Server> {
   await waitUntilListening(child, () => output);
   return {
     baseURL: `http://127.0.0.1:${port}`,
+    collection,
     log: () => output,
     stop: () => stop(child),
   };

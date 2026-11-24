@@ -9,7 +9,8 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { Api, Db } from "./support/api";
 import { App } from "./support/app";
 import { E2E_NOW, FRONTEND, RUN_DIR } from "./support/paths";
-import { startServer, type Server } from "./support/server";
+import { abortedByUnload } from "./support/unload";
+import { copyCollection, startServer, type Server } from "./support/server";
 
 export { expect };
 
@@ -22,6 +23,10 @@ interface Fixtures {
   /** Which database the server starts on: the sample library's template (the
    * default), or `"empty"` for a new library with nothing scanned. */
   library: "sample" | "empty";
+  /** Whether the server serves a copy of the audio files of this test's own
+   * (`server.collection`), which the test may add to and delete from before a
+   * rescan, instead of the suite's shared copy, which no test may change. */
+  privateCollection: boolean;
   /** Errors the guards let through: page errors and `console.error` text,
    * `/api/` 5xx responses (matched against the URL) and server panics.
    * Set with `test.use({ allowedErrors: [/…/] })` in a test that expects
@@ -52,20 +57,27 @@ function slug(text: string): string {
 
 export const test = base.extend<Fixtures>({
   library: ["sample", { option: true }],
+  privateCollection: [false, { option: true }],
   allowedErrors: [[], { option: true }],
 
   server: [
-    async ({ library, allowedErrors }, use, testInfo) => {
+    async ({ library, privateCollection, allowedErrors }, use, testInfo) => {
       const runId = process.env.E2E_RUN_ID ?? String(process.pid);
-      const dbDir = path.join(
+      const runDir = path.join(
         RUN_DIR,
         runId,
         `${testInfo.workerIndex}-${slug(testInfo.titlePath.slice(1).join(" "))}`,
       );
-      fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.rmSync(runDir, { recursive: true, force: true });
+      let collection: string | undefined;
+      if (privateCollection) {
+        collection = path.join(runDir, "collection");
+        copyCollection(collection);
+      }
       const server = await startServer({
-        dbDir,
+        dbDir: path.join(runDir, "db"),
         template: library === "empty" ? null : undefined,
+        collection,
       });
       try {
         await use(server);
@@ -80,7 +92,7 @@ export const test = base.extend<Fixtures>({
           contentType: "text/plain",
         });
       } else {
-        fs.rmSync(dbDir, { recursive: true, force: true });
+        fs.rmSync(runDir, { recursive: true, force: true });
       }
       // Guard: a panic anywhere in the server fails the test, even one the
       // page never noticed.
@@ -108,11 +120,13 @@ export const test = base.extend<Fixtures>({
     const errors: string[] = [];
     page.on("pageerror", (error) => {
       const text = `page error: ${error.message}`;
+      if (abortedByUnload(page, text)) return;
       if (!matches(text, allowedErrors)) errors.push(text);
     });
     page.on("console", (message) => {
       if (message.type() !== "error") return;
       const text = `console.error: ${message.text()}`;
+      if (abortedByUnload(page, text)) return;
       if (!matches(text, allowedErrors)) errors.push(text);
     });
     page.on("response", (response) => {

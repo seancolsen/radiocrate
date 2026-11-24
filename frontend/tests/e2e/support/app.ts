@@ -12,6 +12,7 @@ import {
   type Page,
   type Response,
 } from "@playwright/test";
+import { duringUnload } from "./unload";
 import type { AppStoreFacade } from "../../../src/dev/seed";
 
 declare global {
@@ -36,11 +37,13 @@ export class App {
   /** Reloads the page, as the user would, and waits for the app again. Tabs
    * and layout come back from `localStorage`; everything else from the server.
    *
-   * Waits for the app to settle first: a reload aborts any query still
-   * running, which the app logs as an error and the guards would fail on. */
+   * Waits for the app to settle first, so that what the test did has landed.
+   * Anything still in flight that the reload aborts (the lineage analysis's
+   * module, say) is logged by the app as an error, which the guards let
+   * through while the reload is under way (`support/unload.ts`). */
   async reload(): Promise<void> {
     await this.settled();
-    await this.page.reload();
+    await duringUnload(this.page, () => this.page.reload());
     await this.ready();
   }
 
