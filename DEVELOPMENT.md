@@ -84,6 +84,42 @@ the scripts, run the install yourself first. Screenshots
 are only reproducible in the same (container) environment CI uses — font/GPU
 drift on another machine produces spurious diffs.
 
+## End-to-end tests (production frontend + real server)
+
+`frontend/tests/e2e/` runs the production frontend build against the real
+`radiocrate` server and a real DuckDB file, one server per test on its own copy
+of a template database. The design and its reasoning are in
+[`specs/2026-11-e2e-tests/spec.md`](specs/2026-11-e2e-tests/spec.md).
+
+```sh
+cargo xtask e2e-build      # the debug radiocrate binary the suite serves with
+cd frontend
+bun run test:e2e           # the whole suite
+bun run test:e2e -- record.spec.ts            # one file
+E2E_LOOK=1 bun run test:e2e -- -g "retitle"   # save a PNG at each look() step
+bun run test:e2e:update -- record.spec.ts     # rewrite that file's baselines
+```
+
+What a run does before the first test (`tests/e2e/support/globalSetup.ts`):
+
+- **Refuses a stale binary.** If anything under the backend's sources is newer
+  than `target/debug/radiocrate`, it stops and says to run
+  `cargo xtask e2e-build`. It never runs cargo itself. The build reuses the
+  dev-profile DuckDB that `cargo test -p backend` compiles, so after a backend
+  change it costs our crates plus a link (about 45 s).
+- **Rebuilds `frontend/dist`** when the frontend's sources are newer than it.
+  The debug binary reads `dist/` from disk, so no recompile is needed.
+- **Rebuilds the template database** in `target/e2e/template/` when
+  `collection.yaml`, the generator, the migrations or the scanner change (a
+  hash of them is kept in `target/e2e/template.key`). It's the realistic
+  sample library, generated as if it were 2026-01-15 12:00 UTC, with the
+  server's clock pinned there too (`--fixed-now`, a hidden flag), so relative
+  times and time-relative filters read the same on every run.
+- **Holds the pixel budget:** at most 12 screenshot baselines in the suite.
+
+A failed test keeps its database under `target/e2e/run/`, plus a screenshot, a
+trace and the server's log under `frontend/test-results/e2e/`.
+
 ## Kitchen sink: tuning the colors (production frontend)
 
 The **kitchen sink** is a dev-only page that puts every piece of UI that carries

@@ -274,6 +274,17 @@ function roundRectPath(
   ctx.closePath();
 }
 
+/** The grid drawing on each canvas, for the E2E facade (`dev/seed.ts`), which
+ * has a canvas from the page and needs its rows' geometry. */
+const gridsByCanvas = new WeakMap<HTMLCanvasElement, CanvasGrid>();
+
+/** The live grid drawing on `canvas`, if there is one. */
+export function gridOfCanvas(
+  canvas: HTMLCanvasElement,
+): CanvasGrid | undefined {
+  return gridsByCanvas.get(canvas);
+}
+
 export class CanvasGrid {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -437,6 +448,7 @@ export class CanvasGrid {
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
     this.theme = this.readTheme();
+    gridsByCanvas.set(canvas, this);
 
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -474,6 +486,7 @@ export class CanvasGrid {
   destroy(): void {
     this.destroyed = true;
     const c = this.canvas;
+    if (gridsByCanvas.get(c) === this) gridsByCanvas.delete(c);
     c.removeEventListener("wheel", this.onWheel);
     c.removeEventListener("pointerdown", this.onPointerDown);
     c.removeEventListener("pointermove", this.onPointerMove);
@@ -747,6 +760,28 @@ export class CanvasGrid {
     return {
       x: rect.left + TEXT_PAD_X,
       y: rect.top + Math.max(0, Math.min(this.vh, bottom)),
+    };
+  }
+
+  /** Where row `index` is on screen, in viewport coordinates, the part the
+   * reserved top band covers left out. Call {@link revealRow} first, so the
+   * row is on screen. `undefined` when there's no such row, or none of it
+   * shows. For the E2E suite, which clicks rows where the user would. */
+  rowBox(
+    index: number,
+  ): { x: number; y: number; width: number; height: number } | undefined {
+    const layout = this.layout;
+    const count = this.result?.rowCount ?? 0;
+    if (!layout || index < 0 || index >= count) return undefined;
+    const rect = this.canvas.getBoundingClientRect();
+    const top = Math.max(this.topInset, index * layout.rowH - this.viewTop);
+    const bottom = Math.min(this.vh, (index + 1) * layout.rowH - this.viewTop);
+    if (bottom <= top) return undefined;
+    return {
+      x: rect.left,
+      y: rect.top + top,
+      width: rect.width,
+      height: bottom - top,
     };
   }
 

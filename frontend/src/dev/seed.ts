@@ -13,6 +13,9 @@ import {
   type QueryTab,
 } from "../stores/app";
 import type { Stores } from "../stores/createStores";
+import { exportCellText } from "../query/exportCsv";
+import { gridOfCanvas } from "../grid/canvasGrid";
+import type { QueryResult } from "../query/result";
 
 // Prod-safe seeding seam. Reads URL params on
 // startup and applies them to the app store, so Playwright (and manual dev)
@@ -66,12 +69,41 @@ export interface AppStoreFacade {
   rowSelection: (tabId: string) => ReadonlySet<number>;
   queryTab: (tabId: string) => QueryTab | undefined;
   recordSidebarWidth: () => number;
+  /** The active tab's id, or `null` with no tab open. */
+  activeTabId: () => string | null;
+  /** How many rows a tab's results hold, or `null` before its first result
+   * lands. */
+  rowCount: (tabId: string) => number | null;
+  /** A tab's results as the grid shows them, as text: one line per row (all
+   * of them, or the first `limit`), its visible columns' display text
+   * separated by tabs, a list cell's pills joined by ", ". The grid is a
+   * canvas, so this is what an E2E test reads its rows through. `null` before
+   * the first result lands. */
+  gridText: (tabId: string, limit?: number) => string | null;
+  /** The first display row of a tab's results with a visible cell whose
+   * display text is exactly `text`, or `null` when none has one. */
+  findRow: (tabId: string, text: string) => number | null;
+  /** Scrolls the grid drawing on `canvas` until display row `row` shows, and
+   * returns where it is, in viewport coordinates; `null` when there's no such
+   * row. How a test clicks a row of the canvas where the user would. */
+  revealRow: (
+    canvas: HTMLCanvasElement,
+    row: number,
+  ) => { x: number; y: number; width: number; height: number } | null;
   setResults: AppStoreBundle["actions"]["setResults"];
   setResultRow: AppStoreBundle["actions"]["setResultRow"];
   clickRow: AppStoreBundle["actions"]["clickRow"];
 }
 
+/** One display row's visible cells, as the grid shows them. */
+function rowText(result: QueryResult, row: number): string[] {
+  return result.visible.map((column) =>
+    exportCellText(result, row, column, false),
+  );
+}
+
 function createAppStoreFacade(app: AppStoreBundle): AppStoreFacade {
+  const resultOf = (tabId: string) => app.store.getState().pages[tabId]?.result;
   return {
     get state() {
       return app.store.getState();
@@ -79,6 +111,30 @@ function createAppStoreFacade(app: AppStoreBundle): AppStoreFacade {
     rowSelection: (tabId) => selectRowSelection(app.store.getState(), tabId),
     queryTab: (tabId) => selectQueryTab(app.store.getState(), tabId),
     recordSidebarWidth: () => app.store.getState().recordSidebarWidth,
+    activeTabId: () => app.store.getState().activeTabId,
+    rowCount: (tabId) => resultOf(tabId)?.rowCount ?? null,
+    gridText: (tabId, limit) => {
+      const result = resultOf(tabId);
+      if (!result) return null;
+      const rows = Math.min(result.rowCount, limit ?? Infinity);
+      return Array.from({ length: rows }, (_, row) => rowText(result, row))
+        .map((cells) => cells.join("\t"))
+        .join("\n");
+    },
+    findRow: (tabId, text) => {
+      const result = resultOf(tabId);
+      if (!result) return null;
+      for (let row = 0; row < result.rowCount; row++) {
+        if (rowText(result, row).includes(text)) return row;
+      }
+      return null;
+    },
+    revealRow: (canvas, row) => {
+      const grid = gridOfCanvas(canvas);
+      if (!grid) return null;
+      grid.revealRow(row);
+      return grid.rowBox(row) ?? null;
+    },
     setResults: app.actions.setResults,
     setResultRow: app.actions.setResultRow,
     clickRow: app.actions.clickRow,

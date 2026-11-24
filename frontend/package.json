@@ -15,7 +15,9 @@
     "format:check": "prettier --check .",
     "test:unit": "vitest run",
     "test:visual": "playwright install chromium && playwright test",
-    "test:visual:update": "playwright install chromium && playwright test --update-snapshots"
+    "test:visual:update": "playwright install chromium && playwright test --update-snapshots",
+    "test:e2e": "playwright install chromium && playwright test -c playwright.e2e.config.ts",
+    "test:e2e:update": "playwright install chromium && playwright test -c playwright.e2e.config.ts --update-snapshots=changed"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",

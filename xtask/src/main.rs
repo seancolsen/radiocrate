@@ -10,6 +10,7 @@ fn usage() {
          Commands:\n  \
            build-release      Build the frontend with Bun/Vite and the production binary\n  \
            build-release-pi   Cross-compile the production binary for the Raspberry Pi 4 (armv7)\n  \
+           e2e-build          Build the debug `radiocrate` binary the E2E suite runs\n  \
            vendor-querydown   Build the pinned Querydown's JS packages into frontend/vendor/\n  \
            clean-web          Remove the frontend/dist directory\n  \
            icons              Regenerate the PWA icon set from branding/logo.svg\n  \
@@ -342,6 +343,28 @@ fn build_release_pi() -> Result<(), String> {
     Ok(())
 }
 
+/// Builds the binary the end-to-end suite serves the app with
+/// (`frontend/tests/e2e`): `radiocrate` alone, in the dev profile.
+///
+/// Never `--release` and never `--workspace`. The dev profile shares its
+/// `libduckdb-sys` with `cargo test -p backend`, so after a change to our own
+/// code this costs a compile of our crates and a link, not a `DuckDB` rebuild.
+/// A debug build also reads `frontend/dist` from disk at run time (rust-embed's
+/// debug behavior), so the suite picks up a fresh frontend build without
+/// recompiling. See `specs/2026-11-e2e-tests/spec.md` §4.5.
+fn e2e_build() -> Result<(), String> {
+    let root = workspace_root();
+    println!("==> cargo build -p radiocrate");
+    run(Command::new("cargo")
+        .args(["build", "-p", "radiocrate"])
+        .current_dir(&root))?;
+    println!(
+        "\nBuilt: {}",
+        root.join("target/debug/radiocrate").display()
+    );
+    Ok(())
+}
+
 fn clean_web() -> Result<(), String> {
     let dist = workspace_root().join("frontend/dist");
     if dist.exists() {
@@ -362,6 +385,7 @@ fn main() -> ExitCode {
         "build-release" => build_release(),
         "build-release-pi" => build_release_pi(),
         "clean-web" => clean_web(),
+        "e2e-build" => e2e_build(),
         "vendor-querydown" => build_querydown(),
         "icons" => icons::generate(&workspace_root()),
         "gen-api" => gen_api::generate(&workspace_root()),

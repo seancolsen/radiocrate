@@ -564,7 +564,7 @@ export class AudioEngine {
   /** The last status entry's wall-clock time and track position, so the next
    * can say how far each moved in between. */
   private lastStatus: { wall: number; position: number } | undefined;
-  /** When each player last received data, in epoch milliseconds: the time
+  /** When each player last received data, in `performance.now()` time: the time
    * of its last `progress` event, or of its load if none has fired since.
    * Only kept for the log. */
   private readonly lastData = new Map<HTMLAudioElement, number>();
@@ -889,7 +889,7 @@ export class AudioEngine {
   private fetchStream(el: HTMLAudioElement, url: string): void {
     this.unbounded.delete(el); // until the new stream's metadata says
     // A fresh download: nothing has arrived yet, and any stall is over.
-    this.lastData.set(el, Date.now());
+    this.lastData.set(el, performance.now());
     this.stalled.delete(el);
     el.src = url;
     el.load();
@@ -1506,7 +1506,7 @@ export class AudioEngine {
   /** Notes that `el` has just received data, and, if it had been logged as
    * stalled, that it's receiving data again. */
   private noteData(el: HTMLAudioElement): void {
-    const now = Date.now();
+    const now = performance.now();
     const since = this.lastData.get(el);
     this.lastData.set(el, now);
     if (!this.stalled.delete(el) || since === undefined) return;
@@ -1519,7 +1519,7 @@ export class AudioEngine {
    * nothing arriving, once per stall. Run on the status timer. */
   private checkStalls(): void {
     if (!this.logger?.enabled) return;
-    const now = Date.now();
+    const now = performance.now();
     for (const el of this.elements) {
       if (el.networkState !== NETWORK_LOADING || this.stalled.has(el)) continue;
       const since = this.lastData.get(el);
@@ -1612,7 +1612,7 @@ export class AudioEngine {
     const lastData = this.lastData.get(el);
     if (el.networkState === NETWORK_LOADING && lastData !== undefined) {
       parts.push(
-        `last data ${Math.round((Date.now() - lastData) / 1000)} s ago`,
+        `last data ${Math.round((performance.now() - lastData) / 1000)} s ago`,
       );
     }
     const decoded = (el as HTMLAudioElement & DecodedByteCount)

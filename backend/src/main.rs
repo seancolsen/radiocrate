@@ -1,3 +1,4 @@
+use backend::clock::ClockArgs;
 use backend::duckdb_server::DuckdbServerArgs;
 use backend::log::LogArgs;
 use backend::{db, scanner, server};
@@ -39,6 +40,9 @@ struct CollectionArgs {
     /// `.radiocrate` in the collection root)
     #[arg(long)]
     db_dir: Option<PathBuf>,
+
+    #[command(flatten)]
+    clock: ClockArgs,
 }
 
 #[derive(Args)]
@@ -87,7 +91,7 @@ fn open_collection(
         .db_dir
         .clone()
         .unwrap_or_else(|| db::default_db_dir(collection_path));
-    let conn = db::get_db(&db_dir)?;
+    let conn = db::get_db(&db_dir, &args.clock)?;
     Ok((collection_path, conn))
 }
 

@@ -28,8 +28,15 @@ The result is deliberately *not* committed. It is full of freshly minted UUIDs
 and scan timestamps, so no two runs produce the same bytes — and play times are
 recorded in the definition relative to *now*, which makes regenerating the
 database the very thing that keeps the listening history looking current.
+
+The end-to-end tests build their template database with this script too, but
+hold it still: `--now` pins the instant every "days ago" counts back from (and
+the scanner's clock with it), `--collection` and `--db-dir` point it at the
+tests' own copy of the files, and `--server-bin` scans with an already-built
+binary instead of `cargo run`. See `specs/2026-11-e2e-tests/spec.md` §3.
 """
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -47,11 +54,12 @@ from layout import relative_path
 # every path handed to it has to survive leaving this directory.
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFINITION = SCRIPT_DIR / "collection.yaml"
-COLLECTION_DIR = SCRIPT_DIR.parent / "collection"
+DEFAULT_COLLECTION_DIR = SCRIPT_DIR.parent / "collection"
 REPO_ROOT = SCRIPT_DIR.parents[2]
-# The backend's default database directory, and the file it always keeps there.
-DB_DIR = COLLECTION_DIR / ".radiocrate"
-DB_PATH = DB_DIR / "radiocrate.db"
+# The backend's default database directory within a collection.
+DB_DIR_NAME = ".radiocrate"
+# The file the backend always keeps in its database directory.
+DB_FILE_NAME = "radiocrate.db"
 
 # How long before its first play an album is taken to have been added. Without
 # this the scanner's `now()` would file every album as acquired seconds ago,
@@ -87,7 +95,7 @@ def album_acquired_at(album: dict, now: datetime) -> datetime:
     return now - timedelta(days=first_play) - ACQUIRED_BEFORE_FIRST_PLAY
 
 
-def backdate_files(definition: dict, now: datetime) -> None:
+def backdate_files(definition: dict, now: datetime, collection_dir: Path) -> None:
     """Set each file's mtime to when its album was acquired.
 
     Done before the scan, because the scanner reads mtime off the filesystem;
@@ -97,7 +105,7 @@ def backdate_files(definition: dict, now: datetime) -> None:
     for album in definition["albums"]:
         acquired = album_acquired_at(album, now).timestamp()
         for track in album["tracks"]:
-            path = COLLECTION_DIR / relative_path(definition["path_template"], album, track)
+            path = collection_dir / relative_path(definition["path_template"], album, track)
             if not path.exists():
                 missing.append(path)
                 continue
@@ -109,25 +117,29 @@ def backdate_files(definition: dict, now: datetime) -> None:
         sys.exit("Run generate_collection.py first.")
 
 
-def run_scanner() -> None:
+def run_scanner(
+    collection_dir: Path, db_dir: Path, server_bin: Path | None, fixed_now: datetime | None
+) -> None:
     """Scan the collection with the backend's own scanner.
 
     Built and run through cargo rather than hunted for under target/, so that
     the build profile and the target directory stay cargo's business. The build
     output is left visible: the first run compiles the backend, which is not
     quick, and silence there looks like a hang.
+
+    `server_bin` names an already-built binary to scan with instead (either
+    `radiocrate` or `radiocrate-server`; both take the same `scan` arguments).
+    `fixed_now` pins the scanner's database clock, so the timestamps it and the
+    migrations write agree with the rest of a pinned run.
     """
-    command = [
-        "cargo",
-        "run",
-        "-p",
-        "backend",
-        "--",
-        "scan",
-        str(COLLECTION_DIR),
-        "--db-dir",
-        str(DB_DIR),
-    ]
+    if server_bin is None:
+        command = ["cargo", "run", "-p", "backend", "--"]
+    else:
+        command = [str(server_bin)]
+    command += ["scan", str(collection_dir), "--db-dir", str(db_dir)]
+    if fixed_now is not None:
+        # The flag wants an instant; `fixed_now` is this machine's civil time.
+        command += ["--fixed-now", fixed_now.astimezone().isoformat()]
     print(f"$ {' '.join(command)}\n")
     result = subprocess.run(command, cwd=REPO_ROOT, check=False)
     if result.returncode != 0:
@@ -269,32 +281,66 @@ def summarize(conn: duckdb.DuckDBPyConnection, definition: dict) -> None:
         sys.exit("Error: " + "\n       ".join(mismatches))
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    parser.add_argument(
+        "--now",
+        type=datetime.fromisoformat,
+        metavar="'YYYY-MM-DD HH:MM:SS'",
+        help="The instant to generate as if it were, in this machine's local time "
+        "(default: the real time). Pins the scanner's database clock too.",
+    )
+    parser.add_argument(
+        "--collection",
+        type=lambda p: Path(p).resolve(),
+        default=DEFAULT_COLLECTION_DIR,
+        help="The collection of generated files to scan (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--db-dir",
+        type=lambda p: Path(p).resolve(),
+        help="The directory to build the database in, replacing any there "
+        f"(default: {DB_DIR_NAME}/ in the collection)",
+    )
+    parser.add_argument(
+        "--server-bin",
+        type=lambda p: Path(p).resolve(),
+        help="A built radiocrate binary to scan with (default: `cargo run -p backend`)",
+    )
+    return parser.parse_args()
+
+
 def generate_database() -> None:
+    args = parse_args()
+    collection_dir: Path = args.collection
+    db_dir: Path = args.db_dir or collection_dir / DB_DIR_NAME
+    db_path = db_dir / DB_FILE_NAME
+
     definition = load_definition()
-    if not COLLECTION_DIR.exists():
-        sys.exit(f"Error: no collection at {COLLECTION_DIR}. Run generate_collection.py first.")
+    if not collection_dir.exists():
+        sys.exit(f"Error: no collection at {collection_dir}. Run generate_collection.py first.")
 
     # One instant anchors the whole run, so that "days ago" means the same thing
     # for the first track imported and the last.
-    now = datetime.now().replace(microsecond=0)
+    now = (args.now or datetime.now()).replace(microsecond=0)
 
     # A stale database would leave the scanner reconciling against files it
     # already knows, and the import inserting a second copy of every play.
-    if DB_DIR.exists():
-        print(f"Removing existing database directory at {DB_DIR}")
-        shutil.rmtree(DB_DIR)
+    if db_dir.exists():
+        print(f"Removing existing database directory at {db_dir}")
+        shutil.rmtree(db_dir)
 
-    backdate_files(definition, now)
-    run_scanner()
+    backdate_files(definition, now, collection_dir)
+    run_scanner(collection_dir, db_dir, args.server_bin, args.now and now)
 
-    print(f"\nImporting ratings and play logs into {DB_PATH}")
-    with duckdb.connect(str(DB_PATH)) as conn:
+    print(f"\nImporting ratings and play logs into {db_path}")
+    with duckdb.connect(str(db_path)) as conn:
         stage_user_data(conn, definition, now)
         check_every_track_was_scanned(conn)
         import_user_data(conn)
         summarize(conn, definition)
 
-    print(f"\n✓ {DB_PATH} is ready")
+    print(f"\n✓ {db_path} is ready")
 
 
 if __name__ == "__main__":

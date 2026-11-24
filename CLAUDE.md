@@ -34,6 +34,18 @@ checkout under `target/querydown-src/`. It never touches `duckdb-sys`, and it
 finishes quickly. The ban on `cargo build` above is about the DuckDB rebuild,
 not about WASM builds like this one.
 
+### Building the E2E server binary (do run this yourself)
+
+`cargo xtask e2e-build` is allowed under the same condition as `cargo check`:
+when you haven't changed the top-level `Cargo.toml` or `backend/Cargo.toml`.
+It builds `radiocrate` alone in the dev profile (never `--release`, never
+`--workspace`), reusing the `libduckdb-sys` that `cargo test -p backend`
+already compiled, so it costs our own crates plus a link. Run it after a
+backend change, before `bun run test:e2e`; the suite refuses to run against a
+binary older than the backend sources. After a change to either of those
+`Cargo.toml` files, I build, as for any other cargo command. The ban on
+`cargo build` above still holds for everything else.
+
 ### The production frontend (`frontend/`) is pure JS — cargo rules don't apply
 
 The production frontend in `frontend/` is a **React SPA with no `Cargo.toml`**,
@@ -46,6 +58,9 @@ apply to it — run its checks freely from `frontend/`:
 - `bun run test:unit` (Vitest)
 - `bun run build` (Vite → `frontend/dist`)
 - `bun run test:visual` (Playwright component screenshots, light + dark)
+- `bun run test:e2e` (Playwright against the real server; needs a current
+  `cargo xtask e2e-build`, see above). `bun run test:e2e -- record.spec.ts`
+  runs one file
 
 ### Writing visual snapshot tests
 
@@ -73,6 +88,57 @@ instead — don't force it into a snapshot.
 Behavioral (non-screenshot) Playwright specs still drive the assembled app
 through the URL-param seam in `src/dev/seed.ts` (`?expose=1` puts a store
 facade on `window.__appStore`).
+
+### Writing E2E tests
+
+`frontend/tests/e2e/` drives the production build, served by a debug
+`radiocrate` binary, on a fresh copy of a pinned sample library: one server per
+test. The design is `specs/2026-11-e2e-tests/spec.md`. Write one only when
+**the backend's answer is the thing under test**:
+
+| The question | Where it's tested |
+| --- | --- |
+| Does this component look right in this state? | Harness story + snapshot |
+| Do these components behave together, given canned data? | `tests/visual` behavioral spec over the seed seam |
+| Does a pure function or a store action do the right thing? | Vitest |
+| Does the server do the right thing for this request? | `cargo test -p backend` |
+| Does the user get the right result from the real system? | **E2E** |
+
+Keep the suite small: tens of journeys, not hundreds of cases.
+
+- **Import `test`, `expect` and `look` from `./fixtures`.** Every test gets
+  `app` (the page object, `support/app.ts`, loaded and ready), `api.rpc` and
+  `db.query`. The library is the realistic sample (63 tracks, every one rated
+  and played); `test.use({ library: "empty" })` gives a new, empty one.
+- **Time is frozen** at `E2E_NOW` (2026-01-15 12:00 UTC) in the fixture, the
+  browser's `Date` and the server's `now()`. Measure durations with
+  `performance.now()`, never by subtracting `Date.now()`s. Two plays of one
+  track need `page.clock.setFixedTime` stepped between them.
+- **Assert behavior first**, with web-first `expect`s on roles and names. For
+  "this region shows the right data", use text snapshots:
+  `toMatchAriaSnapshot()` for DOM, `expect(await app.grid.text()).toMatchSnapshot("x.txt")`
+  for the canvas grid (read through `gridText` on the `?expose=1` facade).
+  Assert persistence by `app.reload()` and reading the UI again; `db.query`
+  only for what the UI can't show.
+- **Pixel snapshots are a budget:** about one per spec file, light only, of a
+  region rather than the page. `globalSetup` fails the run past
+  `PIXEL_BUDGET` (12). Needing a 13th means replacing one or raising the
+  constant in the same change.
+- **Look without asserting:** put `await look(page, "step")` at each step, then
+  run `E2E_LOOK=1 bun run test:e2e -- <file> -g "<title>"` and read the PNGs in
+  `test-results/look/<test>/`. A failure keeps a screenshot, a trace and the
+  server's log.
+- **Arrange through the API, act through the UI.** A precondition (a saved
+  query, a playlist, an unrated track) is an `api.rpc` call; each creation
+  flow is tested through the UI once, in its own spec.
+- **No `waitForTimeout`.** Wait for what the user would see, `expect.poll`
+  the facade, or wait for the `/api/rpc` response (autosave idles 5 s first).
+- **Never hard-code an id;** find records by what the user sees.
+- **Guards fail a test** on a page error, a `console.error`, an `/api/` 5xx
+  or a server panic. A test that expects one opts out with
+  `test.use({ allowedErrors: [/…/] })`.
+- `bun run test:e2e:update -- <file>` rewrites that file's baselines; scope it
+  to the file you changed.
 
 ### Keeping the kitchen sink current
 

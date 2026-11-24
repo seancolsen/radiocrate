@@ -33,7 +33,8 @@ export class IdleQueue {
   private readonly sending = new Set<string>();
   /** Requests in flight anywhere in the app ({@link track}). */
   private inFlight = 0;
-  /** When the app was last seen doing something (`Date.now()` time). */
+  /** When the app was last seen doing something (`performance.now()` time:
+   * a duration's clock, which a corrected or frozen wall clock can't stop). */
   private lastActivity = -Infinity;
   /** The pending idle check, if one is set. */
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -74,7 +75,7 @@ export class IdleQueue {
 
   /** Notes a moment of activity: the idle period starts again from now. */
   touch(): void {
-    this.lastActivity = Date.now();
+    this.lastActivity = performance.now();
     this.arm();
   }
 
@@ -104,7 +105,10 @@ export class IdleQueue {
   private arm(): void {
     if (this.timer !== undefined || this.inFlight > 0) return;
     if (!this.anySendable()) return;
-    const wait = Math.max(0, this.lastActivity + this.idleMs - Date.now());
+    const wait = Math.max(
+      0,
+      this.lastActivity + this.idleMs - performance.now(),
+    );
     this.timer = setTimeout(() => {
       this.timer = undefined;
       this.check();
@@ -122,7 +126,7 @@ export class IdleQueue {
   private check(): void {
     // A request in flight re-arms the check as it settles (see `track`).
     if (this.inFlight > 0) return;
-    if (Date.now() - this.lastActivity < this.idleMs) {
+    if (performance.now() - this.lastActivity < this.idleMs) {
       this.arm();
       return;
     }

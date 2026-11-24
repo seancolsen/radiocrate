@@ -1,6 +1,6 @@
 # End-to-end tests
 
-**Status:** decided, nothing built · **Date:** 2026-11-23
+**Status:** phases 1 and 2 built (2026-11-24); phase 3 not started · **Date:** 2026-11-23
 
 RadioCrate has unit tests (Vitest, `cargo test -p backend`), component
 snapshots (the harness), and behavioral Playwright specs that drive the
@@ -577,13 +577,28 @@ Checked in the dev container on 2026-11-23:
   650 ms while `performance.now()` advanced and an interval fired.
 - `bun run build`: 20 s.
 
+Checked while building phases 1 and 2 (2026-11-23/24):
+
+- The macro pins `now()`, `current_timestamp`, `get_current_timestamp()`,
+  `today()`, `current_date` and a column's `DEFAULT now()` through the Rust
+  crate's bundled DuckDB too (`clock::tests`).
+- A debug `radiocrate` serves `frontend/dist` from disk: a frontend rebuild
+  reaches the next test with no recompile.
+- `cargo xtask e2e-build` after a backend change: 46 s, no DuckDB rebuild.
+- Per test: copying the template, spawning the server and answering its first
+  query took 65–117 ms over five samples, not the ~0.3 s estimated.
+- Building the template: about 5 s. Row order in the unsorted Tracks grid held
+  across template rebuilds, so §3.4 hasn't bitten yet.
+- Autosave fires under the frozen `Date` now that `IdleQueue` measures with
+  `performance.now()` (`query.spec.ts`).
+- The whole suite (12 tests, 4 workers) runs in about 50 s.
+
+Ports are taken from the OS rather than `4300 + parallelIndex`, and the run
+directory is keyed by the runner's pid, so two suites can run at once (setup
+holds a lock on `target/e2e/`).
+
 Not checked:
 
-- That the macro behaves the same through the Rust `duckdb` crate's bundled
-  build as in the CLI.
-- That a debug `radiocrate` serves `frontend/dist` from disk. This is
-  rust-embed's documented default and I didn't run it.
-- That `IdleQueue` stalls under a frozen clock. Read from the code, not run.
 - Chromium playing the silent FLACs headlessly through the real stream
   endpoint. The existing playback specs use a stubbed backend.
 - Memory use of four servers and four browsers at once.

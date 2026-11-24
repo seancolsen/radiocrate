@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, info};
 
+use crate::clock::ClockArgs;
+
 /// Re-exported so a binary can name the type `get_db` hands back without taking
 /// its own dependency on `duckdb`.
 pub use duckdb::Connection;
@@ -142,7 +144,10 @@ fn run_migration(conn: &mut Connection, migration: &Migration) -> Result<(), duc
 
 /// Opens the database in `db_dir`, migrating it if needed. The directory is
 /// created (with any missing parents) if it doesn't exist yet.
-pub fn get_db(db_dir: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
+///
+/// `clock` is applied first, before the migrations, so a pinned clock (see
+/// [`crate::clock`]) also stamps whatever they write.
+pub fn get_db(db_dir: &Path, clock: &ClockArgs) -> Result<Connection, Box<dyn std::error::Error>> {
     fs::create_dir_all(db_dir).map_err(|e| {
         format!(
             "couldn't create the database directory '{}': {e}",
@@ -151,6 +156,7 @@ pub fn get_db(db_dir: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
     })?;
     let db_path = db_dir.join(DB_FILE_NAME);
     let mut conn = Connection::open(&db_path)?;
+    clock.apply(&conn)?;
     init_db_version_metadata(&conn)?;
     let current_version = get_current_version(&conn)?;
     debug!(path = %db_path.display(), version = current_version, "opened database");
@@ -208,7 +214,7 @@ mod tests {
         let dir = scratch_dir("wal");
         let wal_path = dir.join(format!("{DB_FILE_NAME}.wal"));
 
-        let conn = get_db(&dir).unwrap();
+        let conn = get_db(&dir, &ClockArgs::default()).unwrap();
         let wal_exists = wal_path.exists();
         drop(conn);
         fs::remove_dir_all(&dir).unwrap();
@@ -221,7 +227,7 @@ mod tests {
         let root = scratch_dir("create");
         let dir = root.join("nested").join(DB_DIR_NAME);
 
-        let conn = get_db(&dir).unwrap();
+        let conn = get_db(&dir, &ClockArgs::default()).unwrap();
         let db_exists = dir.join(DB_FILE_NAME).is_file();
         drop(conn);
         fs::remove_dir_all(&root).unwrap();

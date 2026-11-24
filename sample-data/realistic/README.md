@@ -82,6 +82,13 @@ the definition stores play times as *days before generation*, which makes
 re-running this the very thing that keeps the listening history looking current.
 Rebuild it whenever the history has drifted, or after a schema migration.
 
+Four options exist for the end-to-end tests, which build their own pinned copy
+(see `specs/2026-11-e2e-tests/spec.md`): `--now "2026-01-15 12:00:00"` generates
+as if it were that moment (and pins the scanner's database clock to it),
+`--collection` and `--db-dir` point it at another copy of the files and another
+database directory, and `--server-bin` scans with an already-built binary
+instead of `cargo run`.
+
 The import fails loudly rather than quietly under-filling the database: if a
 track in the definition doesn't match a scanned file, or the final counts don't
 match what the definition asked for, it says so and exits non-zero.

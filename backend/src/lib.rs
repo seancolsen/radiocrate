@@ -4,6 +4,7 @@
 pub use api_schema::DEV_BUILD_ID;
 
 pub mod changes;
+pub mod clock;
 pub mod db;
 pub mod dml;
 pub mod duckdb_server;
