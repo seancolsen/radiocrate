@@ -77,6 +77,7 @@ export default function RowActionsMenu(props: {
         <MenuItem
           icon={Icons.Delete}
           label="Remove from playlist"
+          command="playlist.remove_selected_tracks"
           onClick={props.onRemoveFromPlaylist}
         />
       )}

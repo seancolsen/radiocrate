@@ -606,7 +606,8 @@ for (const colorScheme of SCHEMES) {
   });
 
   // The same menu on a playlist's page, on a track alone: "Remove from
-  // playlist", then the track's "Artists" and "Album".
+  // playlist" (with its command's Delete shortcut), then the track's
+  // "Artists" and "Album".
   test(`result-row/playlist-context-menu - ${colorScheme}`, async ({
     page,
   }) => {
@@ -617,7 +618,7 @@ for (const colorScheme of SCHEMES) {
       "Rate track",
       "Queue track",
       "Add to playlist…",
-      "Remove from playlist",
+      "Remove from playlistDelete",
       "Artists",
       "Album",
       "Select multiple",
