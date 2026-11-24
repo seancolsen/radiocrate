@@ -19,6 +19,7 @@ import { useApp, useAppActions, useFormState } from "../../stores/react";
 import { isFieldHidden } from "../../query/fieldMetadata";
 import { hasQueryEditor } from "../../query/fieldQuery";
 import { fieldRef, type FormField } from "../../query/recordForm";
+import { LOCAL_TIME_CODEC } from "../../query/timestamps";
 
 // The form's context menus — one component for all of them, because only one is
 // ever open and the model already knows what it was raised on.
@@ -125,11 +126,18 @@ function menuEntries(
   }
 
   // A value the records disagree on is no one value to put on the clipboard.
+  // What's copied is what's shown: a stored timestamp in local time.
+  const held = isShared(value) ? (value ?? "") : "";
   const copy: Entry = {
     icon: Icons.Duplicate,
     label: "Copy",
     disabled: !isShared(value),
-    run: () => copyValue(isShared(value) ? (value ?? "") : ""),
+    run: () =>
+      copyValue(
+        field.kind === "primitive" && field.instant
+          ? LOCAL_TIME_CODEC.show(held)
+          : held,
+      ),
   };
 
   // A computed column's field is its expression: that's what there is to

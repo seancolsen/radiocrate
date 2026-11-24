@@ -33,7 +33,7 @@ import {
   defaultColumnMetadata,
   type ColumnMetadata,
 } from "./columns";
-import { displayText } from "./format";
+import { displayText, LOCAL_TIMESTAMP, type Formatter } from "./format";
 import type { ColSize } from "./fieldLayout";
 
 /** One output column of a query: what it is, and how to read it. Columns are
@@ -109,12 +109,17 @@ export class QueryResult {
     return stringifyArrowValue(this.value(row, column), this.types[column]);
   }
 
-  /** A scalar cell's display text, formatted **now**. */
+  /** A scalar cell's display text, formatted **now**. A timestamp column with
+   * no formatter of its own shows its cells in the viewer's local time; the
+   * stored UTC text is {@link QueryResult.keyText}'s. */
   text(row: number, column: ResultColumn): string {
+    const type = this.types[column.index];
     const raw = this.value(row, column.index);
     return displayText(
       column.meta,
-      raw == null ? null : stringifyArrowValue(raw, this.types[column.index]),
+      raw == null ? null : stringifyArrowValue(raw, type),
+      undefined,
+      fallbackFormatter(type),
     );
   }
 
@@ -122,8 +127,15 @@ export class QueryResult {
   pills(row: number, column: ResultColumn): readonly string[] {
     const raw = this.value(row, column.index);
     if (raw == null) return [];
+    const type = elementType(raw);
+    const fallback = fallbackFormatter(type);
     return Array.from(raw as Iterable<unknown>, (e) =>
-      displayText(column.meta, e == null ? null : stringifyArrowValue(e)),
+      displayText(
+        column.meta,
+        e == null ? null : stringifyArrowValue(e, type),
+        undefined,
+        fallback,
+      ),
     );
   }
 
@@ -132,7 +144,20 @@ export class QueryResult {
   rawPills(row: number, column: ResultColumn): readonly string[] {
     const raw = this.value(row, column.index);
     if (raw == null) return [];
-    return Array.from(raw as Iterable<unknown>, (e) => stringifyArrowValue(e));
+    const type = elementType(raw);
+    return Array.from(raw as Iterable<unknown>, (e) =>
+      stringifyArrowValue(e, type),
+    );
+  }
+
+  /** How `column`'s cells are shown, as {@link QueryResult.text} shows them:
+   * its metadata, with the formatter it falls back on filled in — for whoever
+   * shows the cells as plain strings, apart from this result. */
+  displayMeta(column: ResultColumn): ColumnMetadata {
+    const fallback = fallbackFormatter(this.types[column.index]);
+    return column.meta.formatter || !fallback
+      ? column.meta
+      : { ...column.meta, formatter: fallback };
   }
 
   /** The same rows in another order: display row `i` of the new result is row
@@ -314,4 +339,15 @@ export function buildResultFromStringRows(
     metas.push({ ...meta, hide: meta.hide || hiddenColumns.includes(c) });
   }
   return buildResultFromCells(new arrow.Table(vectors), metas);
+}
+
+/** The formatter a column of Arrow type `type` falls back on when its metadata
+ * names none: a stored timestamp shows in local time. */
+function fallbackFormatter(type: ArrowType | undefined): Formatter | undefined {
+  return type && arrow.DataType.isTimestamp(type) ? LOCAL_TIMESTAMP : undefined;
+}
+
+/** The element type of a list cell — a sub-vector, whose own `type` it is. */
+function elementType(list: unknown): ArrowType | undefined {
+  return list instanceof arrow.Vector ? (list.type as ArrowType) : undefined;
 }

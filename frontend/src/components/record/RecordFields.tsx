@@ -19,6 +19,7 @@ import ExpansionToggle from "./ExpansionToggle";
 import FieldLabel, { fieldAppearance, type RenameEnd } from "./FieldLabel";
 import FieldValue, {
   OneLineValue,
+  codecFor,
   ValueInput,
   VariedValue,
   type EditExit,
@@ -1647,6 +1648,7 @@ function DistinctValueRow(props: {
       numeric={field.kind === "primitive" && field.valueType === "number"}
       selectAll={false}
       autocomplete={autocomplete}
+      codec={codecFor(field)}
       onBeginEdit={beginEdit}
       onInput={(input) => model.editDistinct(input)}
       onCommit={commit}
@@ -1725,7 +1727,9 @@ function DistinctValueRow(props: {
           input
         ) : (
           <DistinctText
-            value={value}
+            value={
+              value === null ? null : (codecFor(field)?.show(value) ?? value)
+            }
             editable={!readOnly}
             onClick={beginEdit}
             onOverflow={setOverflowing}

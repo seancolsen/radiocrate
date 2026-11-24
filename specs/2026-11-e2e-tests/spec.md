@@ -1,6 +1,6 @@
 # End-to-end tests
 
-**Status:** phases 1–3 built (2026-11-24); phase 4 as needed · **Date:** 2026-11-23
+**Status:** phases 1–4 built (2026-11-24), except the reset endpoint, which the suite doesn't need yet · **Date:** 2026-11-23
 
 RadioCrate has unit tests (Vitest, `cargo test -p backend`), component
 snapshots (the harness), and behavioral Playwright specs that drive the
@@ -106,11 +106,12 @@ three things held still:
 - **The clock.** `generate_database.py` takes `--now "2026-01-15 12:00:00"`
   and uses it where it calls `datetime.now()` today. The default stays the real
   time, so the development database keeps looking freshly used.
-- **The time zone.** Timestamps in the database are zone-less civil times:
-  the generator writes its machine's local time, and the browser writes its
-  own (`nowTimestamp()` in `api/track.ts`). E2E runs the generator, the server
-  and the browser all in UTC.
-- **The ids.** See §3.4. This one can wait until it's shown to matter.
+- **The time zone.** Timestamps in the database are UTC civil time, whoever
+  writes them (`specs/2026-11-utc-timestamps/decision.md`). The generator
+  writes UTC whatever the machine's zone. E2E runs the server and the browser
+  in UTC by default; `timezone.spec.ts` and `playback.spec.ts` set them
+  apart (`test.use({ timezoneId, serverTimeZone })`).
+- **The ids.** See §3.4.
 
 A fixed instant, not "whenever the template was built", is what keeps absolute
 dates stable. If the anchor moved with each rebuild, every snapshot showing an
@@ -279,7 +280,7 @@ would get around that rule whenever the suite ran after a dependency change.
 
 | Clock | Read by | Effect on a test |
 | --- | --- | --- |
-| Generator's `datetime.now()` | Every play, `file.added`, file mtimes | Decides every timestamp in the fixture |
+| Generator's `utc_now()` | Every play, `file.added`, file mtimes | Decides every timestamp in the fixture |
 | Browser `Date` | `formatRelative`, the minute tickers, a new play's timestamp, `modified` stamps, a new query's default name | What "ago" counts from, and what new rows are stamped with |
 | DuckDB `now()` | Relative filters: Querydown compiles `added:<6m` to `… CAST(NOW() AS TIMESTAMP) - "file"."added" …` (*checked*). Also the scan's `file.added` and migration 0020's `created`/`modified` | Which rows a time-relative preset ("Not played recently", "Added recently") matches |
 
@@ -346,15 +347,20 @@ need it:
 The server's clock doesn't move with it. A test that needs both to move is
 rare enough to solve when it appears.
 
-### 5.5 A gap this leaves
+### 5.5 A gap this left, and what it found
 
-Running everything in UTC hides zone mistakes. The app stores browser-local
-civil time, while a relative filter compares it against the *server's* `now()`
-cast to a civil time. If the server and browser are in different zones, a
-filter such as `last_play:<1h` would be off by the difference. I didn't
-confirm how the bundled DuckDB resolves that cast, so treat it as a question
-to check, not a known bug. Once the suite is stable, one spec run under a
-non-UTC `timezoneId` would answer it.
+Running everything in UTC hid zone mistakes. The app stored browser-local
+civil time, while a relative filter compared it against the server's `now()`
+cast to a civil time. This was flagged here as a question. It turned out to be
+a real bug, which the user had also hit (`timestamp:<1h` needed `<6h` in
+UTC-5), and the reason was worse than a fixed offset: without ICU the cast is
+UTC, but DuckDB could load ICU mid-session from the shared extension cache and
+switch to the server's zone.
+
+It was fixed by storing every timestamp in UTC and keeping the database's
+clock in UTC: `specs/2026-11-utc-timestamps/decision.md`. `timezone.spec.ts`
+checks relative filters for four browser/server zone pairs, and
+`playback.spec.ts` checks that a browser in New York logs a play in UTC.
 
 ---
 
@@ -541,8 +547,11 @@ tests" once phase 2 lands, with the table from §2 and the rules from §6.
    - The Data structure page: hide a field and see the record editor follow.
    - The empty-library fixture and the first-run experience.
    - The private-collection fixture and a rescan.
-4. **Hardening, as needed.** Reproducible ids (§3.4), a non-UTC run (§5.5),
-   and the reset endpoint if the suite has outgrown a process per test.
+4. **Hardening, as needed.** Reproducible ids (§3.4, built), a non-UTC run (§5.5,
+   built: it found the time-zone bug), and the reset endpoint if the suite
+   has outgrown a process per test. It hasn't: with 25-odd tests a server
+   costs about 0.1 s of each, against several seconds of browser work, so
+   the endpoint stays unbuilt until the suite is in the hundreds (§4.1).
 
 Phases 1 and 2 are the commitment. Stop after 2 and judge whether the suite is
 catching things before spending on 3.

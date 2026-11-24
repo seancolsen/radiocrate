@@ -13,6 +13,7 @@ import {
   type Vector,
 } from "apache-arrow";
 import { postQuery } from "api-client";
+import { utcCivilText } from "../query/timestamps";
 
 /** Runs a SQL string against the query API and returns the decoded Arrow table.
  * The transport lives in the generated client (`postQuery`); Arrow decoding
@@ -146,8 +147,8 @@ export function isListLikeValue(v: unknown): boolean {
  * `format_cell` / Arrow's `ArrayFormatter` for the common types.
  *
  * `type` is the column's Arrow field type, when known — required to render
- * `Timestamp*` cells correctly (see {@link formatNaiveTimestamp}); every other
- * type falls through to the crude `String(value)` default (dates and decimals
+ * `Timestamp*` and `Date*` cells correctly (see {@link formatNaiveTimestamp});
+ * every other type falls through to the crude `String(value)` default (decimals
  * should still be verified against a real backend, per plan §3.4).
  *
  * A list cell — wherever one is shown as text rather than as pills: a record
@@ -170,10 +171,16 @@ export function stringifyArrowValue(value: unknown, type?: ArrowType): string {
   if (type && DataType.isTimestamp(type) && typeof value === "number") {
     return formatNaiveTimestamp(value);
   }
+  if (type && DataType.isDate(type) && typeof value === "number") {
+    return formatDate(value);
+  }
   return String(value);
 }
 
-/** Formats an Arrow `Timestamp*` cell as a naive `YYYY-MM-DD HH:MM:SS` string.
+/** Formats an Arrow `Timestamp*` cell as a naive `YYYY-MM-DD HH:MM:SS` string:
+ * the stored civil fields, which are UTC time (see
+ * specs/2026-11-utc-timestamps/decision.md) — this is the stored text, never a
+ * display of it.
  *
  * apache-arrow's `.get()` normalizes every `Timestamp*` unit (s/ms/us/ns) to
  * milliseconds since the epoch, so `ms` here is always milliseconds regardless
@@ -183,10 +190,12 @@ export function stringifyArrowValue(value: unknown, type?: ArrowType): string {
  * the UTC getters recovers exactly the civil fields DuckDB has — the string this
  * returns round-trips through a DuckDB text-to-timestamp cast unchanged. */
 function formatNaiveTimestamp(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-  );
+  return utcCivilText(ms);
+}
+
+/** Formats an Arrow `Date*` cell as `YYYY-MM-DD`. apache-arrow's `.get()` gives
+ * the date as epoch milliseconds at UTC midnight; a date is a calendar date,
+ * not an instant, so it's read in UTC and never shifted into a local zone. */
+function formatDate(ms: number): string {
+  return utcCivilText(ms).slice(0, 10);
 }

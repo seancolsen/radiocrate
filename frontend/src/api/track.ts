@@ -3,6 +3,7 @@
 
 import type { DmlOperation } from "api-client";
 import { isListLikeValue, runSql, stringifyArrowValue } from "./query";
+import { nowUtcText } from "../query/timestamps";
 
 /** What the now-playing bar shows for a track. */
 export interface TrackMetadata {
@@ -84,17 +85,12 @@ export async function fetchTrackRatingId(
   }
 }
 
-/** Current local wall-clock as `YYYY-MM-DD HH:MM:SS` — the literal form DuckDB
- * casts into the `play.timestamp` (`timestamp_s`) column. `timestamp_s` is
- * timezone-naive, so this must be the listener's local time, not UTC — a UTC
- * stamp would silently drift by the local offset. */
+/** The current moment as the literal DuckDB casts into the `play.timestamp`
+ * (`timestamp_s`) column: UTC civil time, `YYYY-MM-DD HH:MM:SS`, as every
+ * stored timestamp is (specs/2026-11-utc-timestamps/decision.md) — so
+ * `NOW()`-relative filters like `last_play:<1h` see it where it belongs. */
 function nowTimestamp(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  );
+  return nowUtcText();
 }
 
 /** The DML operation logging a completed play of `trackId`, timestamped now.

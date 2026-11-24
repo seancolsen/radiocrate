@@ -36,6 +36,9 @@ export interface ServerOptions {
   /** The collection to serve: the suite's shared copy (the default), or a
    * directory of this test's own, for a test that adds or deletes files. */
   collection?: string;
+  /** The server process's time zone (`TZ`): `E2E_TZ` unless a test is about
+   * a server and a browser in different zones. */
+  timeZone?: string;
 }
 
 /** A port nothing is listening on, from the OS. Another process could take it
@@ -76,6 +79,7 @@ export async function startServer(options: ServerOptions): Promise<Server> {
       return await spawnServer(
         options.dbDir,
         options.collection ?? COLLECTION_DIR,
+        options.timeZone ?? E2E_TZ,
         await freePort(),
       );
     } catch (error) {
@@ -89,6 +93,7 @@ export async function startServer(options: ServerOptions): Promise<Server> {
 async function spawnServer(
   dbDir: string,
   collection: string,
+  timeZone: string,
   port: number,
 ): Promise<Server> {
   const child = spawn(
@@ -107,7 +112,7 @@ async function spawnServer(
       E2E_NOW.toISOString(),
     ],
     {
-      env: { ...process.env, TZ: E2E_TZ },
+      env: { ...process.env, TZ: timeZone },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

@@ -10,8 +10,9 @@
 //!
 //! Quack lives in the `quack` extension, which the bundled build can't compile
 //! in (the crate has no feature for it), so it's installed from `DuckDB`'s
-//! extension repository on first use and loaded from the local cache after
-//! that. `DuckDB` publishes no extensions for 32-bit ARM, so this can't work in
+//! extension repository on first use and loaded from the library's own
+//! extension directory (`<db-dir>/extensions`, see `db::config`) after that.
+//! `DuckDB` publishes no extensions for 32-bit ARM, so this can't work in
 //! the Raspberry Pi build. That's why it's opt-in and fails loudly.
 
 use duckdb::{Connection, params};

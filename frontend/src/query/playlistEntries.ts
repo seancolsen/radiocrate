@@ -19,6 +19,7 @@ import type { DmlOperation, DmlRequest, JsonValue } from "api-client";
 import type { QueryResult } from "./result";
 import { APP_TABLES } from "./appTables";
 import { dmlTable } from "./schema";
+import { utcCivilText } from "./timestamps";
 
 /** One `playlist_track` record. */
 export interface PlaylistEntry {
@@ -243,16 +244,11 @@ export function rearrangeMoves(
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 /** Epoch seconds `epoch` as the text a `source` timestamp column takes through
- * `dml`: `YYYY-MM-DD HH:MM:SS`, which DuckDB casts into `timestamp_s`. Read
- * in UTC, because the backend stores a source's epoch timestamps as UTC civil
- * time (`make_timestamp`), and `source.list` reads them back the same way. */
+ * `dml`: `YYYY-MM-DD HH:MM:SS` in UTC, which DuckDB casts into `timestamp_s` —
+ * stored timestamps are UTC civil time, as the backend's `make_timestamp`
+ * stores a source's epoch timestamps (specs/2026-11-utc-timestamps/decision.md). */
 export function sourceTimestamp(epoch: number): string {
-  const d = new Date(epoch * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-  );
+  return utcCivilText(epoch * 1000);
 }
 
 /** Everything a new playlist's `source` and `playlist` records hold. */

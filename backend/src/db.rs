@@ -142,6 +142,46 @@ fn run_migration(conn: &mut Connection, migration: &Migration) -> Result<(), duc
     Ok(())
 }
 
+/// The directory, within the database directory, that `DuckDB` installs and
+/// loads extensions from for this library.
+static EXTENSION_DIR_NAME: &str = "extensions";
+
+/// The configuration every connection to a library's database opens with.
+///
+/// Every timestamp the database makes has to be UTC (see
+/// `specs/2026-11-utc-timestamps/decision.md`). The bundled `DuckDB` has no
+/// ICU, the extension that knows time zones, and without it `now()` and every
+/// cast between `TIMESTAMP` and `TIMESTAMPTZ` are UTC. The danger is ICU
+/// arriving mid-session: a query that touches a time zone (`date_trunc` on a
+/// `TIMESTAMPTZ`, say) loads it from `DuckDB`'s shared extension cache
+/// (`~/.duckdb/extensions`) if some earlier `DuckDB` put it there, *even with
+/// autoloading off*. From then on `CAST(NOW() AS TIMESTAMP)` answers in the
+/// server's local zone, and time-relative filters shift by its offset. So:
+///
+/// - extensions live in a directory of the library's own
+///   (`<db-dir>/extensions`), which ICU is never installed into, so there's
+///   nothing for that lazy load to find: the query fails instead;
+/// - autoloading and autoinstalling are off, so nothing is fetched from the
+///   network behind a query's back either, and a query behaves the same on
+///   every machine, the Raspberry Pi (which has no extensions at all)
+///   included.
+///
+/// Extensions loaded on purpose still load: `--duckdb-server` runs `INSTALL
+/// quack; LOAD quack;`, which downloads it into this directory the first time.
+pub(crate) fn config(db_dir: &Path) -> Result<duckdb::Config, Box<dyn std::error::Error>> {
+    let extensions = db_dir.join(EXTENSION_DIR_NAME);
+    let extensions = extensions.to_str().ok_or_else(|| {
+        format!(
+            "the database directory '{}' isn't valid UTF-8",
+            db_dir.display()
+        )
+    })?;
+    Ok(duckdb::Config::default()
+        .enable_autoload_extension(false)?
+        .with("autoinstall_known_extensions", "false")?
+        .with("extension_directory", extensions)?)
+}
+
 /// Opens the database in `db_dir`, migrating it if needed. The directory is
 /// created (with any missing parents) if it doesn't exist yet.
 ///
@@ -155,7 +195,7 @@ pub fn get_db(db_dir: &Path, clock: &ClockArgs) -> Result<Connection, Box<dyn st
         )
     })?;
     let db_path = db_dir.join(DB_FILE_NAME);
-    let mut conn = Connection::open(&db_path)?;
+    let mut conn = Connection::open_with_flags(&db_path, config(db_dir)?)?;
     clock.apply(&conn)?;
     init_db_version_metadata(&conn)?;
     let current_version = get_current_version(&conn)?;
@@ -207,6 +247,80 @@ mod tests {
             std::env::temp_dir().join(format!("radiocrate-db-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// One value of `sql` on a library connection.
+    fn value<T: duckdb::types::FromSql>(conn: &Connection, sql: &str) -> T {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    /// Every timestamp the database makes is UTC civil time, whatever the
+    /// server's zone: `CAST(NOW() AS TIMESTAMP)` is the same instant as
+    /// `now()` read as UTC. This is what time-relative filters compare stored
+    /// timestamps against. See `specs/2026-11-utc-timestamps/decision.md`.
+    #[test]
+    fn the_database_clock_reads_utc() {
+        let dir = scratch_dir("utc");
+        let conn = get_db(&dir, &ClockArgs::default()).unwrap();
+        let utc: bool = value(
+            &conn,
+            "SELECT epoch_ms(CAST(NOW() AS TIMESTAMP)) = epoch_ms(now())",
+        );
+        drop(conn);
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(utc, "CAST(NOW() AS TIMESTAMP) isn't UTC");
+    }
+
+    /// A query that would need ICU fails instead of loading it, so the
+    /// database's zone can't change mid-session or between machines. Without
+    /// the library's own extension directory, this loads ICU from the shared
+    /// cache on any machine where some `DuckDB` once installed it, autoloading
+    /// off or not.
+    #[test]
+    fn a_query_needing_icu_does_not_load_it() {
+        let dir = scratch_dir("icu");
+        let conn = get_db(&dir, &ClockArgs::default()).unwrap();
+        let _ = conn.query_row("SELECT date_trunc('day', now())", [], |row| {
+            row.get::<_, String>(0)
+        });
+        let loaded: bool = value(
+            &conn,
+            "SELECT coalesce(bool_or(loaded), false) FROM duckdb_extensions() \
+             WHERE extension_name = 'icu'",
+        );
+        drop(conn);
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(!loaded, "ICU was loaded");
+    }
+
+    /// The time functions the app and its queries rely on, on the plain
+    /// `TIMESTAMP` type every stored timestamp has, work without ICU.
+    #[test]
+    fn timestamp_functions_work_without_icu() {
+        let dir = scratch_dir("functions");
+        let conn = get_db(&dir, &ClockArgs::default()).unwrap();
+        let ts = "TIMESTAMP '2026-01-15 12:00:00'";
+        for (sql, expected) in [
+            (format!("{ts} + INTERVAL 1 hour"), "2026-01-15 13:00:00"),
+            (format!("{ts} - INTERVAL 1 month"), "2025-12-15 12:00:00"),
+            (format!("date_trunc('day', {ts})"), "2026-01-15 00:00:00"),
+            (format!("CAST({ts} AS TIMESTAMP_S)"), "2026-01-15 12:00:00"),
+        ] {
+            let got: String = value(&conn, &format!("SELECT CAST({sql} AS TEXT)"));
+            assert_eq!(got, expected, "{sql}");
+        }
+        let formatted: String = value(&conn, &format!("SELECT strftime({ts}, '%H:%M')"));
+        assert_eq!(formatted, "12:00");
+        // The shape Querydown compiles a relative filter to: a stored
+        // timestamp's age.
+        let fresh: bool = value(
+            &conn,
+            "SELECT ABS(EXTRACT(epoch FROM CAST(NOW() AS TIMESTAMP) - \
+             (CAST(NOW() AS TIMESTAMP) - INTERVAL 30 minute))) = 1800",
+        );
+        drop(conn);
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(fresh);
     }
 
     #[test]

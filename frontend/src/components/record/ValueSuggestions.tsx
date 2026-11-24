@@ -172,9 +172,12 @@ export function ValueSuggestionsPanel(props: {
   anchorRef: RefObject<HTMLElement | null>;
   listId: string;
   suggestions: ValueSuggestionsState;
+  /** How a value reads, when not as it's held (a stored timestamp's local
+   * time). */
+  show?: (value: string) => string;
   onPick: (value: string) => void;
 }): JSX.Element {
-  const { anchorRef, listId, suggestions, onPick } = props;
+  const { anchorRef, listId, suggestions, show, onPick } = props;
   const { values, cursor, setCursor } = suggestions;
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -252,7 +255,7 @@ export function ValueSuggestionsPanel(props: {
               onClick={() => onPick(row.value)}
             >
               <span className="text-ink min-w-0 flex-1 truncate">
-                {row.value}
+                {show ? show(row.value) : row.value}
               </span>
               <span className="text-ink-weak shrink-0 text-xs tabular-nums">
                 {row.count}

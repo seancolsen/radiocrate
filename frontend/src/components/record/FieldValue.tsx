@@ -20,6 +20,17 @@ import {
 } from "./ValueSuggestions";
 import { VARIED, type SharedValue } from "../../record/formValues";
 import type { PrimitiveField, ScalarLinkField } from "../../query/recordForm";
+import { LOCAL_TIME_CODEC, type ValueCodec } from "../../query/timestamps";
+
+/** How `field`'s values read in a text box, when not as they're held: a
+ * stored timestamp shows, and is typed, in local time. */
+export function codecFor(
+  field: PrimitiveField | ScalarLinkField,
+): ValueCodec | undefined {
+  return field.kind === "primitive" && field.instant
+    ? LOCAL_TIME_CODEC
+    : undefined;
+}
 
 /** Where focus goes when an activated field leaves edit mode: back to this
  * field's own label, to the next item's, to the previous one's, or nowhere (the
@@ -64,7 +75,11 @@ export type EditExit = "self" | "next" | "previous" | "none";
  * arrow keys and PageUp/PageDown move through it, Esc closes it (only), Enter
  * takes the highlighted value and stays in edit mode so it can be adjusted, and
  * Tab takes it on the way to the next field. With nothing highlighted, Enter and
- * Tab are what they always are. */
+ * Tab are what they always are.
+ *
+ * Handed a `codec`, the box shows the value, and takes what's typed, through
+ * it (a stored timestamp's UTC text as local time); `text` and everything
+ * handed back stay as the form holds them. */
 export function ValueInput(props: {
   /** The value, as the form holds it right now. */
   text: string;
@@ -87,13 +102,18 @@ export function ValueInput(props: {
   /** What to offer as this value is edited. Absent for a value that has nothing
    * to offer right now, whose box behaves as if the feature weren't there. */
   autocomplete?: ValueAutocomplete;
+  /** How the value reads in the box, when not as the form holds it. */
+  codec?: ValueCodec;
   onBeginEdit: () => void;
   onInput: (text: string) => void;
   onCommit: (text: string, exit: EditExit) => void;
   onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   onOverflow?: (overflowing: boolean) => void;
 }): JSX.Element {
-  const { text, editing, selectAll, autocomplete, onOverflow } = props;
+  const { text, editing, selectAll, autocomplete, codec, onOverflow } = props;
+  const shown = codec ? codec.show(text) : text;
+  /** The value as the edit ends on it. */
+  const committed = (value: string) => (codec ? codec.commit(value) : value);
   const tone = props.tone ?? "text-ink";
   const ref = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -169,7 +189,7 @@ export function ValueInput(props: {
     e.preventDefault();
     e.stopPropagation();
     props.onCommit(
-      (e.key === "Tab" && suggestions.highlighted?.value) || text,
+      committed((e.key === "Tab" && suggestions.highlighted?.value) || text),
       exit,
     );
   };
@@ -211,9 +231,12 @@ export function ValueInput(props: {
           },
         )}
         value={
-          whole ? text : text.replace(/\r?\n/g, (n) => " ".repeat(n.length))
+          whole ? shown : shown.replace(/\r?\n/g, (n) => " ".repeat(n.length))
         }
-        onChange={(e) => props.onInput(e.currentTarget.value)}
+        onChange={(e) => {
+          const typed = e.currentTarget.value;
+          props.onInput(codec ? codec.input(typed) : typed);
+        }}
         onKeyDown={onKeyDown}
         // Only the primary button is a way in. Any other press would take focus
         // and so begin an edit on its way to, say, the context menu.
@@ -227,7 +250,7 @@ export function ValueInput(props: {
         // mode, keeping what was typed. An edit that has already ended is what
         // moved focus away, and there's nothing left to do.
         onBlur={() => {
-          if (editing) props.onCommit(text, "none");
+          if (editing) props.onCommit(committed(text), "none");
         }}
         onContextMenu={editing ? undefined : props.onContextMenu}
       />
@@ -250,6 +273,7 @@ export function ValueInput(props: {
           anchorRef={ref}
           listId={listId}
           suggestions={suggestions}
+          show={codec?.show}
           onPick={pick}
         />
       )}
@@ -349,6 +373,9 @@ export default function FieldValue(props: {
    * which every state below "varied" is. */
   const text = typeof props.value === "string" ? props.value : "";
   const empty = props.value == null || props.value === "";
+  const codec = codecFor(props.field);
+  /** The value as it reads where it can't be edited. */
+  const shown = codec ? codec.show(text) : text;
   /** A primary key: issued by the database, not the user, so nothing here
    * activates an editor for it. */
   const readOnly = props.field.kind === "primitive" && props.field.readOnly;
@@ -368,13 +395,13 @@ export default function FieldValue(props: {
           className={`control block w-full cursor-default break-words whitespace-pre-wrap ${tone}`}
           onContextMenu={(e) => props.onContextMenu(e)}
         >
-          {text}
+          {shown}
         </span>
       );
     }
     return (
       <OneLineValue
-        text={text}
+        text={shown}
         className={`control block min-w-0 flex-1 cursor-default truncate ${tone}`}
         onContextMenu={props.onContextMenu}
         onOverflow={props.onOverflow}
@@ -406,6 +433,7 @@ export default function FieldValue(props: {
       selectAll={props.editingSelectAll}
       tone={tone}
       autocomplete={props.autocomplete}
+      codec={codec}
       onBeginEdit={() => props.onBeginEdit()}
       onInput={(text) => props.onInput(text)}
       onCommit={(text, exit) => props.onCommit(text, exit)}

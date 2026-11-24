@@ -5,6 +5,11 @@
 // (stringified Arrow values), so every formatter parses the string it is given
 // and returns `null` when it can't — the caller then falls back to the raw value.
 //
+// A timestamp arrives as its stored text, UTC civil time; the `timestamp` and
+// `relativeTime` formatters show it in the viewer's local time, and so does a
+// timestamp column with no formatter (`LOCAL_TIMESTAMP`). See
+// specs/2026-11-utc-timestamps/decision.md.
+//
 // DEVIATION FROM RUST: the reference uses the `jiff` crate for `Timestamp` /
 // `RelativeTime`. Per the plan (§3.3) we add no date library and use the built-in
 // `Date` plus hand-rolled elapsed math. Consequences:
@@ -17,6 +22,7 @@
 
 import type { AnnotationValue } from "querydown-js";
 import type { ColumnMetadata, Suffix } from "./columns";
+import { localFields, localMs, utcMs, type Civil } from "./timestamps";
 
 /** A unit available to the `relativeTime` formatter. */
 export type RelativeUnit =
@@ -108,16 +114,27 @@ export function formatValue(
   }
 }
 
+/** How a stored timestamp shows when its column names no formatter: in the
+ * viewer's local time, spelled as it's stored. */
+export const LOCAL_TIMESTAMP: Formatter = {
+  type: "timestamp",
+  format: "%Y-%m-%d %H:%M:%S",
+};
+
 /** Applies the column's formatter and prefix/suffix to one raw cell value. A
- * null value has nothing to dress, so it reads as nothing at all. */
+ * null value has nothing to dress, so it reads as nothing at all. `fallback`
+ * is the formatter for a column that names none — {@link LOCAL_TIMESTAMP} for
+ * a timestamp column. */
 export function displayText(
   meta: ColumnMetadata,
   value: string | null,
   nowMs?: number,
+  fallback?: Formatter,
 ): string {
   if (value === null) return "";
-  const formatted = meta.formatter
-    ? (formatValue(meta.formatter, value, nowMs) ?? value)
+  const formatter = meta.formatter ?? fallback;
+  const formatted = formatter
+    ? (formatValue(formatter, value, nowMs) ?? value)
     : value;
   return `${meta.prefix}${formatted}${suffixFor(meta.suffix, formatted)}`;
 }
@@ -215,38 +232,32 @@ export function formatSeconds(secs: number): string {
   return `${sign}${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-/** Civil datetime fields parsed from a cell value. */
-interface Civil {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
 const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** Parses a cell value into civil datetime fields. Tries a civil datetime, then a
- * date, then integer epoch seconds (converted in local time). Mirrors the
- * fallback chain of `format_timestamp` / `parse_zoned`. */
-function parseCivil(value: string): Civil | null {
+/** Reads a cell value as a moment, for display: a zone-less datetime is a
+ * stored timestamp, UTC civil time (specs/2026-11-utc-timestamps/decision.md);
+ * integer epoch seconds are an instant; a bare date is a calendar date. Returns
+ * the instant and the civil fields the viewer sees it as — local time, except
+ * for a date, which is never shifted. Mirrors the fallback chain of
+ * `format_timestamp` / `parse_zoned`. */
+function parseMoment(value: string): { ms: number; civil: Civil } | null {
   const v = value.trim();
   const dt = DATETIME_RE.exec(v);
   if (dt) {
-    return {
+    const ms = utcMs({
       year: +dt[1],
       month: +dt[2],
       day: +dt[3],
       hour: +dt[4],
       minute: +dt[5],
       second: +dt[6],
-    };
+    });
+    return Number.isNaN(ms) ? null : { ms, civil: localFields(ms) };
   }
   const d = DATE_RE.exec(v);
   if (d) {
-    return {
+    const civil = {
       year: +d[1],
       month: +d[2],
       day: +d[3],
@@ -254,31 +265,17 @@ function parseCivil(value: string): Civil | null {
       minute: 0,
       second: 0,
     };
+    // A relative time counts from the date's local midnight.
+    const ms = localMs(civil);
+    return Number.isNaN(ms) ? null : { ms, civil };
   }
   if (/^-?\d+$/.test(v)) {
-    const date = new Date(Number(v) * 1000);
-    if (!Number.isNaN(date.getTime())) {
-      return {
-        year: date.getFullYear(),
-        month: date.getMonth() + 1,
-        day: date.getDate(),
-        hour: date.getHours(),
-        minute: date.getMinutes(),
-        second: date.getSeconds(),
-      };
+    const ms = Number(v) * 1000;
+    if (!Number.isNaN(new Date(ms).getTime())) {
+      return { ms, civil: localFields(ms) };
     }
   }
   return null;
-}
-
-/** Parses a cell value into epoch milliseconds (local time for civil values), for
- * relative-time math. */
-function parseEpochMs(value: string): number | null {
-  const c = parseCivil(value);
-  if (!c) return null;
-  const date = new Date(c.year, c.month - 1, c.day, c.hour, c.minute, c.second);
-  const ms = date.getTime();
-  return Number.isNaN(ms) ? null : ms;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -310,9 +307,8 @@ function strftime(c: Civil, format: string): string {
 }
 
 function formatTimestamp(value: string, format: string): string | null {
-  const c = parseCivil(value);
-  if (!c) return null;
-  return strftime(c, format);
+  const moment = parseMoment(value);
+  return moment && strftime(moment.civil, format);
 }
 
 const MS: Record<RelativeUnit, number> = {
@@ -347,9 +343,8 @@ function formatRelative(
   units: RelativeUnit[],
   nowMs: number,
 ): string | null {
-  const thenMs = parseEpochMs(value);
-  if (thenMs === null) return null;
-  return relativeBetween(thenMs, nowMs, units);
+  const moment = parseMoment(value);
+  return moment && relativeBetween(moment.ms, nowMs, units);
 }
 
 /** The signed whole number of `unit`s elapsed from `then` to `now` (truncated

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as arrow from "apache-arrow";
+import { inZone } from "../dev/inZone";
 import {
   isMonthDayNanoInterval,
   readMonthDayNanoInterval,
@@ -69,6 +70,39 @@ describe("stringifyArrowValue", () => {
     expect(stringifyArrowValue(vector.get(0), type)).toBe(
       "2026-06-28 13:05:44",
     );
+  });
+
+  it("renders a DATE cell as its calendar date, not epoch ms", () => {
+    const type = new arrow.DateDay();
+    const vector = arrow.vectorFromArray(
+      [new Date(Date.UTC(2026, 5, 7))],
+      type,
+    );
+    expect(stringifyArrowValue(vector.get(0), type)).toBe("2026-06-07");
+  });
+
+  // The stringified value is the stored text — what keys, filters and raw
+  // exports are built from — so it's UTC civil time in every zone, and a date
+  // is never shifted (specs/2026-11-utc-timestamps/decision.md).
+  describe("in New York", () => {
+    inZone("America/New_York");
+
+    it("keeps a timestamp's stored UTC fields", () => {
+      const type = new arrow.TimestampSecond();
+      const vector = arrow.vectorFromArray([1782651944000], type);
+      expect(stringifyArrowValue(vector.get(0), type)).toBe(
+        "2026-06-28 13:05:44",
+      );
+    });
+
+    it("keeps a date's calendar date", () => {
+      const type = new arrow.DateDay();
+      const vector = arrow.vectorFromArray(
+        [new Date(Date.UTC(2026, 5, 7))],
+        type,
+      );
+      expect(stringifyArrowValue(vector.get(0), type)).toBe("2026-06-07");
+    });
   });
 
   it("returns '' for null/undefined regardless of type", () => {

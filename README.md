@@ -180,7 +180,13 @@ SELECT count(*) FROM play;
 radiocrate.track`.
 
 The first time you attach, the CLI downloads DuckDB's `quack` extension, so
-that once needs network access.
+that once needs network access. So does the first start of a library with
+`--duckdb-server`: RadioCrate keeps its extensions in the library's own
+`.radiocrate/extensions/` directory.
+
+Timestamps in the database are UTC, in plain `TIMESTAMP` columns. The CLI
+knows your time zone, so `now()::timestamp` there is your local time: compare
+stored values against `now() AT TIME ZONE 'UTC'` instead.
 
 Writes you make this way show up in the app too. While the DuckDB server is on
 and a device has the app open, RadioCrate checks every few seconds whether the

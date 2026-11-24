@@ -280,6 +280,26 @@ and a DML operation sends `schema: "app"` with them (`dmlTable` in
 Contextual queries live in `metadata` with the rest of what customizes the
 user's tables, since migration 0019 (`/metadata/contextual_query`).
 
+## Time zones: every timestamp is UTC
+
+Every timestamp in the database is UTC civil time in a plain `TIMESTAMP`
+column, and only the frontend converts to the viewer's local time. The bundled
+DuckDB has no ICU (the extension that knows time zones), so its own clock is
+UTC, and the backend opens each library with its own extension directory
+(`<db-dir>/extensions`) and autoloading off, so ICU can never load mid-session
+and switch zones. The whole story, including what it costs (calendar logic in
+SQL runs in UTC days) and the alternative that was rejected, is in
+[`specs/2026-11-utc-timestamps/decision.md`](specs/2026-11-utc-timestamps/decision.md).
+
+Two practical consequences:
+
+- Querying the database by hand (`duckdb radiocrate.db`, or through
+  `--duckdb-server`): the CLI has ICU built in, so `now()::timestamp` there is
+  *your* local time, not the server's UTC. Compare stored values against
+  `now() AT TIME ZONE 'UTC'` instead.
+- `--duckdb-server` downloads its Quack extension into the library's
+  `extensions/` directory, once per library.
+
 ## Links between tables
 
 The database declares no foreign keys, because DuckDB can't update a row one

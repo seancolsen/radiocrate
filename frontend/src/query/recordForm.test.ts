@@ -202,6 +202,7 @@ describe("buildFormFields", () => {
       label: "title",
       column: "title",
       valueType: "text",
+      instant: false,
       nullable: false,
       readOnly: false,
       unique: false,

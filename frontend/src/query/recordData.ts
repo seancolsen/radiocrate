@@ -19,7 +19,9 @@ import { buildResultFromArrow, type QueryResult } from "./result";
 export type RecordRows = readonly (readonly (string | null)[])[];
 
 /** A query's cells, and how each column is to be shown: positional, like the
- * cells. A column the query didn't annotate has its defaults. */
+ * cells. A column the query didn't annotate has its defaults — and a timestamp
+ * column with no formatter, the one that shows it in local time (the cells
+ * themselves are stored text, UTC). */
 export interface RecordResult {
   rows: RecordRows;
   columns: readonly ColumnMetadata[];
@@ -58,7 +60,9 @@ async function runViaApi(
   const result = buildResultFromArrow(await runSql(sql), columnAnnotations);
   return {
     rows: recordRowsOf(result),
-    columns: result.columns.map((column) => column.meta),
+    // With the formatter a timestamp column falls back on, so a preview shows
+    // the rows' stored (UTC) timestamps in local time, as the grid does.
+    columns: result.columns.map((column) => result.displayMeta(column)),
   };
 }
 

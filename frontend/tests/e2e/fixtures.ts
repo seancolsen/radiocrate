@@ -8,7 +8,7 @@ import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 import { Api, Db } from "./support/api";
 import { App } from "./support/app";
-import { E2E_NOW, FRONTEND, RUN_DIR } from "./support/paths";
+import { E2E_NOW, E2E_TZ, FRONTEND, RUN_DIR } from "./support/paths";
 import { abortedByUnload } from "./support/unload";
 import { copyCollection, startServer, type Server } from "./support/server";
 
@@ -27,6 +27,9 @@ interface Fixtures {
    * (`server.collection`), which the test may add to and delete from before a
    * rescan, instead of the suite's shared copy, which no test may change. */
   privateCollection: boolean;
+  /** The server process's time zone. The browser's is Playwright's own
+   * `timezoneId` option; both are UTC unless a test sets them apart. */
+  serverTimeZone: string;
   /** Errors the guards let through: page errors and `console.error` text,
    * `/api/` 5xx responses (matched against the URL) and server panics.
    * Set with `test.use({ allowedErrors: [/…/] })` in a test that expects
@@ -58,10 +61,15 @@ function slug(text: string): string {
 export const test = base.extend<Fixtures>({
   library: ["sample", { option: true }],
   privateCollection: [false, { option: true }],
+  serverTimeZone: [E2E_TZ, { option: true }],
   allowedErrors: [[], { option: true }],
 
   server: [
-    async ({ library, privateCollection, allowedErrors }, use, testInfo) => {
+    async (
+      { library, privateCollection, serverTimeZone, allowedErrors },
+      use,
+      testInfo,
+    ) => {
       const runId = process.env.E2E_RUN_ID ?? String(process.pid);
       const runDir = path.join(
         RUN_DIR,
@@ -78,6 +86,7 @@ export const test = base.extend<Fixtures>({
         dbDir: path.join(runDir, "db"),
         template: library === "empty" ? null : undefined,
         collection,
+        timeZone: serverTimeZone,
       });
       try {
         await use(server);

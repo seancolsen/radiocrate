@@ -52,8 +52,8 @@ export function templateKey(): string {
   return hash.digest("hex");
 }
 
-/** `E2E_NOW` as the generator's `--now` takes it: a civil time, read in the
- * generator's own time zone (which is `E2E_TZ`). */
+/** `E2E_NOW` as the generator's `--now` takes it: UTC civil time, which is
+ * what every timestamp in the database is. */
 function generatorNow(): string {
   return E2E_NOW.toISOString()
     .replace("T", " ")

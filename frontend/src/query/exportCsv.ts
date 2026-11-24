@@ -19,7 +19,9 @@ import type { QueryResult, ResultColumn } from "./result";
 const LIST_SEPARATOR = ", ";
 
 /** Whether a column's display text can differ from its raw data — a formatter,
- * a prefix or a suffix — so that exporting it offers a choice between them. */
+ * a prefix or a suffix — so that exporting it offers a choice between them.
+ * Pass `QueryResult.displayMeta`, which counts a timestamp column's local time
+ * as formatting: its raw data is the stored UTC text. */
 export function hasFormatting(meta: ColumnMetadata): boolean {
   return (
     meta.formatter !== undefined || meta.prefix !== "" || meta.suffix !== ""

@@ -34,6 +34,7 @@ const fields = (...keys: string[]): FormField[] =>
     label: key,
     column: key,
     valueType: "text",
+    instant: false,
     nullable: true,
     readOnly: false,
     unique: false,

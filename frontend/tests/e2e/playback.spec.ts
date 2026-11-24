@@ -148,56 +148,65 @@ async function playOutTheEnd(page: Page, title: string): Promise<void> {
   await expect(bar(page).getByText(title, { exact: true })).toBeHidden();
 }
 
-test("a track played to its end is logged as a play", async ({
-  app,
-  page,
-  db,
-}) => {
-  await openTracks(app);
-  const id = await trackId(db, TITLE);
-  const before = await playsOf(app, TITLE);
-  expect(await lastPlayedOf(app, TITLE)).toBe("1 day ago");
-  const logBefore = await playsLogged(db, id);
-  expect(logBefore).toHaveLength(before);
+// Once in UTC, and once with the browser and the server in New York, where
+// the play must still be stored in UTC and still read "0 minutes ago".
+for (const zone of ["UTC", "America/New_York"]) {
+  test.describe(`in ${zone}`, () => {
+    test.use({ timezoneId: zone, serverTimeZone: zone });
 
-  await test.step("a double-click streams it from the server", async () => {
-    const response = streamed(page, id);
-    await playRow(app, page, TITLE);
-    const served = await response;
-    // The media element asks for a range of the file, which the server answers
-    // with the original FLAC (the default "higher" quality isn't transcoded).
-    expect(served.status()).toBe(206);
-    expect(served.headers()["content-type"]).toBe("audio/flac");
-    await look(page, "playing");
+    test("a track played to its end is logged as a play", async ({
+      app,
+      page,
+      db,
+    }) => {
+      await openTracks(app);
+      const id = await trackId(db, TITLE);
+      const before = await playsOf(app, TITLE);
+      expect(await lastPlayedOf(app, TITLE)).toBe("1 day ago");
+      const logBefore = await playsLogged(db, id);
+      expect(logBefore).toHaveLength(before);
+
+      await test.step("a double-click streams it from the server", async () => {
+        const response = streamed(page, id);
+        await playRow(app, page, TITLE);
+        const served = await response;
+        // The media element asks for a range of the file, which the server answers
+        // with the original FLAC (the default "higher" quality isn't transcoded).
+        expect(served.status()).toBe(206);
+        expect(served.headers()["content-type"]).toBe("audio/flac");
+        await look(page, "playing");
+      });
+
+      await test.step("it plays out to its end", async () => {
+        await playOutTheEnd(page, TITLE);
+      });
+
+      // Stored as UTC civil time, whatever the browser's zone: 12:00, not
+      // New York's 07:00 (specs/2026-11-utc-timestamps/decision.md).
+      await test.step("the play is logged at the browser's now, in UTC", async () => {
+        expect(await playsLogged(db, id)).toEqual([
+          ...logBefore,
+          "2026-01-15 12:00:00",
+        ]);
+      });
+
+      await test.step("its row counts it, without a reload", async () => {
+        await expect.poll(() => playsOf(app, TITLE)).toBe(before + 1);
+        await expect.poll(() => lastPlayedOf(app, TITLE)).toBe("0 minutes ago");
+        await (await app.grid.row(TITLE)).box();
+        await look(page, "counted");
+      });
+
+      await test.step("and still does after a reload", async () => {
+        await reloadTracks(app);
+        expect(await playsOf(app, TITLE)).toBe(before + 1);
+        expect(await lastPlayedOf(app, TITLE)).toBe("0 minutes ago");
+        await (await app.grid.row(TITLE)).box();
+        await look(page, "after-reload");
+      });
+    });
   });
-
-  await test.step("it plays out to its end", async () => {
-    await playOutTheEnd(page, TITLE);
-  });
-
-  await test.step("the play is logged at the browser's now", async () => {
-    expect(await playsLogged(db, id)).toEqual([
-      ...logBefore,
-      "2026-01-15 12:00:00",
-    ]);
-  });
-
-  await test.step("its row counts it, without a reload", async () => {
-    await expect.poll(() => playsOf(app, TITLE)).toBe(before + 1);
-    await expect.poll(() => lastPlayedOf(app, TITLE)).toBe("0 minutes ago");
-    await (await app.grid.row(TITLE)).box();
-    await look(page, "counted");
-  });
-
-  await test.step("and still does after a reload", async () => {
-    await reloadTracks(app);
-    expect(await playsOf(app, TITLE)).toBe(before + 1);
-    expect(await lastPlayedOf(app, TITLE)).toBe("0 minutes ago");
-    await (await app.grid.row(TITLE)).box();
-    await look(page, "after-reload");
-  });
-});
-
+}
 test("playing a track again logs a second play", async ({ app, page, db }) => {
   await openTracks(app);
   const id = await trackId(db, TITLE);

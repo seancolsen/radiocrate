@@ -164,6 +164,49 @@ use it to tune the palette. When you change the app's colors, keep it complete:
 Plain grayscale UI doesn't belong there. See `DEVELOPMENT.md` ("Kitchen sink")
 for how the page works.
 
+## Timestamps are UTC
+
+Every timestamp in the database is **UTC civil time**: a plain `TIMESTAMP` (or
+`TIMESTAMP_S`) column, zone-less, meaning UTC by convention. Only the frontend
+converts, to and from the viewer's local time. The full reasoning, the
+limitations and the alternative we rejected are in
+`specs/2026-11-utc-timestamps/decision.md`. Read it before touching anything
+time-related. In short:
+
+- **Why:** the bundled DuckDB has no ICU, the extension that knows time zones,
+  so `now()`, `CAST(NOW() AS TIMESTAMP)`, `DEFAULT now()` and the scanner's
+  stamps are all UTC. The browser used to store its *local* time, so in UTC-5,
+  `timestamp:<1h` missed the last hour's plays (it took `<6h`), and newly
+  scanned tracks showed as added in the future.
+- **The backend keeps it that way** (`db::config` in `backend/src/db.rs`):
+  each library has its own extension directory (`<db-dir>/extensions`) and
+  autoloading is off. DuckDB would otherwise load ICU lazily from the shared
+  cache, even with autoloading off, and switch to the server's zone
+  mid-session. A query that needs ICU now fails instead. Don't undo either.
+- **New columns are `TIMESTAMP`, not `TIMESTAMPTZ`.** Without ICU,
+  `TIMESTAMPTZ` has no `+ INTERVAL`, no subtraction, and its zone functions
+  fail.
+- **The browser writes "now" as UTC** (`nowUtcText()`, `YYYY-MM-DD
+  HH:MM:SS`), never local time. A value the user types in local time is
+  converted to UTC before it's written. Every conversion lives in
+  `frontend/src/query/timestamps.ts`; use it rather than formatting with
+  `getHours()` or `getUTCHours()` by hand.
+- **Display converts; data doesn't.** Relative and absolute display, and the
+  record editor's timestamp fields, show local time. Keys, lineage filters,
+  DML `where` clauses and raw export keep the stored UTC text, which has to
+  round-trip through DuckDB unchanged. A `DATE` is a calendar date and isn't
+  shifted.
+- **Calendar logic in SQL is in UTC days** (`date_trunc('day', …)`, a date
+  typed into a filter). That's the accepted cost; rolling windows (`<1h`,
+  `<7d`) are exact. The decision's §6 says how to add local calendar logic if
+  it's ever needed.
+- **Values written before 2026-11-24 weren't migrated:** old browser-written
+  plays are local time read as UTC, off by the user's offset.
+- **Test time features across zones:** `inZone("America/New_York")`
+  (`src/dev/inZone.ts`) in Vitest, `test.use({ timezoneId, serverTimeZone })`
+  in E2E (`timezone.spec.ts`), and `TZ=America/New_York cargo test -p
+  backend db::` for the backend.
+
 ## Database table names in the UI
 
 User-facing singular/plural names for tables live in `ENTITY_NAMES`

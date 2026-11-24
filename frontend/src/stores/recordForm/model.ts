@@ -93,7 +93,11 @@ import {
   type EmbedChange,
   type MetadataByTable,
 } from "../../query/fieldMetadata";
-import type { ColumnMetadata } from "../../query/columns";
+import {
+  defaultColumnMetadata,
+  type ColumnMetadata,
+} from "../../query/columns";
+import { displayText } from "../../query/format";
 import {
   computedDisplay,
   computedFieldKey,
@@ -117,6 +121,7 @@ import {
   type QueryEditorField,
 } from "../../query/fieldQuery";
 import { embedPreview } from "../../query/embedPreview";
+import { nowUtcText } from "../../query/timestamps";
 import {
   isCompileError,
   isDisplayCompileError,
@@ -663,18 +668,12 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** The current moment, in the naive `YYYY-MM-DD HH:MM:SS` spelling a timestamp
- * column's text form takes — read off the local wall clock (unlike
- * `stringifyArrowValue`'s UTC-as-civil reading of a *stored* value, "now" is
- * civil time here from the start). What a timestamp field is pre-filled with
- * when the user starts adding one. */
+/** The current moment as a timestamp column's stored text: UTC civil time,
+ * `YYYY-MM-DD HH:MM:SS`, like every value the form holds — its text box shows
+ * it in local time (`LOCAL_TIME_CODEC`). What a timestamp field is pre-filled
+ * with when the user starts adding one. */
 function formatCurrentTimestamp(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  );
+  return nowUtcText();
 }
 
 /** Seeds `values` with the key columns — the part of a record we know without
@@ -1296,9 +1295,10 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
 
     const definitions = prelude();
     /** The values of `asked`, one list per field, each index-aligned to the
-     * node's keys. */
+     * node's keys — as the query shows them, since they're only ever read: a
+     * timestamp, say, in local time rather than as its stored UTC text. */
     const read = async (asked: readonly ComputedField[]) => {
-      const rows = await runRecordQuery(
+      const { rows, columns: shown } = await runDisplayQuery(
         {
           base: node.table,
           filter: keyConditions(opts.tables, node.table, keys),
@@ -1317,9 +1317,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       const matched = keys.map((key) =>
         byKey.get(keySignature(key.map((part) => part.value))),
       );
-      return asked.map((_, i) =>
-        matched.map((row) => row?.[keyColumns.length + i] ?? null),
-      );
+      return asked.map((_, i) => {
+        const at = keyColumns.length + i;
+        const meta = shown[at] ?? defaultColumnMetadata();
+        return matched.map((row) => {
+          const cell = row?.[at] ?? null;
+          return cell === null ? null : displayText(meta, cell);
+        });
+      });
     };
     const write = (field: ComputedField, result: ComputedValues) => {
       if (computedTokens.get(id) !== token) return;

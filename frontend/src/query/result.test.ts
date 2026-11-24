@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import * as arrow from "apache-arrow";
 import type { AnnotationValue } from "querydown-js";
 import { buildResultFromArrow, reannotateResult } from "./result";
+import { exportCellText, hasFormatting } from "./exportCsv";
+import { inZone } from "../dev/inZone";
 
 // Guards the full decode path against DuckDB list columns that apache-arrow
 // can't classify by type. Builds a real Arrow table so the test exercises
@@ -93,10 +95,9 @@ describe("buildResultFromArrow with a Timestamp column", () => {
       anno([["formatter", { type: "relativeTime", units: ["days"] }]]),
     ];
     const result = buildResultFromArrow(played, annotations);
-    // Exact wording can land on either side of a day boundary depending on
-    // the host's local timezone offset — what matters is that it's ~1 day,
+    // The stored text is UTC, and read as UTC, so it's a day ago in any zone —
     // not (as the bug produced) tens of thousands of years away.
-    expect(result.text(0, result.visible[0])).toMatch(/^[01] days? ago$/);
+    expect(result.text(0, result.visible[0])).toBe("1 day ago");
   });
 
   it("shows a null cell without its prefix or suffix, and the rest with theirs", () => {
@@ -143,6 +144,64 @@ describe("buildResultFromArrow with a Timestamp column", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// A timestamp's stored text is UTC civil time; the grid shows it in the
+// viewer's zone, while keys and raw exports keep the stored text
+// (specs/2026-11-utc-timestamps/decision.md). New York is UTC-4 in June.
+describe("a Timestamp column in New York", () => {
+  inZone("America/New_York");
+
+  const at = Date.UTC(2026, 5, 7, 2, 30, 45);
+  const element = new arrow.TimestampSecond();
+  const table = new arrow.Table({
+    added: arrow.vectorFromArray([at], new arrow.TimestampSecond()),
+    plays: arrow.vectorFromArray(
+      [[at]],
+      new arrow.List(new arrow.Field("item", element, true)),
+    ),
+    day: arrow.vectorFromArray([new Date(at)], new arrow.DateDay()),
+  });
+
+  it("shows a cell with no formatter in local time, keyed by its stored text", () => {
+    const result = buildResultFromArrow(table, [null, null, null]);
+    const added = result.visible[0];
+    expect(result.text(0, added)).toBe("2026-06-06 22:30:45");
+    expect(result.keyText(0, added.index)).toBe("2026-06-07 02:30:45");
+    expect(exportCellText(result, 0, added, false)).toBe("2026-06-06 22:30:45");
+    expect(exportCellText(result, 0, added, true)).toBe("2026-06-07 02:30:45");
+  });
+
+  it("shows a list of timestamps' pills in local time, raw ones as stored", () => {
+    const result = buildResultFromArrow(table, [null, null, null]);
+    const plays = result.visible[1];
+    expect(plays.isList).toBe(true);
+    expect(result.pills(0, plays)).toEqual(["2026-06-06 22:30:45"]);
+    expect(result.rawPills(0, plays)).toEqual(["2026-06-07 02:30:45"]);
+  });
+
+  it("never shifts a date", () => {
+    const result = buildResultFromArrow(table, [null, null, null]);
+    const day = result.visible[2];
+    expect(result.text(0, day)).toBe("2026-06-07");
+    expect(result.keyText(0, day.index)).toBe("2026-06-07");
+  });
+
+  it("lets the column's own formatter decide, from the same instant", () => {
+    const result = buildResultFromArrow(table, [
+      anno([["formatter", { type: "timestamp", format: "%H:%M" }]]),
+      null,
+      null,
+    ]);
+    expect(result.text(0, result.visible[0])).toBe("22:30");
+  });
+
+  it("counts the fallback as formatting, so export offers the raw text", () => {
+    const result = buildResultFromArrow(table, [null, null, null]);
+    const [added, , day] = result.visible;
+    expect(hasFormatting(result.displayMeta(added))).toBe(true);
+    expect(hasFormatting(result.displayMeta(day))).toBe(false);
   });
 });
 

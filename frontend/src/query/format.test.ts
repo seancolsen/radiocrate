@@ -3,11 +3,13 @@ import {
   displayText,
   formatSeconds,
   formatValue,
+  LOCAL_TIMESTAMP,
   parseFormatter,
   relativeBetween,
   type Formatter,
 } from "./format";
 import { defaultColumnMetadata, type ColumnMetadata } from "./columns";
+import { inZone } from "../dev/inZone";
 
 // The relative-time cases use the exported `relativeBetween` with explicit
 // instants (the public `formatValue` uses `Date.now()`).
@@ -81,7 +83,11 @@ describe("formatSeconds", () => {
   });
 });
 
+// A stored timestamp is UTC civil time, shown in the viewer's zone. New York
+// is UTC-4 in June.
 describe("Timestamp formatter", () => {
+  inZone("America/New_York");
+
   it("formats via reduced strftime", () => {
     const f: Formatter = { type: "timestamp", format: "%Y-%m-%d" };
     expect(formatValue(f, "2026-06-07 14:30:45")).toBe("2026-06-07");
@@ -89,25 +95,95 @@ describe("Timestamp formatter", () => {
     expect(formatValue(f, "not a date")).toBeNull();
   });
 
-  it("supports time specifiers", () => {
+  it("shows a stored timestamp in local time", () => {
     const f: Formatter = { type: "timestamp", format: "%H:%M:%S" };
-    expect(formatValue(f, "2026-06-07 14:30:45")).toBe("14:30:45");
+    expect(formatValue(f, "2026-06-07 14:30:45")).toBe("10:30:45");
+    // Early in the UTC day is the evening before in New York.
+    const day: Formatter = { type: "timestamp", format: "%Y-%m-%d %H:%M" };
+    expect(formatValue(day, "2026-06-07 02:30:45")).toBe("2026-06-06 22:30");
+  });
+
+  it("never shifts a bare date, which is a calendar date", () => {
+    const f: Formatter = { type: "timestamp", format: "%Y-%m-%d %H:%M" };
+    expect(formatValue(f, "2026-06-07")).toBe("2026-06-07 00:00");
+  });
+
+  it("shows epoch seconds in local time", () => {
+    const f: Formatter = { type: "timestamp", format: "%Y-%m-%d %H:%M:%S" };
+    const epoch = Date.UTC(2026, 5, 7, 14, 30, 45) / 1000;
+    expect(formatValue(f, String(epoch))).toBe("2026-06-07 10:30:45");
   });
 });
 
 describe("displayText's clock", () => {
+  const minutes = {
+    ...defaultColumnMetadata(),
+    formatter: {
+      type: "relativeTime",
+      units: ["minutes"],
+    } satisfies Formatter,
+  };
+
   it("counts a relative time back from the moment it's given", () => {
-    const meta = {
-      ...defaultColumnMetadata(),
-      formatter: {
-        type: "relativeTime",
-        units: ["minutes"],
-      } satisfies Formatter,
-    };
-    const now = new Date(2026, 5, 1, 12, 30).getTime();
-    expect(displayText(meta, "2026-06-01 12:00:00", now)).toBe(
+    const now = Date.UTC(2026, 5, 1, 12, 30);
+    expect(displayText(minutes, "2026-06-01 12:00:00", now)).toBe(
       "30 minutes ago",
     );
+  });
+
+  describe("in New York", () => {
+    inZone("America/New_York");
+
+    // The stored text is UTC, so the zone the viewer is in changes nothing
+    // about how long ago it was: read as local time, this would be four hours
+    // off.
+    it("reads a stored timestamp as UTC", () => {
+      const now = Date.UTC(2026, 5, 1, 12, 30);
+      expect(displayText(minutes, "2026-06-01 12:00:00", now)).toBe(
+        "30 minutes ago",
+      );
+    });
+
+    it("counts a bare date from its local midnight", () => {
+      const hours = {
+        ...defaultColumnMetadata(),
+        formatter: { type: "relativeTime", units: ["hours"] } as Formatter,
+      };
+      // 06:00 on June 1 in New York.
+      const now = Date.UTC(2026, 5, 1, 10, 0);
+      expect(displayText(hours, "2026-06-01", now)).toBe("6 hours ago");
+    });
+  });
+});
+
+describe("displayText's fallback formatter", () => {
+  inZone("America/New_York");
+
+  it("shows a timestamp column with no formatter in local time", () => {
+    expect(
+      displayText(
+        defaultColumnMetadata(),
+        "2026-06-07 14:30:45",
+        undefined,
+        LOCAL_TIMESTAMP,
+      ),
+    ).toBe("2026-06-07 10:30:45");
+  });
+
+  it("gives way to the column's own formatter", () => {
+    const meta = {
+      ...defaultColumnMetadata(),
+      formatter: { type: "timestamp", format: "%H:%M" } as Formatter,
+    };
+    expect(
+      displayText(meta, "2026-06-07 14:30:45", undefined, LOCAL_TIMESTAMP),
+    ).toBe("10:30");
+  });
+
+  it("leaves text that isn't a timestamp as it is", () => {
+    expect(
+      displayText(defaultColumnMetadata(), "soon", undefined, LOCAL_TIMESTAMP),
+    ).toBe("soon");
   });
 });
 

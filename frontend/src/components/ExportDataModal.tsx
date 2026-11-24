@@ -247,7 +247,7 @@ function ExportDataModalBody(props: { pending: ExportData }): JSX.Element {
           sampleRow === undefined
             ? ""
             : exportCellText(result, sampleRow, column, raw),
-        formatted: hasFormatting(column.meta),
+        formatted: hasFormatting(result.displayMeta(column)),
         included: !excludedColumns.includes(column.index),
         raw,
       };

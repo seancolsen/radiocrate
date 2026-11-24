@@ -82,7 +82,12 @@ the definition stores play times as *days before generation*, which makes
 re-running this the very thing that keeps the listening history looking current.
 Rebuild it whenever the history has drifted, or after a schema migration.
 
-Four options exist for the end-to-end tests, which build their own pinned copy
+Every timestamp it writes is UTC, whatever the machine's time zone, as all of
+the app's timestamps are (`specs/2026-11-utc-timestamps/decision.md`). A
+database generated before 2026-11-24 holds plays in the generating machine's
+local time; regenerate it.
+
+Five options exist for the end-to-end tests, which build their own pinned copy
 (see `specs/2026-11-e2e-tests/spec.md`): `--now "2026-01-15 12:00:00"` generates
 as if it were that moment (and pins the scanner's database clock to it),
 `--collection` and `--db-dir` point it at another copy of the files and another

@@ -49,6 +49,9 @@ vi.mock("../../query/recordData", () => {
 });
 
 import { runRecordQuery } from "../../query/recordData";
+import { LOCAL_TIMESTAMP } from "../../query/format";
+import { LOCAL_TIME_CODEC } from "../../query/timestamps";
+import { inZone } from "../../dev/inZone";
 import {
   compileFind,
   DEFAULT_FIND_OPTIONS,
@@ -2669,6 +2672,34 @@ describe("computed columns", () => {
     });
   });
 
+  describe("in New York", () => {
+    inZone("America/New_York");
+    afterEach(() => {
+      annotated.columns = [];
+    });
+
+    // A computed value is only ever read, so it's held as the query shows it:
+    // a stored (UTC) timestamp in the viewer's local time, as the grid has it.
+    it("hold a timestamp as the query shows it, in local time", async () => {
+      const PLAIN = defaultColumnMetadata();
+      annotated.columns = [
+        PLAIN,
+        { ...PLAIN, formatter: LOCAL_TIMESTAMP },
+        PLAIN,
+      ];
+      serveDiscs(
+        { a1: "Lemonade" },
+        { decade: { a1: "2026-01-15 12:00:00" }, era: { a1: "201" } },
+      );
+      const model = discForm();
+      model.start();
+      await flush();
+      await flush();
+      expect(value(model, "decade")).toBe("2026-01-15 07:00:00");
+      expect(value(model, "era")).toBe("201");
+    });
+  });
+
   it("are read in one query of their own, under the prelude, once the record lands", async () => {
     serveDiscs(
       { a1: "Lemonade" },
@@ -2952,5 +2983,111 @@ describe("computed columns", () => {
     await flush();
     expect(runDml).toHaveBeenCalledTimes(1);
     expect(computedCalls()).toHaveLength(2);
+  });
+});
+
+// A timestamp field holds its stored text — UTC civil time — from load to save;
+// its box shows and takes local time through `LOCAL_TIME_CODEC`, which is what
+// `ValueInput` puts between the two (specs/2026-11-utc-timestamps/decision.md).
+// New York is UTC-5 in January.
+describe("a timestamp field in New York", () => {
+  inZone("America/New_York");
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const STORED = "2026-01-15 12:00:00";
+  /** A play's form, its data query answered with `played_at` = `STORED`: the
+   * key, then `id`, `track`, `played_at` and `skipped_at`. */
+  const playForm = (
+    runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(() =>
+      Promise.resolve({}),
+    ),
+  ) => {
+    runner.mockImplementation(async () => [["p1", "p1", "t1", STORED, null]]);
+    return createRecordForm({
+      tables: TABLES,
+      table: "play",
+      keys: [[{ column: "id", value: "p1" }]],
+      schemaJson: "{}",
+      runDml,
+    });
+  };
+  const { show, input, commit } = LOCAL_TIME_CODEC;
+
+  it("is an instant, held as stored and shown in local time", async () => {
+    const model = playForm();
+    model.start();
+    await flush();
+    expect(fieldOf(model, ROOT_ID, "played_at")).toMatchObject({
+      valueType: "timestamp",
+      instant: true,
+    });
+    const held = selectSharedValue(
+      model.store.getState(),
+      ROOT_ID,
+      "played_at",
+    );
+    expect(held).toBe(STORED);
+    expect(show(held as string)).toBe("2026-01-15 07:00:00");
+  });
+
+  it("writes nothing back for a value the user didn't change", async () => {
+    const runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(
+      () => Promise.resolve({}),
+    );
+    const model = playForm(runDml);
+    model.start();
+    await flush();
+
+    // The box shows local time; retyping the same text gives back the stored.
+    const shown = show(STORED);
+    model.beginEdit(ROOT_ID, "played_at");
+    model.editValue(ROOT_ID, "played_at", input(shown));
+    model.commitEdit(ROOT_ID, "played_at", commit(input(shown)));
+    expect(selectFormModified(model.store.getState())).toBe(false);
+    await model.save();
+    expect(runDml).not.toHaveBeenCalled();
+  });
+
+  it("saves a local time typed into the box as UTC", async () => {
+    const runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(
+      () => Promise.resolve({}),
+    );
+    const model = playForm(runDml);
+    model.start();
+    await flush();
+
+    model.beginEdit(ROOT_ID, "played_at");
+    model.editValue(ROOT_ID, "played_at", input("2026-01-15 08:30:00"));
+    model.commitEdit(ROOT_ID, "played_at", commit("2026-01-15 08:30"));
+    await model.save();
+    expect(runDml.mock.calls[0]?.[0]).toMatchObject([
+      {
+        operation: "update",
+        table: "play",
+        where: { id: "p1" },
+        values: { played_at: "2026-01-15 13:30:00" },
+      },
+    ]);
+  });
+
+  it("starts a required timestamp of a drafted record at now, in UTC", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2026, 0, 15, 12, 0, 5));
+    serve({ track: [trackRow("t1", "Formation", "Pop", 0)] });
+    const model = form();
+    model.start();
+    await flush();
+
+    model.addChild(
+      ROOT_ID,
+      fieldOf(model, ROOT_ID, "#play") as MultiRecordField,
+    );
+    const child =
+      model.store.getState().lists[listId(ROOT_ID, "#play")]?.childIds[0];
+    const held = selectSharedValue(model.store.getState(), child!, "played_at");
+    expect(held).toBe("2026-01-15 12:00:05");
+    expect(show(held as string)).toBe("2026-01-15 07:00:05");
   });
 });

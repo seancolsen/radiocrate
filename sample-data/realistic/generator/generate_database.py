@@ -44,7 +44,7 @@ import shutil
 import subprocess
 import sys
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -108,7 +108,8 @@ def backdate_files(definition: dict, now: datetime, collection_dir: Path) -> Non
     """
     missing = []
     for album in definition["albums"]:
-        acquired = album_acquired_at(album, now).timestamp()
+        # `now` is UTC civil time (see `utc_now`), so its instant is read as UTC.
+        acquired = album_acquired_at(album, now).replace(tzinfo=UTC).timestamp()
         for track in album["tracks"]:
             path = collection_dir / relative_path(definition["path_template"], album, track)
             if not path.exists():
@@ -143,8 +144,8 @@ def run_scanner(
         command = [str(server_bin)]
     command += ["scan", str(collection_dir), "--db-dir", str(db_dir)]
     if fixed_now is not None:
-        # The flag wants an instant; `fixed_now` is this machine's civil time.
-        command += ["--fixed-now", fixed_now.astimezone().isoformat()]
+        # The flag wants an instant; `fixed_now` is UTC civil time.
+        command += ["--fixed-now", fixed_now.replace(tzinfo=UTC).isoformat()]
     print(f"$ {' '.join(command)}\n")
     result = subprocess.run(command, cwd=REPO_ROOT, check=False)
     if result.returncode != 0:
@@ -286,13 +287,23 @@ def summarize(conn: duckdb.DuckDBPyConnection, definition: dict) -> None:
         sys.exit("Error: " + "\n       ".join(mismatches))
 
 
+def utc_now() -> datetime:
+    """The current moment as UTC civil time: a naive `datetime` meaning UTC.
+
+    Every timestamp in the database is UTC civil time, whatever zone the
+    machine running this is in, so play times and acquisition dates count
+    back from this. See `specs/2026-11-utc-timestamps/decision.md`.
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument(
         "--now",
         type=datetime.fromisoformat,
         metavar="'YYYY-MM-DD HH:MM:SS'",
-        help="The instant to generate as if it were, in this machine's local time "
+        help="The instant to generate as if it were, in UTC "
         "(default: the real time). Pins the scanner's database clock too.",
     )
     parser.add_argument(
@@ -333,7 +344,7 @@ def generate_database() -> None:
 
     # One instant anchors the whole run, so that "days ago" means the same thing
     # for the first track imported and the last.
-    now = (args.now or datetime.now()).replace(microsecond=0)
+    now = (args.now or utc_now()).replace(microsecond=0)
 
     # A stale database would leave the scanner reconciling against files it
     # already knows, and the import inserting a second copy of every play.

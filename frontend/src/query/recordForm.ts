@@ -8,6 +8,7 @@
 // that references it becomes a field too.
 
 import type { FieldRef } from "api-client";
+import { isInstantType } from "./timestamps";
 import { pluralOrRaw } from "./entityNames";
 import {
   identifyingColumns,
@@ -50,6 +51,10 @@ export interface PrimitiveField extends FieldBase {
   kind: "primitive";
   column: string;
   valueType: ValueType;
+  /** Whether the column holds an instant (a `TIMESTAMP`), stored as UTC civil
+   * time, which the form shows and takes in the viewer's local time (see
+   * `timestamps.ts`). A `DATE` or `TIME` is a timestamp field that doesn't. */
+  instant: boolean;
   nullable: boolean;
   /** Whether this column is the table's primary key — issued by the database,
    * not the user, so the form never lets it be edited. */
@@ -238,6 +243,7 @@ export function buildFormFields(
         label: column.name,
         column: column.name,
         valueType: valueTypeOf(column.type),
+        instant: isInstantType(column.type),
         nullable: column.nullable,
         readOnly: column.name === pk,
         unique: table.uniqueConstraints.some(

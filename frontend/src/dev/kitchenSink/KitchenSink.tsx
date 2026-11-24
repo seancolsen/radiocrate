@@ -185,6 +185,7 @@ const primitive = (label: string, valueType: ValueType): FormField => ({
   label,
   column: label,
   valueType,
+  instant: valueType === "timestamp",
   nullable: true,
   readOnly: false,
   unique: false,
