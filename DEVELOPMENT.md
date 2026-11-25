@@ -347,8 +347,18 @@ whole deletion before it writes anything, and sends it as one `dml` request.
   that has it), which is why the backend makes a run of like operations in one
   statement (`leading_run` in `backend/src/dml.rs`).
 
-Deleting a `file` record deletes no audio file. The next scan will find the file
-on disk and add it again.
+- **Audio files.** When the deletion takes `file` records, the dialog has one
+  more checkbox, "Delete the audio file from disk", checked unless the user
+  unchecked it the last time (`localStorage` `deleteKeepsAudioFiles`). Checked,
+  the request carries `deleteAudioFiles: true`, and the server
+  (`backend/src/audio_removal.rs`) removes the audio of every `file` record the
+  request deleted, found by comparing the table before and after. It does that
+  in step with the transaction: each file is renamed aside, in its own folder,
+  before the commit, so a file that can't be removed (a read-only collection)
+  fails the request and puts back everything. Only after the commit are they
+  removed. A file that's already missing is passed over, and a path that leads
+  outside the collection fails the request. Unchecked, the audio stays, and the
+  next scan finds it and adds it again.
 
 ## Live updates: what a change on one device does on another
 

@@ -71,6 +71,7 @@ import {
   type DeletePlan,
   type DeletePlanner,
 } from "../../record/deletePlan";
+import { audioFileCount } from "../../record/deleteText";
 import {
   fetchTrackMetadata,
   fetchTrackRatingId,
@@ -303,6 +304,7 @@ import {
   clampExplorerWidth,
   clampRecordSidebarWidth,
   persistAudioQuality,
+  persistDeleteAudioFiles,
   persistDeleteChoices,
   persistFindOptions,
   persistExpandedFolders,
@@ -312,6 +314,7 @@ import {
   persistStructureExpanded,
   persistTabs,
   persistTheme,
+  storedDeleteAudioFiles,
   storedDeleteChoices,
 } from "./persistence";
 import {
@@ -1059,6 +1062,10 @@ export interface AppActions {
     relationshipId: string,
     checked: boolean,
   ) => void;
+  /** The dialog's "Delete the audio files" choice: whether the audio files of
+   * the `file` records the deletion takes are deleted from the collection
+   * along with them. Remembered for the next deletion. */
+  setRecordDeleteAudioFiles: (checked: boolean) => void;
   /** Deletes what the dialog shows, as one request. Once it lands, the dialog
    * closes and the page the records were chosen on reloads. A failure stays in
    * the dialog. Does nothing while a plan is being worked out. */
@@ -6119,6 +6126,7 @@ export function createAppActions(
           table,
           count: keys.size,
           choices: storedDeleteChoices(env),
+          deleteAudioFiles: storedDeleteAudioFiles(env),
           summary: null,
           status: "planning",
           error: null,
@@ -6138,6 +6146,14 @@ export function createAppActions(
       });
       persistDeleteChoices(env, choices);
       planDeletion();
+    },
+    setRecordDeleteAudioFiles: (checked) => {
+      const pending = get().recordDelete;
+      if (!pending || pending.status === "deleting") return;
+      set((s) => {
+        if (s.recordDelete) s.recordDelete.deleteAudioFiles = checked;
+      });
+      persistDeleteAudioFiles(env, checked);
     },
     confirmRecordDelete: () => {
       const pending = get().recordDelete;
@@ -6162,7 +6178,15 @@ export function createAppActions(
         s.recordDelete.status = "deleting";
         s.recordDelete.error = null;
       });
-      void dml({ operations: plan.operations }).then(
+      // The server removes the audio of the `file` records the request
+      // deletes, inside its transaction: if one can't be removed, nothing is
+      // deleted.
+      const deleteAudioFiles =
+        pending.deleteAudioFiles && audioFileCount(plan.summary) > 0;
+      void dml({
+        operations: plan.operations,
+        ...(deleteAudioFiles && { deleteAudioFiles }),
+      }).then(
         () => {
           close();
           afterRecordDelete(pending.tabId, plan);

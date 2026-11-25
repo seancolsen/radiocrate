@@ -3,6 +3,7 @@
 /// strings and never touches another wire type.
 pub use api_schema::DEV_BUILD_ID;
 
+mod audio_removal;
 pub mod changes;
 pub mod clock;
 pub mod db;

@@ -268,6 +268,12 @@ describe("deleting a track", () => {
     expect(plan.summary).toMatchObject({
       found: 1,
       deleteCount: 6,
+      deletedByTable: {
+        track: 1,
+        credit: 2,
+        play: 2,
+        "/app/playlist_track": 1,
+      },
       updateCount: 0,
       blocked: [],
     });
@@ -307,6 +313,7 @@ describe("deleting a track", () => {
     apply(db, plan.operations);
     expect(idsOf(db["file"]!)).toEqual(["f2", "f3"]);
     expect(plan.deleted.get("file")).toEqual(ids("file", "f1"));
+    expect(plan.summary.deletedByTable["file"]).toBe(1);
   });
 
   it("offers no album while another track is on it", async () => {

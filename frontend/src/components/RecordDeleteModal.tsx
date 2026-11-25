@@ -1,6 +1,9 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
 import {
+  audioFileCount,
+  audioFilesLabel,
+  audioFilesNote,
   blockedNote,
   deleteTitle,
   itemLabel,
@@ -27,12 +30,19 @@ import { Modal } from "./ui/Modal";
  * Changing one works the plan out again, which can add lines: tracks deleted
  * with their album take their credits with them.
  *
+ * When the deletion takes `file` records, one more checkbox, checked unless the
+ * user unchecked it the last time, deletes their audio files from disk too.
+ *
  * The lines stay up while a plan is being worked out, showing the last one's
  * counts, and Delete waits for the new one. */
 function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
   const { pending } = props;
-  const { cancelRecordDelete, confirmRecordDelete, setRecordDeleteChoice } =
-    useAppActions();
+  const {
+    cancelRecordDelete,
+    confirmRecordDelete,
+    setRecordDeleteAudioFiles,
+    setRecordDeleteChoice,
+  } = useAppActions();
   const { summary, status, choices } = pending;
   const planning = status === "planning";
   const deleting = status === "deleting";
@@ -41,6 +51,7 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
   const nothingLeft = summary?.found === 0;
   const blocked = summary?.blocked ?? [];
   const totals = summary && totalsNote(summary);
+  const audioFiles = summary ? audioFileCount(summary) : 0;
   const canDelete =
     status === "ready" &&
     summary !== null &&
@@ -107,6 +118,18 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {audioFiles > 0 && (
+        <div className="mt-3" aria-busy={planning}>
+          <Checkbox
+            label={audioFilesLabel(audioFiles)}
+            description={audioFilesNote(audioFiles)}
+            checked={pending.deleteAudioFiles}
+            disabled={deleting}
+            onChange={(checked) => setRecordDeleteAudioFiles(checked)}
+          />
         </div>
       )}
 

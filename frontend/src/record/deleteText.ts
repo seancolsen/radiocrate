@@ -61,6 +61,29 @@ function article(noun: string): string {
   return /^[aeiou]/i.test(noun) ? "An" : "A";
 }
 
+/** The table whose records are the collection's audio files, one to a file:
+ * the scanner's. Deleting one of its records can delete the file itself. */
+const AUDIO_FILE_TABLE = "file";
+
+/** How many audio files the deletion takes the records of. */
+export function audioFileCount(summary: DeleteSummary): number {
+  return summary.deletedByTable[AUDIO_FILE_TABLE] ?? 0;
+}
+
+/** What the "delete the audio files" checkbox does, for `n` of them. */
+export function audioFilesLabel(n: number): string {
+  return n === 1
+    ? "Delete the audio file from disk"
+    : `Delete the ${number(n)} audio files from disk`;
+}
+
+/** What leaving it unchecked means. */
+export function audioFilesNote(n: number): string {
+  return n === 1
+    ? "Otherwise it stays, and the next scan adds it back."
+    : "Otherwise they stay, and the next scan adds them back.";
+}
+
 /** Why the deletion can't go ahead past `item`. */
 export function blockedNote(item: BlockedItem): string {
   const { relationship, count } = item;

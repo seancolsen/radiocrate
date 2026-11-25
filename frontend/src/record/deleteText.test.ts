@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PlanItem, Relationship } from "./deletePlan";
 import {
+  audioFileCount,
+  audioFilesLabel,
+  audioFilesNote,
   blockedNote,
   deleteTitle,
   itemLabel,
@@ -98,7 +101,12 @@ describe("a line of the plan", () => {
 
 describe("the notes around the plan", () => {
   it("totals a deletion that goes beyond what was asked for", () => {
-    const summary = { table: "track", items: [], blocked: [] };
+    const summary = {
+      table: "track",
+      items: [],
+      blocked: [],
+      deletedByTable: {},
+    };
     expect(
       totalsNote({ ...summary, found: 2, deleteCount: 2, updateCount: 0 }),
     ).toBeUndefined();
@@ -108,6 +116,33 @@ describe("the notes around the plan", () => {
     expect(
       totalsNote({ ...summary, found: 1, deleteCount: 1, updateCount: 20000 }),
     ).toBe("In all, 1 record is deleted and 20,000 are changed.");
+  });
+
+  it("offers to delete the audio of the files the deletion takes", () => {
+    const summary = {
+      table: "track",
+      items: [],
+      blocked: [],
+      found: 2,
+      deleteCount: 6,
+      updateCount: 0,
+    };
+    expect(audioFileCount({ ...summary, deletedByTable: { track: 2 } })).toBe(
+      0,
+    );
+    expect(
+      audioFileCount({ ...summary, deletedByTable: { track: 2, file: 2 } }),
+    ).toBe(2);
+    expect(audioFilesLabel(1)).toBe("Delete the audio file from disk");
+    expect(audioFilesLabel(1200)).toBe(
+      "Delete the 1,200 audio files from disk",
+    );
+    expect(audioFilesNote(1)).toBe(
+      "Otherwise it stays, and the next scan adds it back.",
+    );
+    expect(audioFilesNote(2)).toBe(
+      "Otherwise they stay, and the next scan adds them back.",
+    );
   });
 
   it("says when records have gone already", () => {

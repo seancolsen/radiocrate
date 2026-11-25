@@ -924,6 +924,34 @@ const EXPORT_COLUMNS: ExportColumnOption[] = [
   },
 ];
 
+/** A line of the "Delete records" dialog, for a story. */
+function planItem(
+  kind: PlanItem["kind"],
+  from: string,
+  to: string,
+  count: number,
+  required = false,
+): PlanItem {
+  const [fromTable, fromColumn] = from.split(".") as [string, string];
+  const id = `${from}>${to}`;
+  return {
+    id: `${kind}:${id}`,
+    kind,
+    relationship: {
+      id,
+      fromTable,
+      fromColumn,
+      toTable: to,
+      toColumn: "id",
+      required,
+    },
+    table: kind === "orphans" ? to : fromTable,
+    count,
+    checked: required,
+    required: kind === "referencing" && required,
+  };
+}
+
 export const STORIES: Record<string, Story> = {
   // ── The app's left sidebar, as a general-purpose panel ────────────────────
   // Both stories are about `SidebarLeft`'s two layouts and nothing else, so
@@ -2388,32 +2416,6 @@ export const STORIES: Record<string, Story> = {
   // orphans left unchosen.
   "record-delete/album": {
     setup: (stores) => {
-      const item = (
-        kind: PlanItem["kind"],
-        from: string,
-        to: string,
-        count: number,
-        required = false,
-      ): PlanItem => {
-        const [fromTable, fromColumn] = from.split(".") as [string, string];
-        const id = `${from}>${to}`;
-        return {
-          id: `${kind}:${id}`,
-          kind,
-          relationship: {
-            id,
-            fromTable,
-            fromColumn,
-            toTable: to,
-            toColumn: "id",
-            required,
-          },
-          table: kind === "orphans" ? to : fromTable,
-          count,
-          checked: required,
-          required: kind === "referencing" && required,
-        };
-      };
       stores.app.store.setState((s) => {
         s.recordDelete = {
           tabId: LEMONADE.id,
@@ -2423,18 +2425,64 @@ export const STORIES: Record<string, Story> = {
             referencing: { "track.album>album": true },
             orphans: {},
           },
+          deleteAudioFiles: true,
           summary: {
             table: "album",
             found: 1,
             items: [
-              item("referencing", "track.album", "album", 9),
-              item("referencing", "credit.track", "track", 10, true),
-              item("referencing", "play.track", "track", 594, true),
-              item("orphans", "track.file", "file", 9, true),
-              item("orphans", "credit.artist", "artist", 2, true),
+              planItem("referencing", "track.album", "album", 9),
+              planItem("referencing", "credit.track", "track", 10, true),
+              planItem("referencing", "play.track", "track", 594, true),
+              planItem("orphans", "track.file", "file", 9, true),
+              planItem("orphans", "credit.artist", "artist", 2, true),
             ],
             blocked: [],
             deleteCount: 614,
+            deletedByTable: {
+              album: 1,
+              track: 9,
+              credit: 10,
+              play: 594,
+            },
+            updateCount: 0,
+          },
+          status: "ready",
+          error: null,
+        };
+      });
+    },
+    render: () => <RecordDeleteModal />,
+  },
+
+  // "Delete track…" with its file chosen to go too, so the dialog offers to
+  // delete the audio file from disk, checked as it is to begin with.
+  "record-delete/track-with-file": {
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.recordDelete = {
+          tabId: LEMONADE.id,
+          table: "track",
+          count: 1,
+          choices: {
+            referencing: {},
+            orphans: { "track.file>file": true },
+          },
+          deleteAudioFiles: true,
+          summary: {
+            table: "track",
+            found: 1,
+            items: [
+              planItem("referencing", "credit.track", "track", 2, true),
+              planItem("referencing", "play.track", "track", 12, true),
+              {
+                ...planItem("orphans", "track.file", "file", 1),
+                checked: true,
+              },
+              planItem("orphans", "credit.artist", "artist", 1),
+            ],
+            blocked: [],
+            deleteCount: 16,
+            deletedByTable: { track: 1, credit: 2, play: 12, file: 1 },
             updateCount: 0,
           },
           status: "ready",

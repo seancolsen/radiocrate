@@ -1,0 +1,24 @@
+- dialog "Delete track":
+  - heading "Delete track" [level=2]
+  - button "Close":
+    - img
+  - paragraph: Delete this track? This can’t be undone.
+  - paragraph: "Other records are tied to it:"
+  - list:
+    - listitem:
+      - text: Delete 1 credit A credit can’t be kept without its track.
+      - checkbox "Delete 1 credit" [checked] [disabled]
+    - listitem:
+      - text: /Delete \d+ plays A play can’t be kept without its track\./
+      - checkbox /Delete \d+ plays/ [checked] [disabled]
+    - listitem:
+      - text: Delete 2 track tags A track tag can’t be kept without its track.
+      - checkbox "Delete 2 track tags" [checked] [disabled]
+    - listitem:
+      - text: Delete 1 file It would be left with no tracks.
+      - checkbox "Delete 1 file" [checked]
+  - text: Delete the audio file from disk Otherwise it stays, and the next scan adds it back.
+  - checkbox "Delete the audio file from disk" [checked]
+  - paragraph: /In all, \d+ records are deleted\./
+  - button "Cancel"
+  - button "Delete"

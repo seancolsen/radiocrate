@@ -19,6 +19,7 @@
 //! it refuses are the same.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 
 use api_schema::Topic;
 use duckdb::Connection;
@@ -37,6 +38,10 @@ const DML_ERROR_CODE: i32 = 1;
 #[derive(Deserialize)]
 struct DmlParams {
     operations: Vec<Operation>,
+    /// Whether the audio file of every `file` record the request deletes is removed from the
+    /// collection too (see [`crate::audio_removal`]). Off unless asked for.
+    #[serde(default, rename = "deleteAudioFiles")]
+    delete_audio_files: bool,
 }
 
 #[derive(Deserialize)]
@@ -145,7 +150,10 @@ pub(crate) fn handle(
         .map_err(|e| validation_err(format!("invalid params: {e}")))?;
     validate_operations(&params.operations)?;
     let topics = topics_of(&params.operations);
-    state.write_mut(origin, &topics, |conn| run(conn, &params.operations))
+    let audio = params
+        .delete_audio_files
+        .then_some(state.collection_path.as_path());
+    state.write_mut(origin, &topics, |conn| run(conn, &params.operations, audio))
 }
 
 /// Every table the app's migrations create in the `main`, `app` and `metadata` schemas, by schema and
@@ -215,11 +223,23 @@ fn topics_of(operations: &[Operation]) -> Vec<Topic> {
 /// Introspects the schema, then runs the operations in order inside a single transaction, returning
 /// the per-operation result object. The transaction rolls back on any error (via `Transaction`'s
 /// drop) and only commits — and checkpoints, via `write_mut` — if every operation succeeds.
-fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr> {
+///
+/// With `audio`, the path of the collection, the audio files of the `file` records the request
+/// deletes are removed from it as well, in step with the transaction: moved aside before it commits,
+/// so that one that can't be fails the request, and removed once it has.
+fn run(
+    conn: &mut Connection,
+    operations: &[Operation],
+    audio: Option<&Path>,
+) -> Result<Value, RpcErr> {
     let schema = introspect(conn)?;
     let tx = conn
         .transaction()
         .map_err(|e| RpcErr::from(e.to_string()))?;
+    let files_before = match audio {
+        Some(_) if deletes_files(operations) => Some(file_paths(&tx)?),
+        _ => None,
+    };
 
     // op id -> returned row, for operations that produce a result. Doubles as the source for
     // resolving operation-references.
@@ -237,7 +257,31 @@ fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr>
         rest = after;
     }
 
-    tx.commit().map_err(|e| RpcErr::from(e.to_string()))?;
+    let staged = match (audio, files_before) {
+        (Some(collection), Some(before)) => {
+            let after = file_paths(&tx)?;
+            let gone: Vec<String> = before
+                .into_iter()
+                .filter(|(id, _)| !after.contains_key(id))
+                .map(|(_, path)| path)
+                .collect();
+            Some(
+                crate::audio_removal::stage(collection, &gone)
+                    .map_err(|message| validation_err(format!("{message} Nothing was deleted.")))?,
+            )
+        }
+        _ => None,
+    };
+
+    if let Err(e) = tx.commit() {
+        if let Some(staged) = staged {
+            staged.restore();
+        }
+        return Err(RpcErr::from(e.to_string()));
+    }
+    if let Some(staged) = staged {
+        staged.finish();
+    }
 
     // Emit results in operation order for stable output.
     let mut out = Map::new();
@@ -247,6 +291,25 @@ fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr>
         }
     }
     Ok(Value::Object(out))
+}
+
+/// Whether any of `operations` deletes from the collection's `file` table.
+fn deletes_files(operations: &[Operation]) -> bool {
+    operations.iter().any(|op| {
+        matches!(op, Operation::Delete { .. })
+            && op.target().schema.is_empty()
+            && op.target().name == "file"
+    })
+}
+
+/// Every `file` record's path, by its id.
+fn file_paths(tx: &Connection) -> Result<HashMap<String, String>, RpcErr> {
+    let read = || -> duckdb::Result<HashMap<String, String>> {
+        let mut stmt = tx.prepare("SELECT id::text, path FROM main.file")?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect()
+    };
+    read().map_err(|e| RpcErr::from(format!("couldn't read the files' paths: {e}")))
 }
 
 /// Runs one operation, keeping the row it returns, if it returns one.
@@ -1173,6 +1236,7 @@ fn validation_err(message: String) -> RpcErr {
 mod tests {
     use super::*;
     use duckdb::{Connection, params};
+    use std::path::PathBuf;
 
     const FILE1: &str = "11111111-1111-1111-1111-111111111111";
     const TRACK1: &str = "22222222-2222-2222-2222-222222222222";
@@ -1197,7 +1261,7 @@ mod tests {
         let params: DmlParams = serde_json::from_value(params)
             .map_err(|e| validation_err(format!("invalid params: {e}")))?;
         validate_operations(&params.operations)?;
-        run(conn, &params.operations)
+        run(conn, &params.operations, None)
     }
 
     fn insert_file(conn: &Connection, id: &str) {
@@ -2233,5 +2297,231 @@ mod tests {
             .map(|(schema, table, _)| (*schema, *table))
             .collect();
         assert_eq!(mapped, migrated);
+    }
+
+    /// A folder of its own under the system's temporary one, standing in for the collection a
+    /// request's audio files are removed from. Removed when dropped.
+    struct Collection(PathBuf);
+
+    impl Collection {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("radiocrate-dml-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            Collection(root)
+        }
+
+        /// Records a file at `relative` as `id`, and writes it to disk if `on_disk`.
+        fn add(&self, conn: &Connection, id: &str, relative: &str, on_disk: bool) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            if on_disk {
+                std::fs::write(&path, b"audio").unwrap();
+            }
+            conn.execute(
+                "INSERT INTO file (id, path, hash, size, format, duration, mtime, added) \
+                 VALUES (?, ?, ?, ?, ?, to_seconds(?), ?, now())",
+                params![
+                    id,
+                    format!("./{relative}"),
+                    vec![0u8],
+                    5u32,
+                    "flac",
+                    1.0f32,
+                    1i64
+                ],
+            )
+            .unwrap();
+        }
+
+        fn has(&self, relative: &str) -> bool {
+            self.0.join(relative).exists()
+        }
+
+        /// The names in folder `relative`, sorted: whatever was moved aside and left there shows.
+        fn names(&self, relative: &str) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(self.0.join(relative))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+
+        /// Runs a DML request as [`handle`] would for this collection.
+        fn dml(&self, conn: &mut Connection, params: Value) -> Result<Value, RpcErr> {
+            let params: DmlParams = serde_json::from_value(params)
+                .map_err(|e| validation_err(format!("invalid params: {e}")))?;
+            validate_operations(&params.operations)?;
+            let audio = params.delete_audio_files.then_some(self.0.as_path());
+            run(conn, &params.operations, audio)
+        }
+    }
+
+    impl Drop for Collection {
+        fn drop(&mut self) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                for dir in std::fs::read_dir(&self.0).into_iter().flatten().flatten() {
+                    let _ = std::fs::set_permissions(
+                        dir.path(),
+                        std::fs::Permissions::from_mode(0o755),
+                    );
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const FILE2: &str = "11111111-1111-1111-1111-222222222222";
+    const FILE3: &str = "11111111-1111-1111-1111-333333333333";
+
+    fn delete_file(id: &str, file: &str) -> Value {
+        json!({ "id": id, "operation": "delete", "table": "file", "where": { "id": file } })
+    }
+
+    #[test]
+    fn deleting_file_records_can_delete_their_audio() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+        // Already missing from disk, which is no failure.
+        collection.add(&conn, FILE2, "A/two.flac", false);
+        collection.add(&conn, FILE3, "A/three.flac", true);
+
+        collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": true, "operations": [
+                    delete_file("a", FILE1),
+                    delete_file("b", FILE2),
+                ]}),
+            )
+            .unwrap();
+
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 1);
+        assert_eq!(collection.names("A"), vec!["three.flac"]);
+    }
+
+    #[test]
+    fn deleting_file_records_leaves_their_audio_unless_asked() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+
+        collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": false, "operations": [delete_file("a", FILE1)] }),
+            )
+            .unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 0);
+        assert!(collection.has("A/one.flac"));
+
+        // And with the flag left out, as every other caller sends it.
+        collection.add(&conn, FILE2, "A/two.flac", true);
+        collection
+            .dml(
+                &mut conn,
+                json!({ "operations": [delete_file("b", FILE2)] }),
+            )
+            .unwrap();
+        assert!(collection.has("A/two.flac"));
+    }
+
+    #[test]
+    fn a_failed_deletion_leaves_the_audio() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+        collection.add(&conn, FILE2, "A/two.flac", true);
+        insert_track(&conn, TRACK1, FILE2, None);
+
+        // The second delete would leave the track dangling.
+        collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": true, "operations": [
+                    delete_file("a", FILE1),
+                    delete_file("b", FILE2),
+                ]}),
+            )
+            .unwrap_err();
+
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 2);
+        assert_eq!(collection.names("A"), vec!["one.flac", "two.flac"]);
+    }
+
+    #[test]
+    fn audio_outside_the_collection_fails_the_deletion() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+        conn.execute(
+            "UPDATE file SET path = './A/../../elsewhere.flac' WHERE id = ?",
+            params![FILE1],
+        )
+        .unwrap();
+
+        let err = collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": true, "operations": [delete_file("a", FILE1)] }),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.message.contains("isn’t in the collection’s folder"),
+            "{}",
+            err.message
+        );
+        assert!(
+            err.message.ends_with("Nothing was deleted."),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audio_that_cant_be_removed_fails_the_deletion_and_is_put_back() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+        collection.add(&conn, FILE2, "B/two.flac", true);
+        collection.add(&conn, FILE3, "C/three.flac", true);
+        let locked = collection.0.join("B");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        if std::fs::write(locked.join("probe"), b"").is_ok() {
+            // Permissions don't hold this user back (root): there's nothing to test.
+            return;
+        }
+
+        let err = collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": true, "operations": [
+                    delete_file("a", FILE1),
+                    delete_file("b", FILE2),
+                    delete_file("c", FILE3),
+                ]}),
+            )
+            .unwrap_err();
+
+        assert!(err.message.contains("./B/two.flac"), "{}", err.message);
+        assert!(
+            err.message.ends_with("Nothing was deleted."),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 3);
+        // Whichever were moved aside before the failure are back.
+        assert_eq!(collection.names("A"), vec!["one.flac"]);
+        assert_eq!(collection.names("B"), vec!["two.flac"]);
+        assert_eq!(collection.names("C"), vec!["three.flac"]);
     }
 }

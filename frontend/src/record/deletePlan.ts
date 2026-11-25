@@ -134,6 +134,8 @@ export interface DeleteSummary {
   blocked: readonly BlockedItem[];
   /** How many records are deleted in all, the ones asked for among them. */
   deleteCount: number;
+  /** How many records of each table are deleted, by table. */
+  deletedByTable: Readonly<Record<string, number>>;
   /** How many records are kept, with a column emptied. */
   updateCount: number;
 }
@@ -743,6 +745,9 @@ export function createDeletePlanner(
           count,
         })),
         deleteCount: nodes.length,
+        deletedByTable: Object.fromEntries(
+          [...deleted].map(([name, records]) => [name, records.size]),
+        ),
         updateCount,
       },
       operations,

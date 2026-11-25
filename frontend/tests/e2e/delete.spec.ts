@@ -78,14 +78,23 @@ const trackId = async (db: Db, title: string): Promise<string> =>
     ),
   );
 
-/** Where the audio file of the track titled `title` is, in the collection. */
-async function audioFileOf(db: Db, title: string): Promise<string> {
+/** Where the audio file of the track titled `title` is, in `collection`. */
+async function audioFileOf(
+  db: Db,
+  title: string,
+  collection: string,
+): Promise<string> {
   const stored = await db.value(
     `select f.path from file f join track t on t.file = f.id ` +
       `where t.title = '${title.replace(/'/g, "''")}'`,
   );
-  return path.join(COLLECTION_DIR, String(stored));
+  return path.join(collection, String(stored));
 }
+
+/** The dialog's offer to delete the audio files of the file records it
+ * takes. */
+const audioChoice = (page: Page): Locator =>
+  choice(page, /^Delete the (\d+ )?audio files? from disk/);
 
 /** Saves a query named `name` over `base`, showing `columns` after the hidden
  * key that makes its rows records. */
@@ -127,8 +136,7 @@ test("deleting a track takes what can't be kept without it, and remembers what e
   db,
 }) => {
   const rita = await trackId(db, "Lovely Rita");
-  const ritaFile = await audioFileOf(db, "Lovely Rita");
-  const betterFile = await audioFileOf(db, "Getting Better");
+  const ritaFile = await audioFileOf(db, "Lovely Rita", COLLECTION_DIR);
   await openRows(app, "Tracks", 63);
 
   await test.step("the dialog lists what's tied to the track", async () => {
@@ -139,6 +147,8 @@ test("deleting a track takes what can't be kept without it, and remembers what e
     await expect(choice(page, "Delete 1 credit")).toBeChecked();
     await expect(choice(page, "Delete 1 credit")).toBeDisabled();
     await expect(choice(page, "Delete 1 file")).not.toBeChecked();
+    // With no file record going, there's no audio to offer.
+    await expect(audioChoice(page)).toHaveCount(0);
   });
 
   await test.step("confirming deletes the track and its dependents", async () => {
@@ -150,32 +160,112 @@ test("deleting a track takes what can't be kept without it, and remembers what e
     expect(await count(db, `credit where track = '${rita}'`)).toBe(0);
     expect(await count(db, `play where track = '${rita}'`)).toBe(0);
     expect(await count(db, `track_tag where track = '${rita}'`)).toBe(0);
-    // Its file's record stays, with no track.
+    // Its file's record stays, with no track, and so does its audio.
     expect(await count(db, "file")).toBe(63);
+    expect(fs.existsSync(ritaFile)).toBe(true);
   });
 
-  await test.step("choosing the file deletes its record, not the audio", async () => {
+  await test.step("a choice is still made after a reload", async () => {
     await openDelete(app, page, "Getting Better", "Delete track…");
     await choose(page, "Delete 1 file");
-    await look(page, "with-file");
-    await confirmDelete(app, page);
-    await expect.poll(() => app.grid.rowCount()).toBe(61);
-    expect(await count(db, "file")).toBe(62);
-    expect(fs.existsSync(ritaFile)).toBe(true);
-    expect(fs.existsSync(betterFile)).toBe(true);
-  });
-
-  await test.step("the choice is still made after a reload", async () => {
+    await dialog(page).getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog(page)).toBeHidden();
     await app.reload();
     if ((await app.activeTabName()) !== "Tracks")
       await app.openSource("Tracks");
-    await expect.poll(() => app.grid.rowCount()).toBe(61);
+    await expect.poll(() => app.grid.rowCount()).toBe(62);
     await openDelete(app, page, "Fixing a Hole", "Delete track…");
     await expect(choice(page, "Delete 1 file")).toBeChecked();
     await dialog(page).getByRole("button", { name: "Cancel" }).click();
     await expect(dialog(page)).toBeHidden();
     expect(await app.grid.find("Fixing a Hole")).not.toBeNull();
-    expect(await count(db, "track")).toBe(61);
+    expect(await count(db, "track")).toBe(62);
+  });
+});
+
+test.describe("with a collection of its own", () => {
+  // These delete audio files, so never from the suite's shared copy.
+  test.use({ privateCollection: true });
+
+  test("deleting a file record deletes its audio, unless that's unchecked", async ({
+    app,
+    page,
+    db,
+    server,
+  }) => {
+    const collection = server.collection;
+    const better = await audioFileOf(db, "Getting Better", collection);
+    const hole = await audioFileOf(db, "Fixing a Hole", collection);
+    const within = await audioFileOf(db, "Within You Without You", collection);
+    const lovely = await audioFileOf(db, "Lovely Rita", collection);
+    await openRows(app, "Tracks", 63);
+
+    await test.step("choosing the file offers its audio, checked", async () => {
+      await openDelete(app, page, "Getting Better", "Delete track…");
+      await expect(audioChoice(page)).toHaveCount(0);
+      await choose(page, "Delete 1 file");
+      await expect(
+        choice(page, "Delete the audio file from disk"),
+      ).toBeChecked();
+      await look(page, "with-file");
+      await expect(dialog(page)).toMatchAriaSnapshot({
+        name: "track-with-file.aria.yml",
+      });
+    });
+
+    await test.step("confirming deletes the audio with its record", async () => {
+      await confirmDelete(app, page);
+      await expect.poll(() => app.grid.rowCount()).toBe(62);
+      expect(await count(db, "file")).toBe(62);
+      expect(fs.existsSync(better)).toBe(false);
+      // Nothing is left beside it, and nothing else went.
+      const folder = fs.readdirSync(path.dirname(better));
+      expect(folder.filter((name) => name.startsWith("."))).toEqual([]);
+      expect(fs.existsSync(hole)).toBe(true);
+    });
+
+    await test.step("unchecked, the record goes and the audio stays", async () => {
+      await openDelete(app, page, "Fixing a Hole", "Delete track…");
+      // Both choices come up as they were left.
+      await expect(choice(page, "Delete 1 file")).toBeChecked();
+      await dialog(page)
+        .getByText("Delete the audio file from disk", { exact: true })
+        .click();
+      await expect(
+        choice(page, "Delete the audio file from disk"),
+      ).not.toBeChecked();
+      await confirmDelete(app, page);
+      expect(await count(db, "file")).toBe(61);
+      expect(fs.existsSync(hole)).toBe(true);
+    });
+
+    await test.step("an unchecked box is still unchecked after a reload", async () => {
+      await app.reload();
+      if ((await app.activeTabName()) !== "Tracks")
+        await app.openSource("Tracks");
+      await expect.poll(() => app.grid.rowCount()).toBe(61);
+      await openDelete(app, page, "Within You Without You", "Delete track…");
+      await expect(
+        choice(page, "Delete the audio file from disk"),
+      ).not.toBeChecked();
+      await dialog(page)
+        .getByText("Delete the audio file from disk", { exact: true })
+        .click();
+      await confirmDelete(app, page);
+      expect(fs.existsSync(within)).toBe(false);
+    });
+
+    await test.step("audio that's already missing is no failure", async () => {
+      fs.rmSync(lovely);
+      await openDelete(app, page, "Lovely Rita", "Delete track…");
+      await expect(
+        choice(page, "Delete the audio file from disk"),
+      ).toBeChecked();
+      await confirmDelete(app, page);
+      await expect(page.getByText("Deleted 1 track")).toBeVisible();
+      await expect.poll(() => app.grid.rowCount()).toBe(59);
+      expect(await count(db, "file")).toBe(59);
+    });
   });
 });
 

@@ -146,6 +146,28 @@ export function storedDeleteChoices(env: AppEnv): DeleteChoices {
   return NO_CHOICES;
 }
 
+const KEEP_AUDIO_FILES_KEY = "deleteKeepsAudioFiles";
+
+/** Whether the "Delete records" dialog deletes a deleted `file` record's audio
+ * file too, as the user last left it. On unless they turned it off; only that
+ * is stored. */
+export function storedDeleteAudioFiles(env: AppEnv): boolean {
+  try {
+    return env.storage.getItem(KEEP_AUDIO_FILES_KEY) === null;
+  } catch {
+    return true;
+  }
+}
+
+export function persistDeleteAudioFiles(env: AppEnv, on: boolean): void {
+  try {
+    if (on) env.storage.removeItem(KEEP_AUDIO_FILES_KEY);
+    else env.storage.setItem(KEEP_AUDIO_FILES_KEY, "1");
+  } catch {
+    // ignore
+  }
+}
+
 export function persistDeleteChoices(
   env: AppEnv,
   choices: DeleteChoices,

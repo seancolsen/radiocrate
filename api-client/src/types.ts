@@ -40,7 +40,16 @@ export type DmlOperation =
       where: Record<string, JsonValue>;
     };
 
-export type DmlRequest = { operations: DmlOperation[] };
+/**
+ * A DML request: its operations, run in order as one transaction. With
+ * `deleteAudioFiles`, the audio file of every `file` record it deletes is
+ * removed from the collection too, or the request fails and nothing is
+ * deleted. A file that's already missing is passed over.
+ */
+export type DmlRequest = {
+  operations: DmlOperation[];
+  deleteAudioFiles?: boolean;
+};
 
 /** Per-operation returned rows, keyed by operation id (delete ops produce none). */
 export type DmlResult = Record<string, Record<string, JsonValue>>;

@@ -393,6 +393,10 @@ export interface RecordDelete {
   /** The choices in force: the ones remembered from the last deletions, as
    * changed in this dialog. */
   choices: DeleteChoices;
+  /** Whether the audio files of the `file` records the deletion takes are
+   * deleted from the collection too. It only counts when it takes some. On
+   * unless the user turned it off the last time. */
+  deleteAudioFiles: boolean;
   /** What the deletion takes under those choices. `null` until the first plan
    * lands; then the last one to land, shown while the next is worked out. */
   summary: DeleteSummary | null;

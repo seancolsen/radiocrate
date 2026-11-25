@@ -270,6 +270,7 @@ describe("the Delete records dialog", () => {
         { operation: "delete", id: "d0", table: "track", where: { id: "t1" } },
         { operation: "delete", id: "d1", table: "file", where: { id: "f1" } },
       ],
+      deleteAudioFiles: true,
     });
     const s = bundle.store.getState();
     expect(s.recordDelete).toBeNull();
@@ -278,6 +279,44 @@ describe("the Delete records dialog", () => {
     expect(s.pages["tab"]?.selection).toBeUndefined();
     expect(runSql).toHaveBeenCalledTimes(1);
     expect(s.pages["tab"]?.result?.rowCount).toBe(1);
+  });
+
+  it("deletes the audio of the files it takes, unless that's turned off", async () => {
+    // On to begin with, and only sent when there are files.
+    bundle.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
+    expect(pending()?.deleteAudioFiles).toBe(true);
+    await settle();
+    expect(pending()?.summary?.deletedByTable).toEqual({ track: 1 });
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    expect(vi.mocked(dml).mock.calls[0]?.[0]).not.toHaveProperty(
+      "deleteAudioFiles",
+    );
+
+    // Turned off, it stays off for the next deletion.
+    bundle.actions.requestRecordDelete("tab", "track", [record("track", "t2")]);
+    bundle.actions.setRecordDeleteChoice("orphans", FILE, true);
+    bundle.actions.setRecordDeleteAudioFiles(false);
+    expect(pending()?.deleteAudioFiles).toBe(false);
+    await settle();
+    expect(pending()?.summary?.deletedByTable).toEqual({ track: 1, file: 1 });
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    expect(vi.mocked(dml).mock.calls[1]?.[0]).not.toHaveProperty(
+      "deleteAudioFiles",
+    );
+
+    const later = createAppStore(env);
+    later.actions.setSchemaJson(SCHEMA);
+    later.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
+    expect(later.store.getState().recordDelete?.deleteAudioFiles).toBe(false);
+
+    // And turned on again, it's forgotten: on is the default.
+    later.actions.setRecordDeleteAudioFiles(true);
+    const again = createAppStore(env);
+    again.actions.setSchemaJson(SCHEMA);
+    again.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
+    expect(again.store.getState().recordDelete?.deleteAudioFiles).toBe(true);
   });
 
   it("takes a deleted track out of the queue and off the player", async () => {

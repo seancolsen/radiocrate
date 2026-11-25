@@ -856,6 +856,20 @@ for (const colorScheme of SCHEMES) {
       snapshot("record-delete/album", colorScheme),
     );
   });
+
+  // The dialog on a track whose file is to go with it, which offers to delete
+  // the audio file from disk too: a checkbox of its own, under the lines.
+  test(`record-delete/track-with-file - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "record-delete/track-with-file", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading")).toHaveText("Delete track");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Delete the audio file from disk" }),
+    ).toBeChecked();
+    await expect(dialog).toHaveScreenshot(
+      snapshot("record-delete/track-with-file", colorScheme),
+    );
+  });
 }
 
 // A section toggle wears a tooltip only while the narrow toolbar has dropped
