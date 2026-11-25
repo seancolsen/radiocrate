@@ -54,6 +54,10 @@ From the query results view, there are two ways to begin editing a record:
 
 - **(B) Command palette**: A command palette action should exist with the label "Results: Edit selected rows", executable via keyboard shortcut or command palette.
 
+There is also a way to begin a record that doesn't exist yet:
+
+- **(C) New record** (added 2026-11-25): a "New [table]" (+) button in the query toolbar, beside Refresh, opens the editor on a blank record of the query's base table. It shows on a query (not a playlist) whose base table is one the editor can edit: in the current schema, with a key. The heading reads "New [table]", the first field is open for typing, and Save and Reset appear once something is filled in. Opening it puts the row selection down, and the editor stays on the new record until a row is selected again, which re-points it as usual; an unsaved draft is kept and comes back the next time the button is pressed. Saving inserts the record, along with anything added under it, then the query re-runs so the record shows among the rows, and the editor moves on to the record as the database holds it ("Edit [table]").
+
 ### Context menu generation
 
 The query column lineage (via polyglot analysis) determines which edit context menu options should appear.

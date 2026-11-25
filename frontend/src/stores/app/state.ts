@@ -351,10 +351,12 @@ export interface RecordEditorFocus {
 }
 
 /** One record identified by a result row: the table plus a fully-resolved key.
- * What the context menu offers and the record editor opens. */
+ * What the context menu offers and the record editor opens. The editor opens
+ * on one with no key at all, too: a record it's creating (`openNewRecord`). */
 export interface RecordRef {
   table: string;
-  /** The identifying column/value pairs, in constraint order. */
+  /** The identifying column/value pairs, in constraint order. Empty for a
+   * record that doesn't exist yet (`isNewRecord`). */
   key: readonly { column: string; value: string }[];
 }
 

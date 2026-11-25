@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX, type ReactNode } from "react";
 import {
+  isNewRecord,
   selectEffectivePresets,
   selectPreludeText,
   selectRecordEditor,
@@ -92,12 +93,17 @@ function ToolbarButton(props: {
  * database. Refresh is off while there are unsaved changes or a save is in
  * flight, since it would throw the changes away — Reset is the deliberate way to
  * do that. When something the form shows was changed on another device, both
- * Refresh and the menu's button wear a dot. */
+ * Refresh and the menu's button wear a dot.
+ *
+ * A record the form is `creating` has no computed columns or contextual
+ * queries until it exists, no id to copy and nothing to reload, so it gets only
+ * the first two — and no menu at all when neither applies. */
 function FormActionsMenu(props: {
   model: RecordFormModel;
   table: string;
-}): JSX.Element {
-  const { model } = props;
+  creating: boolean;
+}): JSX.Element | null {
+  const { model, creating } = props;
   const canQuery = useApp(
     (s) => contextKeyColumn(s.schema.tables, props.table) !== undefined,
   );
@@ -112,6 +118,7 @@ function FormActionsMenu(props: {
   const anyHidden = useFormState(model, (s) =>
     selectHasHiddenFields(s, metadata),
   );
+  if (creating && !anyExpanded && !anyHidden) return null;
   return (
     <Menu
       align="end"
@@ -148,19 +155,21 @@ function FormActionsMenu(props: {
             onClick={() => setShowHiddenFields(true)}
           />
         ))}
-      <MenuItem
-        icon={Icons.FieldComputed}
-        label="Add computed column"
-        onClick={() => model.beginAddComputed()}
-      />
-      {canQuery && (
+      {!creating && (
+        <MenuItem
+          icon={Icons.FieldComputed}
+          label="Add computed column"
+          onClick={() => model.beginAddComputed()}
+        />
+      )}
+      {!creating && canQuery && (
         <MenuItem
           icon={Icons.FieldQuery}
           label="Add contextual query"
           onClick={() => model.addProvisional()}
         />
       )}
-      {rootIds !== undefined && (
+      {!creating && rootIds !== undefined && (
         <MenuItem
           icon={Icons.Copy}
           label="Copy id"
@@ -171,13 +180,15 @@ function FormActionsMenu(props: {
           }}
         />
       )}
-      <MenuItem
-        icon={Icons.Refresh}
-        label="Refresh"
-        badge={changedElsewhere}
-        disabled={modified || saving}
-        onClick={() => model.reset()}
-      />
+      {!creating && (
+        <MenuItem
+          icon={Icons.Refresh}
+          label="Refresh"
+          badge={changedElsewhere}
+          disabled={modified || saving}
+          onClick={() => model.reset()}
+        />
+      )}
     </Menu>
   );
 }
@@ -279,10 +290,14 @@ function OpenPanel(props: {
 
   const records = props.target.records;
   const names = entityNames(props.target.table);
-  const heading =
-    records.length > 1
+  const noun = names?.[0] ?? props.target.table;
+  // One record with no key is one the editor is creating (`openNewRecord`).
+  const creating = records.length === 1 && isNewRecord(records[0]);
+  const heading = creating
+    ? `New ${noun}`
+    : records.length > 1
       ? `Edit ${records.length} ${names?.[1] ?? `${props.target.table} records`}`
-      : `Edit ${names?.[0] ?? props.target.table}`;
+      : `Edit ${noun}`;
   const onClose = () => closeRecordEditor(props.tabId);
 
   /** "Go back" to the records edited before these — reloaded, unless they hold
@@ -316,7 +331,7 @@ function OpenPanel(props: {
         width: `${width}px`,
         maxWidth: `calc(100% - ${minResultsWidth}px)`,
       }}
-      aria-label={`Edit ${names?.[0] ?? props.target.table}`}
+      aria-label={creating ? `New ${noun}` : `Edit ${noun}`}
       data-record-editor
     >
       <SidebarResizeHandle
@@ -342,6 +357,7 @@ function OpenPanel(props: {
           tabId={props.tabId}
           table={props.target.table}
           records={records}
+          creating={creating}
           schemaJson={schemaJson}
           heading={heading}
           onClose={onClose}
@@ -364,6 +380,8 @@ function PanelForm(props: {
   tabId: string;
   table: string;
   records: readonly RecordRef[];
+  /** The one record is a new one, for the form to create. */
+  creating: boolean;
   schemaJson: string;
   heading: string;
   onClose: () => void;
@@ -377,13 +395,17 @@ function PanelForm(props: {
   // looks the stash up first), so StrictMode's second initializer call reuses
   // the model the first one stashed; the load waits for `RecordForm`'s effect.
   const [form] = useState(() => {
-    const { tabId, table, records, schemaJson } = props;
+    const { tabId, table, records, creating, schemaJson } = props;
     const ids = identities(records);
     const model = stores.forms.actions.stashedForm(tabId, ids, () =>
       createRecordForm({
         tables,
         table,
         keys: records.map((record) => record.key),
+        create: creating,
+        // The editor moves on to the record once it exists, which loads it
+        // afresh: as the database holds it, in a form of its own.
+        onCreated: (key) => stores.app.actions.recordCreated(tabId, table, key),
         schemaJson,
         fieldMetadata: () => stores.app.store.getState().fieldMetadata.data,
         prelude: () => selectPreludeText(stores.app.store.getState()),
@@ -421,7 +443,13 @@ function PanelForm(props: {
         heading={props.heading}
         onClose={props.onClose}
         onBack={props.onBack}
-        menu={<FormActionsMenu model={model} table={props.table} />}
+        menu={
+          <FormActionsMenu
+            model={model}
+            table={props.table}
+            creating={props.creating}
+          />
+        }
       >
         {modified && (
           <>

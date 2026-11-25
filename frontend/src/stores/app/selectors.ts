@@ -21,6 +21,7 @@ import {
   type Sections,
 } from "../../query/playlist";
 import { resultToCsv } from "../../query/exportCsv";
+import { identifyingColumns } from "../../query/schema";
 import {
   NO_TABLE_METADATA,
   fieldRefKey,
@@ -530,6 +531,27 @@ export const selectRecordEditor = (
   s: AppState,
   tabId: string,
 ): RecordEditorTarget | null => s.pages[tabId]?.recordEditor ?? null;
+
+/** The table a new record can be added to from page `tabId` — its query's base
+ * table, for the record editor to create one of — or `undefined` where there's
+ * none: on a playlist (whose rows are its entries, which a new track wouldn't
+ * be one of), for a query with no base, or for a base the editor can't edit (a
+ * table in another schema, or one with no key to find the record by once it
+ * exists). */
+export function selectNewRecordTable(
+  s: AppState,
+  tabId: string,
+): string | undefined {
+  if (selectQueryTab(s, tabId) === undefined) return undefined;
+  const base = selectResultBase(s, tabId);
+  const table = s.schema.tables.find((t) => t.name === base);
+  return table && identifyingColumns(table).length > 0 ? table.name : undefined;
+}
+
+/** Whether `record` is one the record editor is creating: one with no key,
+ * since the database hasn't issued it one yet. */
+export const isNewRecord = (record: RecordRef): boolean =>
+  record.key.length === 0;
 
 export const selectBuilderSection = (
   s: AppState,

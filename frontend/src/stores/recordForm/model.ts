@@ -204,8 +204,15 @@ export interface RecordFormOptions {
   tables: readonly SchemaTable[];
   table: string;
   /** The records being edited — one, ordinarily; as many as the result-row
-   * selection holds when the user has widened it. */
+   * selection holds when the user has widened it. Unread with `create`. */
   keys: readonly RecordKey[];
+  /** The form is for a record of `table` that doesn't exist yet: it starts
+   * blank, with nothing to load, and its save inserts it. Once that has landed
+   * the form is on the record it created, and `onCreated` says which. */
+  create?: boolean;
+  /** Told the key the database issued a record the form created (`create`),
+   * once its save has landed. */
+  onCreated?: (key: RecordKey) => void;
   schemaJson: string;
   /** How the save reaches the database. The plain DML call by default; the query
    * page passes one that carries the result row the record is being edited from,
@@ -733,13 +740,77 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     isNew: false,
   });
 
-  // The root exists from the start — the keys of the records it's on are
-  // known — and its data is fetched by `start()`, under the loading wash.
+  /** The key of the record a `create` form has saved: what it's on from then
+   * on, Reset included. */
+  let created: RecordKey | undefined;
+
+  /** A record the form is *inventing*: no key, nothing to fetch, every field
+   * empty and editable from the start. `hidden` carries the contextual filter of
+   * the field it's being created under, exactly as a loaded child of that field
+   * would (the column tying it to its parent isn't the user's to fill in).
+   *
+   * Its values are seeded NULL (bar a required timestamp's) rather than left
+   * absent so the fields render as *known to be empty* — pencils and all —
+   * instead of as still loading. */
+  const newRecordNode = (
+    table: string,
+    hidden: readonly string[],
+    records = 1,
+  ): RecordNode => {
+    const fields = buildFormFields(opts.tables, table, hidden);
+    const values: Record<string, ColumnValues> = {};
+    const blank: Record<string, ColumnValues> = {};
+    const counts: Record<string, readonly number[]> = {};
+    // One entry per record being created: one, ordinarily, and one per base
+    // record when a multi-record field is being added to across several.
+    const each = Array.from({ length: records }, () => null);
+    for (const field of fields) {
+      if (field.kind === "multiRecord") counts[field.key] = each.map(() => 0);
+      else {
+        blank[field.column] = [...each];
+        // A required timestamp starts from now, as editing a NULL one does
+        // (`beginEdit`): the record can't be inserted without one, and the
+        // moment it was drafted is the likeliest value (a `play`'s `played_at`).
+        values[field.column] =
+          field.kind === "primitive" &&
+          field.valueType === "timestamp" &&
+          !field.nullable &&
+          !field.readOnly
+            ? each.map(formatCurrentTimestamp)
+            : [...each];
+      }
+    }
+    return {
+      table,
+      keys: each.map(() => []),
+      hidden,
+      fields,
+      status: "loaded",
+      error: null,
+      values,
+      original: blank,
+      counts,
+      computed: {},
+      isNew: true,
+    };
+  };
+
+  /** The root as the form starts out (and as Reset puts it back): the records
+   * it's on, whose keys are known and whose data `start()` fetches under the
+   * loading wash — or, for a form creating a record (`create`), a blank one.
+   * A blank root's baseline is what it starts with, so a value the form fills
+   * in itself (a required timestamp's "now") isn't an edit of the user's, and
+   * the form counts as modified only once they've made one
+   * (`selectFormModified`). */
+  const rootNode = (): RecordNode => {
+    if (created) return recordNode(opts.table, [created], [], "unloaded");
+    if (!opts.create) return recordNode(opts.table, opts.keys, [], "unloaded");
+    const node = newRecordNode(opts.table, []);
+    return { ...node, original: node.values };
+  };
   const rootState = (): FormState => ({
     ...initialFormState(),
-    records: {
-      [ROOT_ID]: recordNode(opts.table, opts.keys, [], "unloaded"),
-    },
+    records: { [ROOT_ID]: rootNode() },
   });
 
   const store = createFormVanillaStore(rootState());
@@ -862,59 +933,16 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       s.records[id] = castDraft(recordNode(table, keys, hidden, status));
     });
 
-  /** Creates a record the form is *inventing*: no key, nothing to fetch, every
-   * field empty and editable from the start. `hidden` carries the contextual
-   * filter of the field it's being created under, exactly as a loaded child of
-   * that field would (the column tying it to its parent isn't the user's to
-   * fill in).
-   *
-   * Its values are seeded NULL (bar a required timestamp's) rather than left absent so the fields render as
-   * *known to be empty* — pencils and all — instead of as still loading. */
+  /** Creates a record the form is *inventing* (`newRecordNode`) under `id`. */
   const addNewRecord = (
     id: string,
     table: string,
     hidden: readonly string[],
     records = 1,
-  ) => {
-    const fields = buildFormFields(opts.tables, table, hidden);
-    const values: Record<string, ColumnValues> = {};
-    const blank: Record<string, ColumnValues> = {};
-    const counts: Record<string, readonly number[]> = {};
-    // One entry per record being created: one, ordinarily, and one per base
-    // record when a multi-record field is being added to across several.
-    const each = Array.from({ length: records }, () => null);
-    for (const field of fields) {
-      if (field.kind === "multiRecord") counts[field.key] = each.map(() => 0);
-      else {
-        blank[field.column] = [...each];
-        // A required timestamp starts from now, as editing a NULL one does
-        // (`beginEdit`): the record can't be inserted without one, and the
-        // moment it was drafted is the likeliest value (a `play`'s `played_at`).
-        values[field.column] =
-          field.kind === "primitive" &&
-          field.valueType === "timestamp" &&
-          !field.nullable &&
-          !field.readOnly
-            ? each.map(formatCurrentTimestamp)
-            : [...each];
-      }
-    }
+  ) =>
     set((s) => {
-      s.records[id] = castDraft({
-        table,
-        keys: each.map(() => []),
-        hidden,
-        fields,
-        status: "loaded",
-        error: null,
-        values,
-        original: blank,
-        counts,
-        computed: {},
-        isNew: true,
-      });
+      s.records[id] = castDraft(newRecordNode(table, hidden, records));
     });
-  };
 
   // ── Values, across the records a node stands for ───────────────────────────
 
@@ -1105,6 +1133,18 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
     set((s) => {
       s.editing = fieldItemId(recordId, field.key);
     });
+  };
+
+  /** Starts the user on a record the form has just scaffolded: choosing what it
+   * links to when its first field is a link it can't be saved without (a
+   * track's new tag, say), and otherwise typing into its first editable field. */
+  const beginNew = (recordId: string) => {
+    const first = firstShownField(recordId);
+    if (first?.kind === "scalarLink" && !first.nullable) {
+      model.openPicker(recordId, first.key);
+    } else {
+      activateNewRecord(recordId);
+    }
   };
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -2477,13 +2517,20 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       : null;
   };
 
+  /** Sets the root going: loads the records it's on, or, for a record the
+   * form is creating, puts the user to work on its first field (`beginNew`). */
+  const startRoot = () => {
+    if (get().records[ROOT_ID]?.isNew) beginNew(ROOT_ID);
+    else void loadRecord(ROOT_ID);
+  };
+
   const model: RecordFormModel = {
     store,
     start: () => {
       if (started) return;
       started = true;
       noteComputedRows();
-      void loadRecord(ROOT_ID);
+      startRoot();
     },
     getSummary: () => selectFormSummary(get()),
     dispose: () => {
@@ -2908,6 +2955,14 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           reloadComputed();
         }
         set({ saving: false, saveError: null });
+        // A record the form was creating is one the database holds now.
+        if (plan.created.includes(ROOT_ID)) {
+          const key = get().records[ROOT_ID]?.keys[0];
+          if (key && key.length > 0) {
+            created = key;
+            opts.onCreated?.(key);
+          }
+        }
       } catch (err) {
         // The form keeps everything it failed to write, so the user can act on
         // what the message says and save again.
@@ -2921,7 +2976,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
       set(rootState());
       started = true;
       noteComputedRows();
-      void loadRecord(ROOT_ID);
+      startRoot();
     },
 
     registerItem: (itemId, handle) => {
@@ -3139,14 +3194,7 @@ export function createRecordForm(opts: RecordFormOptions): RecordFormModel {
           s.expanded[child] = true;
         });
       }
-      // A record whose first field is a link it can't be saved without starts
-      // by choosing what it links to — a track's new tag, say.
-      const first = firstShownField(child);
-      if (first?.kind === "scalarLink" && !first.nullable) {
-        model.openPicker(child, first.key);
-      } else {
-        activateNewRecord(child);
-      }
+      beginNew(child);
     },
     reorderChildren: (recordId, field, ids, gap) => {
       if (!field.ordered) return false;

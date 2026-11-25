@@ -12,6 +12,7 @@ import {
   selectIsFullQuery,
   selectIsUnsaved,
   selectIsWriting,
+  selectNewRecordTable,
   selectPageBase,
   selectPageChangedElsewhere,
   selectResultCount,
@@ -65,8 +66,9 @@ function Separator(): JSX.Element {
  * toggles · then, each only while it applies, Undo, Redo and Save (behind a
  * separator of their own while any of them shows; Undo and Redo dim while a
  * write to a playlist's entries is in flight) — and, at the far right, the
- * result count and Refresh, dotted when what the rows answer was changed on
- * another device. */
+ * result count, "New …" (a new record of the base table, where the record
+ * editor can make one) and Refresh, dotted when what the rows answer was
+ * changed on another device. */
 export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const unsaved = useApp((s) => selectIsUnsaved(s, props.tabId));
   const canUndo = useApp((s) => selectCanUndo(s, props.tabId));
@@ -87,6 +89,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
   const playlist = useApp(
     (s) => selectTab(s, props.tabId)?.kind === "playlist",
   );
+  const newRecordTable = useApp((s) => selectNewRecordTable(s, props.tabId));
   const builderOpen = fullMode ? fullEditorOpen : section !== null;
   // The section whose toggle is marked: the one the error strip's problem is
   // in.
@@ -98,6 +101,7 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
     redo,
     toggleFullEditor,
     toggleBuilderSection,
+    openNewRecord,
   } = useAppActions();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -188,6 +192,14 @@ export default function QueryToolbar(props: { tabId: string }): JSX.Element {
           <span className="text-ink-weak px-1 text-xs whitespace-nowrap">
             {resultCountLabel(count, fullMode ? null : base)}
           </span>
+        )}
+        {/* A new record of the base table, in the record editor. */}
+        {newRecordTable !== undefined && (
+          <IconButton
+            icon={Icons.Add}
+            label={`New ${nounFor(newRecordTable, 1) ?? `${newRecordTable} record`}`}
+            onClick={() => openNewRecord(props.tabId)}
+          />
         )}
         {/* The glyph turns while the run it starts is in flight. Its circular
             arrow is drawn centred in the icon's own box, so the default

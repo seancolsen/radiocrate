@@ -548,9 +548,16 @@ export function selectFieldModified(
   return field !== undefined && fieldModified(s, memoFor(s), recordId, field);
 }
 
-/** Whether the form as a whole has unsaved changes. */
-export const selectFormModified = (s: FormState): boolean =>
-  selectRecordModified(s, ROOT_ID);
+/** Whether the form as a whole has unsaved changes. A record being created
+ * deeper down is a change by being there, but the record the form itself is
+ * creating isn't until the user has filled something in: a blank one is
+ * nothing to save, and nothing to keep. */
+export function selectFormModified(s: FormState): boolean {
+  const root = s.records[ROOT_ID];
+  if (!root?.isNew) return selectRecordModified(s, ROOT_ID);
+  const memo = memoFor(s);
+  return root.fields.some((field) => fieldModified(s, memo, ROOT_ID, field));
+}
 
 /** What the forms store mirrors out of this form (see `RecordFormSummary`):
  * whether it holds focus, a selection or its picker, and whether it's modified.

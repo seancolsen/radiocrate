@@ -203,6 +203,7 @@ import {
   selectIsPristine,
   selectAnyFolderExpanded,
   selectIsUnsaved,
+  selectNewRecordTable,
   selectPageTab,
   selectQueryTab,
   selectRowContext,
@@ -714,6 +715,110 @@ describe("the record editor's way back", () => {
     bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
     bundle.actions.resyncRecordEditors();
     expect(editor(bundle)).toEqual({ table: "track", records: [track("2")] });
+  });
+});
+
+describe("adding a record", () => {
+  const track = (id: string) => ({
+    table: "track",
+    key: [{ column: "id", value: id }],
+  });
+  const draft = { table: "track", records: [{ table: "track", key: [] }] };
+
+  /** Tab "a", a query of tracks with rows 1 and 2, the first selected and
+   * open in the editor. */
+  const opened = (base = "track") => {
+    const bundle = createAppStore(fakeEnv());
+    bundle.actions.setSchemaJson(FIXTURE_SCHEMA_JSON);
+    bundle.actions.openTab({
+      id: "a",
+      name: "a",
+      definition: JSON.stringify({ base }),
+    });
+    bundle.actions.setResults("a", buildResultFromStringRows([["1"], ["2"]]), {
+      records: [{ table: "track", keyColumns: ["id"], keyIndices: [0] }],
+    });
+    bundle.actions.clickRow("a", 0, { shift: false, ctrl: false });
+    bundle.actions.editSelectedRows("a");
+    return bundle;
+  };
+  const page = (bundle: AppStoreBundle) => bundle.store.getState().pages["a"];
+
+  it("adds to the query's base table, when the editor can edit it", () => {
+    expect(selectNewRecordTable(opened().store.getState(), "a")).toBe("track");
+    expect(
+      selectNewRecordTable(opened("nope").store.getState(), "a"),
+    ).toBeUndefined();
+    expect(
+      selectNewRecordTable(opened("").store.getState(), "a"),
+    ).toBeUndefined();
+    // A playlist's rows are its entries, which a new track wouldn't be one of.
+    const bundle = opened();
+    bundle.actions.openTab(PLAYLIST_SOURCE);
+    expect(
+      selectNewRecordTable(bundle.store.getState(), PLAYLIST_SOURCE.id),
+    ).toBeUndefined();
+  });
+
+  it("opens the editor on a new record, putting the selection down", () => {
+    const bundle = opened();
+    bundle.actions.pushRecordEditor("a", "album", [
+      { table: "album", key: [{ column: "id", value: "a1" }] },
+    ]);
+    bundle.actions.openNewRecord("a");
+    expect(page(bundle)?.recordEditor).toEqual(draft);
+    expect(page(bundle)?.selection?.rows.size ?? 0).toBe(0);
+  });
+
+  it("stays on the new record until a row is selected", () => {
+    const bundle = opened();
+    bundle.actions.openNewRecord("a");
+    bundle.actions.resyncRecordEditors();
+    expect(page(bundle)?.recordEditor).toEqual(draft);
+    // Rows landing again are no reason to leave it.
+    bundle.actions.setResults(
+      "a",
+      buildResultFromStringRows([["1"], ["2"]]),
+      { records: [{ table: "track", keyColumns: ["id"], keyIndices: [0] }] },
+      true,
+    );
+    bundle.actions.resyncRecordEditors();
+    expect(page(bundle)?.recordEditor).toEqual(draft);
+
+    bundle.actions.clickRow("a", 1, { shift: false, ctrl: false });
+    bundle.actions.resyncRecordEditors();
+    expect(page(bundle)?.recordEditor).toEqual({
+      table: "track",
+      records: [track("2")],
+    });
+  });
+
+  it("moves on to the record once it's created, and re-runs the page", async () => {
+    const bundle = opened();
+    bundle.actions.openNewRecord("a");
+    vi.mocked(runSql).mockClear();
+    bundle.actions.recordCreated("a", "track", track("9").key);
+    expect(page(bundle)?.recordEditor).toEqual({
+      table: "track",
+      records: [track("9")],
+    });
+    await vi.waitFor(() => expect(runSql).toHaveBeenCalledTimes(1));
+    // Still on it as the rows land, with nothing selected.
+    bundle.actions.resyncRecordEditors();
+    expect(page(bundle)?.recordEditor?.records).toEqual([track("9")]);
+  });
+
+  it("finds the draft beneath a record the user went on into", () => {
+    const bundle = opened();
+    bundle.actions.openNewRecord("a");
+    const album = { table: "album", key: [{ column: "id", value: "a1" }] };
+    bundle.actions.pushRecordEditor("a", "album", [album]);
+    bundle.actions.recordCreated("a", "track", track("9").key);
+    expect(page(bundle)?.recordEditor).toEqual({
+      table: "album",
+      records: [album],
+      back: [{ table: "track", records: [track("9")] }],
+    });
   });
 });
 

@@ -349,6 +349,7 @@ import {
   selectPageTab,
   selectPrelude,
   selectUserPrelude,
+  selectNewRecordTable,
   selectQueryTab,
   selectRowContext,
   selectRowForRecord,
@@ -360,6 +361,7 @@ import {
   selectTableMetadata,
   selectContextualQuery,
   selectTrackIdAt,
+  isNewRecord,
   sameRecord,
 } from "./selectors";
 import {
@@ -381,6 +383,7 @@ import {
   type PresetFields,
   type PresetSave,
   type QueryTab,
+  type RecordEditorEntry,
   type RecordRef,
   type RenamePlace,
   type ThemePref,
@@ -878,6 +881,17 @@ export interface AppActions {
   popRecordEditor: (tabId: string) => void;
   /** Close `tabId`'s record-editor sidebar. */
   closeRecordEditor: (tabId: string) => void;
+  /** Opens `tabId`'s record editor on a new record of the page's base table
+   * (`selectNewRecordTable`) — the toolbar's "New …" button. The new record is
+   * none of the rows, so the row selection is put down, and the editor stays
+   * on it rather than following the selection until the user selects a row
+   * again. Coming back to a draft the user left unsaved picks it up again.
+   * Does nothing on a page with no table to add to. */
+  openNewRecord: (tabId: string) => void;
+  /** What follows the record editor's save of a record it was creating: the
+   * editor moves on to the record the database now holds, keyed by `key`, and
+   * the page re-runs, so the record shows among the rows when they include it. */
+  recordCreated: (tabId: string, table: string, key: RecordKey) => void;
   /** The `results.edit_selected` command: closes `tabId`'s record editor when
    * the user is working in it (`editorFocused` — the keyboard focus is
    * somewhere inside it), and otherwise brings the user to it — opening it on
@@ -1552,7 +1566,10 @@ export function createAppActions(
   // (a re-run), not by the user, and hasn't been added to since. The record
   // editor's resync reads it to tell the two apart: the user putting the rows
   // down closes the editor, the rows changing underneath it doesn't (see
-  // `resyncRecordEditors`). Non-reactive: the selection is what renders.
+  // `resyncRecordEditors`). Opening the editor on a new record puts the
+  // selection down the same way (`openNewRecord`): the record is none of the
+  // rows, so an empty selection is no reason to close it. Non-reactive: the
+  // selection is what renders.
   const sweptSelections = new Set<string>();
 
   // Trailing-debounced re-runs, keyed by tab id, so a burst of keystrokes in a
@@ -5438,6 +5455,45 @@ export function createAppActions(
         const page = s.pages[tabId];
         if (page) page.recordEditor = null;
       }),
+    openNewRecord: (tabId) => {
+      const table = selectNewRecordTable(get(), tabId);
+      if (table === undefined) return;
+      // With nothing selected, the editor stays where it's put (see
+      // `resyncRecordEditors`).
+      sweptSelections.add(tabId);
+      const selection = get().pages[tabId]?.selection;
+      set((s) => {
+        const page = pageDraft(s, tabId);
+        page.recordEditor = castDraft({ table, records: [{ table, key: [] }] });
+        if (selection && selection.rows.size > 0) {
+          page.selection = castDraft(clearedSelection(selection));
+        }
+      });
+    },
+    recordCreated: (tabId, table, key) => {
+      const editor = get().pages[tabId]?.recordEditor;
+      if (editor) {
+        // The draft is wherever the user has left it: on top, ordinarily, but
+        // they may have gone on into one of its records while it saved.
+        const adopt = (entry: RecordEditorEntry): RecordEditorEntry =>
+          entry.table === table &&
+          entry.records.length === 1 &&
+          isNewRecord(entry.records[0])
+            ? { table, records: [{ table, key }] }
+            : entry;
+        set((s) => {
+          const page = s.pages[tabId];
+          if (!page) return;
+          page.recordEditor = castDraft({
+            ...adopt(editor),
+            back: editor.back?.map(adopt),
+          });
+        });
+      }
+      // The same query, so the rows land as a refresh, which keeps the place
+      // in them.
+      runQuery(tabId);
+    },
     toggleRecordEditor: (tabId, editorFocused) => {
       if (get().pages[tabId]?.recordEditor && editorFocused) {
         actions.closeRecordEditor(tabId);
@@ -5461,6 +5517,9 @@ export function createAppActions(
       // twice would be pointless.
       const indexes = new Set<number>();
       for (const record of records) {
+        // A record being created has no row yet; the page re-runs once it
+        // exists (`recordCreated`).
+        if (isNewRecord(record)) continue;
         const index = selectRowForRecord(get(), tabId, record);
         if (index !== undefined) indexes.add(index);
       }

@@ -1557,6 +1557,110 @@ describe("a multi-record field on several records", () => {
   });
 });
 
+describe("creating a record", () => {
+  const creating = (extra: Partial<RecordFormOptions> = {}) =>
+    form([[]], { create: true, ...extra });
+
+  it("starts blank, with nothing to load and the caret in its first field", async () => {
+    const model = creating();
+    model.start();
+    await flush();
+    expect(runner).not.toHaveBeenCalled();
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]).toMatchObject({
+      isNew: true,
+      status: "loaded",
+      keys: [[]],
+    });
+    expect(s.records[ROOT_ID]?.values["title"]).toEqual([null]);
+    expect(s.editing).toBe(fieldItemId(ROOT_ID, "title"));
+  });
+
+  it("is modified only once the user has filled something in", () => {
+    const model = creating();
+    model.start();
+    expect(selectFormModified(model.store.getState())).toBe(false);
+    model.commitEdit(ROOT_ID, "title", "Formation");
+    expect(selectFormModified(model.store.getState())).toBe(true);
+    model.reset();
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["title"]).toEqual([null]);
+    expect(selectFormModified(s)).toBe(false);
+  });
+
+  it("doesn't count the time a required timestamp starts at as an edit", () => {
+    const model = form([[]], { create: true, table: "play" });
+    model.start();
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]?.values["played_at"]?.[0]).not.toBeNull();
+    expect(selectFormModified(s)).toBe(false);
+    expect(s.editing).toBe(fieldItemId(ROOT_ID, "played_at"));
+  });
+
+  it("inserts the record and what was added under it, then reports its key", async () => {
+    const runDml = vi.fn<(operations: DmlOperation[]) => Promise<DmlResult>>(
+      () =>
+        Promise.resolve({
+          op1: { id: "t9", title: "Formation", genre: null, album: null },
+          op2: { id: "c9", track: "t9", role: "Vocals" },
+        }),
+    );
+    const onCreated = vi.fn();
+    const model = creating({ runDml, onCreated });
+    model.start();
+    model.commitEdit(ROOT_ID, "title", "Formation");
+    model.addChild(ROOT_ID, credits(model));
+    const credit = `${CREDITS_LIST}[new:1]`;
+    model.commitEdit(credit, "role", "Vocals");
+
+    await model.save();
+
+    expect(runDml.mock.calls[0]?.[0]).toEqual([
+      {
+        operation: "insert",
+        id: "op1",
+        table: "track",
+        values: { title: "Formation" },
+      },
+      {
+        operation: "insert",
+        id: "op2",
+        table: "credit",
+        values: { role: "Vocals", track: { id: "op1" } },
+      },
+    ]);
+    const key = [{ column: "id", value: "t9" }];
+    expect(onCreated).toHaveBeenCalledWith(key);
+    const s = model.store.getState();
+    expect(s.records[ROOT_ID]).toMatchObject({ isNew: false, keys: [key] });
+    expect(selectFormModified(s)).toBe(false);
+
+    // From here on it's the record it created: Reset reads that back.
+    runner.mockClear();
+    serve({ track: [trackRow("t9", "Formation", null, 1)] });
+    model.reset();
+    await flush();
+    expect(runner.mock.calls[0]?.[0]).toMatchObject({ base: "track" });
+    expect(model.store.getState().records[ROOT_ID]?.keys).toEqual([key]);
+  });
+
+  it("reports nothing when the save fails, and keeps what was typed", async () => {
+    const onCreated = vi.fn();
+    const model = creating({
+      onCreated,
+      runDml: () => Promise.reject(new Error("constraint violated")),
+    });
+    model.start();
+    model.commitEdit(ROOT_ID, "title", "Formation");
+    await model.save();
+    const s = model.store.getState();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(s.saveError).toBe("constraint violated");
+    expect(s.records[ROOT_ID]?.isNew).toBe(true);
+    expect(selectFormModified(s)).toBe(true);
+  });
+});
+
 describe("saving", () => {
   it("waits for the keys a cleared, unopened list has to delete", async () => {
     const removal = deferred<RecordRows>();
