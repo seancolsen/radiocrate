@@ -9,13 +9,21 @@
 //! Deliberately "dumb" about referential integrity: it never cascades or nulls out references. A
 //! delete simply fails if it would leave a dangling reference, and the client is responsible for
 //! ordering a deletion tree leaves-first. See `plans/2026-07-dml-api.md` for the full contract.
+//!
+//! An operation names one record, and a request that deletes a rating can hold one for each of the
+//! tens of thousands of tracks that had it. `DuckDB` takes a millisecond or more to run any
+//! statement at all, and each delete also looks through every table that refers to its own, so a
+//! request that size, run one statement to an operation, takes minutes. A run of operations that
+//! differ only in the record they name is therefore made in one statement (see [`leading_run`]).
+//! That changes how long a request takes and nothing else: what it does, what it returns and what
+//! it refuses are the same.
 
 use std::collections::{BTreeSet, HashMap};
 
 use api_schema::Topic;
 use duckdb::Connection;
 use duckdb::types::Value as DuckValue;
-use introspection::{Column, Schema, Table};
+use introspection::{Column, Link, Schema, Table};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -216,23 +224,17 @@ fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr>
     // op id -> returned row, for operations that produce a result. Doubles as the source for
     // resolving operation-references.
     let mut results: HashMap<String, Value> = HashMap::new();
-    for op in operations {
-        let target = op.target();
-        match op {
-            Operation::Insert { id, values, .. } => {
-                let row = do_insert(&tx, &schema, id, &target, values, &results)?;
-                results.insert(id.clone(), row);
-            }
-            Operation::Update {
-                id, where_, values, ..
-            } => {
-                let row = do_update(&tx, &schema, id, &target, where_, values, &results)?;
-                results.insert(id.clone(), row);
-            }
-            Operation::Delete { id, where_, .. } => {
-                do_delete(&tx, &schema, id, &target, where_)?;
+    let mut rest = operations;
+    while !rest.is_empty() {
+        let (run, after) = rest.split_at(leading_run(&schema, rest));
+        // A run the single statement can't vouch for is made one operation at a time, which is
+        // where whatever is wrong with it gets reported.
+        if run.len() == 1 || !do_run(&tx, &schema, run, &mut results)? {
+            for op in run {
+                do_operation(&tx, &schema, op, &mut results)?;
             }
         }
+        rest = after;
     }
 
     tx.commit().map_err(|e| RpcErr::from(e.to_string()))?;
@@ -245,6 +247,32 @@ fn run(conn: &mut Connection, operations: &[Operation]) -> Result<Value, RpcErr>
         }
     }
     Ok(Value::Object(out))
+}
+
+/// Runs one operation, keeping the row it returns, if it returns one.
+fn do_operation(
+    tx: &Connection,
+    schema: &Schema,
+    op: &Operation,
+    results: &mut HashMap<String, Value>,
+) -> Result<(), RpcErr> {
+    let target = op.target();
+    match op {
+        Operation::Insert { id, values, .. } => {
+            let row = do_insert(tx, schema, id, &target, values, results)?;
+            results.insert(id.clone(), row);
+        }
+        Operation::Update {
+            id, where_, values, ..
+        } => {
+            let row = do_update(tx, schema, id, &target, where_, values, results)?;
+            results.insert(id.clone(), row);
+        }
+        Operation::Delete { id, where_, .. } => {
+            do_delete(tx, schema, id, &target, where_)?;
+        }
+    }
+    Ok(())
 }
 
 fn introspect(conn: &Connection) -> Result<Schema, RpcErr> {
@@ -446,18 +474,9 @@ fn do_delete(
     // references this table, fail if any still-present row points at a row we're about to delete.
     // A referencing table can be in another schema, which it's named with.
     for link in schema.incoming_links_in(&target.schema, target.name) {
-        let check_sql = format!(
-            "SELECT EXISTS(SELECT 1 FROM {from_table} f WHERE f.{from_column} IS NOT NULL \
-             AND f.{from_column} IN (SELECT {to_column} FROM {del_table} WHERE {where_clause}))",
-            from_table = quote_qualified(&link.from_schema, &link.from_table),
-            from_column = quote_ident(&link.from_column),
-            to_column = quote_ident(&link.to_column),
-            del_table = target.sql(),
-            where_clause = where_sql,
-        );
         let dangling: bool = tx
             .query_row(
-                &check_sql,
+                &dangling_sql(link, target, &where_sql),
                 duckdb::params_from_iter(where_binds.iter()),
                 |row| row.get(0),
             )
@@ -491,6 +510,383 @@ fn do_delete(
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Runs: operations that differ only in the record they name, made in one statement
+// ---------------------------------------------------------------------------
+
+/// The most operations one statement stands in for. Each is a few bound parameters.
+const RUN_MAX: usize = 500;
+
+/// How many of the operations `operations` starts with can be made in one statement: a run of
+/// updates that set the same values, or of deletes, each naming a different record of one table by
+/// the same columns. One, for an operation that begins no such run.
+///
+/// Left to be made one at a time, so that the run does exactly what its operations would in turn:
+///
+/// - an insert, or an update whose values name an earlier operation's record;
+/// - an update that changes a column it's found by, whose later operations would be looking for
+///   what an earlier one had changed;
+/// - a delete from a table that refers to itself, where one record of the run could be what keeps
+///   another from being deleted, depending on their order.
+fn leading_run(schema: &Schema, operations: &[Operation]) -> usize {
+    let Some(first) = operations.first() else {
+        return 0;
+    };
+    let target = first.target();
+    let (first_where, first_values) = match first {
+        Operation::Insert { .. } => return 1,
+        Operation::Update { where_, values, .. } => {
+            let plain = values
+                .iter()
+                .all(|(column, value)| is_literal(value) && !where_.contains_key(column));
+            if !plain {
+                return 1;
+            }
+            (where_, Some(values))
+        }
+        Operation::Delete { where_, .. } => {
+            let refers_to_itself = schema
+                .incoming_links_in(&target.schema, target.name)
+                .any(|link| link.from_schema == target.schema && link.from_table == target.name);
+            if refers_to_itself {
+                return 1;
+            }
+            (where_, None)
+        }
+    };
+    if !names_a_record(first_where) {
+        return 1;
+    }
+
+    let mut named = BTreeSet::from([record_name(first_where)]);
+    let mut len = 1;
+    for op in &operations[1..] {
+        let (where_, values) = match op {
+            Operation::Insert { .. } => break,
+            Operation::Update { where_, values, .. } => (where_, Some(values)),
+            Operation::Delete { where_, .. } => (where_, None),
+        };
+        let next = op.target();
+        let alike = values == first_values
+            && next.schema == target.schema
+            && next.name == target.name
+            && where_.len() == first_where.len()
+            && where_.keys().eq(first_where.keys())
+            && names_a_record(where_);
+        // A record named twice is the next run's: the second update of it has its own row to
+        // return, and the second delete of it has nothing left to delete.
+        if !alike || len == RUN_MAX || !named.insert(record_name(where_)) {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+/// Whether a value is one a statement binds as it is: not a reference to another operation's
+/// record, nor anything else a column can't be given.
+fn is_literal(value: &Value) -> bool {
+    !value.is_object() && !value.is_array()
+}
+
+/// Whether a `where` is of the form that can name a record: some columns, each with a value.
+fn names_a_record(where_: &Map<String, Value>) -> bool {
+    !where_.is_empty()
+        && where_
+            .values()
+            .all(|value| is_literal(value) && !value.is_null())
+}
+
+/// A `where`'s values as one string, to tell the records a run names apart.
+fn record_name(where_: &Map<String, Value>) -> String {
+    Value::Array(where_.values().cloned().collect()).to_string()
+}
+
+/// Makes a run (see [`leading_run`]) in one statement. `false`, with nothing written, when there's
+/// something in it for the operations to report as they're made one at a time: a table or column
+/// that isn't there, a record that isn't, a reference a delete would leave dangling.
+fn do_run(
+    tx: &Connection,
+    schema: &Schema,
+    run: &[Operation],
+    results: &mut HashMap<String, Value>,
+) -> Result<bool, RpcErr> {
+    let first = &run[0];
+    let target = first.target();
+    let Some(table) = schema.table_in(&target.schema, target.name) else {
+        return Ok(false);
+    };
+    let wheres: Vec<&Map<String, Value>> = run
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Update { where_, .. } | Operation::Delete { where_, .. } => Some(where_),
+            Operation::Insert { .. } => None,
+        })
+        .collect();
+    if wheres.len() != run.len() || validate_where(table, wheres[0], first.id()).is_err() {
+        return Ok(false);
+    }
+    let Some(records) = RunRecords::new(&wheres) else {
+        return Ok(false);
+    };
+    match first {
+        Operation::Update { values, .. } => {
+            update_run(tx, &target, table, run, &records, values, results)
+        }
+        Operation::Delete { .. } => delete_run(tx, schema, &target, run, &records),
+        Operation::Insert { .. } => Ok(false),
+    }
+}
+
+/// The records a run names: the columns it names them by, and each one's values for those.
+struct RunRecords {
+    columns: Vec<String>,
+    values: Vec<Vec<DuckValue>>,
+}
+
+impl RunRecords {
+    /// `None` when a value isn't one a statement can bind.
+    fn new(wheres: &[&Map<String, Value>]) -> Option<Self> {
+        let columns = wheres.first()?.keys().cloned().collect();
+        let values = wheres
+            .iter()
+            .map(|where_| where_.values().map(json_scalar_to_duck).collect())
+            .collect::<Result<_, _>>()
+            .ok()?;
+        Some(Self { columns, values })
+    }
+
+    /// The condition one record meets: `"track" = ? AND "artist" = ?`.
+    fn one(&self) -> String {
+        self.columns
+            .iter()
+            .map(|column| format!("{} = ?", quote_ident(column)))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+
+    /// The condition the run's records meet and no others do, and the values it binds. A single
+    /// column is looked up in the list of its values. Records named by several columns are each
+    /// spelled out, behind a list of the first column's values: that's the part the database can
+    /// answer quickly, and it leaves the spelled-out part few rows to look at.
+    fn condition(&self) -> (String, Vec<DuckValue>) {
+        let marks = vec!["?"; self.values.len()].join(", ");
+        let listed = format!("{} IN ({marks})", quote_ident(&self.columns[0]));
+        let firsts = self.values.iter().map(|record| record[0].clone());
+        if self.columns.len() == 1 {
+            return (listed, firsts.collect());
+        }
+        let each = vec![format!("({})", self.one()); self.values.len()].join(" OR ");
+        let binds = firsts
+            .chain(self.values.iter().flatten().cloned())
+            .collect();
+        (format!("{listed} AND ({each})"), binds)
+    }
+
+    /// An expression giving a row's place in the run, and the values it binds.
+    fn position(&self) -> (String, Vec<DuckValue>) {
+        let one = self.one();
+        let whens = (0..self.values.len())
+            .map(|index| format!("WHEN {one} THEN {index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let binds = self.values.iter().flatten().cloned().collect();
+        (format!("CASE {whens} END"), binds)
+    }
+
+    /// The columns the run names its records by, each as text: what tells one of the rows a
+    /// statement returns from another.
+    fn as_text(&self) -> String {
+        self.columns
+            .iter()
+            .map(|column| format!("CAST({} AS TEXT)", quote_ident(column)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// A run of updates, in one statement. See [`do_run`] for what `false` means.
+fn update_run(
+    tx: &Connection,
+    target: &Target<'_>,
+    table: &Table,
+    run: &[Operation],
+    records: &RunRecords,
+    values: &Map<String, Value>,
+    results: &mut HashMap<String, Value>,
+) -> Result<bool, RpcErr> {
+    if values.is_empty() || values.keys().any(|column| table.column(column).is_none()) {
+        return Ok(false);
+    }
+    let Ok(set_binds) = values
+        .values()
+        .map(json_scalar_to_duck)
+        .collect::<Result<Vec<_>, _>>()
+    else {
+        return Ok(false);
+    };
+    let (condition, condition_binds) = records.condition();
+    let key_count = records.columns.len();
+
+    // Which row is which operation's: each operation has to find exactly one, and the rows the
+    // update returns come back in no order.
+    let (position, position_binds) = records.position();
+    let find_sql = format!(
+        "SELECT {position}, {} FROM {} WHERE {condition}",
+        records.as_text(),
+        target.sql(),
+    );
+    let find_binds: Vec<&DuckValue> = position_binds.iter().chain(&condition_binds).collect();
+    let mut place_of: HashMap<Vec<Option<String>>, usize> = HashMap::new();
+    let mut taken = BTreeSet::new();
+    {
+        let Ok(mut stmt) = tx.prepare(&find_sql) else {
+            return Ok(false);
+        };
+        let Ok(mut rows) = stmt.query(duckdb::params_from_iter(find_binds)) else {
+            return Ok(false);
+        };
+        loop {
+            let Ok(next) = rows.next() else {
+                return Ok(false);
+            };
+            let Some(row) = next else { break };
+            let Ok(Some(place)) = row.get::<_, Option<usize>>(0) else {
+                return Ok(false);
+            };
+            let Ok(key) = (1..=key_count)
+                .map(|i| row.get(i))
+                .collect::<Result<_, _>>()
+            else {
+                return Ok(false);
+            };
+            if !taken.insert(place) || place_of.insert(key, place).is_some() {
+                return Ok(false);
+            }
+        }
+    }
+    if taken.len() != run.len() {
+        return Ok(false);
+    }
+
+    let assignments = values
+        .keys()
+        .map(|column| format!("{} = ?", quote_ident(column)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "UPDATE {} SET {assignments} WHERE {condition} RETURNING {}, {}",
+        target.sql(),
+        records.as_text(),
+        returning_list(table),
+    );
+    // From here on something has been written, so a failure is the request's. It's reported
+    // against the run's first operation, which is the one that would have met it.
+    let first_id = run[0].id();
+    let failed = |e: duckdb::Error| op_err(first_id, e.to_string());
+    let binds: Vec<&DuckValue> = set_binds.iter().chain(&condition_binds).collect();
+    let mut stmt = tx.prepare(&sql).map_err(failed)?;
+    let mut rows = stmt
+        .query(duckdb::params_from_iter(binds))
+        .map_err(failed)?;
+    let mut updated = 0;
+    while let Some(row) = rows.next().map_err(failed)? {
+        let key: Vec<Option<String>> = (0..key_count)
+            .map(|i| row.get(i))
+            .collect::<Result<_, _>>()
+            .map_err(failed)?;
+        let place = place_of.get(&key).ok_or_else(|| {
+            op_err(
+                first_id,
+                format!("update changed a row of \"{target}\" that no operation named"),
+            )
+        })?;
+        let mut object = Map::new();
+        for (index, column) in table.columns.iter().enumerate() {
+            let value: DuckValue = row.get(key_count + index).map_err(failed)?;
+            object.insert(column.name.clone(), duck_to_json(value));
+        }
+        results.insert(run[*place].id().to_string(), Value::Object(object));
+        updated += 1;
+    }
+    if updated != run.len() {
+        return Err(op_err(
+            first_id,
+            format!(
+                "update changed {updated} rows of \"{target}\" where {} were named",
+                run.len()
+            ),
+        ));
+    }
+    Ok(true)
+}
+
+/// A run of deletes, in one statement. See [`do_run`] for what `false` means.
+fn delete_run(
+    tx: &Connection,
+    schema: &Schema,
+    target: &Target<'_>,
+    run: &[Operation],
+    records: &RunRecords,
+) -> Result<bool, RpcErr> {
+    let (condition, binds) = records.condition();
+
+    // Every record has to be there, as each operation would find for itself.
+    let count_sql = format!("SELECT count(*) FROM {} WHERE {condition}", target.sql());
+    let Ok(found) = tx.query_row(&count_sql, duckdb::params_from_iter(binds.iter()), |row| {
+        row.get::<_, usize>(0)
+    }) else {
+        return Ok(false);
+    };
+    if found != run.len() {
+        return Ok(false);
+    }
+
+    // And none may be referred to. No table that refers to this one changes while the run is made
+    // (it's not this table: see `leading_run`), so asking once for all of them is asking of each
+    // in turn.
+    for link in schema.incoming_links_in(&target.schema, target.name) {
+        let Ok(dangling) = tx.query_row(
+            &dangling_sql(link, target, &condition),
+            duckdb::params_from_iter(binds.iter()),
+            |row| row.get::<_, bool>(0),
+        ) else {
+            return Ok(false);
+        };
+        if dangling {
+            return Ok(false);
+        }
+    }
+
+    let first_id = run[0].id();
+    let delete_sql = format!("DELETE FROM {} WHERE {condition}", target.sql());
+    let deleted = tx
+        .execute(&delete_sql, duckdb::params_from_iter(binds.iter()))
+        .map_err(|e| op_err(first_id, e.to_string()))?;
+    if deleted != run.len() {
+        return Err(op_err(
+            first_id,
+            format!(
+                "delete removed {deleted} rows of \"{target}\" where {} were named",
+                run.len()
+            ),
+        ));
+    }
+    Ok(true)
+}
+
+/// Whether any row still refers, through `link`, to a row of `target` that meets `condition`.
+fn dangling_sql(link: &Link, target: &Target<'_>, condition: &str) -> String {
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM {from_table} f WHERE f.{from_column} IS NOT NULL \
+         AND f.{from_column} IN (SELECT {to_column} FROM {del_table} WHERE {condition}))",
+        from_table = quote_qualified(&link.from_schema, &link.from_table),
+        from_column = quote_ident(&link.from_column),
+        to_column = quote_ident(&link.to_column),
+        del_table = target.sql(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,6 +1879,336 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.message.contains("not a foreign key"), "{}", err.message);
+    }
+
+    // --- Runs: like operations made in one statement ---------------------------
+
+    /// `n` tracks, each with a file of its own, on `album`: the tracks' ids and the files'.
+    fn insert_tracks(conn: &Connection, n: usize, album: Option<&str>) -> Vec<(String, String)> {
+        (0..n)
+            .map(|i| {
+                let track = format!("00000000-0000-0000-0001-{i:012}");
+                let file = format!("00000000-0000-0000-0002-{i:012}");
+                insert_file(conn, &file);
+                insert_track(conn, &track, &file, album);
+                conn.execute(
+                    "UPDATE track SET title = ? WHERE id = ?",
+                    params![format!("Track {i}"), track],
+                )
+                .unwrap();
+                (track, file)
+            })
+            .collect()
+    }
+
+    fn operation_id(err: &RpcErr) -> Option<&str> {
+        err.data.as_ref()?["operation"]["id"].as_str()
+    }
+
+    fn ops(conn: &Connection, request: &Value) -> (Schema, Vec<Operation>) {
+        let params: DmlParams = serde_json::from_value(request.clone()).unwrap();
+        (introspect(conn).unwrap(), params.operations)
+    }
+
+    #[test]
+    fn a_run_is_like_operations_on_different_records() {
+        let conn = setup();
+        let update = |id: &str, track: &str, values: Value| {
+            json!({ "id": id, "operation": "update", "table": "track",
+                    "where": { "id": track }, "values": values })
+        };
+        let delete = |id: &str, table: &str, key: &str| json!({ "id": id, "operation": "delete", "table": table, "where": { "id": key } });
+        let run = |operations: Value| {
+            let (schema, operations) = ops(&conn, &json!({ "operations": operations }));
+            leading_run(&schema, &operations)
+        };
+
+        // Updates that set the same values, up to one that sets others.
+        assert_eq!(
+            run(json!([
+                update("a", "t1", json!({ "album": null })),
+                update("b", "t2", json!({ "album": null })),
+                update("c", "t3", json!({ "album": ALBUM1 })),
+            ])),
+            2
+        );
+        // The same record again starts another run.
+        assert_eq!(
+            run(json!([
+                update("a", "t1", json!({ "album": null })),
+                update("b", "t1", json!({ "album": null })),
+            ])),
+            1
+        );
+        // An update of the column it's found by is on its own, and so is one naming another
+        // operation's record.
+        assert_eq!(
+            run(json!([
+                update("a", "t1", json!({ "id": "t9" })),
+                update("b", "t2", json!({ "id": "t9" })),
+            ])),
+            1
+        );
+        assert_eq!(
+            run(json!([
+                update("a", "t1", json!({ "album": { "id": "x" } })),
+                update("b", "t2", json!({ "album": { "id": "x" } })),
+            ])),
+            1
+        );
+        // Deletes from one table, up to the first from another.
+        assert_eq!(
+            run(json!([
+                delete("a", "track", "t1"),
+                delete("b", "track", "t2"),
+                delete("c", "file", "f1"),
+            ])),
+            2
+        );
+        // A table that refers to itself is deleted from one record at a time.
+        let folders = json!([
+            { "id": "a", "operation": "delete", "schema": "app", "table": "source_folder",
+              "where": { "id": "f1" } },
+            { "id": "b", "operation": "delete", "schema": "app", "table": "source_folder",
+              "where": { "id": "f2" } },
+        ]);
+        assert_eq!(run(folders), 1);
+        // No run is longer than one statement takes.
+        let many: Vec<Value> = (0..RUN_MAX + 10)
+            .map(|i| delete(&format!("d{i}"), "track", &format!("t{i}")))
+            .collect();
+        assert_eq!(run(Value::Array(many)), RUN_MAX);
+    }
+
+    #[test]
+    fn a_run_of_updates_returns_each_operations_own_row() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        let tracks = insert_tracks(&conn, 4, Some(ALBUM1));
+        // Named out of order, so that a row can only be matched to its operation by what it is.
+        let order = [2, 0, 3, 1];
+        let operations: Vec<Value> = order
+            .iter()
+            .map(|&i| {
+                json!({ "id": format!("u{i}"), "operation": "update", "table": "track",
+                        "where": { "id": tracks[i].0 }, "values": { "album": null } })
+            })
+            .collect();
+        let out = dml(&mut conn, json!({ "operations": operations })).unwrap();
+        for i in order {
+            let row = &out[format!("u{i}")];
+            assert_eq!(row["id"], tracks[i].0);
+            assert_eq!(row["title"], format!("Track {i}"));
+            assert_eq!(row["album"], Value::Null);
+        }
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM track WHERE album IS NULL"),
+            4
+        );
+    }
+
+    #[test]
+    fn a_run_names_records_by_several_columns() {
+        let mut conn = setup();
+        let tracks = insert_tracks(&conn, 3, None);
+        insert_artist(&conn, ARTIST1, "Beatles");
+        for (track, _) in &tracks {
+            insert_credit(&conn, track, ARTIST1);
+            conn.execute(
+                "INSERT INTO play (track, timestamp) VALUES (?, '2026-01-01 10:00:00'), \
+                 (?, '2026-01-02 10:00:00')",
+                params![track, track],
+            )
+            .unwrap();
+        }
+        let credits: Vec<Value> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, (track, _))| {
+                json!({ "id": format!("c{i}"), "operation": "update", "table": "credit",
+                        "where": { "track": track, "artist": ARTIST1 },
+                        "values": { "order": 7 } })
+            })
+            .collect();
+        let out = dml(&mut conn, json!({ "operations": credits })).unwrap();
+        for (i, (track, _)) in tracks.iter().enumerate() {
+            assert_eq!(out[format!("c{i}")]["track"], *track);
+            assert_eq!(out[format!("c{i}")]["order"], 7.0);
+        }
+
+        // One play of each track goes, found by its track and its time; the other stays.
+        let plays: Vec<Value> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, (track, _))| {
+                json!({ "id": format!("p{i}"), "operation": "delete", "table": "play",
+                        "where": { "track": track, "timestamp": "2026-01-01 10:00:00" } })
+            })
+            .collect();
+        dml(&mut conn, json!({ "operations": plays })).unwrap();
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM play WHERE timestamp = '2026-01-02 10:00:00'"
+            ),
+            3
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM play"), 3);
+    }
+
+    #[test]
+    fn a_long_deletion_is_made_in_a_few_statements() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        let n = RUN_MAX * 2 + 3;
+        let tracks = insert_tracks(&conn, n, Some(ALBUM1));
+        // Clear every track's album, delete the album, then every track, then every file.
+        let mut operations: Vec<Value> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, (track, _))| {
+                json!({ "id": format!("u{i}"), "operation": "update", "table": "track",
+                        "where": { "id": track }, "values": { "album": null } })
+            })
+            .collect();
+        operations.push(
+            json!({ "id": "album", "operation": "delete", "table": "album",
+                                "where": { "id": ALBUM1 } }),
+        );
+        for (i, (track, _)) in tracks.iter().enumerate() {
+            operations.push(json!({ "id": format!("t{i}"), "operation": "delete",
+                                    "table": "track", "where": { "id": track } }));
+        }
+        for (i, (_, file)) in tracks.iter().enumerate() {
+            operations.push(json!({ "id": format!("f{i}"), "operation": "delete",
+                                    "table": "file", "where": { "id": file } }));
+        }
+        let out = dml(&mut conn, json!({ "operations": operations })).unwrap();
+        assert_eq!(out.as_object().unwrap().len(), n);
+        assert_eq!(out[format!("u{}", n - 1)]["id"], tracks[n - 1].0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM track"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM album"), 0);
+    }
+
+    #[test]
+    fn a_run_with_a_record_that_isnt_there_fails_on_that_operation() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        let tracks = insert_tracks(&conn, 2, Some(ALBUM1));
+        let named = [&tracks[0].0, MISSING, &tracks[1].0];
+        let updates: Vec<Value> = named
+            .iter()
+            .enumerate()
+            .map(|(i, track)| {
+                json!({ "id": format!("u{i}"), "operation": "update", "table": "track",
+                        "where": { "id": track }, "values": { "album": null } })
+            })
+            .collect();
+        let err = dml(&mut conn, json!({ "operations": updates })).unwrap_err();
+        assert_eq!(operation_id(&err), Some("u1"));
+        assert!(err.message.contains("matched no rows"), "{}", err.message);
+        // The update before it was rolled back with the rest.
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM track WHERE album IS NULL"),
+            0
+        );
+
+        conn.execute_batch("UPDATE track SET album = NULL; DELETE FROM album;")
+            .unwrap();
+        let deletes: Vec<Value> = named
+            .iter()
+            .enumerate()
+            .map(|(i, track)| {
+                json!({ "id": format!("d{i}"), "operation": "delete", "table": "track",
+                        "where": { "id": track } })
+            })
+            .collect();
+        let err = dml(&mut conn, json!({ "operations": deletes })).unwrap_err();
+        assert_eq!(operation_id(&err), Some("d1"));
+        assert_eq!(count(&conn, "SELECT count(*) FROM track"), 2);
+    }
+
+    #[test]
+    fn a_run_of_deletes_fails_on_the_one_that_would_dangle() {
+        let mut conn = setup();
+        let tracks = insert_tracks(&conn, 3, None);
+        // The first and last files' tracks go first; the middle file's track stays.
+        let mut operations = vec![
+            json!({ "id": "t0", "operation": "delete", "table": "track",
+                    "where": { "id": tracks[0].0 } }),
+            json!({ "id": "t2", "operation": "delete", "table": "track",
+                    "where": { "id": tracks[2].0 } }),
+        ];
+        for (i, (_, file)) in tracks.iter().enumerate() {
+            operations.push(json!({ "id": format!("f{i}"), "operation": "delete",
+                                    "table": "file", "where": { "id": file } }));
+        }
+        let err = dml(&mut conn, json!({ "operations": operations })).unwrap_err();
+        assert_eq!(operation_id(&err), Some("f1"));
+        assert!(
+            err.message.contains("still references it"),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM track"), 3);
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 3);
+    }
+
+    #[test]
+    fn a_record_updated_twice_running_returns_a_row_each_time() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        let tracks = insert_tracks(&conn, 2, Some(ALBUM1));
+        let update = |id: &str, track: &str| {
+            json!({ "id": id, "operation": "update", "table": "track",
+                    "where": { "id": track }, "values": { "album": null } })
+        };
+        let out = dml(
+            &mut conn,
+            json!({ "operations": [
+                update("a", &tracks[0].0),
+                update("b", &tracks[1].0),
+                update("c", &tracks[1].0),
+                update("d", &tracks[0].0),
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out["a"]["id"], tracks[0].0);
+        assert_eq!(out["b"]["id"], tracks[1].0);
+        assert_eq!(out["c"]["id"], tracks[1].0);
+        assert_eq!(out["d"]["id"], tracks[0].0);
+    }
+
+    #[test]
+    fn folders_are_deleted_innermost_first_and_no_other_way() {
+        let mut conn = setup();
+        let folders = [
+            "00000000-0000-0000-0003-000000000001",
+            "00000000-0000-0000-0003-000000000002",
+            "00000000-0000-0000-0003-000000000003",
+        ];
+        conn.execute(
+            "INSERT INTO app.source_folder (id, name, parent) VALUES \
+             (?1, 'top', NULL), (?2, 'mid', ?1), (?3, 'low', ?2)",
+            params![folders[0], folders[1], folders[2]],
+        )
+        .unwrap();
+        let delete = |order: [usize; 3]| {
+            let operations: Vec<Value> = order
+                .iter()
+                .map(|&i| {
+                    json!({ "id": format!("d{i}"), "operation": "delete", "schema": "app",
+                            "table": "source_folder", "where": { "id": folders[i] } })
+                })
+                .collect();
+            json!({ "operations": operations })
+        };
+        let err = dml(&mut conn, delete([0, 1, 2])).unwrap_err();
+        assert_eq!(operation_id(&err), Some("d0"));
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.source_folder"), 3);
+        dml(&mut conn, delete([2, 1, 0])).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM app.source_folder"), 0);
     }
 
     /// `TABLE_TOPICS` lists every table the migrations leave in the `main`,

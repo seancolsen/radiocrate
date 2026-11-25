@@ -7,7 +7,7 @@ use api_schema::Topic;
 use arrow_ipc::writer::StreamWriter;
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{Response, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect};
@@ -136,10 +136,19 @@ pub fn app_state(
     })
 }
 
+/// The largest RPC request taken. A `dml` request names one record to an operation, and deleting a
+/// record that tens of thousands of others refer to (a rating, with every track that has it) is
+/// that many operations in one request, since it's one transaction. That's a few megabytes, past
+/// the two axum takes unless told otherwise.
+const RPC_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/query", post(query))
-        .route("/rpc", post(crate::rpc::rpc))
+        .route(
+            "/rpc",
+            post(crate::rpc::rpc).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
+        )
         .route("/events", get(crate::changes::events))
         .route("/tracks/{id}/stream", get(crate::stream::stream_track))
         .route("/reauth", get(reauth))
