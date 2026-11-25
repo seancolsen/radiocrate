@@ -131,10 +131,11 @@ export function blockedNote(item: BlockedItem): string {
 
 /** The whole deletion in a line, when it goes beyond the records asked for:
  * "In all, 14 records will be deleted and 12 will be modified." `undefined`
- * when it doesn't. */
+ * when it doesn't. Records asked for that are kept (ignored albums) count as
+ * going beyond them: then the line says what's deleted at all. */
 export function totalsNote(summary: DeleteSummary): string | undefined {
-  const { deleteCount, updateCount, found } = summary;
-  if (deleteCount <= found && updateCount === 0) return undefined;
+  const { deleteCount, updateCount, found, kept } = summary;
+  if (deleteCount <= found - kept && updateCount === 0) return undefined;
   const deleted = `${number(deleteCount)} ${
     deleteCount === 1 ? "record" : "records"
   } will be deleted`;
@@ -159,4 +160,19 @@ export function missingNote(
   return `${number(gone)} of the ${recordCount(table, count)} ${
     gone === 1 ? "has" : "have"
   } already been deleted.`;
+}
+
+/** What the "ignore" checkbox does: "Ignore this album in the future",
+ * "Ignore these 3 albums in the future". */
+export function ignoreLabel(table: string, count: number): string {
+  return count === 1
+    ? `Ignore this ${recordNoun(table, 1)} in the future`
+    : `Ignore these ${recordCount(table, count)} in the future`;
+}
+
+/** What checking it means. */
+export function ignoreNote(count: number): string {
+  return count === 1
+    ? "Its title and artists stay on record, so you know not to download it again."
+    : "Their titles and artists stay on record, so you know not to download them again.";
 }

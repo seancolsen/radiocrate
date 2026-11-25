@@ -64,7 +64,7 @@ import {
 } from "../../api/playlist";
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
-import { loadPlanRows } from "../../api/deletePlan";
+import { loadPlanRows, loadSqlRows } from "../../api/deletePlan";
 import { APP_TABLES } from "../../query/appTables";
 import type { RecordKey } from "../../query/recordForm";
 import {
@@ -74,6 +74,14 @@ import {
   type DeletePlanner,
 } from "../../record/deletePlan";
 import { audioFileCount, audioFileIds } from "../../record/audioFiles";
+import {
+  canIgnore,
+  ignoreOperations,
+  ignoreSpare,
+  loadIgnoreInfo,
+  type IgnoreInfo,
+} from "../../record/ignoreAlbum";
+import { nowUtcText } from "../../query/timestamps";
 import {
   fetchTrackMetadata,
   fetchTrackRatingId,
@@ -1056,6 +1064,13 @@ export interface AppActions {
     table: string,
     records: readonly RecordRef[],
   ) => void;
+  /** The dialog's "Ignore this album in the future" choice: whether the albums
+   * are kept on record as ignored, rather than deleted, while what's tied to
+   * them goes as the other choices say. The plan is worked out again. Not
+   * remembered: each deletion starts with it off. */
+  setRecordDeleteIgnore: (checked: boolean) => void;
+  /** The reason the dialog records for every album it ignores. */
+  setRecordDeleteIgnoreReason: (reason: string) => void;
   /** Makes one of the dialog's choices about relationship `relationshipId`:
    * whether the records that refer to a deleted one through it are deleted
    * too (`"referencing"`), or the records it leaves orphaned (`"orphans"`).
@@ -2817,6 +2832,10 @@ export function createAppActions(
         /** The last folders asked for, by the files they were asked for:
          * most choices don't change which files go. */
         foldersFor?: { files: string; folders: Promise<LeftoverFolder[]> };
+        /** What ignoring the albums needs, read once when it's first chosen. */
+        ignoreInfo?: Promise<IgnoreInfo>;
+        /** What the plan in force was made with, when it ignores them. */
+        ignoring?: IgnoreInfo;
       }
     | undefined;
   let deletionToken = 0;
@@ -2848,8 +2867,30 @@ export function createAppActions(
       s.recordDelete.status = "planning";
       s.recordDelete.error = error;
     });
-    void session.planner
-      .plan(session.table, session.keys, pending.choices)
+    /** What ignoring the albums needs, when they're to be ignored. */
+    const ignoreInfo = async (): Promise<IgnoreInfo | undefined> => {
+      if (!pending.ignore) return undefined;
+      session.ignoreInfo ??= loadIgnoreInfo(session.keys, loadSqlRows);
+      const asked = session.ignoreInfo;
+      try {
+        return await asked;
+      } catch (err) {
+        // Asked again next time, rather than failing for good.
+        if (session.ignoreInfo === asked) session.ignoreInfo = undefined;
+        throw err;
+      }
+    };
+    let ignoring: IgnoreInfo | undefined;
+    void ignoreInfo()
+      .then((info) => {
+        ignoring = info;
+        return session.planner.plan(
+          session.table,
+          session.keys,
+          pending.choices,
+          info && { keep: true, spare: ignoreSpare(info) },
+        );
+      })
       .then(async (plan) => {
         const files = audioFileIds(plan);
         if (files.length === 0) return { plan, folders: [] };
@@ -2873,6 +2914,7 @@ export function createAppActions(
           if (!current()) return;
           session.plan = plan;
           session.folders = folders;
+          session.ignoring = ignoring;
           set((s) => {
             if (!s.recordDelete) return;
             s.recordDelete.summary = castDraft(plan.summary);
@@ -2898,7 +2940,9 @@ export function createAppActions(
     const s = get();
     const count = plan.summary.found;
     const noun = nounFor(plan.summary.table, count) ?? plan.summary.table;
-    showToast(`Deleted ${count.toLocaleString("en-US")} ${noun}`);
+    // Records kept are kept as ignored.
+    const verb = plan.summary.kept > 0 ? "Ignored" : "Deleted";
+    showToast(`${verb} ${count.toLocaleString("en-US")} ${noun}`);
 
     // A deleted track can't be played: its stream is gone with its record,
     // and a play of it would be logged against nothing.
@@ -6164,6 +6208,9 @@ export function createAppActions(
           deleteAudioFiles: storedDeleteAudioFiles(env),
           deleteFolders: storedDeleteFolders(env),
           leftoverFolders: [],
+          canIgnore: canIgnore(table, s.schema.allTables),
+          ignore: false,
+          ignoreReason: "",
           summary: null,
           status: "planning",
           error: null,
@@ -6183,6 +6230,22 @@ export function createAppActions(
       });
       persistDeleteChoices(env, choices);
       planDeletion();
+    },
+    setRecordDeleteIgnore: (checked) => {
+      const pending = get().recordDelete;
+      if (!pending?.canIgnore || pending.status === "deleting") return;
+      if (pending.ignore === checked) return;
+      set((s) => {
+        if (s.recordDelete) s.recordDelete.ignore = checked;
+      });
+      planDeletion();
+    },
+    setRecordDeleteIgnoreReason: (reason) => {
+      set((s) => {
+        if (s.recordDelete && s.recordDelete.status !== "deleting") {
+          s.recordDelete.ignoreReason = reason;
+        }
+      });
     },
     setRecordDeleteAudioFiles: (checked) => {
       const pending = get().recordDelete;
@@ -6213,7 +6276,18 @@ export function createAppActions(
           s.recordDelete = null;
         });
       };
-      if (plan.operations.length === 0) {
+      const operations = session.ignoring
+        ? [
+            ...plan.operations,
+            ...ignoreOperations(
+              plan.kept,
+              session.ignoring,
+              pending.ignoreReason,
+              nowUtcText(),
+            ),
+          ]
+        : plan.operations;
+      if (operations.length === 0) {
         // The records were already gone.
         close();
         return;
@@ -6235,7 +6309,7 @@ export function createAppActions(
           ? session.folders.map((folder) => folder.path)
           : [];
       void dml({
-        operations: plan.operations,
+        operations,
         ...(deleteAudioFiles && { deleteAudioFiles }),
         ...(deleteFolders.length > 0 && { deleteFolders }),
       }).then(
@@ -6250,6 +6324,7 @@ export function createAppActions(
           // nothing, and leave the reason on show beside the new plan.
           session.planner = deletePlanner();
           session.foldersFor = undefined;
+          session.ignoreInfo = undefined;
           planDeletion(describeError(err));
         },
       );

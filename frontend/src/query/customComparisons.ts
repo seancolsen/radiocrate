@@ -41,12 +41,16 @@ export const BUILT_IN_COMPARISONS: Readonly<
   Record<string, readonly BuiltInComparison[]>
 > = {
   track: [{ name: "artist", expression: "++#artist{name:@x}" }],
+  // An album and an artist are tied two ways, through its tracks' credits
+  // and through its ignored album's artists (migration 0022), so `#artist`
+  // from an album and `#album` from an artist are ambiguous: these go
+  // through `#credit`, which only the tracks reach.
   album: [
-    { name: "artist", expression: "++#artist{name:@x}" },
+    { name: "artist", expression: "++#credit{artist.name:@x}" },
     { name: "tag", expression: "++#tag{name:@x}" },
   ],
   artist: [
-    { name: "album", expression: "++#album{title:@x}" },
+    { name: "album", expression: "++#credit{track.album.title:@x}" },
     { name: "tag", expression: "++#tag{name:@x}" },
   ],
   play: [{ name: "artist", expression: "++#artist{name:@x}" }],

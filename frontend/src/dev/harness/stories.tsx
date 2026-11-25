@@ -2435,9 +2435,13 @@ export const STORIES: Record<string, Story> = {
           deleteAudioFiles: true,
           deleteFolders: false,
           leftoverFolders: [],
+          canIgnore: true,
+          ignore: false,
+          ignoreReason: "",
           summary: {
             table: "album",
             found: 1,
+            kept: 0,
             items: [
               planItem("referencing", "track.album", "album", 9),
               planItem(
@@ -2460,6 +2464,55 @@ export const STORIES: Record<string, Story> = {
               credit: 10,
               play: 594,
             },
+            updateCount: 0,
+          },
+          status: "ready",
+          error: null,
+        };
+      });
+    },
+    render: () => <RecordDeleteModal />,
+  },
+
+  // "Delete album…" with "Ignore this album in the future" checked, and a
+  // reason given: the album stays, and only what's tied to it goes.
+  "record-delete/album-ignored": {
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.recordDelete = {
+          tabId: LEMONADE.id,
+          table: "album",
+          count: 1,
+          choices: {
+            referencing: { "track.album>album": true },
+            orphans: {},
+          },
+          deleteAudioFiles: true,
+          deleteFolders: false,
+          leftoverFolders: [],
+          canIgnore: true,
+          ignore: true,
+          ignoreReason: "Too slick. The demos were better.",
+          summary: {
+            table: "album",
+            found: 1,
+            kept: 1,
+            items: [
+              planItem("referencing", "track.album", "album", 9),
+              planItem(
+                "referencing",
+                "credit.track",
+                "track",
+                10,
+                true,
+                TRACKS,
+              ),
+              planItem("referencing", "play.track", "track", 594, true, TRACKS),
+              planItem("orphans", "track.file", "file", 9, false, TRACKS),
+            ],
+            blocked: [],
+            deleteCount: 613,
+            deletedByTable: { track: 9, credit: 10, play: 594 },
             updateCount: 0,
           },
           status: "ready",
@@ -2499,9 +2552,13 @@ export const STORIES: Record<string, Story> = {
               fileCount: 5,
             },
           ],
+          canIgnore: true,
+          ignore: false,
+          ignoreReason: "",
           summary: {
             table: "album",
             found: 1,
+            kept: 0,
             items: [
               planItem("referencing", "track.album", "album", 12, true),
               planItem(
@@ -2553,9 +2610,13 @@ export const STORIES: Record<string, Story> = {
           deleteAudioFiles: true,
           deleteFolders: false,
           leftoverFolders: [],
+          canIgnore: false,
+          ignore: false,
+          ignoreReason: "",
           summary: {
             table: "track",
             found: 1,
+            kept: 0,
             items: [
               planItem("referencing", "credit.track", "track", 2, true),
               planItem("referencing", "play.track", "track", 12, true),

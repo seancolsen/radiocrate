@@ -132,7 +132,7 @@ test("a new library opens to its default sources, presets and tables, with no tr
     await expect(page.getByRole("tree", { name: "Data structure" }))
       .toMatchAriaSnapshot(`
       - tree "Data structure":
-        - treeitem "Tables 25 tables Refresh" [expanded] [level=1]:
+        - treeitem "Tables 27 tables Refresh" [expanded] [level=1]:
           - group:
             - treeitem "track 0 rows × 9 columns Open all tracks in new tab" [level=2]
             - treeitem "artist 0 rows × 2 columns Open all artists in new tab" [level=2]
@@ -144,6 +144,8 @@ test("a new library opens to its default sources, presets and tables, with no tr
             - treeitem "file 0 rows × 8 columns Open all files in new tab" [level=2]
             - treeitem "play 0 rows × 2 columns Open all plays in new tab" [level=2]
             - treeitem "rating 4 rows × 4 columns Open all ratings in new tab" [level=2]
+            - treeitem "artist_ignored_album 0 rows × 2 columns Open all artist ignored albums in new tab" [level=2]
+            - treeitem "ignored_album 0 rows × 4 columns Open all ignored albums in new tab" [level=2]
             - treeitem "app 6 tables" [level=2]
             - treeitem "meta 1 table" [level=2]
             - treeitem "metadata 6 tables" [level=2]

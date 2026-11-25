@@ -32,14 +32,18 @@ const row = (
 describe("the app's own custom comparisons", () => {
   it("compare tracks, albums and plays by artist", () => {
     expect(builtInComparison("track", "artist")).toBe("++#artist{name:@x}");
-    expect(builtInComparison("album", "artist")).toBe("++#artist{name:@x}");
+    expect(builtInComparison("album", "artist")).toBe(
+      "++#credit{artist.name:@x}",
+    );
     expect(builtInComparison("play", "artist")).toBe("++#artist{name:@x}");
   });
 
   it("compare albums and artists by tag, and artists by album", () => {
     expect(builtInComparison("album", "tag")).toBe("++#tag{name:@x}");
     expect(builtInComparison("artist", "tag")).toBe("++#tag{name:@x}");
-    expect(builtInComparison("artist", "album")).toBe("++#album{title:@x}");
+    expect(builtInComparison("artist", "album")).toBe(
+      "++#credit{track.album.title:@x}",
+    );
   });
 
   it("are no other table's, nor the object prototype's", () => {

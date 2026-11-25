@@ -2745,7 +2745,7 @@ mod tests {
         let app = ["app".to_string()];
         let lastfm = ["lastfm".to_string()];
 
-        // The app's own, from migration 0019, each to its target's primary key.
+        // The app's own, from migrations 0019 and 0022, each to its target's primary key.
         let album = schema.link("track", "album").unwrap();
         assert_eq!(
             (album.to_table.as_str(), album.to_column.as_str()),
@@ -2774,7 +2774,8 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(schema.links.len(), 16);
+        // 0019's fifteen, 0022's three, and the one scrobble link.
+        assert_eq!(schema.links.len(), 19);
     }
 
     #[test]

@@ -8,6 +8,8 @@ import {
   deleteTitle,
   folderContents,
   folderName,
+  ignoreLabel,
+  ignoreNote,
   itemLabel,
   itemNote,
   leftoverFoldersLabel,
@@ -116,6 +118,7 @@ describe("the notes around the plan", () => {
       items: [],
       blocked: [],
       deletedByTable: {},
+      kept: 0,
     };
     expect(
       totalsNote({ ...summary, found: 2, deleteCount: 2, updateCount: 0 }),
@@ -128,12 +131,37 @@ describe("the notes around the plan", () => {
     ).toBe("In all, 1 record will be deleted and 20,000 will be modified.");
   });
 
+  it("totals what goes with records that are kept", () => {
+    const summary = {
+      table: "album",
+      items: [],
+      blocked: [],
+      deletedByTable: {},
+      updateCount: 0,
+    };
+    expect(
+      totalsNote({ ...summary, found: 1, kept: 1, deleteCount: 0 }),
+    ).toBeUndefined();
+    expect(totalsNote({ ...summary, found: 1, kept: 1, deleteCount: 1 })).toBe(
+      "In all, 1 record will be deleted.",
+    );
+  });
+
+  it("offers to ignore albums", () => {
+    expect(ignoreLabel("album", 1)).toBe("Ignore this album in the future");
+    expect(ignoreLabel("album", 3)).toBe("Ignore these 3 albums in the future");
+    expect(ignoreNote(1)).toBe(
+      "Its title and artists stay on record, so you know not to download it again.",
+    );
+  });
+
   it("offers to delete the audio of the files the deletion takes", () => {
     const summary = {
       table: "track",
       items: [],
       blocked: [],
       found: 2,
+      kept: 0,
       deleteCount: 6,
       updateCount: 0,
     };

@@ -159,7 +159,9 @@ export const BUILT_IN_TABLE_QUERYDOWN: Readonly<
     linkedRecordComparison: "title:@x",
   },
   album: {
-    defaultTextSearch: "[title:@x ++#artist{name:@x}]",
+    // Through `#credit`, as the album's `artist` comparison is
+    // (`customComparisons.ts`): `#artist` is ambiguous from an album.
+    defaultTextSearch: "[title:@x ++#credit{artist.name:@x}]",
     linkedRecordComparison: "title:@x",
   },
   artist: { linkedRecordComparison: "name:@x" },

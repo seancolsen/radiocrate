@@ -375,6 +375,23 @@ whole deletion before it writes anything, and sends it as one `dml` request.
   request names them in `deleteFolders`, and the server moves each aside whole
   with the audio, after checking again that it would hold no audio. Unchecked, the audio stays, and the
   next scan finds it and adds it again.
+- **Ignoring albums** (`frontend/src/record/ignoreAlbum.ts`, migration 0022).
+  Deleting albums, the dialog's first checkbox is "Ignore this album in the
+  future", off every time it opens, with a field for the reason once checked.
+  Checked, the plan keeps the records asked for (`PlanOptions.keep`): what
+  refers to them through a nullable column is dealt with as their deletion
+  would have it, what refers to them through a `NOT NULL` one stays with them,
+  and the album itself stays, with its title and year. The request then
+  inserts an `ignored_album` for each album not ignored already, and an
+  `artist_ignored_album` for each of its artists: those credited on its tracks
+  without a role, or every one when they all have one. They're read before
+  planning and passed as `PlanOptions.spare`, so they're never deleted as
+  orphans. Deleting an ignored album with the box unchecked takes its
+  `ignored_album` and artist links along, as required referrers.
+  The new links tie an album to its artists two ways, through credits and
+  through ignored albums, so `#artist` from an album and `#album` from an
+  artist are ambiguous in Querydown. The app's own definitions say
+  `#credit{artist.…}` and `#credit{track.album.…}` instead.
 
 ## Live updates: what a change on one device does on another
 

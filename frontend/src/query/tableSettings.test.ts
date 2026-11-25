@@ -89,7 +89,7 @@ describe("effectiveSetting", () => {
 
   it("has the app's defaults for the other tables it ships with", () => {
     expect(builtInSetting("album", "defaultTextSearch")).toBe(
-      "[title:@x ++#artist{name:@x}]",
+      "[title:@x ++#credit{artist.name:@x}]",
     );
     expect(builtInSetting("play", "defaultTextSearch")).toBe(
       "track[title:@x album.title:@x ++#artist{name:@x}]",

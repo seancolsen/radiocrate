@@ -406,6 +406,16 @@ export interface RecordDelete {
    * which looks at what else is in them. Empty when the plan takes no audio
    * files, or leaves no such folder. */
   leftoverFolders: readonly LeftoverFolder[];
+  /** Whether the dialog offers to ignore the records rather than delete them:
+   * for albums, in a library with the tables for it (`record/ignoreAlbum.ts`). */
+  canIgnore: boolean;
+  /** Whether the albums are ignored: kept on record, with their title, year
+   * and artists, and the user's reason, while their tracks and the rest go as
+   * the choices say. Off whenever the dialog opens. */
+  ignore: boolean;
+  /** Why the user is ignoring them, the same for every album. Blank for no
+   * reason. */
+  ignoreReason: string;
   /** What the deletion takes under those choices. `null` until the first plan
    * lands; then the last one to land, shown while the next is worked out. */
   summary: DeleteSummary | null;

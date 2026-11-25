@@ -19,10 +19,12 @@ export const ENTITY_NAMES: Readonly<Record<string, readonly [string, string]>> =
   {
     album: ["album", "albums"],
     artist: ["artist", "artists"],
+    artist_ignored_album: ["artist ignored album", "artist ignored albums"],
     "/metadata/contextual_query": ["contextual query", "contextual queries"],
     credit: ["credit", "credits"],
     deletion: ["deletion", "deletions"],
     file: ["file", "files"],
+    ignored_album: ["ignored album", "ignored albums"],
     play: ["play", "plays"],
     "/app/playlist": ["playlist", "playlists"],
     "/app/playlist_track": ["playlist track", "playlist tracks"],

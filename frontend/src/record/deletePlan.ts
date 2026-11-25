@@ -21,6 +21,10 @@
 // adds to the deletion is followed in turn: tracks deleted with their album
 // take their credits along, and may orphan their files.
 //
+// A plan can also keep the records asked for, emptying them instead
+// ({@link PlanOptions}): that's how an album is ignored, its tracks deleted
+// while the album stays on record.
+//
 // Nothing here knows a table by name. The tables and relationships come from
 // introspection, so a table the user made is followed like any other, in
 // whatever schema it is.
@@ -65,6 +69,20 @@ export const NO_CHOICES: DeleteChoices = { referencing: {}, orphans: {} };
 /** Which of a relationship's two choices: about the records that refer to a
  * deleted record, or about the records left orphaned. */
 export type ChoiceKind = keyof DeleteChoices;
+
+/** How a plan treats what it starts from, beyond the choices. */
+export interface PlanOptions {
+  /** Keep the records asked for, and deal only with what's tied to them. What
+   * refers to them through a column that can be emptied is dealt with as
+   * their deletion would have it (deleted, or kept with the column emptied, as
+   * chosen). What refers to them through a column that can't stays with them,
+   * since they stay, and nothing they refer to is left orphaned by them. */
+  keep?: boolean;
+  /** Records never deleted as orphans, by table, as the values of the column
+   * a relationship leads to (its primary key): records something about to be
+   * written will refer to, so that they aren't orphans after all. */
+  spare?: Readonly<Record<string, ReadonlySet<string>>>;
+}
 
 /** A question the planner asks of the database. It comes as data rather than
  * as SQL, so a test can answer it from tables held in memory;
@@ -136,9 +154,13 @@ export interface DeleteSummary {
   table: string;
   /** How many of the records asked for are there to delete. */
   found: number;
+  /** How many of those are kept ({@link PlanOptions.keep}): all of them, or
+   * none. */
+  kept: number;
   items: readonly PlanItem[];
   blocked: readonly BlockedItem[];
-  /** How many records are deleted in all, the ones asked for among them. */
+  /** How many records are deleted in all, the ones asked for among them
+   * unless they're kept. */
   deleteCount: number;
   /** How many records of each table are deleted, by table. */
   deletedByTable: Readonly<Record<string, number>>;
@@ -154,6 +176,9 @@ export interface DeletePlan {
   operations: DmlOperation[];
   /** The key of every deleted record, by table. */
   deleted: ReadonlyMap<string, readonly RecordKey[]>;
+  /** The keys of the records asked for that are kept, as the database spells
+   * them ({@link PlanOptions.keep}). */
+  kept: readonly RecordKey[];
 }
 
 export interface DeletePlanner {
@@ -163,6 +188,7 @@ export interface DeletePlanner {
     table: string,
     keys: readonly RecordKey[],
     choices: DeleteChoices,
+    options?: PlanOptions,
   ) => Promise<DeletePlan>;
 }
 
@@ -459,6 +485,7 @@ export function createDeletePlanner(
     table: string,
     keys: readonly RecordKey[],
     choices: DeleteChoices,
+    options: PlanOptions = {},
   ): Promise<DeletePlan> => {
     const root = infos.get(table);
     if (!root) throw new Error(`There's no table "${table}".`);
@@ -515,6 +542,9 @@ export function createDeletePlanner(
       rel.required || choices.referencing[rel.id] === true;
 
     const found = await loadByKeys(root, keys);
+    // Kept records are followed as deleted ones are, for what refers to them,
+    // and are left out of what's written.
+    const kept = new Set<Row>(options.keep ? found : []);
     remove(root, found, null);
 
     for (;;) {
@@ -525,7 +555,10 @@ export function createDeletePlanner(
         const cause = causes.get(rows[0]!) ?? null;
         for (const rel of info.incoming) {
           const at = info.at.get(rel.toColumn)!;
-          const values = rows.flatMap((row) => row[at] ?? []);
+          const values = rows.flatMap((row) =>
+            // What can't be kept without them stays with the records kept.
+            rel.required && kept.has(row) ? [] : (row[at] ?? []),
+          );
           if (values.length === 0) continue;
           const from = infos.get(rel.fromTable)!;
           const referring = await loadReferrers(rel, values);
@@ -562,9 +595,12 @@ export function createDeletePlanner(
           const leaving = new Map<string, number>();
           /** What deleted the first of them to refer to each. */
           const leavingCause = new Map<string, string | null>();
+          const spared = options.spare?.[rel.toTable];
           for (const row of records.values()) {
+            if (kept.has(row)) continue;
             const value = row[at];
             if (value == null || going.has(value) || seen?.has(value)) continue;
+            if (spared?.has(value)) continue;
             leaving.set(value, (leaving.get(value) ?? 0) + 1);
             if (!leavingCause.has(value)) {
               leavingCause.set(value, causes.get(row) ?? null);
@@ -672,6 +708,7 @@ export function createDeletePlanner(
     for (const [name, records] of deleted) {
       const info = infos.get(name)!;
       for (const row of records.values()) {
+        if (kept.has(row)) continue;
         const index = nodes.push({ info, row }) - 1;
         for (const rel of info.incoming) {
           const value = row[info.at.get(rel.toColumn)!];
@@ -779,6 +816,7 @@ export function createDeletePlanner(
       summary: {
         table,
         found: found.length,
+        kept: kept.size,
         items,
         blocked: [...blocked].map(([id, count]) => ({
           relationship: relationships.get(id)!,
@@ -786,20 +824,25 @@ export function createDeletePlanner(
         })),
         deleteCount: nodes.length,
         deletedByTable: Object.fromEntries(
-          [...deleted].map(([name, records]) => [name, records.size]),
+          [...deleted].flatMap(([name, records]) => {
+            const count =
+              name === root.name ? records.size - kept.size : records.size;
+            return count > 0 ? [[name, count]] : [];
+          }),
         ),
         updateCount,
       },
       operations,
       deleted: new Map(
-        [...deleted].map(([name, records]) => {
+        [...deleted].flatMap(([name, records]) => {
           const info = infos.get(name)!;
-          return [
-            name,
-            [...records.values()].map((row) => recordKey(info, row)),
-          ];
+          const keys = [...records.values()]
+            .filter((row) => !kept.has(row))
+            .map((row) => recordKey(info, row));
+          return keys.length > 0 ? [[name, keys] as const] : [];
         }),
       ),
+      kept: [...kept].map((row) => recordKey(root, row)),
     };
   };
 

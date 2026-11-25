@@ -857,6 +857,22 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The dialog on an album to be ignored rather than deleted: the checkbox
+  // first, with the reason under it, then what goes with the album as before.
+  test(`record-delete/album-ignored - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "record-delete/album-ignored", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Ignore this album in the future" }),
+    ).toBeChecked();
+    await expect(dialog.getByRole("textbox", { name: "Reason" })).toHaveValue(
+      "Too slick. The demos were better.",
+    );
+    await expect(dialog).toHaveScreenshot(
+      snapshot("record-delete/album-ignored", colorScheme),
+    );
+  });
+
   // The dialog on an album whose files are to go with it, leaving its folder
   // with cover art and rip files: the rest of the folder can go too, nested
   // under the audio's checkbox, with what's in it listed.

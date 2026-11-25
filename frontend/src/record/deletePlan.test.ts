@@ -13,6 +13,7 @@ import {
   relationshipsAmong,
   type DeleteChoices,
   type DeletePlan,
+  type PlanOptions,
   type PlanQuery,
   type RowLoader,
 } from "./deletePlan";
@@ -89,6 +90,7 @@ const TABLES: SchemaTable[] = [
     second: "nullable",
   }),
   table("note", [], { track: "required" }),
+  table("ignored_album", ["id"], { id: "required", album: "required" }),
 ];
 
 const LINKS: SchemaRelationship[] = [
@@ -105,6 +107,7 @@ const LINKS: SchemaRelationship[] = [
   link("bill.first", "venue", "code"),
   link("bill.second", "venue", "code"),
   link("note.track", "track"),
+  link("ignored_album.album", "album"),
 ];
 
 const RELATIONSHIPS = relationshipsAmong(TABLES, LINKS);
@@ -140,6 +143,7 @@ function library(): Db {
     gig: [],
     bill: [],
     note: [],
+    ignored_album: [],
   };
 }
 
@@ -233,11 +237,13 @@ async function planOn(
   table: string,
   keys: RecordKey[],
   choices: DeleteChoices = NO_CHOICES,
+  options?: PlanOptions,
 ): Promise<DeletePlan> {
   return createDeletePlanner(TABLES, LINKS, loaderFor(db)).plan(
     table,
     keys,
     choices,
+    options,
   );
 }
 
@@ -440,6 +446,78 @@ describe("deleting an album", () => {
   it("puts nothing under a line that isn't chosen", async () => {
     const plan = await planOn(library(), "album", ids("album", "a1"));
     expect(plan.summary.items.map((item) => item.parent)).toEqual([null]);
+  });
+});
+
+describe("keeping the records asked for", () => {
+  // An album ignored rather than deleted: `a1` was ignored once before.
+  const ignoredBefore = (): Db => ({
+    ...library(),
+    ignored_album: [{ id: "i1", album: "a1" }],
+  });
+  const everything = choose({
+    referencing: { "track.album>album": true },
+    orphans: { "credit.artist>artist": true, "track.file>file": true },
+  });
+
+  it("deals with what refers to them, and keeps them", async () => {
+    const db = ignoredBefore();
+    const plan = await planOn(db, "album", ids("album", "a1"), everything, {
+      keep: true,
+    });
+    expect(lines(plan)).toEqual([
+      "x referencing track.album: 2 track",
+      "! referencing credit.track: 3 credit",
+      "! referencing play.track: 2 play",
+      "! referencing /app/playlist_track.track: 1 /app/playlist_track",
+      "x orphans track.file: 2 file",
+      "x orphans credit.artist: 1 artist",
+      "- orphans /app/playlist_track.playlist: 1 /app/playlist",
+    ]);
+    expect(plan.summary).toMatchObject({ found: 1, kept: 1, deleteCount: 11 });
+    expect(plan.summary.deletedByTable).not.toHaveProperty("album");
+    expect(plan.deleted.has("album")).toBe(false);
+    expect(plan.kept).toEqual(ids("album", "a1"));
+    apply(db, plan.operations);
+    expect(idsOf(db["album"]!)).toEqual(["a1", "a2"]);
+    // What can't be without the album stays with it.
+    expect(db["ignored_album"]).toEqual([{ id: "i1", album: "a1" }]);
+    expect(idsOf(db["track"]!)).toEqual(["t3"]);
+    expect(idsOf(db["artist"]!)).toEqual(["x1"]);
+  });
+
+  it("empties what's kept from them", async () => {
+    const db = library();
+    const plan = await planOn(db, "album", ids("album", "a1"), NO_CHOICES, {
+      keep: true,
+    });
+    expect(lines(plan)).toEqual(["- referencing track.album: 2 track"]);
+    expect(plan.summary).toMatchObject({ kept: 1, deleteCount: 0 });
+    apply(db, plan.operations);
+    expect(db["track"]!.map((row) => row["album"])).toEqual([null, null, "a2"]);
+    expect(idsOf(db["album"]!)).toEqual(["a1", "a2"]);
+  });
+
+  it("spares the records it's asked to from being orphans", async () => {
+    const db = ignoredBefore();
+    const plan = await planOn(db, "album", ids("album", "a1"), everything, {
+      keep: true,
+      spare: { artist: new Set(["x2"]) },
+    });
+    expect(lines(plan)).not.toContain("x orphans credit.artist: 1 artist");
+    apply(db, plan.operations);
+    expect(idsOf(db["artist"]!)).toEqual(["x1", "x2"]);
+  });
+
+  it("deletes them with what can't be without them, when not kept", async () => {
+    const db = ignoredBefore();
+    const plan = await planOn(db, "album", ids("album", "a1"));
+    expect(lines(plan)).toContain(
+      "! referencing ignored_album.album: 1 ignored_album",
+    );
+    apply(db, plan.operations);
+    expect(db["ignored_album"]).toEqual([]);
+    expect(idsOf(db["album"]!)).toEqual(["a2"]);
   });
 });
 

@@ -442,6 +442,74 @@ test("deleting an album keeps its tracks, or deletes them when that's chosen", a
   });
 });
 
+test("ignoring an album keeps it on record, with its artists and the reason", async ({
+  app,
+  page,
+  db,
+}) => {
+  const ignore = "Ignore this album in the future";
+  const thriller = String(
+    await db.value("select id::text from album where title = 'Thriller'"),
+  );
+  const artists = await count(db, "artist");
+  await openRows(app, "Albums", 6);
+
+  await test.step("checking it asks why", async () => {
+    await openDelete(app, page, "Thriller", "Delete album…");
+    await expect(choice(page, ignore)).not.toBeChecked();
+    await expect(dialog(page).getByRole("textbox")).toHaveCount(0);
+    await choose(page, ignore);
+    const reason = dialog(page).getByRole("textbox", { name: "Reason" });
+    await expect(reason).toBeFocused();
+    await reason.fill("Heard it too many times");
+    await choose(page, "Delete 9 tracks");
+    // Its artists are kept for it, so none is offered as left with nothing.
+    await expect(choice(page, "Delete 10 credits")).toBeDisabled();
+    await expect(choice(page, /^Delete \d+ artists?$/)).toHaveCount(0);
+    await expect(dialog(page)).toContainText(
+      "In all, 645 records will be deleted.",
+    );
+    await look(page, "ignoring");
+  });
+
+  await test.step("confirming deletes its tracks and keeps the album", async () => {
+    await confirmDelete(app, page);
+    await expect(page.getByText("Ignored 1 album")).toBeVisible();
+    expect(await count(db, "track")).toBe(54);
+    expect(await count(db, `album where id = '${thriller}'`)).toBe(1);
+    await expect.poll(() => app.grid.rowCount()).toBe(6);
+    expect(
+      await db.query(
+        `select reason, timestamp::text as timestamp from ignored_album ` +
+          `where album = '${thriller}'`,
+      ),
+    ).toEqual([
+      { reason: "Heard it too many times", timestamp: "2026-01-15 12:00:00" },
+    ]);
+    expect(
+      await db.query(
+        `select a.name from artist_ignored_album x ` +
+          `join artist a on a.id = x.artist ` +
+          `join ignored_album i on i.id = x.ignored_album ` +
+          `where i.album = '${thriller}' order by a.name`,
+      ),
+    ).toEqual([{ name: "Michael Jackson" }, { name: "Paul McCartney" }]);
+  });
+
+  await test.step("deleting it for good takes its ignore record too", async () => {
+    await openDelete(app, page, "Thriller", "Delete album…");
+    await expect(choice(page, ignore)).not.toBeChecked();
+    await expect(choice(page, "Delete 1 ignored album")).toBeDisabled();
+    await expect(choice(page, "Delete 2 artist ignored albums")).toBeChecked();
+    await confirmDelete(app, page);
+    await expect.poll(() => app.grid.rowCount()).toBe(5);
+    expect(await count(db, "ignored_album")).toBe(0);
+    expect(await count(db, "artist_ignored_album")).toBe(0);
+    // The artists it held stay: leaving them is the default.
+    expect(await count(db, "artist")).toBe(artists);
+  });
+});
+
 test("deleting a rating clears it from every track that had it", async ({
   app,
   page,

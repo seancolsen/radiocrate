@@ -14,7 +14,10 @@ vi.mock("api-client", async (importOriginal) => {
     collectionLeftoverFolders: vi.fn(() => Promise.resolve([])),
   };
 });
-vi.mock("../../api/deletePlan", () => ({ loadPlanRows: vi.fn() }));
+vi.mock("../../api/deletePlan", () => ({
+  loadPlanRows: vi.fn(),
+  loadSqlRows: vi.fn(),
+}));
 // The run pipeline, so the page's reload after a deletion needs no compiler
 // and no backend.
 vi.mock("../../query/querydown", () => ({
@@ -49,16 +52,22 @@ vi.mock("../../query/lineage", () => ({
 }));
 
 import { collectionLeftoverFolders, dml } from "api-client";
-import { loadPlanRows } from "../../api/deletePlan";
+import { loadPlanRows, loadSqlRows } from "../../api/deletePlan";
 import { runSql } from "../../api/query";
 import { buildResultFromStringRows } from "../../query/result";
 import { createAppStore, type AppStoreBundle } from "./index";
 import type { RecordRef } from "./state";
 import { fakeEnv } from "./testEnv";
 
-/** Two tracks on one album, each with a file of its own. */
+/** Two tracks on one album, each with a file of its own; and the tables
+ * ignoring an album takes, which the planner has no rows of. */
 const SCHEMA = JSON.stringify({
   tables: [
+    ...["credit", "ignored_album", "artist_ignored_album"].map((name) => ({
+      name,
+      unique_constraints: [],
+      columns: [{ name: "id", type: "UUID", nullable: true }],
+    })),
     {
       name: "track",
       unique_constraints: [["id"]],
@@ -150,6 +159,11 @@ describe("the Delete records dialog", () => {
     vi.mocked(dml).mockReset().mockResolvedValue({});
     vi.mocked(collectionLeftoverFolders).mockReset().mockResolvedValue([]);
     vi.mocked(loadPlanRows).mockReset().mockImplementation(answer);
+    vi.mocked(loadSqlRows)
+      .mockReset()
+      .mockImplementation((sql) =>
+        Promise.resolve(sql.includes("main.credit") ? [["a1", "x1"]] : []),
+      );
     vi.mocked(runSql).mockClear();
     env = fakeEnv();
     bundle = createAppStore(env);
@@ -239,6 +253,49 @@ describe("the Delete records dialog", () => {
       referencing: {},
       orphans: {},
     });
+  });
+
+  it("ignores albums rather than deleting them, when asked", async () => {
+    bundle.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
+    expect(pending()).toMatchObject({ canIgnore: false, ignore: false });
+    bundle.actions.cancelRecordDelete();
+
+    bundle.actions.requestRecordDelete("tab", "album", [record("album", "a1")]);
+    expect(pending()).toMatchObject({ canIgnore: true, ignore: false });
+    await settle();
+    expect(loadSqlRows).not.toHaveBeenCalled();
+
+    bundle.actions.setRecordDeleteIgnore(true);
+    expect(pending()).toMatchObject({ ignore: true, status: "planning" });
+    await settle();
+    // The album stays; its tracks are emptied of it, as the choice has it.
+    expect(pending()?.summary).toMatchObject({
+      found: 1,
+      kept: 1,
+      deleteCount: 0,
+      updateCount: 2,
+      deletedByTable: {},
+    });
+    expect(loadSqlRows).toHaveBeenCalledTimes(2);
+
+    bundle.actions.setRecordDeleteIgnoreReason("Too slick");
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    const { operations } = vi.mocked(dml).mock.calls[0]![0];
+    expect(operations.map((op) => [op.operation, op.table])).toEqual([
+      ["update", "track"],
+      ["update", "track"],
+      ["insert", "ignored_album"],
+      ["insert", "artist_ignored_album"],
+    ]);
+    expect(operations[2]).toMatchObject({
+      values: { album: "a1", reason: "Too slick" },
+    });
+    expect(bundle.store.getState().toast?.text).toBe("Ignored 1 album");
+
+    // Not remembered: the next deletion starts with it off.
+    bundle.actions.requestRecordDelete("tab", "album", [record("album", "a1")]);
+    expect(pending()).toMatchObject({ ignore: false, ignoreReason: "" });
   });
 
   it("won't delete on a plan that's still being worked out", async () => {

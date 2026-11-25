@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { useLayoutEffect, useRef, type JSX } from "react";
 import { Icons } from "../icons";
 import { audioFileCount } from "../record/audioFiles";
 import type { DeleteChoices, PlanItem } from "../record/deletePlan";
@@ -10,6 +10,8 @@ import {
   deleteTitle,
   folderContents,
   folderName,
+  ignoreLabel,
+  ignoreNote,
   itemLabel,
   itemNote,
   leftoverFoldersLabel,
@@ -42,6 +44,11 @@ import { Modal } from "./ui/Modal";
  * whole, naming each and what's in it. That one is unchecked unless the user
  * checked it the last time, and can only be checked along with the audio.
  *
+ * Deleting albums, one more checkbox comes first, unchecked every time:
+ * ignoring them in the future (`record/ignoreAlbum.ts`). Checked, the albums
+ * stay on record rather than going, and a field asks why; the lines below go
+ * on saying what becomes of their tracks and the rest.
+ *
  * The lines stay up while a plan is being worked out, showing the last one's
  * counts, and Delete waits for the new one. */
 function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
@@ -52,6 +59,7 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
     setRecordDeleteAudioFiles,
     setRecordDeleteChoice,
     setRecordDeleteFolders,
+    setRecordDeleteIgnore,
   } = useAppActions();
   const { summary, status, choices } = pending;
   const planning = status === "planning";
@@ -79,6 +87,25 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
       </p>
       {missing && !nothingLeft && (
         <p className="text-ink-weak mt-1 text-sm">{missing}</p>
+      )}
+
+      {pending.canIgnore && !nothingLeft && (
+        <div className="mt-3">
+          <Checkbox
+            label={ignoreLabel(pending.table, pending.count)}
+            description={ignoreNote(pending.count)}
+            checked={pending.ignore}
+            disabled={deleting}
+            onChange={(checked) => setRecordDeleteIgnore(checked)}
+          />
+          {pending.ignore && (
+            <IgnoreReasonField
+              reason={pending.ignoreReason}
+              count={pending.count}
+              disabled={deleting}
+            />
+          )}
+        </div>
       )}
 
       {summary === null && pending.error === null && (
@@ -180,6 +207,39 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** Where the user says why they're ignoring the albums, under the checkbox.
+ * Takes the focus as it appears, with the checkbox just checked. */
+function IgnoreReasonField(props: {
+  reason: string;
+  count: number;
+  disabled: boolean;
+}): JSX.Element {
+  const { setRecordDeleteIgnoreReason } = useAppActions();
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
+  return (
+    <div className="mt-2 ml-6">
+      <textarea
+        ref={fieldRef}
+        rows={2}
+        aria-label="Reason"
+        placeholder="Reason (optional)"
+        className="control bg-panel border-edge text-ink placeholder:text-ink-weak focus:border-accent block w-full resize-y rounded-md outline-none disabled:opacity-40"
+        value={props.reason}
+        disabled={props.disabled}
+        onChange={(e) => setRecordDeleteIgnoreReason(e.currentTarget.value)}
+      />
+      {props.count > 1 && (
+        <p className="text-ink-weak mt-1 text-xs">
+          Recorded for each of the {props.count.toLocaleString("en-US")}.
+        </p>
+      )}
+    </div>
   );
 }
 

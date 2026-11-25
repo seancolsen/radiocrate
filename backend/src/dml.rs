@@ -223,6 +223,8 @@ const TABLE_TOPICS: &[(&str, &str, Option<Topic>)] = &[
     ("main", "artist", None),
     ("main", "credit", None),
     ("main", "file", None),
+    ("main", "ignored_album", None),
+    ("main", "artist_ignored_album", None),
     ("main", "play", None),
     ("main", "role", None),
     ("main", "tag", None),
@@ -1528,6 +1530,38 @@ mod tests {
             1,
             "delete rolled back"
         );
+    }
+
+    /// Migration 0022's tables are linked, so the frontend can ignore an album in one request (its
+    /// artist links naming the new `ignored_album` by reference), and can't delete an ignored
+    /// album without its `ignored_album` record and that record without its artist links.
+    #[test]
+    fn an_ignored_album_is_tied_to_its_album_and_artists() {
+        let mut conn = setup();
+        insert_album(&conn, ALBUM1);
+        insert_artist(&conn, ARTIST1, "Beatles");
+        let out = dml(
+            &mut conn,
+            json!({ "operations": [
+                { "id": "ig", "operation": "insert", "table": "ignored_album",
+                  "values": { "album": ALBUM1, "timestamp": "2026-01-15 12:00:00", "reason": "Meh" } },
+                { "id": "ar", "operation": "insert", "table": "artist_ignored_album",
+                  "values": { "artist": ARTIST1, "ignored_album": { "id": "ig" } } }
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out["ar"]["ignored_album"], out["ig"]["id"]);
+
+        let delete = |table: &str, column: &str, value: &str| {
+            json!({ "operations": [
+                { "id": "d", "operation": "delete", "table": table, "where": { column: value } }
+            ]})
+        };
+        let ignored = out["ig"]["id"].as_str().unwrap().to_string();
+        assert!(dml(&mut conn, delete("album", "id", ALBUM1)).is_err());
+        assert!(dml(&mut conn, delete("artist", "id", ARTIST1)).is_err());
+        assert!(dml(&mut conn, delete("ignored_album", "id", &ignored)).is_err());
+        assert_eq!(count(&conn, "SELECT count(*) FROM ignored_album"), 1);
     }
 
     #[test]
