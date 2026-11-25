@@ -412,6 +412,35 @@ describe("deleting an album", () => {
     expect(idsOf(db["track"]!)).toEqual(["t3"]);
     expect(idsOf(db["album"]!)).toEqual(["a2"]);
   });
+
+  it("puts each line under the one whose records led to it", async () => {
+    const plan = await planOn(
+      library(),
+      "album",
+      ids("album", "a1"),
+      choose({ referencing: { "track.album>album": true } }),
+    );
+    const parents = Object.fromEntries(
+      plan.summary.items.map((item) => [item.id, item.parent]),
+    );
+    const tracks = "referencing:track.album>album";
+    const credits = "referencing:credit.track>track";
+    const entries = "referencing:/app/playlist_track.track>track";
+    expect(parents).toEqual({
+      [tracks]: null,
+      [credits]: tracks,
+      "referencing:play.track>track": tracks,
+      [entries]: tracks,
+      "orphans:track.file>file": tracks,
+      "orphans:credit.artist>artist": credits,
+      "orphans:/app/playlist_track.playlist>/app/playlist": entries,
+    });
+  });
+
+  it("puts nothing under a line that isn't chosen", async () => {
+    const plan = await planOn(library(), "album", ids("album", "a1"));
+    expect(plan.summary.items.map((item) => item.parent)).toEqual([null]);
+  });
 });
 
 describe("deleting a rating", () => {

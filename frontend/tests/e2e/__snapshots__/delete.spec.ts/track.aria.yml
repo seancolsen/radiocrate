@@ -2,7 +2,7 @@
     - heading "Delete track" [level=2]
     - button "Close":
         - img
-    - paragraph: Delete this track? This can’t be undone.
+    - paragraph: This can’t be undone.
     - paragraph: "Other records are tied to it:"
     - list:
         - listitem:
@@ -15,8 +15,8 @@
             - text: Delete 2 track tags A track tag can’t be kept without its track.
             - checkbox "Delete 2 track tags" [checked] [disabled]
         - listitem:
-            - text: Delete 1 file It would be left with no tracks.
-            - checkbox "Delete 1 file"
-    - paragraph: In all, 36 records are deleted.
+            - text: Delete 1 file record It would be left with no tracks.
+            - checkbox "Delete 1 file record"
+    - paragraph: In all, 36 records will be deleted.
     - button "Cancel"
     - button "Delete"

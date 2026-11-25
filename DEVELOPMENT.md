@@ -338,7 +338,11 @@ whole deletion before it writes anything, and sends it as one `dml` request.
   deletion is followed in turn. Planning again after a choice reuses what's
   loaded.
 - **The dialog** (`RecordDeleteModal.tsx`, state in `s.recordDelete`) shows a
-  checkbox per link reached, checked and disabled where there's no choice. A
+  checkbox per link reached, checked and disabled where there's no choice. The
+  checkboxes are a tree: each plan line has a `parent`, the line whose deleted
+  records first led to it (a track's credits sit under "Delete 9 tracks", the
+  artists they orphan under the credits). A `file` record is a "file record"
+  in its wording, since deleting the audio is a separate checkbox. A
   choice the user changes is kept in `localStorage` (`deleteChoices`, by link:
   `track.album>album`), so the dialog comes up the same way next time.
 - **The request** is ordered so that each delete runs after everything that

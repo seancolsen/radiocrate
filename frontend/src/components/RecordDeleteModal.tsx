@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
 import { audioFileCount } from "../record/audioFiles";
+import type { DeleteChoices, PlanItem } from "../record/deletePlan";
 import type { LeftoverFolder } from "api-client";
 import {
   audioFilesLabel,
@@ -14,8 +15,6 @@ import {
   leftoverFoldersLabel,
   leftoverFoldersNote,
   missingNote,
-  recordCount,
-  recordNoun,
   totalsNote,
 } from "../record/deleteText";
 import type { RecordDelete } from "../stores/app";
@@ -33,7 +32,8 @@ import { Modal } from "./ui/Modal";
  * It's checked and can't be changed where they can't be kept, and unchecked to
  * begin with everywhere else, unless the user checked it the last time.
  * Changing one works the plan out again, which can add lines: tracks deleted
- * with their album take their credits with them.
+ * with their album take their credits with them. Those lines are nested under
+ * the one that brought them, so the lines make a tree of what leads to what.
  *
  * When the deletion takes `file` records, one more checkbox, checked unless the
  * user unchecked it the last time, deletes their audio files from disk too.
@@ -74,19 +74,9 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
       onClose={() => cancelRecordDelete()}
       width="400px"
     >
-      {nothingLeft ? (
-        <p className="text-ink text-sm">{missing}</p>
-      ) : (
-        <p className="text-ink text-sm">
-          Delete{" "}
-          <span className="font-medium">
-            {pending.count === 1
-              ? `this ${recordNoun(pending.table, 1)}`
-              : recordCount(pending.table, summary?.found ?? pending.count)}
-          </span>
-          ? This can&rsquo;t be undone.
-        </p>
-      )}
+      <p className="text-ink text-sm">
+        {nothingLeft ? missing : <>This can&rsquo;t be undone.</>}
+      </p>
       {missing && !nothingLeft && (
         <p className="text-ink-weak mt-1 text-sm">{missing}</p>
       )}
@@ -104,30 +94,15 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
           <p className="text-ink-weak text-sm">
             Other records are tied to {pending.count === 1 ? "it" : "them"}:
           </p>
-          <ul className="mt-2 flex flex-col gap-2">
-            {summary.items.map((item) => (
-              <li key={item.id}>
-                <Checkbox
-                  label={itemLabel(item)}
-                  description={itemNote(item)}
-                  // The choice as it stands, which is ahead of the plan while
-                  // the plan for it is being worked out.
-                  checked={
-                    item.required ||
-                    choices[item.kind][item.relationship.id] === true
-                  }
-                  disabled={item.required || deleting}
-                  onChange={(checked) =>
-                    setRecordDeleteChoice(
-                      item.kind,
-                      item.relationship.id,
-                      checked,
-                    )
-                  }
-                />
-              </li>
-            ))}
-          </ul>
+          <PlanItemList
+            parent={null}
+            items={summary.items}
+            choices={choices}
+            disabled={deleting}
+            onChange={(item, checked) =>
+              setRecordDeleteChoice(item.kind, item.relationship.id, checked)
+            }
+          />
         </div>
       )}
 
@@ -205,6 +180,44 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** The lines of a plan under `parent` (`null` for the top level), each with
+ * its own lines nested under it. */
+function PlanItemList(props: {
+  parent: string | null;
+  items: readonly PlanItem[];
+  choices: DeleteChoices;
+  disabled: boolean;
+  onChange: (item: PlanItem, checked: boolean) => void;
+}): JSX.Element | null {
+  const { parent, items, choices, disabled, onChange } = props;
+  const children = items.filter((item) => item.parent === parent);
+  if (children.length === 0) return null;
+  return (
+    <ul
+      className={cx("mt-2 flex flex-col gap-2", {
+        "border-edge ml-2 border-l pl-4": parent !== null,
+      })}
+    >
+      {children.map((item) => (
+        <li key={item.id}>
+          <Checkbox
+            label={itemLabel(item)}
+            description={itemNote(item)}
+            // The choice as it stands, which is ahead of the plan while the
+            // plan for it is being worked out.
+            checked={
+              item.required || choices[item.kind][item.relationship.id] === true
+            }
+            disabled={item.required || disabled}
+            onChange={(checked) => onChange(item, checked)}
+          />
+          <PlanItemList {...props} parent={item.id} />
+        </li>
+      ))}
+    </ul>
   );
 }
 

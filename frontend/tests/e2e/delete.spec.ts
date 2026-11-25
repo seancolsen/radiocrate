@@ -26,7 +26,7 @@ const dialog = (page: Page): Locator =>
 const deleteButton = (page: Page): Locator =>
   dialog(page).getByRole("button", { name: "Delete", exact: true });
 
-/** One of the dialog's choices, by its label ("Delete 1 file"). */
+/** One of the dialog's choices, by its label ("Delete 1 file record"). */
 const choice = (page: Page, name: string | RegExp): Locator =>
   dialog(page).getByRole("checkbox", { name });
 
@@ -146,7 +146,7 @@ test("deleting a track takes what can't be kept without it, and remembers what e
     // What must go with it isn't a choice. Its file is, and stays by default.
     await expect(choice(page, "Delete 1 credit")).toBeChecked();
     await expect(choice(page, "Delete 1 credit")).toBeDisabled();
-    await expect(choice(page, "Delete 1 file")).not.toBeChecked();
+    await expect(choice(page, "Delete 1 file record")).not.toBeChecked();
     // With no file record going, there's no audio to offer.
     await expect(audioChoice(page)).toHaveCount(0);
   });
@@ -167,7 +167,7 @@ test("deleting a track takes what can't be kept without it, and remembers what e
 
   await test.step("a choice is still made after a reload", async () => {
     await openDelete(app, page, "Getting Better", "Delete track…");
-    await choose(page, "Delete 1 file");
+    await choose(page, "Delete 1 file record");
     await dialog(page).getByRole("button", { name: "Cancel" }).click();
     await expect(dialog(page)).toBeHidden();
     await app.reload();
@@ -175,7 +175,7 @@ test("deleting a track takes what can't be kept without it, and remembers what e
       await app.openSource("Tracks");
     await expect.poll(() => app.grid.rowCount()).toBe(62);
     await openDelete(app, page, "Fixing a Hole", "Delete track…");
-    await expect(choice(page, "Delete 1 file")).toBeChecked();
+    await expect(choice(page, "Delete 1 file record")).toBeChecked();
     await dialog(page).getByRole("button", { name: "Cancel" }).click();
     await expect(dialog(page)).toBeHidden();
     expect(await app.grid.find("Fixing a Hole")).not.toBeNull();
@@ -203,7 +203,7 @@ test.describe("with a collection of its own", () => {
     await test.step("choosing the file offers its audio, checked", async () => {
       await openDelete(app, page, "Getting Better", "Delete track…");
       await expect(audioChoice(page)).toHaveCount(0);
-      await choose(page, "Delete 1 file");
+      await choose(page, "Delete 1 file record");
       await expect(
         choice(page, "Delete the audio file from disk"),
       ).toBeChecked();
@@ -227,7 +227,7 @@ test.describe("with a collection of its own", () => {
     await test.step("unchecked, the record goes and the audio stays", async () => {
       await openDelete(app, page, "Fixing a Hole", "Delete track…");
       // Both choices come up as they were left.
-      await expect(choice(page, "Delete 1 file")).toBeChecked();
+      await expect(choice(page, "Delete 1 file record")).toBeChecked();
       await dialog(page)
         .getByText("Delete the audio file from disk", { exact: true })
         .click();
@@ -287,7 +287,7 @@ test.describe("with a collection of its own", () => {
       await openDelete(app, page, "Rumours", "Delete album…");
       await expect(choice(page, rest)).toHaveCount(0);
       await choose(page, "Delete 11 tracks");
-      await choose(page, "Delete 11 files");
+      await choose(page, "Delete 11 file records");
       await expect(choice(page, audio)).toBeChecked();
       // Not until it's asked for.
       await expect(choice(page, rest)).not.toBeChecked();
@@ -406,7 +406,7 @@ test("deleting an album keeps its tracks, or deletes them when that's chosen", a
       "Otherwise they’re kept, with no album.",
     );
     await expect(dialog(page)).toContainText(
-      "In all, 1 record is deleted and 9 are changed.",
+      "In all, 1 record will be deleted and 9 will be modified.",
     );
     await look(page, "album-default");
     await confirmDelete(app, page);
@@ -456,7 +456,7 @@ test("deleting a rating clears it from every track that had it", async ({
     await openDelete(app, page, "Love", "Delete rating…");
     await expect(choice(page, "Delete 17 tracks")).not.toBeChecked();
     await expect(dialog(page)).toContainText(
-      "In all, 1 record is deleted and 17 are changed.",
+      "In all, 1 record will be deleted and 17 will be modified.",
     );
     await look(page, "rating");
     await confirmDelete(app, page);

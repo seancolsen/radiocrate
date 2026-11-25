@@ -45,6 +45,7 @@ function item(
     count,
     checked: rel.required,
     required: kind === "referencing" && rel.required,
+    parent: null,
   };
 }
 
@@ -57,6 +58,11 @@ describe("the dialog's title", () => {
   it("calls a table the app has no noun for by its name", () => {
     expect(deleteTitle("gig", 2)).toBe("Delete 2 gig");
     expect(deleteTitle("/lastfm/scrobble", 1)).toBe("Delete scrobble");
+  });
+
+  it("calls a file's record a file record, not a file", () => {
+    expect(deleteTitle("file", 1)).toBe("Delete file record");
+    expect(deleteTitle("file", 3)).toBe("Delete 3 file records");
   });
 });
 
@@ -95,7 +101,7 @@ describe("a line of the plan", () => {
 
   it("says what an orphan is left without", () => {
     const files = item("orphans", relationship("track.file", "file", true), 1);
-    expect(itemLabel(files)).toBe("Delete 1 file");
+    expect(itemLabel(files)).toBe("Delete 1 file record");
     expect(itemNote(files)).toBe("It would be left with no tracks.");
     expect(
       itemNote(item("orphans", relationship("credit.artist", "artist"), 3)),
@@ -116,10 +122,10 @@ describe("the notes around the plan", () => {
     ).toBeUndefined();
     expect(
       totalsNote({ ...summary, found: 2, deleteCount: 14, updateCount: 0 }),
-    ).toBe("In all, 14 records are deleted.");
+    ).toBe("In all, 14 records will be deleted.");
     expect(
       totalsNote({ ...summary, found: 1, deleteCount: 1, updateCount: 20000 }),
-    ).toBe("In all, 1 record is deleted and 20,000 are changed.");
+    ).toBe("In all, 1 record will be deleted and 20,000 will be modified.");
   });
 
   it("offers to delete the audio of the files the deletion takes", () => {

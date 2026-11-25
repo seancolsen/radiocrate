@@ -9,13 +9,19 @@
 import type { LeftoverFolder } from "api-client";
 import { nounFor } from "../query/entityNames";
 import { tableLabel } from "../query/schema";
+import { AUDIO_FILE_TABLE } from "./audioFiles";
 import type { BlockedItem, DeleteSummary, PlanItem } from "./deletePlan";
 
 const number = (n: number): string => n.toLocaleString("en-US");
 
 /** "track" or "tracks", or the table's own name for one the app has no noun
- * for. */
+ * for. A record of `file` is a "file record": the dialog deletes the audio
+ * file itself only when asked, by a checkbox of its own, and "Delete 1 file"
+ * would say otherwise. */
 export function recordNoun(table: string, n: number): string {
+  if (table === AUDIO_FILE_TABLE) {
+    return n === 1 ? "file record" : "file records";
+  }
   return nounFor(table, n) ?? tableLabel(table);
 }
 
@@ -124,18 +130,16 @@ export function blockedNote(item: BlockedItem): string {
 }
 
 /** The whole deletion in a line, when it goes beyond the records asked for:
- * "In all, 14 records are deleted and 12 are changed." `undefined` when it
- * doesn't. */
+ * "In all, 14 records will be deleted and 12 will be modified." `undefined`
+ * when it doesn't. */
 export function totalsNote(summary: DeleteSummary): string | undefined {
   const { deleteCount, updateCount, found } = summary;
   if (deleteCount <= found && updateCount === 0) return undefined;
   const deleted = `${number(deleteCount)} ${
-    deleteCount === 1 ? "record is" : "records are"
-  } deleted`;
+    deleteCount === 1 ? "record" : "records"
+  } will be deleted`;
   if (updateCount === 0) return `In all, ${deleted}.`;
-  return `In all, ${deleted} and ${number(updateCount)} ${
-    updateCount === 1 ? "is" : "are"
-  } changed.`;
+  return `In all, ${deleted} and ${number(updateCount)} will be modified.`;
 }
 
 /** What's become of the records asked for, when not all `count` of them are

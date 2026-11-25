@@ -850,7 +850,7 @@ for (const colorScheme of SCHEMES) {
       dialog.getByRole("checkbox", { name: "Delete 10 credits" }),
     ).toBeDisabled();
     await expect(
-      dialog.getByRole("checkbox", { name: "Delete 9 files" }),
+      dialog.getByRole("checkbox", { name: "Delete 9 file records" }),
     ).not.toBeChecked();
     await expect(dialog).toHaveScreenshot(
       snapshot("record-delete/album", colorScheme),

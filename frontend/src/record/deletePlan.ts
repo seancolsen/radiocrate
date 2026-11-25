@@ -114,6 +114,12 @@ export interface PlanItem {
   /** Whether there's no choice: they refer to a deleted record through a
    * column that can't be emptied. */
   required: boolean;
+  /** The {@link id} of the line whose records led here: the line that deletes
+   * the records these refer to, or that these would be left without. `null`
+   * for a line the records asked for lead to. A line reached from several
+   * places is put under the first, in the order the plan met them. The parent
+   * is always among the plan's lines, so they make a tree. */
+  parent: string | null;
 }
 
 /** Records that refer to a deleted record and can be neither deleted nor
@@ -472,13 +478,23 @@ export function createDeletePlanner(
     const pending: [TableInfo, Row[]][] = [];
     const isDeleted = (info: TableInfo, row: Row): boolean =>
       deleted.get(info.name)?.has(signature(info, row)) ?? false;
-    const remove = (info: TableInfo, rows: readonly Row[]) => {
+    /** For each deleted record (interned, so one object per record): the
+     * line whose choice deleted it, `null` for the records asked for. */
+    const causes = new Map<Row, string | null>();
+    /** For each line, by its id: the line whose records first led to it. */
+    const parents = new Map<string, string | null>();
+    const remove = (
+      info: TableInfo,
+      rows: readonly Row[],
+      cause: string | null,
+    ) => {
       const records = ensure(deleted, info.name, () => new Map<string, Row>());
       const fresh: Row[] = [];
       for (const row of rows) {
         const sig = signature(info, row);
         if (records.has(sig)) continue;
         records.set(sig, row);
+        causes.set(row, cause);
         fresh.push(row);
         for (const rel of info.incoming) {
           const value = row[info.at.get(rel.toColumn)!];
@@ -499,12 +515,14 @@ export function createDeletePlanner(
       rel.required || choices.referencing[rel.id] === true;
 
     const found = await loadByKeys(root, keys);
-    remove(root, found);
+    remove(root, found, null);
 
     for (;;) {
       // Whatever refers to a record that's going.
       for (let next = pending.shift(); next; next = pending.shift()) {
         const [info, rows] = next;
+        // One batch is one removal, so its rows share a cause.
+        const cause = causes.get(rows[0]!) ?? null;
         for (const rel of info.incoming) {
           const at = info.at.get(rel.toColumn)!;
           const values = rows.flatMap((row) => row[at] ?? []);
@@ -522,10 +540,13 @@ export function createDeletePlanner(
             rel.id,
             () => new Map<string, Row>(),
           );
+          const id = `referencing:${rel.id}`;
           for (const row of referring) {
-            if (!isDeleted(from, row)) seen.set(signature(from, row), row);
+            if (isDeleted(from, row)) continue;
+            seen.set(signature(from, row), row);
+            if (!parents.has(id)) parents.set(id, cause);
           }
-          if (deletesReferrers(rel)) remove(from, referring);
+          if (deletesReferrers(rel)) remove(from, referring, id);
         }
       }
 
@@ -539,10 +560,15 @@ export function createDeletePlanner(
           // How many of the records going refer to each record that isn't,
           // and isn't known to be orphaned already.
           const leaving = new Map<string, number>();
+          /** What deleted the first of them to refer to each. */
+          const leavingCause = new Map<string, string | null>();
           for (const row of records.values()) {
             const value = row[at];
             if (value == null || going.has(value) || seen?.has(value)) continue;
             leaving.set(value, (leaving.get(value) ?? 0) + 1);
+            if (!leavingCause.has(value)) {
+              leavingCause.set(value, causes.get(row) ?? null);
+            }
           }
           if (leaving.size === 0) continue;
           const all = await loadTotals(rel, [...leaving.keys()]);
@@ -555,8 +581,10 @@ export function createDeletePlanner(
           const found = ensure(orphaned, rel.id, () => new Set<string>());
           for (const value of fresh) found.add(value);
           relationships.set(rel.id, rel);
+          const id = `orphans:${rel.id}`;
+          if (!parents.has(id)) parents.set(id, leavingCause.get(fresh[0]!)!);
           if (choices.orphans[rel.id] === true && target.key.length > 0) {
-            remove(target, await loadHolders(target, rel.toColumn, fresh));
+            remove(target, await loadHolders(target, rel.toColumn, fresh), id);
           }
         }
       }
@@ -600,6 +628,7 @@ export function createDeletePlanner(
             count,
             checked,
             required: rel.required,
+            parent: parents.get(`referencing:${rel.id}`) ?? null,
           });
         }
       }
@@ -619,9 +648,20 @@ export function createDeletePlanner(
             count,
             checked,
             required: false,
+            parent: parents.get(`orphans:${rel.id}`) ?? null,
           });
         }
       }
+    }
+    // A line whose parent isn't shown (one that leaves nothing to say, like
+    // records all deleted some other way) goes under the nearest one that is.
+    const shown = new Set(items.map((item) => item.id));
+    for (const item of items) {
+      let parent = item.parent;
+      while (parent !== null && !shown.has(parent)) {
+        parent = parents.get(parent) ?? null;
+      }
+      item.parent = parent;
     }
 
     // The deletes, ordered so that a record goes only after everything that

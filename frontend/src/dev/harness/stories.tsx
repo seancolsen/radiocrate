@@ -924,13 +924,15 @@ const EXPORT_COLUMNS: ExportColumnOption[] = [
   },
 ];
 
-/** A line of the "Delete records" dialog, for a story. */
+/** A line of the "Delete records" dialog, for a story, nested under the line
+ * `parent` names (as `from>to` of its relationship), if any. */
 function planItem(
   kind: PlanItem["kind"],
   from: string,
   to: string,
   count: number,
   required = false,
+  parent: string | null = null,
 ): PlanItem {
   const [fromTable, fromColumn] = from.split(".") as [string, string];
   const id = `${from}>${to}`;
@@ -949,8 +951,13 @@ function planItem(
     count,
     checked: required,
     required: kind === "referencing" && required,
+    parent,
   };
 }
+
+/** The ids of the "Delete records" dialog's lines that others nest under. */
+const TRACKS = "referencing:track.album>album";
+const CREDITS = "referencing:credit.track>track";
 
 export const STORIES: Record<string, Story> = {
   // ── The app's left sidebar, as a general-purpose panel ────────────────────
@@ -2433,10 +2440,17 @@ export const STORIES: Record<string, Story> = {
             found: 1,
             items: [
               planItem("referencing", "track.album", "album", 9),
-              planItem("referencing", "credit.track", "track", 10, true),
-              planItem("referencing", "play.track", "track", 594, true),
-              planItem("orphans", "track.file", "file", 9, true),
-              planItem("orphans", "credit.artist", "artist", 2, true),
+              planItem(
+                "referencing",
+                "credit.track",
+                "track",
+                10,
+                true,
+                TRACKS,
+              ),
+              planItem("referencing", "play.track", "track", 594, true, TRACKS),
+              planItem("orphans", "track.file", "file", 9, true, TRACKS),
+              planItem("orphans", "credit.artist", "artist", 2, true, CREDITS),
             ],
             blocked: [],
             deleteCount: 614,
@@ -2490,10 +2504,17 @@ export const STORIES: Record<string, Story> = {
             found: 1,
             items: [
               planItem("referencing", "track.album", "album", 12, true),
-              planItem("referencing", "credit.track", "track", 14, true),
-              planItem("referencing", "play.track", "track", 230, true),
+              planItem(
+                "referencing",
+                "credit.track",
+                "track",
+                14,
+                true,
+                TRACKS,
+              ),
+              planItem("referencing", "play.track", "track", 230, true, TRACKS),
               {
-                ...planItem("orphans", "track.file", "file", 12),
+                ...planItem("orphans", "track.file", "file", 12, false, TRACKS),
                 checked: true,
               },
             ],
@@ -2542,7 +2563,7 @@ export const STORIES: Record<string, Story> = {
                 ...planItem("orphans", "track.file", "file", 1),
                 checked: true,
               },
-              planItem("orphans", "credit.artist", "artist", 1),
+              planItem("orphans", "credit.artist", "artist", 1, false, CREDITS),
             ],
             blocked: [],
             deleteCount: 16,
