@@ -2,6 +2,7 @@ import * as arrow from "apache-arrow";
 import { castDraft, current as snapshot, produce, type Draft } from "immer";
 import { shallow } from "zustand/vanilla/shallow";
 import {
+  dml,
   folderAdd,
   folderDelete,
   folderList,
@@ -61,6 +62,15 @@ import {
 } from "../../api/playlist";
 import { WriteQueue } from "../../api/writeQueue";
 import { runSql, runSqlScalar } from "../../api/query";
+import { loadPlanRows } from "../../api/deletePlan";
+import { APP_TABLES } from "../../query/appTables";
+import type { RecordKey } from "../../query/recordForm";
+import {
+  createDeletePlanner,
+  type ChoiceKind,
+  type DeletePlan,
+  type DeletePlanner,
+} from "../../record/deletePlan";
 import {
   fetchTrackMetadata,
   fetchTrackRatingId,
@@ -85,6 +95,7 @@ import {
 } from "../../log/log";
 import {
   INTROSPECTION_SQL,
+  parseRelationships,
   parseSchemaTables,
   readSchemaTables,
   rowTable,
@@ -292,6 +303,7 @@ import {
   clampExplorerWidth,
   clampRecordSidebarWidth,
   persistAudioQuality,
+  persistDeleteChoices,
   persistFindOptions,
   persistExpandedFolders,
   persistExplorerWidth,
@@ -300,6 +312,7 @@ import {
   persistStructureExpanded,
   persistTabs,
   persistTheme,
+  storedDeleteChoices,
 } from "./persistence";
 import {
   selectEffectivePresets,
@@ -1026,6 +1039,32 @@ export interface AppActions {
   confirmAddToPlaylist: (sourceId: string) => void;
   /** Dismiss the "Add to playlist…" dialog, adding nothing. */
   cancelAddToPlaylist: () => void;
+  /** "Delete track…": raises the "Delete records" dialog on the records of
+   * `table` that some rows of page `tabId` identify, and starts working out
+   * what deleting them takes (`record/deletePlan.ts`) under the choices
+   * remembered from the last deletions. Nothing is written until
+   * {@link AppActions.confirmRecordDelete}. */
+  requestRecordDelete: (
+    tabId: string,
+    table: string,
+    records: readonly RecordRef[],
+  ) => void;
+  /** Makes one of the dialog's choices about relationship `relationshipId`:
+   * whether the records that refer to a deleted one through it are deleted
+   * too (`"referencing"`), or the records it leaves orphaned (`"orphans"`).
+   * The choice is remembered for the next deletion, and the plan is worked
+   * out again. */
+  setRecordDeleteChoice: (
+    kind: ChoiceKind,
+    relationshipId: string,
+    checked: boolean,
+  ) => void;
+  /** Deletes what the dialog shows, as one request. Once it lands, the dialog
+   * closes and the page the records were chosen on reloads. A failure stays in
+   * the dialog. Does nothing while a plan is being worked out. */
+  confirmRecordDelete: () => void;
+  /** Closes the dialog, deleting nothing. Not while a deletion is in flight. */
+  cancelRecordDelete: () => void;
   /** Adds `trackIds`, in that order, to the end of playlist source
    * `sourceId`, as one request through its write queue, then reloads its page
    * (as new rows) if it's open and has run. Not a step in that page's undo
@@ -2742,6 +2781,124 @@ export function createAppActions(
       );
     });
     return outcome.result;
+  };
+
+  // ── Deleting records ────────────────────────────────────────────────────────
+
+  // The deletion the "Delete records" dialog is on: the records asked for,
+  // the planner (which keeps what it has loaded from one plan to the next, so
+  // that changing a choice asks only for what the choice newly reaches) and
+  // the plan in force, once one has landed for the choices as they stand.
+  // Non-reactive: the dialog shows the plan's outline, which is in state.
+  let deletion:
+    | {
+        table: string;
+        keys: readonly RecordKey[];
+        planner: DeletePlanner;
+        plan: DeletePlan | undefined;
+      }
+    | undefined;
+  let deletionToken = 0;
+
+  /** A planner over the schema as it stands: every schema's tables, since
+   * what refers to a record can be in any of them (a playlist's entries, in
+   * `app`, refer to tracks). */
+  const deletePlanner = (): DeletePlanner => {
+    const { json, allTables } = get().schema;
+    return createDeletePlanner(
+      allTables,
+      json === undefined ? [] : parseRelationships(json),
+      loadPlanRows,
+    );
+  };
+
+  /** Works out the deletion under the dialog's choices as they stand. A plan
+   * for choices that have changed since it was asked for is dropped. `error`
+   * stays on show while it's worked out, and after. */
+  const planDeletion = (error: string | null = null) => {
+    const session = deletion;
+    const pending = get().recordDelete;
+    if (!session || !pending) return;
+    const token = ++deletionToken;
+    const current = () => deletion === session && deletionToken === token;
+    session.plan = undefined;
+    set((s) => {
+      if (!s.recordDelete) return;
+      s.recordDelete.status = "planning";
+      s.recordDelete.error = error;
+    });
+    void session.planner
+      .plan(session.table, session.keys, pending.choices)
+      .then(
+        (plan) => {
+          if (!current()) return;
+          session.plan = plan;
+          set((s) => {
+            if (!s.recordDelete) return;
+            s.recordDelete.summary = castDraft(plan.summary);
+            s.recordDelete.status = "ready";
+          });
+        },
+        (err: unknown) => {
+          if (!current()) return;
+          console.error("delete plan failed", err);
+          set((s) => {
+            if (!s.recordDelete) return;
+            s.recordDelete.status = "ready";
+            s.recordDelete.error = describeError(err);
+          });
+        },
+      );
+  };
+
+  /** What follows a deletion made from page `tabId`: the page reloads, and
+   * what the app holds of the deleted records goes. */
+  const afterRecordDelete = (tabId: string, plan: DeletePlan) => {
+    const s = get();
+    const count = plan.summary.found;
+    const noun = nounFor(plan.summary.table, count) ?? plan.summary.table;
+    showToast(`Deleted ${count.toLocaleString("en-US")} ${noun}`);
+
+    // A deleted track can't be played: its stream is gone with its record,
+    // and a play of it would be logged against nothing.
+    const tracks = new Set(
+      (plan.deleted.get("track") ?? []).flatMap(
+        (key) => key.find((part) => part.column === "id")?.value ?? [],
+      ),
+    );
+    if (tracks.size > 0) {
+      const queue = dequeue(s.queuedTracks, [...tracks]);
+      if (queue.length !== s.queuedTracks.length) setQueue(queue);
+      if (s.currentTrack && tracks.has(s.currentTrack.id)) clearNowPlaying();
+    }
+
+    // This device's own writes aren't echoed back to it as live updates, so
+    // the lists it holds of what was deleted are refetched here.
+    if (plan.deleted.has("rating")) void refreshTopic("ratings", () => false);
+    const sourceTables: string[] = [
+      APP_TABLES.source,
+      APP_TABLES.playlist,
+      "/app/query",
+      "/app/source_folder",
+    ];
+    if (sourceTables.some((table) => plan.deleted.has(table))) {
+      actions.refetchSources();
+    }
+
+    // The rows were chosen by where they were, and where they were is about
+    // to hold other records. With nothing selected, an open record editor
+    // closes: it was on what's gone.
+    if (!selectPageTab(get(), tabId)) return;
+    set((d) => {
+      const page = d.pages[tabId];
+      if (!page) return;
+      delete page.selection;
+      page.multiSelect = false;
+      page.rangeSelect = false;
+    });
+    // The same query, so the rows land as a refresh, which keeps the place
+    // in them.
+    runQuery(tabId);
   };
 
   // ── Playback ────────────────────────────────────────────────────────────────
@@ -5939,6 +6096,94 @@ export function createAppActions(
       set((s) => {
         s.pendingAddToPlaylist = null;
       }),
+    requestRecordDelete: (tabId, table, records) => {
+      const s = get();
+      if (s.schema.json === undefined || s.recordDelete) return;
+      // A row can carry one record twice (a query joining a table to itself),
+      // and a record with no key names nothing to delete.
+      const keys = new Map(
+        records
+          .filter((record) => record.key.length > 0)
+          .map((record) => [JSON.stringify(record.key), record.key]),
+      );
+      if (keys.size === 0) return;
+      deletion = {
+        table,
+        keys: [...keys.values()],
+        planner: deletePlanner(),
+        plan: undefined,
+      };
+      set((d) => {
+        d.recordDelete = {
+          tabId,
+          table,
+          count: keys.size,
+          choices: storedDeleteChoices(env),
+          summary: null,
+          status: "planning",
+          error: null,
+        };
+      });
+      planDeletion();
+    },
+    setRecordDeleteChoice: (kind, relationshipId, checked) => {
+      const pending = get().recordDelete;
+      if (!pending || pending.status === "deleting") return;
+      const choices = {
+        ...pending.choices,
+        [kind]: { ...pending.choices[kind], [relationshipId]: checked },
+      };
+      set((s) => {
+        if (s.recordDelete) s.recordDelete.choices = choices;
+      });
+      persistDeleteChoices(env, choices);
+      planDeletion();
+    },
+    confirmRecordDelete: () => {
+      const pending = get().recordDelete;
+      const session = deletion;
+      const plan = session?.plan;
+      if (!pending || !session || !plan || pending.status !== "ready") return;
+      if (plan.summary.blocked.length > 0) return;
+      const close = () => {
+        if (deletion !== session) return;
+        deletion = undefined;
+        set((s) => {
+          s.recordDelete = null;
+        });
+      };
+      if (plan.operations.length === 0) {
+        // The records were already gone.
+        close();
+        return;
+      }
+      set((s) => {
+        if (!s.recordDelete) return;
+        s.recordDelete.status = "deleting";
+        s.recordDelete.error = null;
+      });
+      void dml({ operations: plan.operations }).then(
+        () => {
+          close();
+          afterRecordDelete(pending.tabId, plan);
+        },
+        (err: unknown) => {
+          if (deletion !== session) return;
+          // The usual cause is that the records changed after the plan was
+          // made, so what was loaded for it is stale: start again from
+          // nothing, and leave the reason on show beside the new plan.
+          session.planner = deletePlanner();
+          planDeletion(describeError(err));
+        },
+      );
+    },
+    cancelRecordDelete: () => {
+      if (get().recordDelete?.status === "deleting") return;
+      deletion = undefined;
+      set((s) => {
+        s.recordDelete = null;
+      });
+    },
     addTracksToPlaylist: async (sourceId, trackIds) => {
       const playlistId = playlistIdOf(sourceId);
       if (playlistId === undefined || trackIds.length === 0) return;

@@ -477,6 +477,15 @@ function Inputs(): JSX.Element {
               onChange={setUnchecked}
             />
           </Specimen>
+          <Specimen caption="checkbox, disabled">
+            <Checkbox
+              label="Delete 6 credits"
+              description="A credit can’t be kept without its track."
+              checked
+              disabled
+              onChange={() => {}}
+            />
+          </Specimen>
           <Specimen caption="text">
             <input type="text" placeholder="Preset name" className={INPUT} />
           </Specimen>

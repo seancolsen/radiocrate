@@ -316,6 +316,40 @@ The introspection query (`introspection/resources/duckdb.sql`, copied into
 `frontend/src/query/schema.ts`) reads the rows into its `links` array, leaving
 out any whose column or target table isn't there.
 
+## Deleting records
+
+A result row's menu has "Delete track…" (one entry per table the row carries a
+key for, as with "Edit"). Nothing in the database cascades, and the DML API
+refuses a delete that would leave a link dangling, so the frontend works out the
+whole deletion before it writes anything, and sends it as one `dml` request.
+
+- **The plan** is `frontend/src/record/deletePlan.ts`: pure, and driven only by
+  the introspected tables and `metadata.relationship` rows of every schema, so
+  a table of the user's own is followed like the app's. From the records being
+  deleted it follows each link both ways, loading what it finds:
+  - *Records that refer to a deleted record.* They're deleted with it where the
+    referring column is `NOT NULL`. Where it's nullable there's a choice,
+    defaulting to keeping them with the column set to NULL.
+  - *Records a deleted record referred to*, where no record refers to one
+    through that link any more (a file with no track left). Deleting such an
+    orphan is a choice, defaulting to leaving it.
+
+  A choice is made once per link, not per record, and whatever it adds to the
+  deletion is followed in turn. Planning again after a choice reuses what's
+  loaded.
+- **The dialog** (`RecordDeleteModal.tsx`, state in `s.recordDelete`) shows a
+  checkbox per link reached, checked and disabled where there's no choice. A
+  choice the user changes is kept in `localStorage` (`deleteChoices`, by link:
+  `track.album>album`), so the dialog comes up the same way next time.
+- **The request** is ordered so that each delete runs after everything that
+  refers to its record has gone, with the updates that clear columns first. A
+  deletion can be tens of thousands of operations (a rating, with every track
+  that has it), which is why the backend makes a run of like operations in one
+  statement (`leading_run` in `backend/src/dml.rs`).
+
+Deleting a `file` record deletes no audio file. The next scan will find the file
+on disk and add it again.
+
 ## Live updates: what a change on one device does on another
 
 Each device in the foreground holds open `GET /api/events`, a Server-Sent

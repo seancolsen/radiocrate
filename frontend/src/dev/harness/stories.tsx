@@ -77,6 +77,8 @@ import CommandPalette from "../../components/CommandPalette";
 import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 import DeleteConfirmModal from "../../components/DeleteConfirmModal";
 import PresetDeleteModal from "../../components/PresetDeleteModal";
+import RecordDeleteModal from "../../components/RecordDeleteModal";
+import type { PlanItem } from "../../record/deletePlan";
 import DataStructurePage from "../../components/DataStructurePage";
 import LogPage from "../../components/LogPage";
 import type { LogEntry } from "../../log/log";
@@ -2379,6 +2381,68 @@ export const STORIES: Record<string, Story> = {
       });
     },
     render: () => <AddToPlaylistModal />,
+  },
+
+  // "Delete album…" with its tracks chosen to go too: a choice that's made, the
+  // records that then go without one (checked, and not to be changed), and the
+  // orphans left unchosen.
+  "record-delete/album": {
+    setup: (stores) => {
+      const item = (
+        kind: PlanItem["kind"],
+        from: string,
+        to: string,
+        count: number,
+        required = false,
+      ): PlanItem => {
+        const [fromTable, fromColumn] = from.split(".") as [string, string];
+        const id = `${from}>${to}`;
+        return {
+          id: `${kind}:${id}`,
+          kind,
+          relationship: {
+            id,
+            fromTable,
+            fromColumn,
+            toTable: to,
+            toColumn: "id",
+            required,
+          },
+          table: kind === "orphans" ? to : fromTable,
+          count,
+          checked: required,
+          required: kind === "referencing" && required,
+        };
+      };
+      stores.app.store.setState((s) => {
+        s.recordDelete = {
+          tabId: LEMONADE.id,
+          table: "album",
+          count: 1,
+          choices: {
+            referencing: { "track.album>album": true },
+            orphans: {},
+          },
+          summary: {
+            table: "album",
+            found: 1,
+            items: [
+              item("referencing", "track.album", "album", 9),
+              item("referencing", "credit.track", "track", 10, true),
+              item("referencing", "play.track", "track", 594, true),
+              item("orphans", "track.file", "file", 9, true),
+              item("orphans", "credit.artist", "artist", 2, true),
+            ],
+            blocked: [],
+            deleteCount: 614,
+            updateCount: 0,
+          },
+          status: "ready",
+          error: null,
+        };
+      });
+    },
+    render: () => <RecordDeleteModal />,
   },
 
   // ── The record editor ────────────────────────────────────────────────────

@@ -601,6 +601,8 @@ for (const colorScheme of SCHEMES) {
       "Edit album",
       "Show album tracks",
       "Rate track",
+      "Delete 2 tracks…",
+      "Delete 2 albums…",
       "Artists",
     ]);
   });
@@ -622,8 +624,9 @@ for (const colorScheme of SCHEMES) {
 
   // A row's context menu: one "Edit {table}" entry per table whose primary key
   // the row carries, "Show album tracks" for an album, "Rate track", "Queue
-  // track" and "Add to playlist…" for a track, the track's "Artists" (but not
-  // its "Album", whose entries are already there), then "Select multiple".
+  // track" and "Add to playlist…" for a track, a "Delete {table}…" entry per
+  // table, the track's "Artists" (but not its "Album", whose entries are
+  // already there), then "Select multiple".
   // Shot through the menu (it portals out of the stage).
   test(`result-row/context-menu - ${colorScheme}`, async ({ page }) => {
     await openStory(page, "result-row/context-menu", colorScheme);
@@ -635,6 +638,8 @@ for (const colorScheme of SCHEMES) {
       "Rate track",
       "Queue track",
       "Add to playlist…",
+      "Delete track…",
+      "Delete album…",
       "Artists",
       "Select multiple",
     ]);
@@ -657,6 +662,7 @@ for (const colorScheme of SCHEMES) {
       "Queue track",
       "Add to playlist…",
       "Remove from playlistDelete",
+      "Delete track…",
       "Artists",
       "Album",
       "Select multiple",
@@ -680,6 +686,8 @@ for (const colorScheme of SCHEMES) {
       "Queue after 2 queued tracks",
       "Remove from queue",
       "Add to playlist…",
+      "Delete track…",
+      "Delete album…",
       "Artists",
       "Select multiple",
     ]);
@@ -706,6 +714,8 @@ for (const colorScheme of SCHEMES) {
       "2: ❤️ (Love)",
       "Queue track",
       "Add to playlist…",
+      "Delete track…",
+      "Delete album…",
       "Artists",
       "Select multiple",
     ]);
@@ -798,6 +808,7 @@ for (const colorScheme of SCHEMES) {
       "Edit artist",
       "Show artist tracks",
       "Show artist albums",
+      "Delete artist…",
       "Select multiple",
     ]);
     await expect(menu).toHaveScreenshot(
@@ -822,6 +833,27 @@ for (const colorScheme of SCHEMES) {
     ]);
     await expect(dialog).toHaveScreenshot(
       snapshot("add-to-playlist/modal", colorScheme),
+    );
+  });
+
+  // The "Delete records" dialog on an album whose tracks are to go with it:
+  // one choice made, the records that follow from it with no choice (checked,
+  // dimmed), and the orphans left as they are.
+  test(`record-delete/album - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "record-delete/album", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading")).toHaveText("Delete album");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Delete 9 tracks" }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("checkbox", { name: "Delete 10 credits" }),
+    ).toBeDisabled();
+    await expect(
+      dialog.getByRole("checkbox", { name: "Delete 9 files" }),
+    ).not.toBeChecked();
+    await expect(dialog).toHaveScreenshot(
+      snapshot("record-delete/album", colorScheme),
     );
   });
 }

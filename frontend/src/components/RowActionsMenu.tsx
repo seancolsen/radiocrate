@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { Icons } from "../icons";
 import { ratingLabel } from "../query/ratings";
+import { deleteTitle } from "../record/deleteText";
 import {
   fetchCreditedArtists,
   fetchTrackAlbumIds,
@@ -32,6 +33,8 @@ import {
  *   tracks;
  * - the queue's entries when the rows are tracks ({@link QueueActions}),
  *   "Add to playlist…" too, and "Remove from playlist" on a playlist's page;
+ * - one "Delete {table}…" entry per table ({@link DeleteActions}), which
+ *   raises the dialog that says what deleting those records takes;
  * - the records they lead to ({@link RecordNavigation}): the artists credited
  *   on tracks or albums, and a track's album — each a submenu offering the
  *   same entries for *its* records, so the user can walk from record to
@@ -81,6 +84,7 @@ export default function RowActionsMenu(props: {
           onClick={props.onRemoveFromPlaylist}
         />
       )}
+      <DeleteActions tabId={props.tabId} groups={props.groups} />
       {navigation.length > 0 && (
         <>
           <MenuSeparator />
@@ -145,6 +149,33 @@ function RecordActions(props: {
       ))}
       <RecordNavigationItems tabId={tabId} groups={groups} />
       {tracks && <RateSubmenu onRate={(id) => rateTracks(tabId, tracks, id)} />}
+    </>
+  );
+}
+
+/** The entries deleting `groups`' records, one per table: "Delete track…" on
+ * one record, "Delete 3 tracks…" on several. Each raises the "Delete records"
+ * dialog, which deletes nothing until it's confirmed. They're the rows' own
+ * entries only: the submenus leading to other records (a track's artists)
+ * don't offer to delete those. */
+function DeleteActions(props: {
+  tabId: string;
+  groups: readonly RecordGroup[];
+}): JSX.Element {
+  const { requestRecordDelete } = useAppActions();
+  return (
+    <>
+      {props.groups.map((group) => (
+        <MenuItem
+          key={group.table}
+          icon={Icons.Delete}
+          label={`${deleteTitle(group.table, group.records.length)}…`}
+          danger
+          onClick={() =>
+            requestRecordDelete(props.tabId, group.table, group.records)
+          }
+        />
+      ))}
     </>
   );
 }

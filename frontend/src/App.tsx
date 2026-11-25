@@ -27,6 +27,7 @@ import ToastHost from "./components/Toast";
 import AboutModal from "./components/AboutModal";
 import AddToPlaylistModal from "./components/AddToPlaylistModal";
 import DeleteConfirmModal from "./components/DeleteConfirmModal";
+import RecordDeleteModal from "./components/RecordDeleteModal";
 import ExportDataModal from "./components/ExportDataModal";
 
 /** One tab's page: the one its kind calls for. The one place tab kinds fan out
@@ -271,6 +272,8 @@ export default function App(): JSX.Element {
       <DeleteConfirmModal />
       {/* Raised from a result row's menu, on any page of tracks. */}
       <AddToPlaylistModal />
+      {/* Raised from a result row's menu, on the records its rows identify. */}
+      <RecordDeleteModal />
       <ExportDataModal />
     </div>
   );

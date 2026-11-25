@@ -658,6 +658,7 @@ export function createCommandsStore(
       capturingKeys() ||
       a.pendingDelete !== null ||
       a.pendingAddToPlaylist !== null ||
+      a.recordDelete !== null ||
       a.rowDrag !== null ||
       a.viewSql !== null ||
       a.exportData !== null ||

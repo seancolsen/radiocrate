@@ -5,6 +5,7 @@ import {
   identifyingColumns,
   INTROSPECTION_SQL,
   parseOtherSchemaTables,
+  parseRelationships,
   parseSchemaTables,
   primaryKey,
   qualifiedTableName,
@@ -104,6 +105,29 @@ describe("schemas", () => {
     expect(column("track", "id").link).toBeUndefined();
     expect(column("/lastfm/scrobble", "track").link).toBe("track");
     expect(column("/lastfm/scrobble", "album").link).toBe("/lastfm/album");
+  });
+
+  it("lists every relationship with the column it leads to", () => {
+    expect(parseRelationships(SCHEMAS)).toEqual([
+      {
+        fromTable: "track",
+        fromColumn: "album",
+        toTable: "album",
+        toColumn: "id",
+      },
+      {
+        fromTable: "/lastfm/scrobble",
+        fromColumn: "track",
+        toTable: "track",
+        toColumn: "id",
+      },
+      {
+        fromTable: "/lastfm/scrobble",
+        fromColumn: "album",
+        toTable: "/lastfm/album",
+        toColumn: "id",
+      },
+    ]);
   });
 
   it("parses only the current schema's tables for the app", () => {

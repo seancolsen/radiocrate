@@ -116,6 +116,8 @@ test("a row's context menu offers one entry per table it identifies", async ({
     "Edit album",
     "Show album tracks",
     "Rate track",
+    "Delete track…",
+    "Delete album…",
     "Artists",
     "Select multiple",
   ]);
@@ -177,6 +179,8 @@ test("a menu raised before the lineage lands takes up its entries as it does", a
     "Rate track",
     "Queue track",
     "Add to playlist…",
+    "Delete track…",
+    "Delete album…",
     "Artists",
     "Select multiple",
   ]);
@@ -211,6 +215,8 @@ test("in multi-select mode, rows the lineage hasn't landed for raise no menu", a
     "Rate track",
     "Queue track",
     "Add to playlist…",
+    "Delete track…",
+    "Delete album…",
     "Artists",
   ]);
 });

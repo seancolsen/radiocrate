@@ -1,0 +1,31 @@
+- dialog "Delete album":
+    - heading "Delete album" [level=2]
+    - button "Close":
+        - img
+    - paragraph: Delete this album? This can’t be undone.
+    - paragraph: "Other records are tied to it:"
+    - list:
+        - listitem:
+            - text: Delete 9 tracks Otherwise they’re kept, with no album.
+            - checkbox "Delete 9 tracks" [checked]
+        - listitem:
+            - text: Delete 10 credits A credit can’t be kept without its track.
+            - checkbox "Delete 10 credits" [checked] [disabled]
+        - listitem:
+            - text: Delete 594 plays A play can’t be kept without its track.
+            - checkbox "Delete 594 plays" [checked] [disabled]
+        - listitem:
+            - text: Delete 32 track tags A track tag can’t be kept without its track.
+            - checkbox "Delete 32 track tags" [checked] [disabled]
+        - listitem:
+            - text: Delete 9 files They would be left with no tracks.
+            - checkbox "Delete 9 files"
+        - listitem:
+            - text: Delete 2 artists They would be left with no credits.
+            - checkbox "Delete 2 artists"
+        - listitem:
+            - text: Delete 3 tags They would be left with no track tags.
+            - checkbox "Delete 3 tags"
+    - paragraph: In all, 646 records are deleted.
+    - button "Cancel"
+    - button "Delete"

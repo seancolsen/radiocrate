@@ -17,6 +17,7 @@ import {
   parseFindOptions,
   type FindOptions,
 } from "../../record/findReplace";
+import { NO_CHOICES, type DeleteChoices } from "../../record/deletePlan";
 import type { AppEnv } from "../env";
 import type { Tab } from "./state";
 import type { ThemePref } from "./theme";
@@ -104,6 +105,64 @@ export function storedFindOptions(env: AppEnv): FindOptions {
 export function persistFindOptions(env: AppEnv, options: FindOptions): void {
   try {
     env.storage.setItem(FIND_OPTIONS_KEY, JSON.stringify(options));
+  } catch {
+    // ignore
+  }
+}
+
+const DELETE_CHOICES_KEY = "deleteChoices";
+
+/** The relationships of `value` (an object read from storage) marked `true`. */
+function chosen(value: unknown): Record<string, boolean> {
+  if (typeof value !== "object" || value === null) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([id, on]) =>
+      on === true ? [[id, true]] : [],
+    ),
+  );
+}
+
+/** What the user last chose in the "Delete records" dialog, by relationship:
+ * which ones' referring records to delete rather than keep, and which ones'
+ * orphaned records to delete. The dialog comes up as it was left the last
+ * time records of the same kind were deleted. Only what was chosen is stored;
+ * a relationship that isn't there has its default, which deletes nothing
+ * more. */
+export function storedDeleteChoices(env: AppEnv): DeleteChoices {
+  try {
+    const raw = env.storage.getItem(DELETE_CHOICES_KEY);
+    if (raw === null) return NO_CHOICES;
+    const parsed = JSON.parse(raw) as Partial<
+      Record<keyof DeleteChoices, unknown>
+    >;
+    return {
+      referencing: chosen(parsed?.referencing),
+      orphans: chosen(parsed?.orphans),
+    };
+  } catch {
+    // Private-mode localStorage denial, or a value that isn't JSON — fall
+    // back to the defaults.
+  }
+  return NO_CHOICES;
+}
+
+export function persistDeleteChoices(
+  env: AppEnv,
+  choices: DeleteChoices,
+): void {
+  try {
+    const stored = {
+      referencing: chosen(choices.referencing),
+      orphans: chosen(choices.orphans),
+    };
+    if (
+      Object.keys(stored.referencing).length === 0 &&
+      Object.keys(stored.orphans).length === 0
+    ) {
+      env.storage.removeItem(DELETE_CHOICES_KEY);
+    } else {
+      env.storage.setItem(DELETE_CHOICES_KEY, JSON.stringify(stored));
+    }
   } catch {
     // ignore
   }

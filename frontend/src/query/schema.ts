@@ -414,6 +414,32 @@ export function schemaLinks(tables: readonly SchemaTable[]): SchemaLink[] {
   return links;
 }
 
+/** A declared relationship, with the column it leads to: `fromTable.fromColumn`
+ * holds the value of `toTable.toColumn`, that table's primary key. Both tables
+ * are named as the app names them, in whatever schema they are. */
+export interface SchemaRelationship {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+}
+
+/** Every relationship an introspection document declares, across all the
+ * database's schemas, in the document's order. One with an end in another
+ * attached database, which the app has no name for, is left out. What deleting
+ * a record follows, in both directions (`record/deletePlan.ts`), where the
+ * record editor reads {@link schemaLinks} of the current schema alone. */
+export function parseRelationships(json: string): SchemaRelationship[] {
+  return rawDocument(json).links.flatMap(({ from, to }) => {
+    const fromTable = appTableName(from.schema, from.table);
+    const toTable = appTableName(to.schema, to.table);
+    if (fromTable === undefined || toTable === undefined) return [];
+    return [
+      { fromTable, fromColumn: from.column, toTable, toColumn: to.column },
+    ];
+  });
+}
+
 /** The columns of `table` that link to another of `tables` — each holding the
  * primary key of a record there. */
 export function linkColumns(

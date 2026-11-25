@@ -25,6 +25,7 @@ import type { SchemaTable } from "../../query/schema";
 import { loadLog, type LogEntry } from "../../log/log";
 import type { SettingOverrides } from "../../state/settings";
 import { EMPTY_HISTORY, type UndoHistory } from "../../state/undoHistory";
+import type { DeleteChoices, DeleteSummary } from "../../record/deletePlan";
 import type { FindOptions } from "../../record/findReplace";
 import type { AppEnv } from "../env";
 import {
@@ -375,6 +376,33 @@ export interface RecordEditorEntry {
   records: readonly RecordRef[];
 }
 
+/** The "Delete records" dialog: some records of one table, chosen from a
+ * page's rows, and what deleting them takes (`record/deletePlan.ts`).
+ *
+ * The plan is worked out when the dialog opens, and again each time a choice
+ * changes. What it holds here is its outline; the records it loaded along the
+ * way, tens of thousands of them for a record much is tied to, stay out of
+ * state, with the store's actions. */
+export interface RecordDelete {
+  /** The page whose rows the records were chosen from, which reloads once
+   * they're gone. */
+  tabId: string;
+  table: string;
+  /** How many records were asked for. */
+  count: number;
+  /** The choices in force: the ones remembered from the last deletions, as
+   * changed in this dialog. */
+  choices: DeleteChoices;
+  /** What the deletion takes under those choices. `null` until the first plan
+   * lands; then the last one to land, shown while the next is worked out. */
+  summary: DeleteSummary | null;
+  /** `"planning"` while a plan is being worked out, `"deleting"` once the
+   * deletion has been sent. */
+  status: "planning" | "ready" | "deleting";
+  /** Why the plan couldn't be worked out, or the deletion made. */
+  error: string | null;
+}
+
 /** The status of a boot-time load. `"loading"` covers both "hasn't started" and
  * "in flight" — nothing in this app distinguishes them. */
 export type ResourceStatus = "loading" | "ready" | "error";
@@ -608,6 +636,8 @@ export interface AppState {
     fromTabId: string;
     trackIds: readonly string[];
   } | null;
+  /** The "Delete records" dialog, when open (see {@link RecordDelete}). */
+  recordDelete: RecordDelete | null;
   /** The result rows being dragged, while a drag is under way (see
    * {@link RowDrag}). */
   rowDrag: RowDrag | null;
@@ -856,6 +886,7 @@ export function initialState(env: AppEnv): AppState {
     renaming: null,
     pendingDelete: null,
     pendingAddToPlaylist: null,
+    recordDelete: null,
     rowDrag: null,
     aboutOpen: false,
     logging: log.logging,
