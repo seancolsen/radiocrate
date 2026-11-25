@@ -356,8 +356,10 @@ whole deletion before it writes anything, and sends it as one `dml` request.
   in step with the transaction: each file is renamed aside, in its own folder,
   before the commit, so a file that can't be removed (a read-only collection)
   fails the request and puts back everything. Only after the commit are they
-  removed. A file that's already missing is passed over, and a path that leads
-  outside the collection fails the request. Unchecked, the audio stays, and the
+  removed, and then each folder that leaves empty, and each above it left empty
+  in turn, short of the collection's own. A folder with anything left in it (a
+  cover image, a hidden file) stays. A file that's already missing is passed
+  over, and a path that leads outside the collection fails the request. Unchecked, the audio stays, and the
   next scan finds it and adds it again.
 
 ## Live updates: what a change on one device does on another

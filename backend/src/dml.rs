@@ -2376,6 +2376,7 @@ mod tests {
 
     const FILE2: &str = "11111111-1111-1111-1111-222222222222";
     const FILE3: &str = "11111111-1111-1111-1111-333333333333";
+    const FILE4: &str = "11111111-1111-1111-1111-444444444444";
 
     fn delete_file(id: &str, file: &str) -> Value {
         json!({ "id": id, "operation": "delete", "table": "file", "where": { "id": file } })
@@ -2402,6 +2403,38 @@ mod tests {
 
         assert_eq!(count(&conn, "SELECT count(*) FROM file"), 1);
         assert_eq!(collection.names("A"), vec!["three.flac"]);
+    }
+
+    #[test]
+    fn deleting_audio_removes_the_folders_it_leaves_empty() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "Artist/Album 1/one.flac", true);
+        collection.add(&conn, FILE2, "Artist/Album 2/two.flac", true);
+        std::fs::write(collection.0.join("Artist/Album 2/cover.jpg"), b"").unwrap();
+        collection.add(&conn, FILE3, "Lone/Deep/Er/three.flac", true);
+        collection.add(&conn, FILE4, "root.flac", true);
+        // A folder that was empty already, which no removal left so.
+        std::fs::create_dir_all(collection.0.join("Empty")).unwrap();
+
+        collection
+            .dml(
+                &mut conn,
+                json!({ "deleteAudioFiles": true, "operations": [
+                    delete_file("a", FILE1),
+                    delete_file("b", FILE2),
+                    delete_file("c", FILE3),
+                    delete_file("d", FILE4),
+                ]}),
+            )
+            .unwrap();
+
+        // The album with its cover stays, and so the artist does too; the chain of folders left
+        // empty goes, up to the collection, which stays however empty.
+        assert_eq!(collection.names(""), vec!["Artist", "Empty"]);
+        assert_eq!(collection.names("Artist"), vec!["Album 2"]);
+        assert_eq!(collection.names("Artist/Album 2"), vec!["cover.jpg"]);
+        assert!(collection.0.is_dir());
     }
 
     #[test]
