@@ -3,6 +3,7 @@ import type {
   CustomComparisonRow,
   DmlOperation,
   DmlResult,
+  LeftoverFolder,
   Preset,
   Source,
   SourceFolder,
@@ -397,6 +398,14 @@ export interface RecordDelete {
    * deleted from the collection too. It only counts when it takes some. On
    * unless the user turned it off the last time. */
   deleteAudioFiles: boolean;
+  /** Whether the folders the audio files' removal would leave with no audio
+   * in them, only other files (cover art, a cue sheet), are deleted whole along
+   * with it. Off unless the user turned it on the last time. */
+  deleteFolders: boolean;
+  /** Those folders, for the plan shown: worked out with it, on the server,
+   * which looks at what else is in them. Empty when the plan takes no audio
+   * files, or leaves no such folder. */
+  leftoverFolders: readonly LeftoverFolder[];
   /** What the deletion takes under those choices. `null` until the first plan
    * lands; then the last one to land, shown while the next is worked out. */
   summary: DeleteSummary | null;

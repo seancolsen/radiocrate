@@ -84,11 +84,15 @@ export type DmlOperation =
  * A DML request: its operations, run in order as one transaction. With
  * `deleteAudioFiles`, the audio file of every `file` record it deletes is
  * removed from the collection too, or the request fails and nothing is
- * deleted. A file that's already missing is passed over.
+ * deleted. A file that's already missing is passed over. `deleteFolders`
+ * (only with `deleteAudioFiles`) names folders, as `collection.leftover_folders`
+ * reports them, to delete whole, with everything left in them; one that would
+ * still hold audio once the request's is gone is left alone.
  */
 export type DmlRequest = {
   operations: DmlOperation[];
   deleteAudioFiles?: boolean;
+  deleteFolders?: string[];
 };
 
 /** Per-operation returned rows, keyed by operation id (delete ops produce none). */

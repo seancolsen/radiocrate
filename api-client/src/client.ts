@@ -2,7 +2,7 @@
 // Source of truth: the `api-schema` Rust crate. Re-run the command after
 // changing it, and commit the result.
 
-import type { AppVersion, ComputedColumnRow, CustomComparisonRow, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams, MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
+import type { AppVersion, CollectionLeftoverFoldersParams, ComputedColumnRow, CustomComparisonRow, DmlRequest, DmlResult, FieldMetadataRow, FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams, LeftoverFolder, MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams, MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams, MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow, TableSummary } from "./types";
 import { handleAuthRedirect, httpError, rpcCall, trackRequest } from "./rpc";
 
 export async function sourceList(): Promise<Source[]> {
@@ -163,6 +163,10 @@ export async function tableSummarize(): Promise<TableSummary[]> {
 
 export async function collectionRescan(): Promise<null> {
   return (await rpcCall("collection.rescan", null)) as null;
+}
+
+export async function collectionLeftoverFolders(params: CollectionLeftoverFoldersParams): Promise<LeftoverFolder[]> {
+  return (await rpcCall("collection.leftover_folders", params)) as LeftoverFolder[];
 }
 
 export async function dml(params: DmlRequest): Promise<DmlResult> {

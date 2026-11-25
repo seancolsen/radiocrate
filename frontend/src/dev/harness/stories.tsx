@@ -2426,6 +2426,8 @@ export const STORIES: Record<string, Story> = {
             orphans: {},
           },
           deleteAudioFiles: true,
+          deleteFolders: false,
+          leftoverFolders: [],
           summary: {
             table: "album",
             found: 1,
@@ -2454,6 +2456,66 @@ export const STORIES: Record<string, Story> = {
     render: () => <RecordDeleteModal />,
   },
 
+  // "Delete album…" with its tracks and their files chosen to go, which would
+  // leave the album's folder holding only its cover art and rip files: the
+  // dialog offers to delete the audio, and the rest of the folder with it.
+  "record-delete/album-with-folder": {
+    setup: (stores) => {
+      stores.app.store.setState((s) => {
+        s.recordDelete = {
+          tabId: LEMONADE.id,
+          table: "album",
+          count: 1,
+          choices: {
+            referencing: { "track.album>album": true },
+            orphans: { "track.file>file": true },
+          },
+          deleteAudioFiles: true,
+          deleteFolders: true,
+          leftoverFolders: [
+            {
+              path: "./Beyoncé - Lemonade",
+              files: [
+                "cover.jpg",
+                "Lemonade.cue",
+                "Lemonade.log",
+                "Scans/back.jpg",
+                "Scans/booklet-01.jpg",
+              ],
+              fileCount: 5,
+            },
+          ],
+          summary: {
+            table: "album",
+            found: 1,
+            items: [
+              planItem("referencing", "track.album", "album", 12, true),
+              planItem("referencing", "credit.track", "track", 14, true),
+              planItem("referencing", "play.track", "track", 230, true),
+              {
+                ...planItem("orphans", "track.file", "file", 12),
+                checked: true,
+              },
+            ],
+            blocked: [],
+            deleteCount: 269,
+            deletedByTable: {
+              album: 1,
+              track: 12,
+              credit: 14,
+              play: 230,
+              file: 12,
+            },
+            updateCount: 0,
+          },
+          status: "ready",
+          error: null,
+        };
+      });
+    },
+    render: () => <RecordDeleteModal />,
+  },
+
   // "Delete track…" with its file chosen to go too, so the dialog offers to
   // delete the audio file from disk, checked as it is to begin with.
   "record-delete/track-with-file": {
@@ -2468,6 +2530,8 @@ export const STORIES: Record<string, Story> = {
             orphans: { "track.file>file": true },
           },
           deleteAudioFiles: true,
+          deleteFolders: false,
+          leftoverFolders: [],
           summary: {
             table: "track",
             found: 1,

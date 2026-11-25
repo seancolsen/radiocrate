@@ -267,6 +267,60 @@ test.describe("with a collection of its own", () => {
       expect(await count(db, "file")).toBe(59);
     });
   });
+
+  test("deleting an album can take its folder, with what else is in it", async ({
+    app,
+    page,
+    db,
+    server,
+  }) => {
+    const folder = path.join(server.collection, "Fleetwood Mac - Rumours");
+    fs.writeFileSync(path.join(folder, "cover.jpg"), "");
+    fs.writeFileSync(path.join(folder, "Rumours.log"), "");
+    fs.mkdirSync(path.join(folder, "Scans"));
+    fs.writeFileSync(path.join(folder, "Scans", "back.jpg"), "");
+    const audio = "Delete the 11 audio files from disk";
+    const rest = "Delete the rest of the folder";
+    await openRows(app, "Albums", 6);
+
+    await test.step("the folder is offered once its audio is to go", async () => {
+      await openDelete(app, page, "Rumours", "Delete album…");
+      await expect(choice(page, rest)).toHaveCount(0);
+      await choose(page, "Delete 11 tracks");
+      await choose(page, "Delete 11 files");
+      await expect(choice(page, audio)).toBeChecked();
+      // Not until it's asked for.
+      await expect(choice(page, rest)).not.toBeChecked();
+      await expect(
+        dialog(page).getByRole("list", { name: "Folders" }),
+      ).toContainText(
+        "Fleetwood Mac - Rumours/Rumours.log, Scans/back.jpg, cover.jpg",
+      );
+    });
+
+    await test.step("it goes only with the audio", async () => {
+      await dialog(page).getByText(audio, { exact: true }).click();
+      await expect(choice(page, rest)).toBeDisabled();
+      await dialog(page).getByText(audio, { exact: true }).click();
+      await expect(choice(page, rest)).toBeEnabled();
+      await choose(page, rest);
+      await look(page, "album-with-folder");
+      await expect(dialog(page)).toMatchAriaSnapshot({
+        name: "album-with-folder.aria.yml",
+      });
+    });
+
+    await test.step("confirming deletes the folder whole", async () => {
+      await confirmDelete(app, page);
+      await expect.poll(() => app.grid.rowCount()).toBe(5);
+      expect(await count(db, "file")).toBe(52);
+      expect(fs.existsSync(folder)).toBe(false);
+      // Nothing was left aside, and the other albums are all there.
+      const left = fs.readdirSync(server.collection);
+      expect(left.filter((name) => name.startsWith("."))).toEqual([]);
+      expect(left).toHaveLength(5);
+    });
+  });
 });
 
 test("deleting every track of two albums offers both albums as one choice", async ({

@@ -1,0 +1,37 @@
+- dialog "Delete album":
+    - heading "Delete album" [level=2]
+    - button "Close":
+        - img
+    - paragraph: Delete this album? This can’t be undone.
+    - paragraph: "Other records are tied to it:"
+    - list:
+        - listitem:
+            - text: /Delete \d+ tracks Otherwise they’re kept, with no album\./
+            - checkbox /Delete \d+ tracks/ [checked]
+        - listitem:
+            - text: /Delete \d+ credits A credit can’t be kept without its track\./
+            - checkbox /Delete \d+ credits/ [checked] [disabled]
+        - listitem:
+            - text: /Delete \d+ plays A play can’t be kept without its track\./
+            - checkbox /Delete \d+ plays/ [checked] [disabled]
+        - listitem:
+            - text: /Delete \d+ track tags A track tag can’t be kept without its track\./
+            - checkbox /Delete \d+ track tags/ [checked] [disabled]
+        - listitem:
+            - text: /Delete \d+ files They would be left with no tracks\./
+            - checkbox /Delete \d+ files/ [checked]
+        - listitem:
+            - text: Delete 1 artist It would be left with no credits.
+            - checkbox "Delete 1 artist"
+        - listitem:
+            - text: Delete 1 tag It would be left with no track tags.
+            - checkbox "Delete 1 tag"
+    - text: /Delete the \d+ audio files from disk Otherwise they stay, and the next scan adds them back\./
+    - checkbox /Delete the \d+ audio files from disk/ [checked]
+    - text: Delete the rest of the folder No audio would be left in it, only 3 other files.
+    - checkbox "Delete the rest of the folder" [checked]
+    - list "Folders":
+        - listitem "Fleetwood Mac - Rumours/ Rumours.log Scans/back.jpg cover.jpg": Fleetwood Mac - Rumours/ Rumours.log, Scans/back.jpg, cover.jpg
+    - paragraph: /In all, \d+ records are deleted\./
+    - button "Cancel"
+    - button "Delete"

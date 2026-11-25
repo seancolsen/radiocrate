@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { PlanItem, Relationship } from "./deletePlan";
+import { audioFileCount } from "./audioFiles";
 import {
-  audioFileCount,
   audioFilesLabel,
   audioFilesNote,
   blockedNote,
   deleteTitle,
+  folderContents,
+  folderName,
   itemLabel,
   itemNote,
+  leftoverFoldersLabel,
+  leftoverFoldersNote,
   missingNote,
   totalsNote,
 } from "./deleteText";
@@ -142,6 +146,34 @@ describe("the notes around the plan", () => {
     );
     expect(audioFilesNote(2)).toBe(
       "Otherwise they stay, and the next scan adds them back.",
+    );
+  });
+
+  it("names the folders the audio would leave, and what's in them", () => {
+    const album = {
+      path: "./Artist/Album",
+      files: ["cover.jpg", "rip.log", "album.cue", "Scans/back.jpg"],
+      fileCount: 4,
+    };
+    const single = { path: "./Single", files: ["cover.jpg"], fileCount: 1 };
+    expect(leftoverFoldersLabel([album])).toBe("Delete the rest of the folder");
+    expect(leftoverFoldersLabel([album, single])).toBe(
+      "Delete the rest of 2 folders",
+    );
+    expect(leftoverFoldersNote([single])).toBe(
+      "No audio would be left in it, only 1 other file.",
+    );
+    expect(leftoverFoldersNote([album, single])).toBe(
+      "No audio would be left in them, only 5 other files.",
+    );
+    expect(folderName(album)).toBe("Artist/Album/");
+    expect(folderContents(album)).toBe(
+      "cover.jpg, rip.log, album.cue and 1 more",
+    );
+    expect(folderContents(single)).toBe("cover.jpg");
+    // More files than the server listed.
+    expect(folderContents({ ...single, fileCount: 40 })).toBe(
+      "cover.jpg and 39 more",
     );
   });
 

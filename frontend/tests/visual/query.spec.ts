@@ -857,6 +857,25 @@ for (const colorScheme of SCHEMES) {
     );
   });
 
+  // The dialog on an album whose files are to go with it, leaving its folder
+  // with cover art and rip files: the rest of the folder can go too, nested
+  // under the audio's checkbox, with what's in it listed.
+  test(`record-delete/album-with-folder - ${colorScheme}`, async ({ page }) => {
+    await openStory(page, "record-delete/album-with-folder", colorScheme);
+    const dialog = page.getByRole("dialog");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Delete the rest of the folder" }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("list", { name: "Folders" }).getByRole("listitem"),
+    ).toHaveText([
+      "Beyoncé - Lemonade/cover.jpg, Lemonade.cue, Lemonade.log and 2 more",
+    ]);
+    await expect(dialog).toHaveScreenshot(
+      snapshot("record-delete/album-with-folder", colorScheme),
+    );
+  });
+
   // The dialog on a track whose file is to go with it, which offers to delete
   // the audio file from disk too: a checkbox of its own, under the lines.
   test(`record-delete/track-with-file - ${colorScheme}`, async ({ page }) => {

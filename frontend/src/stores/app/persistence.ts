@@ -168,6 +168,28 @@ export function persistDeleteAudioFiles(env: AppEnv, on: boolean): void {
   }
 }
 
+const DELETE_FOLDERS_KEY = "deleteLeftoverFolders";
+
+/** Whether the "Delete records" dialog deletes the folders a deletion's audio
+ * leaves behind, as the user last left it. Off unless they turned it on; only
+ * that is stored. */
+export function storedDeleteFolders(env: AppEnv): boolean {
+  try {
+    return env.storage.getItem(DELETE_FOLDERS_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function persistDeleteFolders(env: AppEnv, on: boolean): void {
+  try {
+    if (on) env.storage.setItem(DELETE_FOLDERS_KEY, "1");
+    else env.storage.removeItem(DELETE_FOLDERS_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function persistDeleteChoices(
   env: AppEnv,
   choices: DeleteChoices,

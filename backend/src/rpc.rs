@@ -9,17 +9,18 @@
 use std::sync::Arc;
 
 use api_schema::{
-    AppVersion, CLIENT_ID_HEADER, ColumnSummary, ComputedColumnRow, CustomComparisonRow,
-    FieldMetadataRow, FieldOrder, FieldRef, FilterStrategy, FolderDeleteParams, FolderRenameParams,
-    Keybinding, KeybindingDeleteParams, MetadataComputedColumnDeleteParams,
-    MetadataComputedColumnRenameParams, MetadataCustomComparisonDeleteParams,
-    MetadataCustomComparisonRenameParams, MetadataFieldSetDisplayParams,
-    MetadataFieldSetOrderParams, MetadataFieldSetSortingParams, MetadataFieldSetVisibleParams,
-    MetadataTableSetOrderParams, MetadataTableSetQuerydownParams, MetadataTableSetVisibleParams,
-    MultiLink, Placement, Preset, PresetDeleteParams, PresetUpdateParams, QueryDeleteParams,
-    Setting, SettingDeleteParams, Source, SourceArrangeParams, SourceFolder, SourceKind,
-    SourceRecordPlayParams, SourceRenameParams, SourceUpdateDefinitionParams, TableMetadataRow,
-    TableOrder, TableQuerydownSetting, TableSummary, Topic, TreeItemKind,
+    AppVersion, CLIENT_ID_HEADER, CollectionLeftoverFoldersParams, ColumnSummary,
+    ComputedColumnRow, CustomComparisonRow, FieldMetadataRow, FieldOrder, FieldRef, FilterStrategy,
+    FolderDeleteParams, FolderRenameParams, Keybinding, KeybindingDeleteParams,
+    MetadataComputedColumnDeleteParams, MetadataComputedColumnRenameParams,
+    MetadataCustomComparisonDeleteParams, MetadataCustomComparisonRenameParams,
+    MetadataFieldSetDisplayParams, MetadataFieldSetOrderParams, MetadataFieldSetSortingParams,
+    MetadataFieldSetVisibleParams, MetadataTableSetOrderParams, MetadataTableSetQuerydownParams,
+    MetadataTableSetVisibleParams, MultiLink, Placement, Preset, PresetDeleteParams,
+    PresetUpdateParams, QueryDeleteParams, Setting, SettingDeleteParams, Source,
+    SourceArrangeParams, SourceFolder, SourceKind, SourceRecordPlayParams, SourceRenameParams,
+    SourceUpdateDefinitionParams, TableMetadataRow, TableOrder, TableQuerydownSetting,
+    TableSummary, Topic, TreeItemKind,
 };
 use axum::Json;
 use axum::extract::State;
@@ -481,8 +482,42 @@ fn dispatch_legacy(
             crate::scanner::scan(&state.collection_path, conn).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }),
+        // What deleting the audio of some `file` records would leave behind: the folders with no
+        // audio left in them but other files (cover art, a cue sheet), for the "Delete records"
+        // dialog to offer along with the audio. The paths are read under the lock; the folders
+        // are looked through after it's let go.
+        "collection.leftover_folders" => {
+            let p: CollectionLeftoverFoldersParams = from_params(params)?;
+            let ids: std::collections::HashSet<String> = p.file_ids.into_iter().collect();
+            let paths = state.read(|conn| file_paths_of(conn, &ids))?;
+            let folders = crate::audio_removal::leftover_folders(&state.collection_path, &paths);
+            serde_json::to_value(folders).map_err(|e| e.to_string())
+        }
         other => Err(format!("method not found: {other}")),
     }
+}
+
+/// The paths of the `file` records with the given ids. One that isn't there is passed over.
+fn file_paths_of(
+    conn: &Connection,
+    ids: &std::collections::HashSet<String>,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id::text, path FROM main.file")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut paths = Vec::new();
+    for row in rows {
+        let (id, path) = row.map_err(|e| e.to_string())?;
+        if ids.contains(&id) {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
 }
 
 fn from_params<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, String> {
@@ -3210,6 +3245,11 @@ mod tests {
                 vec![Settings],
             ),
             ("collection.rescan", Value::Null, vec![]),
+            (
+                "collection.leftover_folders",
+                json!({ "fileIds": [] }),
+                vec![],
+            ),
             (
                 "dml",
                 json!({ "operations": [{

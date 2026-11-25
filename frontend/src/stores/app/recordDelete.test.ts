@@ -8,7 +8,11 @@ import type { PlanQuery } from "../../record/deletePlan";
 
 vi.mock("api-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("api-client")>();
-  return { ...actual, dml: vi.fn(() => Promise.resolve({})) };
+  return {
+    ...actual,
+    dml: vi.fn(() => Promise.resolve({})),
+    collectionLeftoverFolders: vi.fn(() => Promise.resolve([])),
+  };
 });
 vi.mock("../../api/deletePlan", () => ({ loadPlanRows: vi.fn() }));
 // The run pipeline, so the page's reload after a deletion needs no compiler
@@ -44,7 +48,7 @@ vi.mock("../../query/lineage", () => ({
   recordKeyColumns: vi.fn(() => []),
 }));
 
-import { dml } from "api-client";
+import { collectionLeftoverFolders, dml } from "api-client";
 import { loadPlanRows } from "../../api/deletePlan";
 import { runSql } from "../../api/query";
 import { buildResultFromStringRows } from "../../query/result";
@@ -144,6 +148,7 @@ describe("the Delete records dialog", () => {
 
   beforeEach(() => {
     vi.mocked(dml).mockReset().mockResolvedValue({});
+    vi.mocked(collectionLeftoverFolders).mockReset().mockResolvedValue([]);
     vi.mocked(loadPlanRows).mockReset().mockImplementation(answer);
     vi.mocked(runSql).mockClear();
     env = fakeEnv();
@@ -317,6 +322,85 @@ describe("the Delete records dialog", () => {
     again.actions.setSchemaJson(SCHEMA);
     again.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
     expect(again.store.getState().recordDelete?.deleteAudioFiles).toBe(true);
+  });
+
+  it("offers the folders the audio leaves, and deletes them when chosen", async () => {
+    const folder = {
+      path: "./Artist/Album",
+      files: ["cover.jpg"],
+      fileCount: 1,
+    };
+    vi.mocked(collectionLeftoverFolders).mockResolvedValue([folder]);
+
+    // No files go, so there's nothing to ask about.
+    bundle.actions.requestRecordDelete("tab", "album", [record("album", "a1")]);
+    await settle();
+    expect(collectionLeftoverFolders).not.toHaveBeenCalled();
+    expect(pending()?.leftoverFolders).toEqual([]);
+
+    // Its tracks and their files do: the folders come with the plan.
+    bundle.actions.setRecordDeleteChoice("referencing", TRACKS, true);
+    bundle.actions.setRecordDeleteChoice("orphans", FILE, true);
+    expect(pending()?.status).toBe("planning");
+    await settle();
+    expect(collectionLeftoverFolders).toHaveBeenCalledExactlyOnceWith({
+      fileIds: ["f1", "f2"],
+    });
+    expect(pending()).toMatchObject({
+      status: "ready",
+      deleteFolders: false,
+      leftoverFolders: [folder],
+    });
+
+    // A choice that doesn't change which files go doesn't ask again.
+    bundle.actions.setRecordDeleteChoice("referencing", TRACKS, true);
+    await settle();
+    expect(collectionLeftoverFolders).toHaveBeenCalledTimes(1);
+
+    // Off by default, so only the audio goes unless the folders are chosen.
+    bundle.actions.setRecordDeleteFolders(true);
+    expect(pending()?.deleteFolders).toBe(true);
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    expect(vi.mocked(dml).mock.calls[0]?.[0]).toMatchObject({
+      deleteAudioFiles: true,
+      deleteFolders: ["./Artist/Album"],
+    });
+
+    // Remembered; and with the audio kept, the folders are too.
+    bundle.actions.requestRecordDelete("tab", "album", [record("album", "a1")]);
+    expect(pending()?.deleteFolders).toBe(true);
+    bundle.actions.setRecordDeleteAudioFiles(false);
+    await settle();
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    const second = vi.mocked(dml).mock.calls[1]?.[0];
+    expect(second).not.toHaveProperty("deleteAudioFiles");
+    expect(second).not.toHaveProperty("deleteFolders");
+  });
+
+  it("won't delete when the folders couldn't be looked at", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(collectionLeftoverFolders).mockRejectedValueOnce(
+      new Error("can't read the collection"),
+    );
+    bundle.actions.requestRecordDelete("tab", "track", [record("track", "t1")]);
+    bundle.actions.setRecordDeleteChoice("orphans", FILE, true);
+    await settle();
+    expect(pending()).toMatchObject({
+      status: "ready",
+      error: "can't read the collection",
+    });
+    bundle.actions.confirmRecordDelete();
+    await settle();
+    expect(dml).not.toHaveBeenCalled();
+
+    // Asked again on the next plan, which goes through.
+    bundle.actions.setRecordDeleteChoice("orphans", FILE, true);
+    await settle();
+    expect(pending()?.error).toBeNull();
+    expect(collectionLeftoverFolders).toHaveBeenCalledTimes(2);
+    logged.mockRestore();
   });
 
   it("takes a deleted track out of the queue and off the player", async () => {

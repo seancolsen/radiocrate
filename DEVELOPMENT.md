@@ -357,9 +357,19 @@ whole deletion before it writes anything, and sends it as one `dml` request.
   before the commit, so a file that can't be removed (a read-only collection)
   fails the request and puts back everything. Only after the commit are they
   removed, and then each folder that leaves empty, and each above it left empty
-  in turn, short of the collection's own. A folder with anything left in it (a
-  cover image, a hidden file) stays. A file that's already missing is passed
-  over, and a path that leads outside the collection fails the request. Unchecked, the audio stays, and the
+  in turn, short of the collection's own. A file that's already missing is
+  passed over, and a path that leads outside the collection fails the request.
+- **Folders left behind.** A folder that would be left with no audio but other
+  files (cover art, a cue sheet, a rip log) isn't empty, so it stays unless
+  asked. With each plan that takes `file` records, the store asks
+  `collection.leftover_folders` which folders those are: for each file, the
+  outermost folder above it, short of the collection's, with no audio left
+  anywhere in it (an audio file on disk counts, record or not). The dialog
+  offers them under the audio's checkbox, "Delete the rest of the folder",
+  naming each and what's in it; it's off unless the user turned it on the last
+  time (`deleteLeftoverFolders`), and only goes with the audio. Checked, the
+  request names them in `deleteFolders`, and the server moves each aside whole
+  with the audio, after checking again that it would hold no audio. Unchecked, the audio stays, and the
   next scan finds it and adds it again.
 
 ## Live updates: what a change on one device does on another

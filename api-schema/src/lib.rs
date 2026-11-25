@@ -564,6 +564,31 @@ pub struct TableSummary {
     pub columns: Vec<ColumnSummary>,
 }
 
+/// Params of `collection.leftover_folders`: the `file` records a deletion would
+/// take, by id.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionLeftoverFoldersParams {
+    pub file_ids: Vec<String>,
+}
+
+/// A folder of the collection that deleting some audio files would leave with
+/// no audio anywhere in it, though not empty: cover art, a cue sheet, a rip
+/// log. It's the outermost such folder (an artist's, if the album was the
+/// artist's only one), and never the collection's own. A `dml` request can
+/// delete it along with the audio (`deleteFolders`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftoverFolder {
+    /// The folder as `file.path` names a file: `./Artist/Album`.
+    pub path: String,
+    /// The files left in it, relative to it (`Scans/back.jpg`), in order: the
+    /// first few of them, for a glimpse of what they are.
+    pub files: Vec<String>,
+    /// How many files are left in it in all.
+    pub file_count: u32,
+}
+
 /// One kind of live data: a list every device follows as it changes, rather
 /// than loading once and waiting for Refresh. A write that changes one of
 /// these announces it on the change stream (`GET /api/events`), and a device
@@ -902,6 +927,12 @@ pub const METHODS: &[Method] = &[
         result: "null",
     },
     Method {
+        wire: "collection.leftover_folders",
+        func: "collectionLeftoverFolders",
+        params: Some("CollectionLeftoverFoldersParams"),
+        result: "LeftoverFolder[]",
+    },
+    Method {
         wire: "dml",
         func: "dml",
         params: Some("DmlRequest"),
@@ -976,6 +1007,8 @@ pub fn type_decls() -> Vec<String> {
         ),
         format!("export {}", ColumnSummary::decl(&cfg)),
         format!("export {}", TableSummary::decl(&cfg)),
+        format!("export {}", CollectionLeftoverFoldersParams::decl(&cfg)),
+        format!("export {}", LeftoverFolder::decl(&cfg)),
         format!("export {}", Topic::decl(&cfg)),
         format!("export {}", EventsHello::decl(&cfg)),
         format!("export {}", TopicChanged::decl(&cfg)),

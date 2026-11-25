@@ -44,11 +44,15 @@ export type DmlOperation =
  * A DML request: its operations, run in order as one transaction. With
  * `deleteAudioFiles`, the audio file of every `file` record it deletes is
  * removed from the collection too, or the request fails and nothing is
- * deleted. A file that's already missing is passed over.
+ * deleted. A file that's already missing is passed over. `deleteFolders`
+ * (only with `deleteAudioFiles`) names folders, as `collection.leftover_folders`
+ * reports them, to delete whole, with everything left in them; one that would
+ * still hold audio once the request's is gone is left alone.
  */
 export type DmlRequest = {
   operations: DmlOperation[];
   deleteAudioFiles?: boolean;
+  deleteFolders?: string[];
 };
 
 /** Per-operation returned rows, keyed by operation id (delete ops produce none). */
@@ -248,6 +252,23 @@ export type TableSummary = {
  * The schema the table is in, by name: `main` for the app's own tables.
  */
 schema: string, name: string, rowCount: number, columns: Array<ColumnSummary>, };
+
+export type CollectionLeftoverFoldersParams = { fileIds: Array<string>, };
+
+export type LeftoverFolder = { 
+/**
+ * The folder as `file.path` names a file: `./Artist/Album`.
+ */
+path: string, 
+/**
+ * The files left in it, relative to it (`Scans/back.jpg`), in order: the
+ * first few of them, for a glimpse of what they are.
+ */
+files: Array<string>, 
+/**
+ * How many files are left in it in all.
+ */
+fileCount: number, };
 
 export type Topic = "sources" | "presets" | "settings" | "keybindings" | "field-metadata" | "table-settings" | "computed-columns" | "custom-comparisons" | "contextual-queries" | "ratings" | "schema";
 

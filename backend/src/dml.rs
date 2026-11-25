@@ -42,6 +42,40 @@ struct DmlParams {
     /// collection too (see [`crate::audio_removal`]). Off unless asked for.
     #[serde(default, rename = "deleteAudioFiles")]
     delete_audio_files: bool,
+    /// Folders to delete whole along with that audio, as `collection.leftover_folders` names them
+    /// (`./Artist/Album`). Only with `delete_audio_files`.
+    #[serde(default, rename = "deleteFolders")]
+    delete_folders: Vec<String>,
+}
+
+/// What a request removes from the collection along with the `file` records it deletes.
+#[derive(Clone, Copy)]
+struct AudioRemoval<'a> {
+    collection: &'a Path,
+    /// Folders to delete whole (see [`crate::audio_removal::stage`]).
+    folders: &'a [String],
+}
+
+impl DmlParams {
+    /// What the request removes from `collection`, if it asks to remove anything.
+    fn audio_removal<'a>(
+        &'a self,
+        collection: &'a Path,
+    ) -> Result<Option<AudioRemoval<'a>>, RpcErr> {
+        if !self.delete_audio_files {
+            if !self.delete_folders.is_empty() {
+                return Err(validation_err(
+                    "deleteFolders deletes folders along with audio files, so it needs deleteAudioFiles"
+                        .to_string(),
+                ));
+            }
+            return Ok(None);
+        }
+        Ok(Some(AudioRemoval {
+            collection,
+            folders: &self.delete_folders,
+        }))
+    }
 }
 
 #[derive(Deserialize)]
@@ -150,9 +184,7 @@ pub(crate) fn handle(
         .map_err(|e| validation_err(format!("invalid params: {e}")))?;
     validate_operations(&params.operations)?;
     let topics = topics_of(&params.operations);
-    let audio = params
-        .delete_audio_files
-        .then_some(state.collection_path.as_path());
+    let audio = params.audio_removal(&state.collection_path)?;
     state.write_mut(origin, &topics, |conn| run(conn, &params.operations, audio))
 }
 
@@ -224,13 +256,13 @@ fn topics_of(operations: &[Operation]) -> Vec<Topic> {
 /// the per-operation result object. The transaction rolls back on any error (via `Transaction`'s
 /// drop) and only commits — and checkpoints, via `write_mut` — if every operation succeeds.
 ///
-/// With `audio`, the path of the collection, the audio files of the `file` records the request
-/// deletes are removed from it as well, in step with the transaction: moved aside before it commits,
-/// so that one that can't be fails the request, and removed once it has.
+/// With `audio`, the audio files of the `file` records the request deletes are removed from the
+/// collection as well, with the folders it names, in step with the transaction: moved aside before
+/// it commits, so that one that can't be fails the request, and removed once it has.
 fn run(
     conn: &mut Connection,
     operations: &[Operation],
-    audio: Option<&Path>,
+    audio: Option<AudioRemoval<'_>>,
 ) -> Result<Value, RpcErr> {
     let schema = introspect(conn)?;
     let tx = conn
@@ -258,7 +290,7 @@ fn run(
     }
 
     let staged = match (audio, files_before) {
-        (Some(collection), Some(before)) => {
+        (Some(audio), Some(before)) => {
             let after = file_paths(&tx)?;
             let gone: Vec<String> = before
                 .into_iter()
@@ -266,7 +298,7 @@ fn run(
                 .map(|(_, path)| path)
                 .collect();
             Some(
-                crate::audio_removal::stage(collection, &gone)
+                crate::audio_removal::stage(audio.collection, &gone, audio.folders)
                     .map_err(|message| validation_err(format!("{message} Nothing was deleted.")))?,
             )
         }
@@ -2353,7 +2385,7 @@ mod tests {
             let params: DmlParams = serde_json::from_value(params)
                 .map_err(|e| validation_err(format!("invalid params: {e}")))?;
             validate_operations(&params.operations)?;
-            let audio = params.delete_audio_files.then_some(self.0.as_path());
+            let audio = params.audio_removal(&self.0)?;
             run(conn, &params.operations, audio)
         }
     }
@@ -2435,6 +2467,149 @@ mod tests {
         assert_eq!(collection.names("Artist"), vec!["Album 2"]);
         assert_eq!(collection.names("Artist/Album 2"), vec!["cover.jpg"]);
         assert!(collection.0.is_dir());
+    }
+
+    /// Writes a file that isn't audio, with no record, at `relative`.
+    fn write_other(collection: &Collection, relative: &str) {
+        let path = collection.0.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"x").unwrap();
+    }
+
+    #[test]
+    fn deleting_audio_can_delete_the_folders_it_names_whole() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "Artist/Album/one.flac", true);
+        collection.add(&conn, FILE2, "Artist/Album/two.flac", true);
+        write_other(&collection, "Artist/Album/cover.jpg");
+        write_other(&collection, "Artist/Album/Scans/back.jpg");
+        collection.add(&conn, FILE3, "Other/three.flac", true);
+
+        collection
+            .dml(
+                &mut conn,
+                json!({
+                    "deleteAudioFiles": true,
+                    "deleteFolders": ["./Artist/Album"],
+                    "operations": [delete_file("a", FILE1), delete_file("b", FILE2)],
+                }),
+            )
+            .unwrap();
+
+        // The album went whole, and the artist's folder, left empty, after it.
+        assert_eq!(collection.names(""), vec!["Other"]);
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 1);
+    }
+
+    #[test]
+    fn a_named_folder_that_would_keep_audio_is_left_alone() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+        collection.add(&conn, FILE2, "A/two.flac", true);
+        write_other(&collection, "A/cover.jpg");
+
+        collection
+            .dml(
+                &mut conn,
+                json!({
+                    "deleteAudioFiles": true,
+                    "deleteFolders": ["./A"],
+                    "operations": [delete_file("a", FILE1)],
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(collection.names("A"), vec!["cover.jpg", "two.flac"]);
+    }
+
+    #[test]
+    fn folders_are_deleted_only_with_audio() {
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "A/one.flac", true);
+
+        let err = collection
+            .dml(
+                &mut conn,
+                json!({ "deleteFolders": ["./A"], "operations": [delete_file("a", FILE1)] }),
+            )
+            .unwrap_err();
+        assert!(
+            err.message.contains("needs deleteAudioFiles"),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 1);
+
+        let err = collection
+            .dml(
+                &mut conn,
+                json!({
+                    "deleteAudioFiles": true,
+                    "deleteFolders": ["./A/../.."],
+                    "operations": [delete_file("a", FILE1)],
+                }),
+            )
+            .unwrap_err();
+        assert!(
+            err.message.contains("isn’t in the collection’s folder"),
+            "{}",
+            err.message
+        );
+        assert_eq!(collection.names("A"), vec!["one.flac"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cant_be_removed_fails_the_deletion_and_all_is_put_back() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut conn = setup();
+        let collection = Collection::new();
+        collection.add(&conn, FILE1, "Free/Album/one.flac", true);
+        write_other(&collection, "Free/Album/cover.jpg");
+        collection.add(&conn, FILE2, "Locked/Album/two.flac", true);
+        write_other(&collection, "Locked/Album/cover.jpg");
+        let locked = collection.0.join("Locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        if std::fs::write(locked.join("probe"), b"").is_ok() {
+            // Permissions don't hold this user back (root): there's nothing to test.
+            return;
+        }
+
+        let err = collection
+            .dml(
+                &mut conn,
+                json!({
+                    "deleteAudioFiles": true,
+                    "deleteFolders": ["./Free/Album", "./Locked/Album"],
+                    "operations": [delete_file("a", FILE1), delete_file("b", FILE2)],
+                }),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.message.contains("the folder “./Locked/Album”"),
+            "{}",
+            err.message
+        );
+        assert!(
+            err.message.ends_with("Nothing was deleted."),
+            "{}",
+            err.message
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM file"), 2);
+        assert_eq!(collection.names("Free"), vec!["Album"]);
+        assert_eq!(
+            collection.names("Free/Album"),
+            vec!["cover.jpg", "one.flac"]
+        );
+        assert_eq!(
+            collection.names("Locked/Album"),
+            vec!["cover.jpg", "two.flac"]
+        );
     }
 
     #[test]

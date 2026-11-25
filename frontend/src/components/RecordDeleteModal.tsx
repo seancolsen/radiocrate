@@ -1,13 +1,18 @@
 import type { JSX } from "react";
 import { Icons } from "../icons";
+import { audioFileCount } from "../record/audioFiles";
+import type { LeftoverFolder } from "api-client";
 import {
-  audioFileCount,
   audioFilesLabel,
   audioFilesNote,
   blockedNote,
   deleteTitle,
+  folderContents,
+  folderName,
   itemLabel,
   itemNote,
+  leftoverFoldersLabel,
+  leftoverFoldersNote,
   missingNote,
   recordCount,
   recordNoun,
@@ -32,6 +37,10 @@ import { Modal } from "./ui/Modal";
  *
  * When the deletion takes `file` records, one more checkbox, checked unless the
  * user unchecked it the last time, deletes their audio files from disk too.
+ * Under it, when that would leave folders with no audio in them but other
+ * files (cover art, a cue sheet, a rip log), another deletes those folders
+ * whole, naming each and what's in it. That one is unchecked unless the user
+ * checked it the last time, and can only be checked along with the audio.
  *
  * The lines stay up while a plan is being worked out, showing the last one's
  * counts, and Delete waits for the new one. */
@@ -42,6 +51,7 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
     confirmRecordDelete,
     setRecordDeleteAudioFiles,
     setRecordDeleteChoice,
+    setRecordDeleteFolders,
   } = useAppActions();
   const { summary, status, choices } = pending;
   const planning = status === "planning";
@@ -130,6 +140,21 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
             disabled={deleting}
             onChange={(checked) => setRecordDeleteAudioFiles(checked)}
           />
+          {pending.leftoverFolders.length > 0 && (
+            <div className="mt-2 ml-6">
+              <Checkbox
+                label={leftoverFoldersLabel(pending.leftoverFolders)}
+                description={leftoverFoldersNote(pending.leftoverFolders)}
+                checked={pending.deleteAudioFiles && pending.deleteFolders}
+                disabled={!pending.deleteAudioFiles || deleting}
+                onChange={(checked) => setRecordDeleteFolders(checked)}
+              />
+              <FolderList
+                folders={pending.leftoverFolders}
+                dimmed={!pending.deleteAudioFiles}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -180,6 +205,47 @@ function RecordDeleteModalBody(props: { pending: RecordDelete }): JSX.Element {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** How many folders the list names before it counts the rest. */
+const LISTED_FOLDERS = 4;
+
+/** The folders the "Delete the rest of the folder" checkbox would delete:
+ * each one's name, and what's in it, in brief. A name cut short by the
+ * dialog's width, and the whole list of files, show on hover. */
+function FolderList(props: {
+  folders: readonly LeftoverFolder[];
+  dimmed: boolean;
+}): JSX.Element {
+  const { folders, dimmed } = props;
+  const listed = folders.slice(0, LISTED_FOLDERS);
+  const more = folders.length - listed.length;
+  return (
+    <ul
+      aria-label="Folders"
+      className={cx("mt-1 ml-6 flex flex-col gap-1 text-xs", {
+        "opacity-50": dimmed,
+      })}
+    >
+      {listed.map((folder) => (
+        <li
+          key={folder.path}
+          title={`${folderName(folder)}\n${folder.files.join("\n")}`}
+        >
+          <span className="text-ink block truncate">{folderName(folder)}</span>
+          <span className="text-ink-weak block break-words">
+            {folderContents(folder)}
+          </span>
+        </li>
+      ))}
+      {more > 0 && (
+        <li className="text-ink-weak">
+          and {more.toLocaleString("en-US")} more{" "}
+          {more === 1 ? "folder" : "folders"}
+        </li>
+      )}
+    </ul>
   );
 }
 

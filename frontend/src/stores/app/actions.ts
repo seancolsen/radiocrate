@@ -37,6 +37,7 @@ import {
   metadataFieldSetSorting,
   metadataFieldSetVisible,
   metadataTableList,
+  collectionLeftoverFolders,
   metadataTableSetOrder,
   metadataTableSetQuerydown,
   metadataTableSetVisible,
@@ -44,6 +45,7 @@ import {
   type CustomComparisonRow,
   type FieldMetadataRow,
   type FieldRef,
+  type LeftoverFolder,
   type DmlOperation,
   type DmlResult,
   type Placement,
@@ -71,7 +73,7 @@ import {
   type DeletePlan,
   type DeletePlanner,
 } from "../../record/deletePlan";
-import { audioFileCount } from "../../record/deleteText";
+import { audioFileCount, audioFileIds } from "../../record/audioFiles";
 import {
   fetchTrackMetadata,
   fetchTrackRatingId,
@@ -306,6 +308,7 @@ import {
   persistAudioQuality,
   persistDeleteAudioFiles,
   persistDeleteChoices,
+  persistDeleteFolders,
   persistFindOptions,
   persistExpandedFolders,
   persistExplorerWidth,
@@ -316,6 +319,7 @@ import {
   persistTheme,
   storedDeleteAudioFiles,
   storedDeleteChoices,
+  storedDeleteFolders,
 } from "./persistence";
 import {
   selectEffectivePresets,
@@ -1066,6 +1070,11 @@ export interface AppActions {
    * the `file` records the deletion takes are deleted from the collection
    * along with them. Remembered for the next deletion. */
   setRecordDeleteAudioFiles: (checked: boolean) => void;
+  /** The dialog's "Delete the rest of the folder" choice: whether the folders
+   * the audio files' removal leaves with no audio in them are deleted whole,
+   * with what else is in them. Only along with the audio. Remembered for the
+   * next deletion. */
+  setRecordDeleteFolders: (checked: boolean) => void;
   /** Deletes what the dialog shows, as one request. Once it lands, the dialog
    * closes and the page the records were chosen on reloads. A failure stays in
    * the dialog. Does nothing while a plan is being worked out. */
@@ -2803,6 +2812,11 @@ export function createAppActions(
         keys: readonly RecordKey[];
         planner: DeletePlanner;
         plan: DeletePlan | undefined;
+        /** The folders the plan in force would leave behind. */
+        folders: readonly LeftoverFolder[];
+        /** The last folders asked for, by the files they were asked for:
+         * most choices don't change which files go. */
+        foldersFor?: { files: string; folders: Promise<LeftoverFolder[]> };
       }
     | undefined;
   let deletionToken = 0;
@@ -2836,13 +2850,33 @@ export function createAppActions(
     });
     void session.planner
       .plan(session.table, session.keys, pending.choices)
+      .then(async (plan) => {
+        const files = audioFileIds(plan);
+        if (files.length === 0) return { plan, folders: [] };
+        const key = files.join();
+        if (session.foldersFor?.files !== key) {
+          session.foldersFor = {
+            files: key,
+            folders: collectionLeftoverFolders({ fileIds: files }),
+          };
+        }
+        try {
+          return { plan, folders: await session.foldersFor.folders };
+        } catch (err) {
+          // Asked again next time, rather than failing for good.
+          if (session.foldersFor?.files === key) session.foldersFor = undefined;
+          throw err;
+        }
+      })
       .then(
-        (plan) => {
+        ({ plan, folders }) => {
           if (!current()) return;
           session.plan = plan;
+          session.folders = folders;
           set((s) => {
             if (!s.recordDelete) return;
             s.recordDelete.summary = castDraft(plan.summary);
+            s.recordDelete.leftoverFolders = castDraft(folders);
             s.recordDelete.status = "ready";
           });
         },
@@ -6119,6 +6153,7 @@ export function createAppActions(
         keys: [...keys.values()],
         planner: deletePlanner(),
         plan: undefined,
+        folders: [],
       };
       set((d) => {
         d.recordDelete = {
@@ -6127,6 +6162,8 @@ export function createAppActions(
           count: keys.size,
           choices: storedDeleteChoices(env),
           deleteAudioFiles: storedDeleteAudioFiles(env),
+          deleteFolders: storedDeleteFolders(env),
+          leftoverFolders: [],
           summary: null,
           status: "planning",
           error: null,
@@ -6154,6 +6191,14 @@ export function createAppActions(
         if (s.recordDelete) s.recordDelete.deleteAudioFiles = checked;
       });
       persistDeleteAudioFiles(env, checked);
+    },
+    setRecordDeleteFolders: (checked) => {
+      const pending = get().recordDelete;
+      if (!pending || pending.status === "deleting") return;
+      set((s) => {
+        if (s.recordDelete) s.recordDelete.deleteFolders = checked;
+      });
+      persistDeleteFolders(env, checked);
     },
     confirmRecordDelete: () => {
       const pending = get().recordDelete;
@@ -6183,9 +6228,16 @@ export function createAppActions(
       // deleted.
       const deleteAudioFiles =
         pending.deleteAudioFiles && audioFileCount(plan.summary) > 0;
+      // The folders as they were shown, which the server deletes only if
+      // they'd still hold no audio.
+      const deleteFolders =
+        deleteAudioFiles && pending.deleteFolders
+          ? session.folders.map((folder) => folder.path)
+          : [];
       void dml({
         operations: plan.operations,
         ...(deleteAudioFiles && { deleteAudioFiles }),
+        ...(deleteFolders.length > 0 && { deleteFolders }),
       }).then(
         () => {
           close();
@@ -6197,6 +6249,7 @@ export function createAppActions(
           // made, so what was loaded for it is stale: start again from
           // nothing, and leave the reason on show beside the new plan.
           session.planner = deletePlanner();
+          session.foldersFor = undefined;
           planDeletion(describeError(err));
         },
       );
